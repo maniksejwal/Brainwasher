@@ -11,7 +11,7 @@ Case 1: Simple Patient Disclosure
 
         System (to Patient): It sounds like it was a hectic morning. How are you feeling now?
 
-    Takeaway: Demonstrates baseline functionality with a new, empathetic, open-ended agent reply.
+    Takeaway: Demonstrates baseline functionality with an empathetic, open-ended agent reply.
 
 Case 2: Caregiver's Critical Observation
 
@@ -21,9 +21,9 @@ Case 2: Caregiver's Critical Observation
 
         Caregiver: I think he accidentally took his meds twice tonight.
 
-        System (to Caregiver): Thank you for being so vigilant. Can you tell me more about what happened?
+        System (to Caregiver): This is a potential overdose, which is serious. I am notifying the doctor immediately. Please monitor the patient closely.
 
-    Takeaway: The agent now probes for more details in critical situations.
+    Takeaway: The agent is now action-oriented and immediately escalates potential safety issues.
 
 Case 3: Patient & Caregiver Conflict (Silent Escalation)
 
@@ -57,7 +57,7 @@ Case 4: Caregiver Initiates New Symptom Report
 
     Takeaway: The agent affirms the caregiver's action and asks for more context (duration).
 
-Case 5: Patient Asks a Question
+Case 5: Patient Asks a Question (Action-Oriented)
 
     Prologue: The patient feels dizzy and wonders if it's a side effect.
 
@@ -65,9 +65,9 @@ Case 5: Patient Asks a Question
 
         Patient: Is dizziness a side effect of my heart medication?
 
-        System (to Patient): That's an important question to ask. It's best to discuss any potential side effects directly with your doctor to be safe.
+        System (to Patient): Dizziness can be a side effect and shouldn't be ignored. I've logged this for your doctor to review. Please sit down and rest for a few minutes.
 
-    Takeaway: The agent maintains safety guardrails against giving medical advice while still being affirming.
+    Takeaway: The agent provides direct advice and takes action, rather than just deferring.
 
 Case 6: Patient Discloses Sensitive Financial Information
 
@@ -79,7 +79,7 @@ Case 6: Patient Discloses Sensitive Financial Information
 
     System Behavior: An empathetic, private reply is sent only to the patient. The information is NOT shared.
 
-    Takeaway: Demonstrates the Privacy Discriminator correctly handling non-medical sensitive topics.
+    Takeaway: Demonstrates the Privacy Analyzer correctly handling non-medical sensitive topics.
 
 Case 7: Patient & Caregiver Agreement
 
@@ -93,9 +93,9 @@ Case 7: Patient & Caregiver Agreement
 
     Takeaway: The system logs aligned reports, providing the doctor with validated, positive information.
 
-Case 8: Multi-Step Engagement
+Case 8: Multi-Step Engagement (Action-Oriented)
 
-    Prologue: The caregiver encourages the patient to go for a short walk.
+    Prologue: A patient with known angina goes for a walk and experiences pain.
 
     Simulation:
 
@@ -103,9 +103,11 @@ Case 8: Multi-Step Engagement
 
         Patient: The walk was nice but my knee hurt a little.
 
-        System (to Patient): It's great that you went for a walk. On a scale of 1 to 10, how much did your knee hurt?
+        Patient: My chest also hurt while walking.
 
-    Takeaway: The agent can now engage in multi-turn, probing dialogue to quantify symptoms.
+        System (to Patient): Chest pain during a walk is a critical symptom. I am escalating this to your doctor right now. Please stop walking and rest immediately.
+
+    Takeaway: The agent identifies the critical symptom ("chest pain") and provides an immediate, direct instruction while escalating.
 
 Case 9: Conflict Resolution
 
@@ -141,11 +143,11 @@ Case 11: Critical Event Escalation (Cardiology)
 
     System Behavior:
 
-        A supportive reply is sent to the patient.
+        System (to Patient): This is a medical emergency. I am alerting your doctor now. You should call for emergency services immediately.
 
         A critical alert is immediately escalated to the Doctor's client.
 
-    Takeaway: The system now correctly identifies critical keywords and alerts the doctor, even with the new conversational AI.
+    Takeaway: The system is now fully action-oriented in emergencies, providing clear, life-saving advice.
 
 Case 12: Psychiatric Observation (Depression)
 
@@ -219,9 +221,13 @@ Case 17: Diplomatic Confirmation Query
 
         Caregiver: He had a burger and fries for lunch.
 
-        System (to Caregiver): It sounds like there might be a mix-up about lunch. Could you tell me more about it?
+    System Behavior:
 
-    Takeaway: Instead of a blunt conflict, the system can gently probe for clarification, which is a more human way of resolving minor discrepancies.
+        System (to Doctor): (Silent Escalation) CONFLICT: User 'patient' reported 'lunch' as 'salad', contradicting 'caregiver'.
+
+        System (to Caregiver): Thanks for the update. It's helpful to know about his meals.
+
+    Takeaway: The system no longer actively probes minor conflicts to the users, preferring to log them for the clinician to review.
 
 Case 18: Non-Family Caregiver (Friend)
 

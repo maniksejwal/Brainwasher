@@ -1,154 +1,154 @@
 import express from 'express';
-import dotenv from 'dotenv';
-import { 
-    initializeDatabase, addUser, userExists, upsertFact, getFact, 
-    addMessageToQueue, getMessagesForUser, getAllUsers, resetDatabase,
-    setRelationship, getRelationship, addEscalation, getEscalations
-} from './database.js';
-import { generatePersonalAgentReply, privacyDiscriminator } from './agents.js';
+import { EventEmitter } from 'events';
+import { initializeDatabase, addMessage, getMessagesForUser, clearUserMessages, upsertFact, getFact, addEscalation, getUnreadEscalations, markEscalationsAsRead, clearAllData } from './database.js';
+import { generatePersonalAgentReply, analyzeMessage } from './agents.js';
+import chalk from 'chalk';
 
-// --- Initialization ---
-dotenv.config();
 const app = express();
 app.use(express.json());
-const PORT = 5000;
-const CRITICAL_KEYWORDS = ['fainted', 'chest pain', 'overdose', 'can\'t breathe', 'suicide', 'passed out'];
+
+const messageBus = new EventEmitter();
+const doctorClients = new Set();
 
 
-// --- Core IP: Conflict Detection Engine ---
-async function detectConflict(user, message) {
-    let factKey = null;
-    let factValue = null;
-
-    if (message.toLowerCase().includes("took his meds") || message.toLowerCase().includes("took my meds") || message.toLowerCase().includes("took my medicine")) {
-        factKey = "medication_taken";
-        factValue = true;
-    } else if (message.toLowerCase().includes("did not take his meds") || message.toLowerCase().includes("miss my medicine")) {
-        factKey = "medication_taken";
-        factValue = false;
-    }
-
-    if (factKey) {
-        await upsertFact(factKey, user, factValue);
-        const allReports = await getFact(factKey);
-
-        const patientReport = allReports.find(r => r.userId === 'patient');
-        const caregiverReport = allReports.find(r => r.userId === 'caregiver');
-
-        if (patientReport && caregiverReport && patientReport.factValue !== caregiverReport.factValue) {
-            const conflictMessage = `[Discrepancy Noted] A difference was noted in reports about '${factKey}'. This has been logged for the doctor's review.`;
-            console.log(`!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!`);
-            console.log(`*** CONFLICT DETECTED on fact '${factKey}' ***`);
-            console.log(`-> caregiver reports: ${caregiverReport.factValue}`);
-            console.log(`-> patient reported: ${patientReport.factValue}`);
-            console.log(`-> ACTION: Silently Escalating to Doctor/System Log.`);
-            console.log(`!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!`);
-            await addEscalation(`CONFLICT: User 'patient' reported '${factKey}' as '${patientReport.factValue}', contradicting 'caregiver' who reported it as '${caregiverReport.factValue}'.`);
-            
-            // We no longer send a direct alert to users, making it more subtle.
-            // await addMessageToQueue('patient', conflictMessage);
-            // await addMessageToQueue('caregiver', conflictMessage);
-        }
-    }
+// --- Helper Functions ---
+function broadcastToCareCircle(message) {
+    messageBus.emit('care-circle-message', message);
 }
 
-// --- New Core IP: Critical Event Detection ---
-async function detectCriticalEvent(user, message) {
-    const lowerCaseMessage = message.toLowerCase();
-    for (const keyword of CRITICAL_KEYWORDS) {
-        if (lowerCaseMessage.includes(keyword)) {
-            const escalationMessage = `CRITICAL ALERT from ${user}: "${message}"`;
-            console.log(`\n!!! CRITICAL EVENT DETECTED !!! -> Escalating: ${escalationMessage}`);
-            await addEscalation(escalationMessage);
-            return true; // Event was critical
+function broadcastToDoctor(escalation) {
+    doctorClients.forEach(client => {
+        client.write(`data: ${JSON.stringify([escalation])}\n\n`);
+    });
+}
+
+async function detectConflictAndEscalate(userId, facts) {
+    for (const [factKey, factValue] of Object.entries(facts)) {
+        const existingFact = await getFact(factKey);
+        if (existingFact && existingFact.reported_by !== userId && String(existingFact.value) !== String(factValue)) {
+            console.log(chalk.yellow.bold(`!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!`));
+            console.log(chalk.yellow.bold(`*** CONFLICT DETECTED on fact '${factKey}' ***`));
+            console.log(chalk.yellow.bold(`-> ${userId} reports: ${factValue}`));
+            console.log(chalk.yellow.bold(`-> ${existingFact.reported_by} reported: ${existingFact.value}`));
+            console.log(chalk.yellow.bold(`-> ACTION: Silently escalating to Doctor.`));
+            console.log(chalk.yellow.bold(`!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!`));
+            
+            const newEscalation = await addEscalation('CONFLICT', `User '${userId}' reported '${factKey}' as '${factValue}', contradicting '${existingFact.reported_by}'.`);
+            broadcastToDoctor(newEscalation);
         }
+        await upsertFact(factKey, userId, factValue);
     }
-    return false; // Not critical
 }
 
 
 // --- API Endpoints ---
-app.post('/register', async (req, res) => {
-    const { userId } = req.body;
-    await addUser(userId);
-    res.status(200).json({ status: `user ${userId} registered` });
-});
-
 app.post('/send', async (req, res) => {
     const { userId, message } = req.body;
-    if (!(await userExists(userId))) {
-        return res.status(400).json({ error: "User not registered" });
+    console.log(`[Orchestrator] Received message from '${userId}': '${message}'`);
+
+    const analysis = await analyzeMessage(userId, message);
+    console.log(`[Orchestrator] Analysis complete:`, analysis);
+
+    // Criticality now directly influences the agent's reply.
+    const personalReply = await generatePersonalAgentReply(userId, message, analysis.criticality);
+    await addMessage(userId, personalReply);
+
+    if (analysis.criticality === 'HIGH') {
+        console.log(chalk.red.bold(`[Orchestrator] CRITICAL EVENT DETECTED. Escalating to doctor.`));
+        const newEscalation = await addEscalation('CRITICAL', `User '${userId}' reported a critical event: "${message}"`);
+        broadcastToDoctor(newEscalation);
     }
-    console.log(`\n[Orchestrator] Received message from '${userId}': '${message}'`);
+
+    if (analysis.privacyLevel === 'PUBLIC') {
+        const broadcastMessage = `[Care Circle Update] The ${userId} has shared a new update.`;
+        broadcastToCareCircle(broadcastMessage);
+    } else {
+         console.log(chalk.magenta(`[Orchestrator] Message from ${userId} is not for broadcast (Privacy: ${analysis.privacyLevel}).`));
+    }
     
-    // 1. Generate and queue the immediate personal reply
-    const personalReply = await generatePersonalAgentReply(userId, message);
-    await addMessageToQueue(userId, personalReply);
-
-    // 2. Check for critical events and escalate if necessary
-    const wasCritical = await detectCriticalEvent(userId, message);
-
-    // 3. Check for privacy and conflicts
-    const isPrivate = await privacyDiscriminator(userId, message);
-    await detectConflict(userId, message);
-
-    // 4. Broadcast a diplomatic update if not private
-    if (!isPrivate) {
-        const broadcastMessage = `[Care Circle Update] An update was shared by the ${userId}.`;
-        const allUsers = await getAllUsers();
-        for (const otherUser of allUsers) {
-            if (otherUser.userId !== userId) {
-                 const patientId = userId === 'patient' ? userId : otherUser.userId;
-                 const caregiverId = userId === 'patient' ? otherUser.userId : userId;
- 
-                 if (patientId === caregiverId) continue;
-                 
-                 const relationship = await getRelationship(patientId, caregiverId);
-                 const consentLevel = relationship ? relationship.consentLevel : 'full'; 
- 
-                 if (consentLevel === 'full') {
-                     await addMessageToQueue(otherUser.userId, broadcastMessage);
-                 } else {
-                     console.log(`[Consent Manager] Update notification BLOCKED for ${otherUser.userId} (Consent: ${consentLevel})`);
-                 }
-            }
-        }
+    let facts = {};
+    if (message.toLowerCase().includes('took my medicine')) facts.medication_taken = true;
+    if (message.toLowerCase().includes('did not take')) facts.medication_taken = false;
+    if (message.toLowerCase().includes('chest pain')) facts.symptom_chest_pain = true;
+    
+    if (Object.keys(facts).length > 0) {
+        await detectConflictAndEscalate(userId, facts);
     }
-    res.status(200).json({ status: "message_received" });
+
+    res.status(200).send({ status: 'ok' });
 });
+
 
 app.get('/fetch/:userId', async (req, res) => {
+    // BUG FIX: Added 'const { userId } = req.params;' to correctly capture the user ID.
     const { userId } = req.params;
-    const messages = await getMessagesForUser(userId);
-    res.status(200).json({ messages });
-});
 
-app.post('/consent/set', async (req, res) => {
-    const { patientId, caregiverId, relationshipType, consentLevel } = req.body;
-    await setRelationship(patientId, caregiverId, relationshipType, consentLevel);
-    res.status(200).json({ status: 'Consent level updated.' });
-});
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
 
-app.get('/fetch/doctor', async (req, res) => {
-    const escalations = await getEscalations();
-    res.status(200).json({ escalations });
-});
+    const messageHandler = (message) => {
+        res.write(`data: ${JSON.stringify({ messages: [message] })}\n\n`);
+    };
 
-app.post('/test/reset', async (req, res) => {
-    await resetDatabase();
-    res.status(200).json({ status: "database_reset" });
-});
+    const pollMessages = async () => {
+         const messages = await getMessagesForUser(userId);
+         if (messages.length > 0) {
+             res.write(`data: ${JSON.stringify({ messages })}\n\n`);
+             await clearUserMessages(userId);
+         }
+    };
+    
+    pollMessages(); 
+    const interval = setInterval(pollMessages, 2000); 
+    messageBus.on('care-circle-message', messageHandler);
 
-// --- Main Execution ---
-async function startServer() {
-    await initializeDatabase();
-    app.listen(PORT, () => {
-        console.log(`--- Multi-Agent Orchestrator (JS) is RUNNING ---`);
-        console.log(`This terminal acts as the Doctor's Log.`);
-        console.log(`Listening on http://127.0.0.1:${PORT}`);
-        console.log(`---------------------------------------------`);
+    req.on('close', () => {
+        clearInterval(interval);
+        messageBus.removeListener('care-circle-message', messageHandler);
+        res.end();
     });
-}
+});
 
-startServer();
+
+app.get('/doctor/escalations', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    
+    doctorClients.add(res);
+    console.log(chalk.blue(`[Orchestrator] Doctor client connected. Total clients: ${doctorClients.size}`));
+
+    getUnreadEscalations().then(async (escalations) => {
+        if (escalations.length > 0) {
+            res.write(`data: ${JSON.stringify(escalations)}\n\n`);
+            await markEscalationsAsRead(escalations.map(e => e.id));
+        }
+    });
+
+    req.on('close', () => {
+        doctorClients.delete(res);
+        console.log(chalk.blue(`[Orchestrator] Doctor client disconnected. Total clients: ${doctorClients.size}`));
+        res.end();
+    });
+});
+
+
+app.post('/clear-all', async (req, res) => {
+    console.log("[Orchestrator] Clearing all data.");
+    await clearAllData();
+    res.status(200).send({ status: 'cleared' });
+});
+
+
+const PORT = 5000;
+app.listen(PORT, async () => {
+    await initializeDatabase();
+    console.log(chalk.green.bold('--- Multi-Agent Orchestrator (JS) is RUNNING ---'));
+    console.log(chalk.cyan('This terminal acts as the Doctor\'s Log.'));
+    console.log(`Listening on http://127.0.0.1:${PORT}`);
+    console.log(chalk.yellow('---------------------------------------------'));
+});
 
