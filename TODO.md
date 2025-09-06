@@ -1,42 +1,30 @@
 Project Roadmap & TODO
 
-This document tracks the strategic direction and planned features for the multi-agent system.
-Core IP & Inventive Steps
+This document outlines the planned features and improvements for the multi-agent system.
+Immediate Next Steps
 
-    [x] Multi-Agent Reconciliation Engine: Core logic for detecting conflicts between patient and caregiver reports. (Implemented)
+    [ ] Temporal Fact & Symptom Logging: Overhaul the database schema for the facts table to include a timestamp and a history of values. This will allow the system to track symptoms and behaviors over time (e.g., "Patient has reported headaches 5 times this week").
 
-    [x] Privacy-Preserving Protocol: AI-driven privacy discriminator to prevent sharing of sensitive info. (Implemented)
+Future Enhancements & IP
 
-    [x] Verifiable Conversational Logic: Using AI to generate context-aware, human-like replies. (Implemented)
+    [ ] Reciprocal Care Circles: Architect a system where every user can have their own care circle. A user can be a "patient" in their own circle while being a "caregiver" in another's. This involves a more complex user and relationship management model in the database.
 
-    [x] Consent Manager: Granular control over what information is shared based on user-defined relationships. (Implemented)
+    [ ] Dynamic Relationship Analysis: Develop a module that analyzes conversation history to dynamically infer the relationship_closeness (e.g., supportive, strained, distant) between users. This score can then be used to further refine the AI's communication style and data-sharing decisions.
 
-    [x] Doctor Escalation Pathway: A dedicated client for clinicians to receive critical, filtered alerts. (Implemented)
+Completed
 
-    [x] Granular Privacy & Labels: AI assigns privacyLevel and criticality to every message for nuanced decision-making. (Implemented)
+    [x] Implement "Mediated Clarification" Logic: The system now gently probes users to clarify discrepancies, rather than only escalating silently.
 
-    [ ] Dynamic Relationship Analysis: AI agent that actively analyzes the tone and content of conversations to determine the real-time state of the patient-caregiver relationship.
+    [x] Implement Consent Manager Commands: Users can now set consent levels for others in their care circle via chat commands.
 
-Current Implementation (Prototype v2)
+    [x] Beautify CLI: Add color and better formatting to the client terminals.
 
-    [x] Backend: Node.js with Express (orchestrator.js)
+    [x] Create Automated Tests: Build a test.js runner for repeatable system checks.
 
-    [x] Database: SQLite for persistence (database.js)
+    [x] Create Doctor's Client: Implement a separate client for doctors to view escalated alerts.
 
-    [x] AI Logic: Gemini API integration (agents.js)
+    [x] Implement Consent Manager (Backend): The database now supports consentLevel and relationshipType, laying the groundwork for user-facing controls.
 
-    [x] Prompt Library: Centralized prompts for easier management (prompts.js)
+    [x] Granular Privacy & Criticality: The messageAnalyzer now provides detailed classification, which the orchestrator uses for smarter decision-making.
 
-    [x] Clients: CLI for Patient, Caregiver, and Doctor. (client.js, doctor_client.js)
-
-    [x] Testing: Automated test runner. (test.js)
-
-Future Enhancements (The Next Big Steps)
-
-    Goal-Driven Conversation from DB: Enhance the Personal Agent to pull from the database (e.g., past symptoms, conflicts) to inform its goal-driven questions, making conversations contextually aware over time.
-
-    Add Time Dimension to Database: Maintain a temporal log of all facts and symptom reports, including timestamps, to allow for trend analysis.
-
-    Implement Reciprocal Roles & Multi-Circle Architecture: Evolve the architecture to support a model where every user can be both a patient and a caregiver in different circles.
-
-    Diplomatic Probing: Instead of just flagging a conflict, the AI agent should be able to ask a clarifying, non-accusatory question to the user who provided the conflicting report.
+    [x] Action-Oriented AI Persona: Updated the personal agent's prompts to be more decisive and provide direct advice in critical situations.

@@ -1,30 +1,39 @@
-import { EOL } from 'os';
 import chalk from 'chalk';
+import EventSource from 'eventsource';
+import config from './config.js';
 
-const ORCHESTRATOR_URL = "http://120.0.0.1:5000";
-const ROLE = 'doctor';
+const ESCALATIONS_URL = `${config.ORCHESTRATOR_URL}/doctor/escalations`;
 
-async function fetchEscalations() {
+console.log(chalk.bold.cyan("--- Doctor's Escalation Client ---"));
+console.log(chalk.gray("Listening for critical alerts from the orchestrator..."));
+
+const es = new EventSource(ESCALATIONS_URL);
+
+es.on('open', () => {
+  console.log(chalk.green('Connection to orchestrator established.'));
+});
+
+es.on('message', (e) => {
   try {
-    const response = await fetch(`${ORCHESTRATOR_URL}/fetch/doctor`);
-    if (response.ok) {
-      const { escalations } = await response.json();
-      if (escalations.length > 0) {
-        console.log(chalk.red.bold(`--- NEW ESCALATIONS RECEIVED ---`));
-        escalations.forEach(item => {
-            console.log(chalk.yellow(`[${new Date(item.timestamp).toLocaleString()}] ${item.content}`));
-        });
-         console.log(chalk.red.bold(`------------------------------${EOL}`));
-      }
+    const escalations = JSON.parse(e.data);
+    if (escalations && escalations.length > 0) {
+      console.log(chalk.red.bold(`\n--- NEW ESCALATIONS RECEIVED ---`));
+      escalations.forEach(item => {
+        const message = `[${new Date(item.timestamp).toLocaleString()}] ${item.type}: ${item.details}`;
+        console.log(chalk.yellow(message));
+      });
+      console.log(chalk.red.bold(`------------------------------`));
     }
-  } catch (e) {
-    // Fail silently
+  } catch (error) {
+    console.error(chalk.red('Error parsing escalation data:'), error);
   }
-}
+});
 
-// --- Main Execution ---
-console.log(chalk.blue("--- Doctor's Escalation Client ---"));
-console.log("Listening for critical alerts from the orchestrator...");
+es.on('error', (err) => {
+  if (err.status === 404) {
+    console.error(chalk.red('Could not connect to the orchestrator. Is it running?'));
+  } else if (err.type === 'error' && err.message === 'network error') {
+     console.error(chalk.red('Network error. Retrying...'));
+  }
+});
 
-// Fetch escalations every 5 seconds
-setInterval(fetchEscalations, 5000);

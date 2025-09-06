@@ -1,89 +1,92 @@
 import readline from 'readline';
-import { EOL } from 'os';
 import chalk from 'chalk';
-
-const ORCHESTRATOR_URL = "http://127.0.0.1:5000";
+import config from './config.js'; // Correctly import the default config object
 
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
 });
 
-let userId;
+let userId = '';
 
-// FEATURE: Simplified display logic for new conversational style
-function displayMessage(message) {
-    if (message.startsWith('[Care Circle Update]')) {
-        console.log(chalk.blue(message));
-    } else if (message.startsWith('[Discrepancy Noted]')) {
-        console.log(chalk.yellow.bold(message));
-    }
-    else {
-        // AI agent's conversational replies will be green
-        console.log(chalk.green(message)); 
+async function sendMessage(message) {
+    try {
+        await fetch(`${config.ORCHESTRATOR_URL}/send`, { // Access URL from the object
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, message })
+        });
+    } catch (error) {
+        console.log(chalk.red('Error: Could not send message to the orchestrator.'));
     }
 }
 
 async function fetchMessages() {
     try {
-        const response = await fetch(`${ORCHESTRATOR_URL}/fetch/${userId}`);
-        if (response.ok) {
-            const { messages } = await response.json();
-            if (messages.length > 0) {
-                messages.forEach(displayMessage);
-                rl.prompt(true); // Redraw the prompt
+        const response = await fetch(`${config.ORCHESTRATOR_URL}/fetch/${userId}`); // Access URL from the object
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split('\n').filter(line => line.startsWith('data: '));
+
+            for (const line of lines) {
+                const data = line.replace(/^data: /, '');
+                try {
+                    const json = JSON.parse(data);
+                    if (json.messages && Array.isArray(json.messages)) {
+                        json.messages.forEach(msg => {
+                            if (msg.startsWith('[System]')) {
+                                console.log(chalk.gray(msg));
+                            } else if (msg.startsWith('[Care Circle Update]')) {
+                                console.log(chalk.blue(msg));
+                            } else {
+                                console.log(chalk.green(msg));
+                            }
+                            rl.prompt(true);
+                        });
+                    }
+                } catch (e) {
+                    // Ignore parsing errors for incomplete streams
+                }
             }
         }
-    } catch (e) {
-        // Fail silently if the server isn't ready
+    } catch (error) {
+        // This will happen on close, it's okay.
     }
 }
 
-async function sendMessage(line) {
-    try {
-        await fetch(`${ORCHESTRATOR_URL}/send`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId, message: line })
-        });
-    } catch (e) {
-        console.log(chalk.red("Error: Could not connect to the orchestrator. Is it running?"));
-    }
-}
+function startChat() {
+    rl.setPrompt(chalk.yellow(`${userId} > `));
+    rl.prompt();
 
-// --- Main Execution ---
-rl.question('Enter your role (patient/caregiver): ', async (role) => {
-    userId = role.trim().toLowerCase();
-    if (userId !== 'patient' && userId !== 'caregiver') {
-        console.log("Invalid role. Please enter 'patient' or 'caregiver'.");
-        rl.close();
-        return;
-    }
-
-    try {
-        // Register the user
-        await fetch(`${ORCHESTRATOR_URL}/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId })
-        });
-        console.log(chalk.cyan(`Welcome, ${userId}. You can start typing messages.`));
-        rl.setPrompt(chalk.bold(`${userId}> `));
+    rl.on('line', (line) => {
+        const message = line.trim();
+        if (message) {
+            sendMessage(message);
+        }
         rl.prompt();
+    }).on('close', () => {
+        console.log(chalk.bold('\nHave a great day!'));
+        process.exit(0);
+    });
 
-        rl.on('line', async (line) => {
-            if (line.trim()) {
-                await sendMessage(line);
-            }
-            rl.prompt();
-        });
+    fetchMessages();
+}
 
-        // Check for new messages every 3 seconds
-        setInterval(fetchMessages, 3000);
-
-    } catch (e) {
-        console.log(chalk.red("Error: Could not connect to the orchestrator. Is it running?"));
+rl.question('Enter your role (patient/caregiver): ', (role) => {
+    userId = role.trim().toLowerCase();
+    if (userId === 'patient' || userId === 'caregiver') {
+        console.log(chalk.bold.green(`\nWelcome, ${userId}. You can start typing now.`));
+        startChat();
+    } else {
+        console.log(chalk.red('Invalid role. Please restart and enter "patient" or "caregiver".'));
         rl.close();
     }
 });
+
 

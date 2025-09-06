@@ -1,45 +1,55 @@
-import config from './config.js';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { personalAgentPrompt, messageAnalyzerPrompt } from './prompts.js';
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { personalAgentPrompt, messageAnalyzerPrompt, mediatedClarificationPrompt } from './prompts.js';
+import config from './config.js'; // Correctly import the default config object
 
-const genAI = new GoogleGenerativeAI(config.API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+const genAI = new GoogleGenerativeAI(config.API_KEY); // Access API_KEY from the object
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-const generatePersonalAgentReply = async (userId, message) => {
-    // FEATURE: Prompt is now imported from prompts.js
-    const prompt = personalAgentPrompt
-        .replace('{{userId}}', userId)
-        .replace('{{message}}', message);
-
+async function generatePersonalAgentReply(userId, message, criticality) {
     try {
+        const prompt = personalAgentPrompt
+            .replace('{{userId}}', userId)
+            .replace('{{message}}', message);
+
         const result = await model.generateContent(prompt);
         const response = await result.response;
         return response.text().trim();
     } catch (error) {
         console.error("Error generating personal reply:", error);
-        return "Thank you for sharing that with me.";
+        return "I'm having trouble processing that right now. Please try again in a moment.";
     }
-};
+}
 
-// FEATURE: Replaced the simple privacyDiscriminator with a sophisticated message analyzer
-const analyzeMessage = async (userId, message) => {
-    const prompt = messageAnalyzerPrompt
-        .replace('{{userId}}', userId)
-        .replace('{{message}}', message);
-
+async function analyzeMessage(userId, message) {
     try {
+        const prompt = messageAnalyzerPrompt
+            .replace('{{userId}}', userId)
+            .replace('{{message}}', message);
         const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const jsonText = response.text().match(/```json\n([\s\S]*?)\n```/)[1];
-        const analysis = JSON.parse(jsonText);
-        return analysis;
+        const responseText = (await result.response).text().trim().replace(/```json|```/g, '');
+        return JSON.parse(responseText);
     } catch (error) {
         console.error("Error in message analyzer:", error);
-        // Fallback to the safest possible classification on error
-        return { privacyLevel: 'SENSITIVE', criticality: 'LOW' };
+        return { privacyLevel: 'PRIVATE', criticality: 'LOW' }; // Default to safe values
     }
-};
+}
+
+async function generateMediatedClarification(targetUser, factKey) {
+     try {
+        const prompt = mediatedClarificationPrompt
+            .replace('{{targetUser}}', targetUser)
+            .replace('{{factKey}}', factKey);
+
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        return response.text().trim();
+    } catch (error) {
+        console.error("Error generating mediated clarification:", error);
+        return `I wanted to check in about the ${factKey.replace(/_/g, ' ')}. How are things?`;
+    }
+}
 
 
-export { generatePersonalAgentReply, analyzeMessage };
+export { generatePersonalAgentReply, analyzeMessage, generateMediatedClarification };
+
 

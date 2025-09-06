@@ -11,10 +11,17 @@ async function initializeDatabase() {
 
     await db.exec(`
         CREATE TABLE IF NOT EXISTS users (
+            user_id TEXT PRIMARY KEY
+        );
+
+        CREATE TABLE IF NOT EXISTS relationships (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT UNIQUE,
+            source_user_id TEXT,
+            target_user_id TEXT,
             consent_level TEXT DEFAULT 'full',
-            relationship_type TEXT DEFAULT 'caregiver'
+            FOREIGN KEY (source_user_id) REFERENCES users(user_id),
+            FOREIGN KEY (target_user_id) REFERENCES users(user_id),
+            UNIQUE(source_user_id, target_user_id)
         );
 
         CREATE TABLE IF NOT EXISTS messages (
@@ -44,8 +51,22 @@ async function addUser(userId) {
     return db.run('INSERT OR IGNORE INTO users (user_id) VALUES (?)', userId);
 }
 
+async function updateUserConsent(sourceUserId, targetUserId, consentLevel) {
+    return db.run(
+        'INSERT INTO relationships (source_user_id, target_user_id, consent_level) VALUES (?, ?, ?) ON CONFLICT(source_user_id, target_user_id) DO UPDATE SET consent_level = excluded.consent_level',
+        [sourceUserId, targetUserId, consentLevel]
+    );
+}
+
+async function getConsentLevel(sourceUserId, targetUserId) {
+    const row = await db.get('SELECT consent_level FROM relationships WHERE source_user_id = ? AND target_user_id = ?', [sourceUserId, targetUserId]);
+    return row ? row.consent_level : 'full'; // Default to 'full' if no specific rule exists
+}
+
+
 async function getUsers() {
-    return db.all('SELECT user_id FROM users');
+    const rows = await db.all('SELECT user_id FROM users');
+    return rows.map(r => r.user_id);
 }
 
 async function addMessage(recipientId, message) {
@@ -91,12 +112,14 @@ async function markEscalationsAsRead(ids) {
 
 
 async function clearAllData() {
-    await db.exec('DELETE FROM users; DELETE FROM messages; DELETE FROM facts; DELETE FROM escalations;');
+    await db.exec('DELETE FROM users; DELETE FROM messages; DELETE FROM facts; DELETE FROM escalations; DELETE FROM relationships;');
 }
 
 export {
     initializeDatabase,
     addUser,
+    updateUserConsent,
+    getConsentLevel,
     getUsers,
     addMessage,
     getMessagesForUser,
