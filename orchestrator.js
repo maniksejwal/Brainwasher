@@ -1,18 +1,46 @@
 import express from 'express';
-import { EventEmitter } from 'events';
 import { 
-    initializeDatabase, addMessage, getMessagesForUser, clearUserMessages, 
-    upsertFact, getFact, addEscalation, getUnreadEscalations, markEscalationsAsRead, 
-    clearAllData, updateUserConsent, getConsentLevel, getUsers
+    initializeDatabase, addMessage as dbAddMessage, 
+    upsertFact, getFact, 
+    clearAllData, updateUserConsent, getConsentLevel, getUsers, addUser
 } from './database.js';
-import { generatePersonalAgentReply, analyzeMessage, generateMediatedClarification } from './agents.js';
+import { processUserMessage, generateMediatedClarification, generateDoctorAgentReply } from './agents.js';
 import chalk from 'chalk';
 
 const app = express();
 app.use(express.json());
 
-const messageBus = new EventEmitter();
-const doctorClients = new Set();
+// --- Real-time Event System (Server-Sent Events) ---
+let clients = {};
+
+const sendMessageToUser = (userId, message) => {
+    if (clients[userId]) {
+        clients[userId].res.write(`data: ${JSON.stringify({ message })}\n\n`);
+    }
+};
+
+async function addMessage(userId, message) {
+    await dbAddMessage(userId, message);
+    sendMessageToUser(userId, message);
+}
+
+app.get('/events/:userId', (req, res) => {
+    const { userId } = req.params;
+    
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    clients[userId] = { res };
+    console.log(chalk.blue(`[Orchestrator] Client '${userId}' connected.`));
+
+    req.on('close', () => {
+        delete clients[userId];
+        console.log(chalk.yellow(`[Orchestrator] Client '${userId}' disconnected.`));
+    });
+});
+
 
 // --- Helper Functions ---
 async function broadcastToCareCircle(originatingUser, message, privacyLevel) {
@@ -23,37 +51,38 @@ async function broadcastToCareCircle(originatingUser, message, privacyLevel) {
 
     const allUsers = await getUsers();
     for (const targetUser of allUsers) {
-        if (targetUser === originatingUser) continue;
+        if (targetUser === originatingUser || targetUser === 'doctor') continue;
 
         const consentLevel = await getConsentLevel(originatingUser, targetUser);
         if (consentLevel === 'full') {
-            messageBus.emit('message-for-user', { userId: targetUser, message });
+            await addMessage(targetUser, message);
         } else {
             console.log(chalk.cyan(`[Orchestrator] Broadcast to '${targetUser}' blocked by consent level: '${consentLevel}'`));
         }
     }
 }
 
-function broadcastToDoctor(escalation) {
-    doctorClients.forEach(client => {
-        client.write(`data: ${JSON.stringify([escalation])}\n\n`);
-    });
+async function escalateToDoctor(type, details) {
+    console.log(chalk.red.bold(`[Orchestrator] CRITICAL EVENT DETECTED. Escalating to doctor.`));
+    const escalationSummary = await generateDoctorAgentReply(type, details);
+    await addMessage('doctor', escalationSummary);
 }
+
 
 async function detectConflictAndMediate(userId, facts) {
     for (const [factKey, factValue] of Object.entries(facts)) {
+        if (!factKey || factValue === undefined) continue; // Skip invalid facts
+        
         const existingFact = await getFact(factKey);
         if (existingFact && existingFact.reported_by !== userId && String(existingFact.value) !== String(factValue)) {
             const conflictingUser = existingFact.reported_by;
-            console.log(chalk.yellow.bold(`[Conflict] Detected on '${factKey}'. Escalating and attempting mediated clarification.`));
+            const conflictDetails = `User '${userId}' reported '${factKey}' as '${factValue}', contradicting '${conflictingUser}'.`;
+            console.log(chalk.yellow.bold(`[Conflict] Detected: ${conflictDetails}`));
             
-            const escalation = await addEscalation('CONFLICT', `User '${userId}' reported '${factKey}' as '${factValue}', contradicting '${conflictingUser}'.`);
-            broadcastToDoctor(escalation);
+            await escalateToDoctor('CONFLICT', conflictDetails);
 
-            // Mediate: Ask the *first* person who reported the fact to clarify.
             const mediationMessage = await generateMediatedClarification(conflictingUser, factKey);
             await addMessage(conflictingUser, mediationMessage);
-            
         }
         await upsertFact(factKey, userId, factValue);
     }
@@ -79,6 +108,7 @@ async function handleCommand(userId, command) {
 // --- API Endpoints ---
 app.post('/send', async (req, res) => {
     const { userId, message } = req.body;
+    await addUser(userId);
 
     if (message.startsWith('/')) {
         await handleCommand(userId, message);
@@ -88,85 +118,30 @@ app.post('/send', async (req, res) => {
 
     console.log(`[Orchestrator] Received message from '${userId}': '${message}'`);
 
-    const analysis = await analyzeMessage(userId, message);
-    console.log(`[Orchestrator] Analysis complete:`, analysis);
+    // SINGLE API CALL
+    const { reply, privacyLevel, criticality, facts } = await processUserMessage(userId, message);
+    
+    console.log(`[Orchestrator] Unified analysis complete:`, { reply, privacyLevel, criticality, facts });
 
-    const personalReply = await generatePersonalAgentReply(userId, message, analysis.criticality);
-    await addMessage(userId, personalReply);
+    // 1. Always send personal reply
+    await addMessage(userId, reply);
 
-    if (analysis.criticality === 'HIGH') {
-        console.log(chalk.red.bold(`[Orchestrator] CRITICAL EVENT DETECTED. Escalating to doctor.`));
-        const newEscalation = await addEscalation('CRITICAL', `User '${userId}' reported: "${message}"`);
-        broadcastToDoctor(newEscalation);
+    // 2. Escalate if critical
+    if (criticality === 'HIGH') {
+        await escalateToDoctor('CRITICAL', `User '${userId}' reported: "${message}"`);
     }
 
-    await broadcastToCareCircle(userId, `[Care Circle Update] The ${userId} has shared a new update.`, analysis.privacyLevel);
+    // 3. Broadcast to circle if public
+    if (userId !== 'doctor') {
+        await broadcastToCareCircle(userId, `[Care Circle Update] The ${userId} has shared an update.`, privacyLevel);
+    }
     
-    let facts = {};
-    if (message.toLowerCase().includes('took my medicine')) facts.medication_taken = true;
-    if (message.toLowerCase().includes('did not take')) facts.medication_taken = false;
-    
-    if (Object.keys(facts).length > 0) {
+    // 4. Detect conflicts from extracted facts
+    if (facts && Object.keys(facts).length > 0) {
         await detectConflictAndMediate(userId, facts);
     }
 
     res.status(200).send({ status: 'ok' });
-});
-
-app.get('/fetch/:userId', async (req, res) => {
-    const { userId } = req.params;
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    const specificMessageHandler = (data) => {
-        if (data.userId === userId) {
-            res.write(`data: ${JSON.stringify({ messages: [data.message] })}\n\n`);
-        }
-    };
-    
-    const pollMessages = async () => {
-         const messages = await getMessagesForUser(userId);
-         if (messages.length > 0) {
-             res.write(`data: ${JSON.stringify({ messages })}\n\n`);
-             await clearUserMessages(userId);
-         }
-    };
-    
-    pollMessages(); 
-    const interval = setInterval(pollMessages, 1500); 
-    messageBus.on('message-for-user', specificMessageHandler);
-
-    req.on('close', () => {
-        clearInterval(interval);
-        messageBus.removeListener('message-for-user', specificMessageHandler);
-        res.end();
-    });
-});
-
-app.get('/doctor/escalations', (req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-    
-    doctorClients.add(res);
-    console.log(chalk.blue(`[Orchestrator] Doctor client connected. Total clients: ${doctorClients.size}`));
-
-    getUnreadEscalations().then(async (escalations) => {
-        if (escalations.length > 0) {
-            res.write(`data: ${JSON.stringify(escalations)}\n\n`);
-            await markEscalationsAsRead(escalations.map(e => e.id));
-        }
-    });
-
-    req.on('close', () => {
-        doctorClients.delete(res);
-        console.log(chalk.blue(`[Orchestrator] Doctor client disconnected. Total clients: ${doctorClients.size}`));
-        res.end();
-    });
 });
 
 app.post('/clear-all', async (req, res) => {
@@ -179,7 +154,7 @@ const PORT = 5000;
 app.listen(PORT, async () => {
     await initializeDatabase();
     console.log(chalk.green.bold('--- Multi-Agent Orchestrator (JS) is RUNNING ---'));
-    console.log(chalk.cyan('This terminal acts as the Doctor\'s Log.'));
+    console.log(chalk.cyan('This terminal acts as the main system Log.'));
     console.log(`Listening on http://127.0.0.1:${PORT}`);
     console.log(chalk.yellow('---------------------------------------------'));
 });

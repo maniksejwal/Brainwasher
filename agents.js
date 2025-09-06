@@ -1,36 +1,43 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { personalAgentPrompt, messageAnalyzerPrompt, mediatedClarificationPrompt } from './prompts.js';
-import config from './config.js'; // Correctly import the default config object
+import { unifiedAgentPrompt, mediatedClarificationPrompt, doctorAgentPrompt } from './prompts.js';
+import config from './config.js';
 
-const genAI = new GoogleGenerativeAI(config.API_KEY); // Access API_KEY from the object
+const genAI = new GoogleGenerativeAI(config.API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-async function generatePersonalAgentReply(userId, message, criticality) {
+async function processUserMessage(userId, message) {
     try {
-        const prompt = personalAgentPrompt
+        const prompt = unifiedAgentPrompt
             .replace('{{userId}}', userId)
             .replace('{{message}}', message);
-
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        return response.text().trim();
-    } catch (error) {
-        console.error("Error generating personal reply:", error);
-        return "I'm having trouble processing that right now. Please try again in a moment.";
-    }
-}
-
-async function analyzeMessage(userId, message) {
-    try {
-        const prompt = messageAnalyzerPrompt
-            .replace('{{userId}}', userId)
-            .replace('{{message}}', message);
+        
         const result = await model.generateContent(prompt);
         const responseText = (await result.response).text().trim().replace(/```json|```/g, '');
         return JSON.parse(responseText);
     } catch (error) {
-        console.error("Error in message analyzer:", error);
-        return { privacyLevel: 'PRIVATE', criticality: 'LOW' }; // Default to safe values
+        console.error("Error in unified agent processing:", error);
+        // Return a safe, default response
+        return {
+            reply: "I'm having some trouble processing that. Could you please rephrase?",
+            privacyLevel: 'PRIVATE',
+            criticality: 'LOW',
+            facts: {}
+        };
+    }
+}
+
+async function generateDoctorAgentReply(type, details) {
+    try {
+        const prompt = doctorAgentPrompt
+            .replace('{{type}}', type)
+            .replace('{{details}}', details);
+
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        return `[Escalation] ${response.text().trim()}`;
+    } catch (error) {
+        console.error("Error generating doctor reply:", error);
+        return "[Escalation] A critical event occurred, but the summary failed to generate. Please review logs.";
     }
 }
 
@@ -50,6 +57,5 @@ async function generateMediatedClarification(targetUser, factKey) {
 }
 
 
-export { generatePersonalAgentReply, analyzeMessage, generateMediatedClarification };
-
+export { processUserMessage, generateMediatedClarification, generateDoctorAgentReply };
 
