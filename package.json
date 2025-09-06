@@ -1,0 +1,17 @@
+{
+  "name": "multi-agent-prototype-js",
+  "version": "1.0.0",
+  "description": "A JS prototype of the multi-agent reconciliation system.",
+  "main": "orchestrator.js",
+  "type": "module",
+  "scripts": {
+    "start": "node orchestrator.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.11.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^5.1.7"
+  }
+}
