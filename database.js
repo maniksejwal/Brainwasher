@@ -9,7 +9,6 @@ async function initializeDatabase() {
     driver: sqlite3.Database
   });
 
-  // Create tables if they don't exist
   await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       userId TEXT PRIMARY KEY
@@ -26,43 +25,68 @@ async function initializeDatabase() {
         content TEXT,
         isRead BOOLEAN DEFAULT 0
     );
+    -- New tables for Consent Manager and Escalations
+    CREATE TABLE IF NOT EXISTS relationships (
+        patientId TEXT NOT NULL,
+        caregiverId TEXT NOT NULL,
+        relationshipType TEXT,
+        consentLevel TEXT, -- e.g., 'full', 'limited', 'none'
+        PRIMARY KEY (patientId, caregiverId)
+    );
+    CREATE TABLE IF NOT EXISTS escalations (
+        escalationId INTEGER PRIMARY KEY AUTOINCREMENT,
+        content TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        isRead BOOLEAN DEFAULT 0
+    );
   `);
 
   console.log('[Database] Connected and tables are ready.');
   return db;
 }
 
+// --- New Function for Testing ---
+async function resetDatabase() {
+    await db.exec('DELETE FROM users');
+    await db.exec('DELETE FROM facts');
+    await db.exec('DELETE FROM messages');
+    await db.exec('DELETE FROM relationships');
+    await db.exec('DELETE FROM escalations');
+    console.log('[Database] All tables have been reset.');
+}
+
+
 // --- User Functions ---
-export async function addUser(userId) {
+async function addUser(userId) {
   return db.run('INSERT OR IGNORE INTO users (userId) VALUES (?)', userId);
 }
-export async function userExists(userId) {
+async function userExists(userId) {
     const user = await db.get('SELECT 1 FROM users WHERE userId = ?', userId);
     return !!user;
 }
-export async function getAllUsers() {
+async function getAllUsers() {
     return db.all('SELECT userId FROM users');
 }
 
 
 // --- Fact Functions ---
-export async function getFact(factKey) {
+async function getFact(factKey) {
   return db.all('SELECT userId, factValue FROM facts WHERE factKey = ?', factKey);
 }
 
-export async function upsertFact(factKey, userId, factValue) {
+async function upsertFact(factKey, userId, factValue) {
   return db.run(
     'INSERT INTO facts (factKey, userId, factValue) VALUES (?, ?, ?) ON CONFLICT(factKey, userId) DO UPDATE SET factValue = ?',
-    [factKey, userId, factValue, factValue]
+    [factKey, userId, factValue, factValue] // Corrected 'value' to 'factValue'
   );
 }
 
 // --- Message Queue Functions ---
-export async function addMessageToQueue(recipientId, content) {
+async function addMessageToQueue(recipientId, content) {
     return db.run('INSERT INTO messages (recipientId, content) VALUES (?, ?)', [recipientId, content]);
 }
 
-export async function getMessagesForUser(userId) {
+async function getMessagesForUser(userId) {
     const messages = await db.all('SELECT messageId, content FROM messages WHERE recipientId = ? AND isRead = 0', userId);
     // Mark messages as read after fetching
     if (messages.length > 0) {
@@ -72,5 +96,49 @@ export async function getMessagesForUser(userId) {
     return messages.map(m => m.content);
 }
 
+// --- New Relationship (Consent) Functions ---
+async function setRelationship(patientId, caregiverId, relationshipType, consentLevel) {
+    return db.run(
+        `INSERT INTO relationships (patientId, caregiverId, relationshipType, consentLevel) VALUES (?, ?, ?, ?)
+         ON CONFLICT(patientId, caregiverId) DO UPDATE SET relationshipType = ?, consentLevel = ?`,
+        [patientId, caregiverId, relationshipType, consentLevel, relationshipType, consentLevel]
+    );
+}
 
-export { db, initializeDatabase };
+async function getRelationship(patientId, caregiverId) {
+    return db.get('SELECT consentLevel FROM relationships WHERE patientId = ? AND caregiverId = ?', [patientId, caregiverId]);
+}
+
+
+// --- New Escalation Functions ---
+async function addEscalation(content) {
+    return db.run('INSERT INTO escalations (content) VALUES (?)', content);
+}
+
+async function getEscalations() {
+    const items = await db.all('SELECT escalationId, content, timestamp FROM escalations WHERE isRead = 0');
+    if (items.length > 0) {
+        const ids = items.map(i => i.escalationId);
+        await db.run(`UPDATE escalations SET isRead = 1 WHERE escalationId IN (${ids.join(',')})`);
+    }
+    return items;
+}
+
+// --- Consolidated Exports ---
+export {
+    db,
+    initializeDatabase,
+    resetDatabase,
+    addUser,
+    userExists,
+    getAllUsers,
+    getFact,
+    upsertFact,
+    addMessageToQueue,
+    getMessagesForUser,
+    setRelationship,
+    getRelationship,
+    addEscalation,
+    getEscalations
+};
+

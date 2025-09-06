@@ -1,7 +1,10 @@
 import express from 'express';
 import dotenv from 'dotenv';
-import { initializeDatabase, addUser, userExists, upsertFact, getFact, addMessageToQueue, getMessagesForUser, getAllUsers } from './database.js';
-// --- Refactoring Step: Import agent logic from the new agents.js file ---
+import { 
+    initializeDatabase, addUser, userExists, upsertFact, getFact, 
+    addMessageToQueue, getMessagesForUser, getAllUsers, resetDatabase,
+    setRelationship, getRelationship, addEscalation, getEscalations
+} from './database.js';
 import { generatePersonalAgentReply, privacyDiscriminator } from './agents.js';
 
 // --- Initialization ---
@@ -42,6 +45,10 @@ async function detectConflict(user, message) {
             const conflictMsg = `[System Alert] A conflict was detected in reports about '${factKey}'. Please discuss.`;
             await addMessageToQueue(user, conflictMsg);
             await addMessageToQueue(fact.userId, conflictMsg);
+            
+            // --- New Feature: Escalate conflict to doctor ---
+            const escalationContent = `CONFLICT: User '${user}' reported '${factKey}' as '${factValue}', contradicting '${fact.userId}'.`;
+            await addEscalation(escalationContent);
         }
     }
     
@@ -66,7 +73,6 @@ app.post('/send', async (req, res) => {
     }
     console.log(`\n[Orchestrator] Received message from '${userId}': '${message}'`);
     
-    // --- Feature: Generate and queue personal reply first ---
     const personalReply = await generatePersonalAgentReply(userId, message);
     await addMessageToQueue(userId, personalReply);
 
@@ -74,14 +80,29 @@ app.post('/send', async (req, res) => {
     await detectConflict(userId, message);
 
     if (!isPrivate) {
-        const broadcastMessage = `[${userId} says]: ${message}`;
+        // --- New Feature: Diplomatic Broadcast Message ---
+        const broadcastMessage = `[System Note] The ${userId} has shared a new update.`;
         const allUsers = await getAllUsers();
-        for (const user of allUsers) {
-            if (user.userId !== userId) {
-                await addMessageToQueue(user.userId, broadcastMessage);
+        for (const otherUser of allUsers) {
+            if (otherUser.userId !== userId) {
+                 // --- New Feature: Check consent before broadcasting ---
+                 const patientId = userId === 'patient' ? userId : otherUser.userId;
+                 const caregiverId = userId === 'patient' ? otherUser.userId : userId;
+ 
+                 if (patientId === caregiverId) continue; // Don't check consent for self
+                 
+                 const relationship = await getRelationship(patientId, caregiverId);
+                 // Default to 'full' consent if not set, change if you want default to be 'none'
+                 const consentLevel = relationship ? relationship.consentLevel : 'full'; 
+ 
+                 if (consentLevel === 'full') {
+                     await addMessageToQueue(otherUser.userId, broadcastMessage);
+                     console.log(`[Consent Manager] Update notification sent to ${otherUser.userId} (Consent: ${consentLevel})`);
+                 } else {
+                     console.log(`[Consent Manager] Update notification BLOCKED for ${otherUser.userId} (Consent: ${consentLevel})`);
+                 }
             }
         }
-        console.log(`[Orchestrator] Message broadcasted to other clients.`);
     } else {
         console.log(`[Orchestrator] Message from '${userId}' was private and was NOT broadcasted.`);
     }
@@ -96,6 +117,28 @@ app.get('/fetch', async (req, res) => {
     const messages = await getMessagesForUser(userId);
     res.status(200).json({ messages });
 });
+
+// --- New Endpoints for Consent and Doctor ---
+app.post('/consent/set', async (req, res) => {
+    const { patientId, caregiverId, relationshipType, consentLevel } = req.body;
+    await setRelationship(patientId, caregiverId, relationshipType, consentLevel);
+    console.log(`\n[Consent Manager] Relationship set: ${patientId} -> ${caregiverId} is a ${relationshipType} with ${consentLevel} consent.`);
+    res.status(200).json({ status: "consent_set" });
+});
+
+app.get('/fetch/doctor', async (req, res) => {
+    const escalations = await getEscalations();
+    res.status(200).json({ escalations });
+});
+
+
+// --- New Endpoint for Testing ---
+app.post('/test/reset', async (req, res) => {
+    console.log("\n[Orchestrator] Received request to reset database for testing.");
+    await resetDatabase();
+    res.status(200).json({ status: "database_reset" });
+});
+
 
 // --- Main Execution ---
 async function startServer() {
