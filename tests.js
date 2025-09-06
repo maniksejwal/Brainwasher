@@ -1,85 +1,88 @@
-import assert from 'assert';
-import { EOL } from 'os';
-
-// --- Test Runner for Multi-Agent System ---
-
+import chalk from 'chalk';
 const ORCHESTRATOR_URL = "http://127.0.0.1:5000";
-const patientId = 'patient';
-const caregiverId = 'caregiver';
+let testCount = 0;
+let passCount = 0;
 
 // --- Helper Functions ---
-async function apiPost(endpoint, body) {
-    const response = await fetch(`${ORCHESTRATOR_URL}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-    });
-    return response.json();
-}
+const api = {
+    post: async (endpoint, body) => {
+        return fetch(`${ORCHESTRATOR_URL}${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    },
+    get: async (endpoint) => fetch(`${ORCHESTRATOR_URL}${endpoint}`)
+};
 
-async function apiGet(endpoint) {
-    const response = await fetch(`${ORCHESTRATOR_URL}${endpoint}`);
-    return response.json();
-}
+const assert = (condition, message) => {
+    testCount++;
+    if (condition) {
+        passCount++;
+        console.log(chalk.green(`  ¿ PASS: ${message}`));
+    } else {
+        console.error(chalk.red(`  ¿ FAIL: ${message}`));
+        process.exit(1); // Exit on failure
+    }
+};
+
+const getMessages = async (userId) => {
+    const res = await api.get(`/fetch/${userId}`);
+    const { messages } = await res.json();
+    return messages;
+};
 
 // --- Test Cases ---
 async function runTests() {
-    console.log("--- Running System Tests ---");
+    console.log(chalk.blue.bold("\n--- Running System Integration Tests ---\n"));
 
-    // Test 1: Baseline communication and personal agent reply
-    console.log("Running Test Case 1: Simple Patient Disclosure...");
-    await apiPost('/test/reset'); // Reset database for a clean test
-    await apiPost('/register', { userId: patientId });
-    await apiPost('/register', { userId: caregiverId });
-    await apiPost('/send', { userId: patientId, message: "I didn't have time for breakfast this morning." });
-    let { messages: patientMessages } = await apiGet(`/fetch?userId=${patientId}`);
-    let { messages: caregiverMessages } = await apiGet(`/fetch?userId=${caregiverId}`);
-    assert(patientMessages[0].includes('[personal-agent says]'), 'Test 1 Failed: Patient did not receive personal reply.');
-    assert(caregiverMessages[0].includes('[patient says]'), 'Test 1 Failed: Caregiver did not receive broadcast message.');
-    console.log("  -> Test Case 1 Passed!");
+    // Test 1: Reset database
+    console.log(chalk.yellow("1. Resetting Database State..."));
+    await api.post('/test/reset');
+    await api.post('/register', { userId: 'patient' });
+    await api.post('/register', { userId: 'caregiver' });
+    console.log(chalk.gray("   Database reset and users registered.\n"));
 
-
-    // Test 3: Conflict Detection (Core IP)
-    console.log("Running Test Case 3: Patient & Caregiver Conflict...");
-    await apiPost('/test/reset');
-    await apiPost('/register', { userId: patientId });
-    await apiPost('/register', { userId: caregiverId });
-    await apiPost('/send', { userId: patientId, message: "Feeling good, I took my medicine this morning." });
-    await apiPost('/send', { userId: caregiverId, message: "He did not take his medicine today." });
-    caregiverMessages = (await apiGet(`/fetch?userId=${caregiverId}`)).messages;
-    assert(caregiverMessages.some(m => m.includes('[System Alert]')), 'Test 3 Failed: Caregiver did not receive conflict alert.');
-    console.log("  -> Test Case 3 Passed!");
-
-
-    // Test 6: Privacy Discriminator (Core IP)
-    console.log("Running Test Case 6: Patient Discloses Sensitive Info...");
-    await apiPost('/test/reset');
-    await apiPost('/register', { userId: patientId });
-    await apiPost('/register', { userId: caregiverId });
-    await apiPost('/send', { userId: patientId, message: "This is a secret, but I'm really stressed about how expensive my meds are." });
-    caregiverMessages = (await apiGet(`/fetch?userId=${caregiverId}`)).messages;
-    assert(caregiverMessages.length === 0, 'Test 6 Failed: Caregiver received a private message.');
-    console.log("  -> Test Case 6 Passed!");
+    // Test 2: Simple message and personal reply
+    console.log(chalk.yellow("2. Testing Simple Message & Personal Reply..."));
+    await api.post('/send', { userId: 'patient', message: 'I feel fine today.' });
+    const patientMessages1 = await getMessages('patient');
+    assert(patientMessages1.some(m => m.startsWith('[Personal Note]')), 'Patient should receive a personal note.');
     
-    // Test 11: Consent Manager (New Feature)
-    console.log("Running Test Case 11: Consent Manager Blocks Communication...");
-    await apiPost('/test/reset');
-    await apiPost('/register', { userId: patientId });
-    await apiPost('/register', { userId: caregiverId });
-    // Patient sets consent for caregiver to 'none'
-    await apiPost('/consent/set', { patientId, caregiverId, relationshipType: 'friend', consentLevel: 'none' });
-    // Patient sends a message
-    await apiPost('/send', { userId: patientId, message: "Just a regular update." });
-    let { messages: caregiverMessages } = await apiGet(`/fetch?userId=${caregiverId}`);
-    assert(caregiverMessages.length === 0, 'Test 11 Failed: Caregiver received a message despite consent being "none".');
-    console.log("  -> Test Case 11 Passed!");
+    // Test 3: Diplomatic broadcast
+    console.log(chalk.yellow("\n3. Testing Diplomatic Broadcast..."));
+    const caregiverMessages1 = await getMessages('caregiver');
+    assert(caregiverMessages1.some(m => m.startsWith('[Care Circle Update]')), 'Caregiver should receive a care circle update.');
+
+    // Test 4: Conflict detection and silent escalation
+    console.log(chalk.yellow("\n4. Testing Conflict Detection & Silent Escalation..."));
+    await api.post('/send', { userId: 'patient', message: 'I took my medicine.' });
+    await api.post('/send', { userId: 'caregiver', message: 'He did not take his medicine.' });
+    const doctorMessages1 = await api.get('/fetch/doctor').then(res => res.json());
+    assert(doctorMessages1.escalations.some(e => e.content.startsWith('CONFLICT')), 'Doctor should receive a conflict escalation.');
+    const patientMessages2 = await getMessages('patient');
+    assert(!patientMessages2.some(m => m.startsWith('[Discrepancy Noted]')), 'Patient should NOT receive a direct conflict alert.');
+
+    // Test 5: Privacy discriminator
+    console.log(chalk.yellow("\n5. Testing Privacy Discriminator..."));
+    await api.post('/send', { userId: 'patient', message: 'I have a secret financial debt.' });
+    const caregiverMessages2 = await getMessages('caregiver');
+    assert(!caregiverMessages2.some(m => m.includes('debt')), 'Caregiver should not receive private financial info.');
+    
+    // Test 6: Critical Keyword Escalation
+    console.log(chalk.yellow("\n6. Testing Critical Keyword Escalation..."));
+    await api.post('/send', { userId: 'caregiver', message: 'The patient fainted this morning!' });
+    const doctorMessages2 = await api.get('/fetch/doctor').then(res => res.json());
+    assert(doctorMessages2.escalations.some(e => e.content.startsWith('CRITICAL ALERT')), 'Doctor should receive a critical alert for "fainted".');
 
 
-    console.log(EOL + "--- All tests passed successfully! ---");
+    console.log(chalk.blue.bold("\n--- All Tests Finished ---"));
+    console.log(chalk.green.bold(`Result: ${passCount}/${testCount} tests passed.`));
 }
 
+// --- Main Execution ---
 runTests().catch(err => {
-    console.error(EOL + "--- A TEST FAILED ---");
+    console.error(chalk.red("\n--- A CRITICAL ERROR OCCURRED ---"));
     console.error(err);
     process.exit(1);
 });

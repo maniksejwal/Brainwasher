@@ -1,90 +1,63 @@
+import config from './config.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import dotenv from 'dotenv';
 
-// --- Initialization ---
-dotenv.config();
+const genAI = new GoogleGenerativeAI(config.API_KEY);
+// FIX: Updated model to a current, valid version
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
-// Configure the Gemini API client
-const apiKey = process.env.GEMINI_API_KEY;
-if (!apiKey) {
-  throw new Error("GEMINI_API_KEY not found. Please set it in your .env file.");
-}
-const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const generatePersonalAgentReply = async (userId, message) => {
+    // FEATURE: New, advanced prompt using OARS and FRAMES principles
+    const prompt = `You are a conversational AI agent acting as a personal health companion. Your goal is to be a supportive, empathetic listener who encourages the user to share more details using motivational interviewing techniques.
 
+    **Your Guiding Principles (OARS & FRAMES):**
+    1.  **Open-Ended Questions:** Ask questions that can't be answered with a simple "yes" or "no." (e.g., "How did that make you feel?" instead of "Did that make you sad?")
+    2.  **Affirmations:** Acknowledge the user's efforts and strengths. (e.g., "That sounds difficult, it's brave of you to share.")
+    3.  **Reflective Listening:** Rephrase what the user said to show you understand. (e.g., "So, it sounds like you're feeling frustrated with the side effects.")
+    4.  **Summarizing:** Occasionally, summarize the conversation to reinforce understanding.
+    5.  **Empathy:** Show you understand their perspective.
 
-/**
- * --- Core IP: Personal Agent Reply Generator ---
- * Generates an empathetic, supportive reply to a user's message.
- * @param {string} user - The role of the user ('patient' or 'caregiver').
- * @param {string} message - The user's message.
- * @returns {Promise<string>} The generated reply from the personal agent.
- */
-export async function generatePersonalAgentReply(user, message) {
-    console.log(`\n[Personal Agent] Generating reply for ${user}...`);
-    const prompt = `You are an empathetic AI personal agent in a healthcare context. Your user, a ${user}, just sent you the following message.
+    **Conversation Rules:**
+    * **BE BRIEF:** Your response MUST be a single, short sentence.
+    * **NO LABELS:** Do not use labels like "[Personal Note]". Respond as a person would.
+    * **AVOID MEDICAL ADVICE:** Don't rush to give medical advice. Defer to a doctor for tricky medical questions.
+    * **BE A LISTENER:** Your primary goal is to listen and gently probe, not to solve problems (which is secondary).
 
-    User's Message: "${message}"
+    **The user, '${userId}', just said: "${message}"**
 
-    Your task is to provide a brief, supportive, and non-prescriptive reply. Acknowledge their message and offer encouragement. Do NOT give medical advice. Keep your response to one or two sentences.
+    Now, generate a brief, empathetic, and open-ended response based on these principles.`;
 
-    Example 1:
-    User Message: "I took my medicine this morning."
-    Your Reply: "That's great to hear! Keeping on track is a big step."
-
-    Example 2:
-    User Message: "He did not take his medicine today."
-    Your Reply: "Thank you for letting me know. It's helpful to understand the challenges."
-    
-    Example 3:
-    User Message: "I have been feeling very depressed about my secret financial debt."
-    Your Reply: "It sounds like you're going through a lot, and I'm here to listen. Thank you for sharing that with me."`;
-    
     try {
         const result = await model.generateContent(prompt);
         const response = await result.response;
-        const reply = response.text().trim();
-        console.log(`[Personal Agent] Generated reply: "${reply}"`);
-        return `[personal-agent says]: ${reply}`;
-    } catch (e) {
-        console.error("[Personal Agent] Error generating reply:", e);
-        return "[personal-agent says]: Thank you for sharing that with me."; // Fallback reply
+        return response.text().trim();
+    } catch (error) {
+        console.error("Error generating personal reply:", error);
+        // Fallback response in case of API error
+        return "Thank you for sharing that with me.";
     }
-}
+};
 
+const privacyDiscriminator = async (userId, message) => {
+    const prompt = `You are a privacy analysis agent. Analyze the following message from a user identified as '${userId}': "${message}".
+    Your task is to determine if this message contains highly sensitive personal information that should NOT be shared with family members in a care circle.
+    Consider topics like specific medical diagnoses (HIV, cancer), financial debt, marital problems (affairs, divorce), or any text explicitly marked with words like 'secret' or 'private'.
+    Respond with only 'true' if it is sensitive and should be kept private, or 'false' if it is a general health update that can be shared.`;
 
-/**
- * --- Core IP: Privacy Discriminator Agent ---
- * Analyzes a message to determine if it contains sensitive, private information.
- * @param {string} user - The role of the user sending the message.
- * @param {string} message - The message content.
- * @returns {Promise<boolean>} True if the message is deemed private, false otherwise.
- */
-export async function privacyDiscriminator(user, message) {
-  console.log(`\n[Privacy Discriminator] Analyzing message from ${user}: '${message}'`);
-  const prompt = `
-    Analyze the following message from a user in a healthcare context.
-    The user is either a 'patient' or a 'caregiver'.
-    Does the message contain sensitive, private information that the user might not want shared widely?
-    Examples of sensitive information include confessions of non-compliance, mentions of secret financial or emotional issues, or anything explicitly stated as a secret.
-
-    Message: "${message}"
-
-    Answer with a single word: YES or NO.
-    `;
-  try {
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const answer = response.text().trim().toUpperCase();
-    if (answer.includes("YES")) {
-      console.log(`[Privacy Discriminator] *** PRIVACY ALERT *** Message from ${user} flagged as sensitive.`);
-      return true;
-    } else {
-      console.log(`[Privacy Discriminator] Message from ${user} deemed safe to share.`);
-      return false;
+    try {
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const text = response.text().toLowerCase().trim();
+        const isPrivate = text.includes('true');
+        if(isPrivate) {
+            console.log(`[Privacy Agent] Message flagged as PRIVATE.`);
+        }
+        return isPrivate;
+    } catch (error) {
+        console.error("Error in privacy discriminator:", error);
+        return false; // Default to not private on error
     }
-  } catch (e) {
-    console.error("[Privacy Discriminator] Error during API call:", e);
-    return true; // Fail safe: assume it's private if the API fails.
-  }
-}
+};
+
+
+export { generatePersonalAgentReply, privacyDiscriminator };
+

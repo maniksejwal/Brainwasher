@@ -1,68 +1,38 @@
 Project Roadmap & TODO
 
-This document outlines the planned features, architectural changes, and future enhancements for the multi-agent reconciliation system.
-Immediate Tasks (Implemented in this version)
+This document tracks the strategic direction and planned features for the multi-agent system.
+Core 
 
-    [x] Beautify CLI: Add color to the client interface for better readability using chalk.
+    [x] Multi-Agent Reconciliation Engine: Core logic for detecting conflicts between patient and caregiver reports. (Implemented)
 
-    [x] Automated Testing: Create a test runner (test.js) to programmatically execute the scenarios defined in scenarios.md.
+    [x] Privacy-Preserving Protocol: AI-driven privacy discriminator to prevent sharing of sensitive info. (Implemented)
 
-    [x] Refactor for Testability: Add a database reset function to enable clean test runs.
+    [x] Verifiable Conversational Logic: Using AI to generate context-aware, human-like replies. (Implemented)
 
-Next Up: Core Feature Enhancements
+    [x] Consent Manager: Granular control over what information is shared based on user-defined relationships. (Implemented)
 
-These are the next priorities to build out the core IP.
+    [x] Doctor Escalation Pathway: A dedicated client for clinicians to receive critical, filtered alerts. (Implemented)
 
-    Consent Manager (High Priority):
+    [ ] Dynamic Relationship Analysis: AI agent that actively analyzes the tone and content of conversations to determine the real-time state of the patient-caregiver relationship (e.g., "supportive," "strained"). This is a key inventive step.
 
-        Implement a basic consent framework. A patient should be able to define what types of information can be shared with a specific caregiver.
+Current Implementation (Prototype v1)
 
-        This will require adding a relationships table to the database (e.g., patient_id, caregiver_id, relationship_type, consent_level).
+    [x] Backend: Node.js with Express (orchestrator.js)
 
-        The privacyDiscriminator agent will need to be updated to check these consent rules.
+    [x] Database: SQLite for persistence (database.js)
 
-    Doctor's Client / Escalation Pathway:
+    [x] AI Logic: Gemini API integration (agents.js)
 
-        Create a simple, read-only client for the "doctor" role.
+    [x] Clients: CLI for Patient, Caregiver, and Doctor. (client.js, doctor_client.js)
 
-        Implement an "escalate" function in the orchestrator. Critical conflicts or specific alerts should be flagged and pushed to the doctor's view.
+    [x] Testing: Automated test runner. (test.js)
 
-    Enhanced Privacy Granularity:
+Future Enhancements (The Next Big Steps)
 
-        Move beyond a simple "YES/NO" for privacy.
+    Add Time Dimension to Database: The current database overwrites facts. The next version should maintain a temporal log of all facts and symptom reports, including timestamps. This allows the doctor to see the history and progression of a patient's state over time, which is a critical feature for clinical analysis.
 
-        The privacyDiscriminator should classify messages with more nuanced labels like:
+    Implement Reciprocal Roles & Multi-Circle Architecture: The current model assumes fixed "patient" and "caregiver" roles. The architecture needs to evolve to support a multi-circle model where every user has their own profile. A user can be a "patient" in their own care circle while also being a "caregiver" in someone else's circle (e.g., their parent's). This is a significant architectural and IP enhancement.
 
-            SENSITIVE: (e.g., mental health, finance) - Requires explicit consent.
+    Granular Privacy & Labels: Move beyond a simple private/not-private flag. Introduce a spectrum of labels (e.g., SENSITIVE, CRITICAL, SAFE_TO_SHARE, ROUTINE_UPDATE) that the AI can assign. The Consent Manager will use these labels to make more nuanced sharing decisions.
 
-            CRITICAL: (e.g., overdose, severe symptom) - Should be shared/escalated regardless of privacy for safety.
-
-            PRIVATE: (e.g., an infection in the privates) - Should never be shared with anyone except the doctor.
-
-            SAFE_TO_SHARE: (e.g., headache, general updates) - Default sharing level.
-
-Future Work & New IP
-
-This section includes more complex features and potential new inventive steps.
-
-    Inventive Step: Dynamic Relationship & Context Analysis:
-
-        The system should dynamically measure the "closeness" and "state" (e.g., supportive, strained) of the relationship between patient and caregiver based on their message history.
-
-        This "closeness score" can then be used to adapt the personal agent's tone and decide what information is appropriate to share (e.g., you might share more with a supportive spouse than a distant friend).
-
-    Advanced Fact Extraction:
-
-        Improve the detectConflict engine to extract more than just medication_taken. It should be able to identify and structure facts about symptoms, appointments, and lifestyle events (e.g., symptom: cough, severity: persistent).
-
-    Expand Scenarios:
-
-        Develop and test the more complex human scenarios you outlined:
-
-            Caregiver is a friend, not family.
-
-            Diseases with high social stigma (e.g., HIV/AIDS).
-
-            Sensitive personal topics (e.g., extramarital affairs, divorce).
-
-        A table of scenarios is a good idea for tracking test coverage. We should decide if test cases need to be thorough (testing every edge case) or light (proving the core feature). For a prototype, light tests are better.
+    Diplomatic Probing: Instead of just flagging a conflict, the AI agent should be able to ask a clarifying, non-accusatory question to the user who provided the conflicting report (e.g., "Just to double-check, are you sure about that time?").
