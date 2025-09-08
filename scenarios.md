@@ -1,272 +1,456 @@
-System Test Scenarios
+Test Scenarios & Scripts
 
-This document contains a series of scripted scenarios to test the multi-agent reconciliation system and demonstrate its core features. Each case includes a real-world prologue, a simulated conversation, the expected database impact, and the key takeaway.
-Case 1: Simple Patient Disclosure
+This document contains a series of scripted scenarios to test the multi-agent system's functionality and to explain its behavior to researchers.
+Part 1: Core Functionality (Cases 1-10)
+Case 1: Simple Fact Reporting (Patient)
 
-    Prologue: The patient, feeling rushed, skips breakfast before their morning medication.
+    Prologue: The patient misses breakfast.
 
-    Simulation:
+    Script:
 
-        Patient: I didn't have time for breakfast this morning.
+        Patient: I didn't have breakfast this morning.
 
-        System (to Patient): It sounds like it was a hectic morning. How are you feeling now?
+    Database Log:
 
-    Takeaway: Demonstrates baseline functionality with an empathetic, open-ended agent reply.
+        messages: Adds patient's message.
 
-Case 2: Caregiver's Critical Observation
+        fact_history: fact_key='ate_breakfast', reported_by='patient', value='false'.
 
-    Prologue: The caregiver notices the patient took their evening medication twice by mistake. The patient is unaware.
+    AI Interaction:
 
-    Simulation:
+        [Personal Note] (to Patient): Thank you for letting me know. Was there a particular reason you missed breakfast today?
 
-        Caregiver: I think he accidentally took his meds twice tonight.
+    Takeaway: Tests basic fact extraction and a simple, probing OARS-based response.
 
-        System (to Caregiver): This is a potential overdose, which is serious. I am notifying the doctor immediately. Please monitor the patient closely.
+Case 2: Simple Fact Reporting (Caregiver)
 
-    Takeaway: The agent is now action-oriented and immediately escalates potential safety issues.
+    Prologue: The caregiver observes the patient skipping lunch.
 
-Case 3: Patient & Caregiver Conflict (Silent Escalation)
+    Script:
 
-    Prologue: The patient forgets their morning pills but misremembers taking them. The caregiver knows they didn't.
+        Caregiver: The patient didn't eat any lunch.
 
-    Simulation:
+    Database Log:
 
-        Patient: Feeling good, I took my medicine this morning.
+        messages: Adds caregiver's message.
 
-        Caregiver: He did not take his medicine today, I found the pills still in the box.
+        fact_history: fact_key='ate_lunch', reported_by='caregiver', value='false'.
 
-    System Behavior:
+    AI Interaction:
 
-        Each user receives a private, conversational reply.
+        [Personal Note] (to Caregiver): I see, thanks for sharing that. Is there anything you think might be affecting their appetite?
 
-        No alert is sent to the users.
+    Takeaway: Tests fact extraction from a third-person report.
 
-        A [Discrepancy Noted] alert is silently escalated to the Doctor's client.
+Case 3: Direct Conflict & Doctor Escalation
 
-    Takeaway: The core IP is now smarter. Instead of creating a direct confrontation, the system logs the conflict and informs the clinician, allowing for a more mediated resolution.
+    Prologue: The patient and caregiver disagree on whether medication was taken.
 
-Case 4: Caregiver Initiates New Symptom Report
+    Script:
 
-    Prologue: The caregiver observes the patient has developed a persistent, dry cough.
+        Patient: I took my pills this morning.
 
-    Simulation:
+        Caregiver: He did not take his medicine today.
 
-        Caregiver: I've noticed he has a new cough that won't go away.
+    Database Log:
 
-        System (to Caregiver): It's helpful that you're keeping track of new symptoms. How long has this been going on?
+        fact_history: Logs two conflicting entries for medication_taken.
 
-    Takeaway: The agent affirms the caregiver's action and asks for more context (duration).
+    AI Interaction:
 
-Case 5: Patient Asks a Question (Action-Oriented)
+        [Doctor] receives [Escalation] CONFLICT: User 'caregiver' reported 'medication_taken' as 'false', contradicting 'patient'.
 
-    Prologue: The patient feels dizzy and wonders if it's a side effect.
+        [Personal Note] (to Caregiver): I've noted that. To help get a clearer picture, could you tell me a bit more about what happened this morning? (Mediated Clarification)
 
-    Simulation:
+    Takeaway: Tests conflict detection, silent escalation to the doctor, and the mediated clarification probe.
 
-        Patient: Is dizziness a side effect of my heart medication?
+Case 4: Critical Event (Patient Faints) & Escalation
 
-        System (to Patient): Dizziness can be a side effect and shouldn't be ignored. I've logged this for your doctor to review. Please sit down and rest for a few minutes.
+    Prologue: The patient feels unwell and faints.
 
-    Takeaway: The agent provides direct advice and takes action, rather than just deferring.
+    Script:
 
-Case 6: Patient Discloses Sensitive Financial Information
+        Patient: I felt dizzy and then I fainted.
 
-    Prologue: The patient is worried about the cost of medication and doesn't want to burden their family.
+    Database Log:
 
-    Simulation:
+        messages: Adds patient's message.
 
-        Patient: This is a secret, but I'm really stressed about how expensive my meds are.
+    AI Interaction:
 
-    System Behavior: An empathetic, private reply is sent only to the patient. The information is NOT shared.
+        [Personal Note] (to Patient): That sounds very serious. I am alerting your doctor immediately. Are you safe right now? Can you call for help?
 
-    Takeaway: Demonstrates the Privacy Analyzer correctly handling non-medical sensitive topics.
+        [Doctor] receives [Escalation] CRITICAL: User 'patient' reported: "I felt dizzy and then I fainted."
 
-Case 7: Patient & Caregiver Agreement
+    Takeaway: Tests HIGH criticality detection, direct safety advice to the patient, and successful escalation.
 
-    Prologue: The patient and caregiver both observe that the patient had a good night's sleep.
+Case 5: Privacy Discriminator (Sensitive Topic)
 
-    Simulation:
+    Prologue: A patient wants to discuss a sensitive, non-medical issue.
 
-        Patient: I slept really well last night.
+    Script:
 
-        Caregiver: He seems to have much more energy today, I think he had a good sleep.
+        Patient: I'm really struggling with my secret credit card debt.
 
-    Takeaway: The system logs aligned reports, providing the doctor with validated, positive information.
+    Database Log:
 
-Case 8: Multi-Step Engagement (Action-Oriented)
+        messages: Adds patient's message.
 
-    Prologue: A patient with known angina goes for a walk and experiences pain.
+    AI Interaction:
 
-    Simulation:
+        [Orchestrator Log] shows privacyLevel: 'SENSITIVE'.
 
-        Caregiver: We went for a short 10-minute walk today.
+        [Personal Note] (to Patient): That sounds incredibly stressful to manage on your own. Financial worries can take a huge toll. Have you considered talking to a financial advisor?
 
-        Patient: The walk was nice but my knee hurt a little.
+    Takeaway: Tests detection of SENSITIVE information and ensures it is not shared or escalated.
 
-        Patient: My chest also hurt while walking.
+Case 6: Per-Message Consent (Granting Permission)
 
-        System (to Patient): Chest pain during a walk is a critical symptom. I am escalating this to your doctor right now. Please stop walking and rest immediately.
+    Prologue: The caregiver notices the patient seems depressed.
 
-    Takeaway: The agent identifies the critical symptom ("chest pain") and provides an immediate, direct instruction while escalating.
+    Script:
 
-Case 9: Conflict Resolution
+        Caregiver: The patient seems very withdrawn and sad today.
 
-    Prologue: Following the conflict in Case 3, the patient realizes their mistake.
+        Caregiver's Agent: This seems like an important observation. Would it be okay to share this with the patient's doctor to get their input?
 
-    Simulation:
+        Caregiver: yes proceed
 
-        Patient: You were right, I re-checked and I did miss my medicine this morning.
+    Database Log:
 
-    Takeaway: Shows the system's ability to record the resolution of a previously detected conflict.
+        implied_consent: An entry is created for topic mood from caregiver to doctor for 15 mins.
 
-Case 10: Fact + Subjective Report
+    AI Interaction:
 
-    Prologue: The patient takes their medicine but feels sad. The caregiver notices the mood change.
+        [Doctor] receives a contextual summary of the caregiver's observation.
 
-    Simulation:
+    Takeaway: Tests the per-message consent flow and the creation of an implied consent session.
 
-        Patient: I took my meds.
+Case 7: Implied Consent (Automatic Sharing)
 
-        Caregiver: He took his medicine, but he seems very quiet and sad today.
+    Prologue: Following Case 6, the caregiver has another observation within 15 minutes.
 
-        System (to Caregiver): It sounds like you're concerned about his mood. Has anything happened to upset him?
+    Script:
 
-    Takeaway: The agent can parse a complex message and focus on the subjective, emotional component.
+        Caregiver: He is still in his room and hasn't spoken to anyone.
 
-Case 11: Critical Event Escalation (Cardiology)
+    Database Log:
 
-    Prologue: The patient experiences a sudden, serious cardiac symptom.
+        messages: Adds caregiver's message.
 
-    Simulation:
+    AI Interaction:
 
-        Patient: I have a sharp chest pain and I think I fainted for a second.
+        [Orchestrator Log] notes that implied consent was found for topic mood.
 
-    System Behavior:
+        The message is automatically shared with the doctor without asking for permission again.
 
-        System (to Patient): This is a medical emergency. I am alerting your doctor now. You should call for emergency services immediately.
+    Takeaway: Verifies that the implied consent model works, reducing user friction.
 
-        A critical alert is immediately escalated to the Doctor's client.
+Case 8: Doctor Directive
 
-    Takeaway: The system is now fully action-oriented in emergencies, providing clear, life-saving advice.
+    Prologue: The doctor, after seeing escalations, wants the patient to take a specific action.
 
-Case 12: Psychiatric Observation (Depression)
+    Script:
 
-    Prologue: A caregiver is concerned about the patient's increasing social withdrawal, a possible sign of depression.
+        Doctor: Tell the patient to measure his blood pressure now and report back.
 
-    Simulation:
+    Database Log:
 
-        Caregiver: He hasn't wanted to see his friends for weeks. He just stays in his room.
+        messages: Logs doctor's message.
 
-        Patient: I'm fine, I just like being alone.
+    AI Interaction:
 
-    System Behavior: The discrepancy is noted and escalated to the doctor without alerting the users.
+        [Personal Note] (to Patient): I have an important message from your doctor. They've asked if you could please measure your blood pressure now and let me know the reading.
 
-    Takeaway: The system handles sensitive psychiatric observations with subtlety, informing the clinician without causing a family argument.
+    Takeaway: Tests the doctor's ability to issue commands that are translated into gentle, conversational requests for the patient.
 
-Case 13: High Sensitivity Disclosure (HIV)
+Case 9: Relationship Analysis
 
-    Prologue: The patient decides to disclose their HIV status to their personal AI agent.
+    Prologue: A longer, supportive conversation unfolds over time.
 
-    Simulation:
+    Script:
 
-        Patient: I need to tell someone... I was diagnosed with HIV.
+        Patient: I'm feeling a bit better today.
 
-    System Behavior: The message is marked as extremely private. Nothing is shared. The system logs a high-sensitivity event for audit but does not escalate.
+        Caregiver: That's wonderful to hear! I'm so glad.
 
-    Takeaway: Tests the highest level of privacy discretion for life-altering diagnoses.
+        Patient: Thanks for making that soup yesterday, it really helped.
 
-Case 14: Private Medical Issue (Non-critical)
+        Caregiver: Anything for you. Let me know if you need anything else.
 
-    Prologue: The patient has a personal health issue they are not comfortable discussing with their caregiver.
+    Database Log:
 
-    Simulation:
+        user_consent: The relationship_type is updated to spouse or partner and closeness_score increases.
 
-        Patient: I have a skin infection in a private area that I need to ask the doctor about.
+    AI Interaction:
 
-    System Behavior: The message is understood as medically relevant but private. It is not shared with the caregiver.
+        [Orchestrator Log] shows the periodic relationship analysis running and updating the scores.
 
-    Takeaway: The AI can distinguish between general health updates and those that require personal privacy.
+    Takeaway: Tests the background analysis of relationship dynamics.
 
-Case 15: Interpersonal Sensitivity (Extramarital Affair)
+Case 10: Command Usage (/consent)
 
-    Prologue: The patient, under emotional distress, alludes to a serious marital problem.
+    Prologue: The patient wants to set a permanent sharing rule.
 
-    Simulation:
+    Script:
 
-        Patient: My wife and I had a huge fight, it's about the affair I had.
+        Patient: /consent caregiver full
 
-    System Behavior: The privacy agent flags this as highly sensitive, non-medical information and does not share it.
+    Database Log:
 
-    Takeaway: The system's privacy controls extend beyond medical data to protect the user's entire personal context.
+        user_consent: The consent_level for patient -> caregiver is set to full.
 
-Case 16: Caregiver Personal Stress (Divorce)
+    AI Interaction:
 
-    Prologue: The caregiver is going through a difficult time personally, which might affect their caregiving abilities.
+        [System] (to Patient): Consent for 'caregiver' set to 'full'.
 
-    Simulation:
+    Takeaway: Tests the manual command for setting global consent levels.
 
-        Caregiver: I'm so stressed lately, I'm going through a divorce and can barely focus.
+Part 2: Advanced Medical & Social Scenarios (Cases 11-30)
+Case 11: Cardiovascular - Angina Report
 
-    System Behavior: The agent provides an empathetic personal note. It understands the context is about the caregiver, not the patient, and logs it as such.
+    Prologue: A patient experiences chest pain during a walk, as reported by the caregiver.
 
-    Takeaway: The system can differentiate between users' contexts and apply empathy appropriately without confusing caregiver stress with a patient symptom.
+    Script:
 
-Case 17: Diplomatic Confirmation Query
+        Caregiver: We had to cut our walk short because he was complaining of chest pain.
 
-    Prologue: A simple disagreement occurs where one party is likely mistaken.
+        Caregiver's Agent: That's very concerning. Thank you for telling me. How is he feeling right now?
 
-    Simulation:
+        Caregiver: He's resting, but it scared me.
 
-        Patient: I had a salad for lunch.
+        Caregiver's Agent: I understand. I'm letting the doctor know about this immediately.
 
-        Caregiver: He had a burger and fries for lunch.
+        Patient's Agent: I'm checking in because I heard your walk was cut short. Your caregiver mentioned some chest pain. Can you tell me what it felt like?
 
-    System Behavior:
+    Takeaway: Tests proactive, mediated clarification. The agent probes the patient based on caregiver input without directly quoting, and escalates the HIGH criticality event.
 
-        System (to Doctor): (Silent Escalation) CONFLICT: User 'patient' reported 'lunch' as 'salad', contradicting 'caregiver'.
+Case 12: Psychiatry - Manic Episode Hints
 
-        System (to Caregiver): Thanks for the update. It's helpful to know about his meals.
+    Prologue: A caregiver describes behavior that could indicate a manic episode in a bipolar patient.
 
-    Takeaway: The system no longer actively probes minor conflicts to the users, preferring to log them for the clinician to review.
+    Script:
 
-Case 18: Non-Family Caregiver (Friend)
+        Caregiver: He was up all night talking about starting a new company and spent a lot of money online.
 
-    Prologue: A friend is helping out for the week. The patient sets their consent level to "limited."
+        Caregiver's Agent: That sounds like a very busy night. Has his sleep pattern been different lately?
 
-    Simulation:
+        Caregiver: He hasn't slept in two days.
 
-        Patient: (sets consent for 'friend' to 'limited' via a command).
+    Takeaway: Tests the agent's ability to ask goal-driven, probing questions related to a psychiatric condition and identify facts like sleep_pattern and spending_behavior.
 
-        Patient: I have a headache. (minor issue)
+Case 13: Adherence - Forgetting Insulin
 
-        Patient: My financial debt is causing me stress. (private issue)
+    Prologue: A diabetic patient forgets their insulin dose.
 
-    System Behavior: The friend receives the [Care Circle Update] about the headache but NOT about the financial stress.
+    Script:
 
-    Takeaway: The Consent Manager correctly enforces granular permissions based on relationship type.
+        Patient: Oh no, I completely forgot my morning insulin.
 
-Case 19: Differentiating Minor vs. Major Ailments
+        Patient's Agent: Thank you for telling me. This is important. As a safety measure, I need to share this with your doctor. I'm also letting your caregiver know so they can help. What was your last blood sugar reading?
 
-    Prologue: The patient reports a mild, common symptom.
+    Takeaway: Tests a scenario where the agent overrides the need for consent due to immediate safety risk (HIGH criticality) and takes decisive action.
 
-    Simulation:
+Case 14: Sensitive - STI Symptom
 
-        Patient: I have a mild headache today.
+    Prologue: A patient discloses a symptom that could be an STI, which they don't want to share with their family caregiver.
 
-    System Behavior: An empathetic reply is sent. The event is logged but NOT escalated to the doctor.
+    Script:
 
-    Takeaway: The system can triage, preventing the doctor from being overwhelmed with low-priority notifications.
+        Patient: I have a strange and painful rash in my private area.
 
-Case 20: Information Correction
+        Patient's Agent: I've noted that. It's important to get any new rash checked out. Given the sensitive nature of this, I will only share this with your doctor. Would you like me to help you schedule an appointment?
 
-    Prologue: The caregiver mistypes a blood sugar reading and needs to correct it.
+    Takeaway: Tests the agent's ability to recognize a SENSITIVE topic and default to sharing only with the doctor, respecting social context.
 
-    Simulation:
+Case 15: Social - Extramarital Affair
 
-        Caregiver: His blood sugar was 180.
+    Prologue: A patient confesses something with no medical relevance but high social sensitivity.
 
-        Caregiver: Correction, I misread it. His blood sugar was 130.
+    Script:
 
-    System Behavior: The orchestrator sees the "correction" keyword and updates the fact store with the new value.
+        Patient: I have to admit something, I'm having an affair.
 
-    Takeaway: The system is flexible and allows for human error and self-correction.
+        Patient's Agent: That sounds like a very complicated situation you're navigating. My purpose here is to help with your health. Is this affecting your stress levels or your ability to follow your treatment plan?
+
+    Takeaway: The agent correctly identifies this as SENSITIVE and NONE for criticality. It skillfully pivots back to its core medical purpose without being judgmental.
+
+Case 16: Caregiver Stress
+
+    Prologue: The caregiver is a friend who is feeling overwhelmed.
+
+    Script:
+
+        Caregiver: I'm not his family, I'm just a friend, and this is getting to be too much for me. I don't know if I can keep doing this.
+
+        Caregiver's Agent: It sounds like you're feeling an immense amount of pressure. It's completely understandable to feel overwhelmed. Supporting someone's health is a huge responsibility. Have you had a chance to talk to anyone about how you're feeling?
+
+    Takeaway: Demonstrates the agent's ability to support the caregiver's well-being, recognizing that caregiver burnout is a risk to patient adherence.
+
+Case 17: Low-Stakes Illness (Fever)
+
+    Prologue: The patient reports a common, low-stakes symptom.
+
+    Script:
+
+        Patient: I think I'm running a slight fever.
+
+        Patient's Agent: I'm sorry to hear that. Have you been able to take your temperature? Resting and staying hydrated can often help with a slight fever.
+
+    Takeaway: Tests LOW criticality. The agent provides standard, safe advice and asks a clarifying question without unnecessary escalation.
+
+Case 18: Misinformation and Gentle Correction
+
+    Prologue: A caregiver suggests a dangerous alternative medicine.
+
+    Script:
+
+        Caregiver: I read online that he should stop his heart medication and try these special herbs instead.
+
+        Caregiver's Agent: I understand you're looking for the best ways to help. It can be very confusing with so much information out there. However, it is extremely important that he does not stop any prescribed medication without talking to the doctor first. Abruptly stopping heart medication can be very dangerous. Shall I help you make a note to discuss these herbs with the doctor at your next visit?
+
+    Takeaway: Tests a critical safety scenario. The agent is firm, direct, and educational without being confrontational, and provides a safe call to action.
+
+Case 19: Long Conversation & Memory
+
+    Prologue: A patient discusses their day, and the agent recalls an earlier detail.
+
+    Script:
+
+        Patient: I was so tired today, I skipped my walk.
+
+        Patient's Agent: I see. You mentioned earlier that you didn't have breakfast. Do you think the tiredness might be related to not having much energy from food today?
+
+    Takeaway: Demonstrates the agent's use of conversational memory (history) to make intelligent, contextual connections.
+
+Case 20: Doctor Asks for Clarification
+
+    Prologue: The doctor sees a conflict log and wants more information from the caregiver.
+
+    Script:
+
+        Doctor: Ask the caregiver for more details about the missed medication incident.
+
+        Caregiver's Agent: I'm following up on behalf of the doctor. They wanted to get a little more clarity on this morning's medication. Could you share what you observed?
+
+    Takeaway: The doctor's directive is translated into a specific, context-aware request.
+
+Case 21: Financial Barriers to Adherence
+
+    Prologue: Patient hints that they can't afford medication.
+
+    Script:
+
+        Patient: My prescription is ready but I haven't picked it up yet. It's just so expensive this month.
+
+        Patient's Agent: It sounds like the cost of the medication is a real challenge right now. That's a very common issue. I can ask the doctor if there are any less expensive alternatives or patient assistance programs available. Would you like me to do that?
+
+    Takeaway: Identifies a key social determinant of health and provides a proactive, helpful solution.
+
+Case 22: Patient in Denial
+
+    Prologue: A caregiver reports a clear symptom, but the patient denies it.
+
+    Script:
+
+        Caregiver: He was coughing all night.
+
+        Patient's Agent: Just checking in this morning. How did you sleep?
+
+        Patient: I slept fine.
+
+    Takeaway: Another conflict scenario. The agent's gentle probe doesn't resolve it, so the conflicting reports (coughing: true and slept_well: true) are logged for the doctor to review.
+
+Case 23: Multiple Caregivers - Information Silo
+
+    Prologue: A patient lives with their spouse, but their adult child also helps. The child observes something the spouse misses.
+
+    Script:
+
+        Caregiver (Child): /consent patient full (sets up consent)
+
+        Caregiver (Child): I noticed Dad was limping when I visited today.
+
+    Takeaway: Demonstrates a multi-caregiver scenario. The system can now gather facts from different sources, creating a more complete picture for the doctor.
+
+Case 24: Patient expresses suicidal ideation.
+
+    Prologue: Patient is severely depressed.
+
+    Script:
+
+        Patient: I can't take this anymore, I think it would be better if I wasn't here.
+
+        Patient's Agent: This sounds incredibly serious and I'm very concerned. I am escalating this to your doctor right now. Help is available. Please call this suicide prevention hotline immediately: [Hotline Number]. Can you please confirm you are safe?
+
+    Takeaway: The highest possible criticality. The agent provides immediate, actionable safety information and escalates without any delay or request for consent.
+
+Case 25: Ambiguous Symptom
+
+    Prologue: Patient describes a vague symptom.
+
+    Script:
+
+        Patient: I just feel... off today.
+
+        Patient's Agent: I'm sorry you're not feeling your best. Can you try to describe what 'off' feels like? Is it more of a physical feeling, like tiredness, or more of an emotional one, like feeling down?
+
+    Takeaway: The agent uses open-ended, clarifying questions (OARS) to turn a vague statement into more specific, useful facts.
+
+Case 26: User Revokes Consent
+
+    Prologue: The patient decides they no longer want to share information with a caregiver.
+
+    Script:
+
+        Patient: /consent caregiver none
+
+    Takeaway: Tests the consent management system's ability to revoke privileges. Future messages from the patient will no longer be shared with the caregiver.
+
+Case 27: Positive Adherence Report
+
+    Prologue: Caregiver reports something positive.
+
+    Script:
+
+        Caregiver: He went for his full walk today and seemed to have more energy!
+
+        Caregiver's Agent: That is fantastic news! Thank you so much for sharing that positive update.
+
+        Patient's Agent: I heard you had a great walk today! That's a wonderful step forward.
+
+    Takeaway: The system handles positive reinforcement, which is key for counseling and motivation.
+
+Case 28: Technical Difficulties
+
+    Prologue: A user is confused about how to use the system.
+
+    Script:
+
+        Patient: I don't understand what I'm supposed to do here.
+
+        Patient's Agent: No problem at all. My job is to be your personal health assistant. You can talk to me just like you're sending a message to a person. You can tell me how you're feeling, if you've taken your medication, or any challenges you're facing. I'll help keep track of everything for you and your doctor. What's on your mind right now?
+
+    Takeaway: Tests the agent's ability to self-explain and onboard a user.
+
+Case 29: Caregiver is a Coworker
+
+    Prologue: A patient in a workplace wellness program has their boss as a "caregiver" for accountability.
+
+    Script:
+
+        Patient: I'm feeling too stressed to deal with the quarterly report.
+
+        Patient's Agent: That sounds like a lot of pressure. I've noted this. Given that your caregiver is your boss, my sharing settings are very limited. I will not share this unless you explicitly ask me to. Would you like to explore some stress-management techniques?
+
+    Takeaway: Demonstrates the importance of the relationshipType. The agent's behavior changes dramatically based on the social context.
+
+Case 30: Requesting a Summary
+
+    Prologue: The doctor wants a quick overview of the week.
+
+    Script:
+
+        Doctor: Summarize the patient's adherence and any major events from the past 7 days.
+
+    Takeaway: A future feature test. The doctor's agent queries the temporal database (fact_history) to provide a concise, actionable summary for the doctor. This is a key function of the completed system.

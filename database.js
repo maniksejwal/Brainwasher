@@ -3,150 +3,183 @@ import { open } from 'sqlite';
 
 let db;
 
-async function initializeDatabase() {
-    db = await open({
-        filename: './care_circle.db',
-        driver: sqlite3.Database
-    });
+async function getDb() {
+    if (!db) {
+        db = await open({
+            filename: './care_circle.db',
+            driver: sqlite3.Database
+        });
+    }
+    return db;
+}
 
+export async function initializeDatabase() {
+    const db = await getDb();
     await db.exec(`
-        CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY);
-        CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id TEXT,
-            content TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS facts (
-            key TEXT PRIMARY KEY,
-            reported_by TEXT,
-            value TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS user_consent (
-            user_id TEXT,
-            target_user_id TEXT,
-            relationship_type TEXT DEFAULT 'other',
-            closeness_score INTEGER DEFAULT 5,
-            consent_level TEXT,
-            PRIMARY KEY (user_id, target_user_id)
-        );
-        CREATE TABLE IF NOT EXISTS pending_actions (
+        PRAGMA journal_mode = WAL;
+        PRAGMA foreign_keys = ON;
+
+        CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
-            action_type TEXT,
-            payload TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            role TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS messages (
+            message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            message TEXT NOT NULL,
+            privacy_level TEXT NOT NULL,
+            criticality_level TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS facts (
+            fact_key TEXT NOT NULL,
+            reported_by TEXT NOT NULL,
+            value TEXT,
+            timestamp INTEGER NOT NULL,
+            UNIQUE(fact_key, reported_by) -- ** FIX: Added UNIQUE constraint **
+        );
+        
+        CREATE TABLE IF NOT EXISTS escalations (
+            escalation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT NOT NULL,
+            details TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            is_read INTEGER DEFAULT 0
+        );
+        
+        CREATE TABLE IF NOT EXISTS consent (
+            user_id TEXT NOT NULL,
+            target_user TEXT NOT NULL,
+            consent_level TEXT NOT NULL,
+            relationship_type TEXT,
+            PRIMARY KEY (user_id, target_user)
+        );
+
+        CREATE TABLE IF NOT EXISTS pending_actions (
+            action_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            details TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS implied_consent (
+            user_id TEXT NOT NULL,
+            topic TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            PRIMARY KEY (user_id, topic)
         );
     `);
-     console.log('Database initialized successfully.');
+    console.log('[Database] Initialized.');
 }
 
-// ... (addUser, getUsers, addMessage, etc. are unchanged)
-async function addUser(userId) {
-    await db.run('INSERT OR IGNORE INTO users (id) VALUES (?)', userId);
+export async function clearDatabase() {
+    const db = await getDb();
+    await db.exec(`
+        DELETE FROM implied_consent;
+        DELETE FROM pending_actions;
+        DELETE FROM consent;
+        DELETE FROM escalations;
+        DELETE FROM facts;
+        DELETE FROM messages;
+        DELETE FROM users;
+    `);
+    console.log('[Database] Cleared.');
 }
 
-async function getUsers() {
-    const rows = await db.all('SELECT id FROM users');
-    return rows.map(row => row.id);
+// User Functions
+export async function addUser(userId, role) {
+    const db = await getDb();
+    await db.run('INSERT OR IGNORE INTO users (user_id, role, created_at) VALUES (?, ?, ?)', [userId, role, Date.now()]);
 }
 
-async function addMessage(userId, content) {
-    await db.run('INSERT INTO messages (user_id, content) VALUES (?, ?)', userId, content);
+// Message Functions
+export async function addMessage(userId, role, message, privacy, criticality) {
+    const db = await getDb();
+    await db.run('INSERT INTO messages (user_id, role, message, privacy_level, criticality_level, timestamp) VALUES (?, ?, ?, ?, ?, ?)', [userId, role, message, privacy, criticality, Date.now()]);
 }
 
-async function getConversationHistory(limit = 20) {
-    return await db.all(`
-        SELECT user_id, content, timestamp 
-        FROM messages 
-        WHERE user_id != 'doctor'
-        ORDER BY timestamp DESC 
-        LIMIT ?`, limit);
-}
-
-
-async function upsertFact(key, reportedBy, value) {
-    await db.run(`
-        INSERT INTO facts (key, reported_by, value, timestamp) 
-        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(key) DO UPDATE SET
-        reported_by = excluded.reported_by,
-        value = excluded.value,
-        timestamp = excluded.timestamp
-    `, key, reportedBy, value);
+export async function getRecentMessages(userId, limit = 5) {
+    const db = await getDb();
+    return db.all('SELECT user_id, message FROM messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?', [userId, limit]);
 }
 
 
-async function getFact(key) {
-    return await db.get('SELECT * FROM facts WHERE key = ?', key);
-}
-
-async function updateUserConsent(userId, targetUserId, level) {
-    await db.run(`
-        INSERT INTO user_consent (user_id, target_user_id, consent_level) VALUES (?, ?, ?)
-        ON CONFLICT(user_id, target_user_id) DO UPDATE SET consent_level = excluded.consent_level
-    `, userId, targetUserId, level);
-}
-
-async function updateRelationship(userId, targetUserId, relationshipType, closenessScore) {
-    await db.run(`
-        INSERT INTO user_consent (user_id, target_user_id, relationship_type, closeness_score) VALUES (?, ?, ?, ?)
-        ON CONFLICT(user_id, target_user_id) DO UPDATE SET 
-            relationship_type = excluded.relationship_type,
-            closeness_score = excluded.closeness_score
-    `, userId, targetUserId, relationshipType, closenessScore);
-}
-
-
-async function getConsentLevel(fromUser, toUser) {
-    const result = await db.get('SELECT consent_level FROM user_consent WHERE user_id = ? AND target_user_id = ?', fromUser, toUser);
-    return result?.consent_level || 'none'; // Default to 'none' if not set
-}
-
-
-async function clearAllData() {
-    await db.exec('DELETE FROM users; DELETE FROM messages; DELETE FROM facts; DELETE FROM user_consent; DELETE FROM pending_actions;');
-}
-
-
-// --- New functions for Per-Message Consent ---
-async function createPendingAction(userId, actionType, payload) {
+// Fact Functions
+export async function upsertFact(factKey, userId, factValue) {
+    const db = await getDb();
     await db.run(
-        'INSERT OR REPLACE INTO pending_actions (user_id, action_type, payload) VALUES (?, ?, ?)',
-        userId, actionType, JSON.stringify(payload)
+        `INSERT INTO facts (fact_key, reported_by, value, timestamp) VALUES (?, ?, ?, ?)
+         ON CONFLICT(fact_key, reported_by) DO UPDATE SET value = excluded.value, timestamp = excluded.timestamp`, // ** FIX: Use correct composite key **
+        [factKey, userId, factValue, Date.now()]
     );
 }
 
-async function getPendingAction(userId) {
-    const row = await db.get('SELECT * FROM pending_actions WHERE user_id = ?', userId);
-    if (row) {
-        return {
-            actionType: row.action_type,
-            payload: JSON.parse(row.payload)
-        };
+
+export async function getLastFact(factKey) {
+    const db = await getDb();
+    return db.get('SELECT * FROM facts WHERE fact_key = ? ORDER BY timestamp DESC LIMIT 1', [factKey]);
+}
+
+// Escalation Functions
+export async function addEscalation(type, details) {
+    const db = await getDb();
+    await db.run('INSERT INTO escalations (type, details, timestamp) VALUES (?, ?, ?)', [type, details, Date.now()]);
+}
+
+export async function getUnreadEscalations() {
+    const db = await getDb();
+    const escalations = await db.all('SELECT * FROM escalations WHERE is_read = 0 ORDER BY timestamp ASC');
+    if (escalations.length > 0) {
+        const ids = escalations.map(e => e.escalation_id);
+        await db.run(`UPDATE escalations SET is_read = 1 WHERE escalation_id IN (${ids.join(',')})`);
     }
-    return null;
+    return escalations;
 }
 
-async function deletePendingAction(userId) {
-    await db.run('DELETE FROM pending_actions WHERE user_id = ?', userId);
+// Consent Functions
+export async function setUserConsent(userId, targetUser, level, relationship) {
+    const db = await getDb();
+    await db.run(
+        'INSERT INTO consent (user_id, target_user, consent_level, relationship_type) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, target_user) DO UPDATE SET consent_level = excluded.consent_level, relationship_type = excluded.relationship_type',
+        [userId, targetUser, level, relationship]
+    );
+}
+
+export async function addImpliedConsent(userId, topic) {
+    const db = await getDb();
+    const fifteenMinutes = Date.now() + 15 * 60 * 1000;
+    await db.run('INSERT INTO implied_consent (user_id, topic, expires_at) VALUES (?, ?, ?) ON CONFLICT(user_id, topic) DO UPDATE SET expires_at = excluded.expires_at', [userId, topic, fifteenMinutes]);
+}
+
+export async function getImpliedConsent(userId, topic) {
+    const db = await getDb();
+    return db.get('SELECT * FROM implied_consent WHERE user_id = ? AND topic = ? AND expires_at > ?', [userId, topic, Date.now()]);
 }
 
 
-export { 
-    initializeDatabase, 
-    addUser, 
-    getUsers,
-    addMessage, 
-    upsertFact, 
-    getFact, 
-    updateUserConsent, 
-    getConsentLevel,
-    getConversationHistory,
-    updateRelationship,
-    clearAllData,
-    createPendingAction,
-    getPendingAction,
-    deletePendingAction
-};
+// Pending Action Functions
+export async function addPendingAction(actionId, userId, actionType, details) {
+    const db = await getDb();
+    await db.run('INSERT INTO pending_actions (action_id, user_id, action_type, details, created_at) VALUES (?, ?, ?, ?, ?)', [actionId, userId, actionType, JSON.stringify(details), Date.now()]);
+}
+
+export async function getPendingAction(userId) {
+    const db = await getDb();
+    const row = await db.get('SELECT * FROM pending_actions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
+    if (row) {
+        row.details = JSON.parse(row.details);
+    }
+    return row;
+}
+
+export async function removePendingAction(actionId) {
+    const db = await getDb();
+    await db.run('DELETE FROM pending_actions WHERE action_id = ?', [actionId]);
+}
 

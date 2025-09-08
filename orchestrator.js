@@ -1,223 +1,177 @@
-import { 
-    addMessage as dbAddMessage, 
-    upsertFact, getFact, 
-    clearAllData, updateUserConsent, getConsentLevel, getUsers, addUser,
-    getConversationHistory, updateRelationship,
-    createPendingAction, getPendingAction, deletePendingAction
-} from './database.js';
-import { 
-    processUserMessage, 
-    generateMediatedClarification, 
-    generateDoctorAgentReply, 
-    generateDoctorDirective,
-    analyzeRelationship,
-    generateSharingRequest,
-    generateContextualShare
-} from './agents.js';
 import chalk from 'chalk';
+import {
+    addUser,
+    addMessage,
+    upsertFact,
+    getLastFact,
+    addEscalation,
+    setUserConsent,
+    addPendingAction,
+    getPendingAction,
+    removePendingAction,
+    addImpliedConsent,
+    getImpliedConsent,
+    clearDatabase
+} from './database.js';
+import {
+    processUserMessage,
+    generateSharingRequest,
+    generateSharingSummaryOrProbe,
+    generateMediatedClarification,
+} from './agents.js';
+import { EventEmitter } from 'events';
+import { randomUUID } from 'crypto';
 
-let clients = {};
-let messageCounter = 0;
+export const events = new EventEmitter();
+events.on('clear_db', clearDatabase);
 
-// ... (sendMessageToUser, addMessage are unchanged)
-const sendMessageToUser = (userId, message, type = 'personal') => {
-    if (clients[userId]) {
-        clients[userId].res.write(`data: ${JSON.stringify({ type, message })}\n\n`);
+
+const USER_ROLES = ['patient', 'caregiver', 'doctor'];
+
+export async function handleNewUser(userId, role) {
+    if (!USER_ROLES.includes(role)) {
+        return { error: 'Invalid role specified.' };
     }
-};
+    await addUser(userId, role);
+    console.log(`[Orchestrator] User added/confirmed: ${userId} (${role})`);
+    return { success: true, message: `Welcome, ${userId}. You are the ${role}.` };
+}
 
-async function addMessage(userId, message, type = 'personal') {
-    if (type !== 'system') {
-        await dbAddMessage(userId, message);
-    }
-    sendMessageToUser(userId, message, type);
-};
+async function handleCommand(userId, message) {
+    const parts = message.toLowerCase().split(' ');
+    const command = parts[0].substring(1);
 
-
-async function broadcastToCareCircle(originatingUser, message, privacyLevel) {
-    if (privacyLevel !== 'PUBLIC') {
-        return;
-    }
-    const allUsers = await getUsers();
-    for (const targetUser of allUsers) {
-        if (targetUser === originatingUser || targetUser === 'doctor') continue;
-        const consentLevel = await getConsentLevel(originatingUser, targetUser);
-        if (consentLevel === 'full') {
-            const contextualMessage = await generateContextualShare(originatingUser, targetUser, message);
-            await addMessage(targetUser, contextualMessage, 'broadcast');
+    if (command === 'consent') {
+        const [, targetUser, level, relationship] = parts;
+        if (!targetUser || !level || !relationship) {
+            return { reply: "[System] Invalid command. Use: /consent <targetUser> <level> <relationship>" };
         }
-    }
-}
-
-async function shareMessageWithTarget(originatingUser, message, targetUser) {
-     console.log(chalk.blue(`[Orchestrator] Sharing message from '${originatingUser}' with '${targetUser}' by consent.`));
-     const contextualMessage = await generateContextualShare(originatingUser, targetUser, message);
-     await addMessage(targetUser, contextualMessage, 'broadcast');
-}
-
-// ... (escalateToDoctor, processFactsAndEvents, etc. are unchanged)
-async function escalateToDoctor(type, details) {
-    console.log(chalk.red.bold(`[Orchestrator] Escalating to doctor: ${type}`));
-    const escalationSummary = await generateDoctorAgentReply(type, details);
-    await addMessage('doctor', escalationSummary, 'escalation');
-}
-
-async function processFactsAndEvents(userId, facts, criticality, message) {
-    if (criticality === 'HIGH' && userId !== 'doctor') {
-        const allUsers = await getUsers();
-        const otherUser = allUsers.find(u => u !== userId && u !== 'doctor');
-        if (otherUser) {
-            console.log(chalk.cyan(`[Orchestrator] High criticality event from '${userId}'. Probing '${otherUser}'.`));
-            const clarificationMessage = await generateMediatedClarification(otherUser, message);
-            await addMessage(otherUser, clarificationMessage);
+        if (!['none', 'limited', 'full'].includes(level)) {
+            return { reply: "[System] Invalid level. Use: none, limited, or full." };
         }
+        await setUserConsent(userId, targetUser, level, relationship);
+        console.log(`[Orchestrator] Consent set by ${userId} for ${targetUser} to ${level} with relationship ${relationship}`);
+        return { reply: `[System] Consent for '${targetUser}' set to '${level}' as your '${relationship}'.` };
     }
-    for (const [factKey, factValue] of Object.entries(facts)) {
-        if (!factKey || factValue === undefined) continue;
-        const existingFact = await getFact(factKey);
-        if (existingFact && existingFact.reported_by !== userId && String(existingFact.value) !== String(factValue)) {
-            const conflictingUser = existingFact.reported_by;
-            const conflictDetails = `User '${userId}' reported '${factKey}' as '${factValue}', contradicting '${conflictingUser}'.`;
-            console.log(chalk.yellow.bold(`[Conflict] Detected: ${conflictDetails}`));
-            await escalateToDoctor('CONFLICT', conflictDetails);
-            const mediationMessage = await generateMediatedClarification(conflictingUser, factKey);
-            await addMessage(conflictingUser, mediationMessage);
-        }
-        await upsertFact(factKey, userId, factValue);
+     if (command === 'clear') {
+        // In a real app, you'd have auth here. For now, any user can clear.
+        events.emit('clear_db');
+        return { reply: `[System] Database cleared.` };
     }
+    return { reply: `[System] Unknown command: ${command}` };
 }
 
-
-async function handleCommand(userId, command) {
-    const parts = command.split(' ');
-    const cmd = parts[0];
-    if (cmd === '/consent') {
-        const targetUser = parts[1];
-        const level = parts[2];
-        if (!targetUser || !level) {
-            await addMessage(userId, "[System] Invalid. Use: /consent <user> <level>", 'system');
-            return;
-        }
-        await updateUserConsent(userId, targetUser, level);
-        await addMessage(userId, `[System] Consent for '${targetUser}' set to '${level}'.`, 'system');
-    } else {
-        await addMessage(userId, "[System] Unknown command.", 'system');
-    }
-}
-
-async function handleDoctorMessage(message) {
-    const targetUser = message.toLowerCase().includes('caregiver') ? 'caregiver' : 'patient';
-    console.log(chalk.blue(`[Orchestrator] Doctor directive for '${targetUser}'.`));
-    const conversationalMessage = await generateDoctorDirective(message, targetUser);
-    await addMessage(targetUser, conversationalMessage);
-    await addMessage('doctor', `[System] Your directive sent to ${targetUser}.`, 'system');
-}
-
-async function triggerRelationshipAnalysis() {
-    console.log(chalk.magentaBright('[Orchestrator] Triggering periodic relationship analysis...'));
-    const history = await getConversationHistory(20);
-    if (history.length < 5) {
-        console.log(chalk.magentaBright('[Orchestrator] Not enough history to analyze relationship yet.'));
-        return;
-    }
-    const { relationshipType, closenessScore } = await analyzeRelationship(history);
-    console.log(chalk.magentaBright(`[Orchestrator] Analysis result: Type=${relationshipType}, Closeness=${closenessScore}`));
-    await updateRelationship('patient', 'caregiver', relationshipType, closenessScore);
-    await updateRelationship('caregiver', 'patient', relationshipType, closenessScore); // Reciprocal
-}
-
-
-async function handlePendingActions(userId, message) {
+async function handlePendingAction(userId, message) {
     const pendingAction = await getPendingAction(userId);
-    if (!pendingAction) return false;
+    if (!pendingAction) return null;
 
-    const affirmativeResponse = /^(yes|yep|y|ok|okay|sure|proceed|consent granted|do it)/i.test(message);
+    const positiveResponse = ['yes', 'yep', 'ok', 'okay', 'proceed', 'grant', 'granted', 'sure', 'do it'].includes(message.toLowerCase());
+    await removePendingAction(pendingAction.action_id);
 
-    if (affirmativeResponse) {
-        if (pendingAction.actionType === 'share') {
-            const { originalMessage, target } = pendingAction.payload;
-            await shareMessageWithTarget(userId, originalMessage, target);
-            await addMessage(userId, `[System] Understood. I've shared the update with the ${target}.`);
+    if (positiveResponse) {
+        if (pendingAction.action_type === 'share_consent') {
+            const { originatingUser, target, originalMessage } = pendingAction.details;
+            
+            // Create an implied consent for the specific fact topic
+            const topic = Object.keys(originalMessage.facts)[0] || 'general';
+            await addImpliedConsent(originatingUser, topic);
+            
+            // Generate and send the contextual message
+            const contextualMessage = await generateSharingSummaryOrProbe(originatingUser, target, originalMessage.message);
+            events.emit('broadcast', {
+                targetUsers: [target],
+                message: contextualMessage,
+                from: 'personal-agent'
+            });
+            return { reply: "[Personal Note] Thank you. I've shared that with them." };
         }
-        await deletePendingAction(userId);
-        return true; 
     } else {
-        await deletePendingAction(userId);
-        await addMessage(userId, "[System] Okay, I won't share it.");
-        return true;
+        return { reply: "[Personal Note] Understood. I will not share it." };
     }
+    return null;
 }
 
-// --- Server Handlers ---
-export const handleNewConnection = (req, res) => {
-    const { userId } = req.params;
-    
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    clients[userId] = { res };
-    console.log(chalk.blue(`[Orchestrator] Client '${userId}' connected.`));
-
-    req.on('close', () => {
-        delete clients[userId];
-        console.log(chalk.yellow(`[Orchestrator] Client '${userId}' disconnected.`));
-    });
-};
-
-export const handleSendMessage = async (req, res) => {
-    const { userId, message } = req.body;
-    await addUser(userId);
-
-    if (await handlePendingActions(userId, message)) {
-        res.status(200).send({ status: 'pending action handled' });
-        return;
-    }
-
+export async function handleMessage(userId, role, message) {
     if (message.startsWith('/')) {
-        await handleCommand(userId, message);
-        res.status(200).send({ status: 'command processed' });
+        const response = await handleCommand(userId, message);
+        events.emit('broadcast', { targetUsers: [userId], reply: response.reply, from: 'system' });
         return;
     }
 
+    const pendingActionResponse = await handlePendingAction(userId, message);
+    if (pendingActionResponse) {
+        events.emit('broadcast', { targetUsers: [userId], reply: pendingActionResponse.reply, from: 'personal-agent' });
+        return;
+    }
+    
     console.log(`[Orchestrator] Received message from '${userId}': '${message}'`);
-
-    if (userId === 'doctor') {
-        await handleDoctorMessage(message);
-        res.status(200).send({ status: 'ok' });
-        return;
-    }
-
-    const analysis = await processUserMessage(userId, message);
+    const analysis = await processUserMessage(userId, role, message);
     console.log(`[Orchestrator] Unified analysis complete:`, analysis);
-    await addMessage(userId, analysis.reply);
 
+    await addMessage(userId, role, message, analysis.privacyLevel, analysis.criticality);
+    events.emit('broadcast', { targetUsers: [userId], reply: analysis.reply, from: 'personal-agent' });
+
+    // Handle facts and conflicts
+    if (analysis.facts && Object.keys(analysis.facts).length > 0) {
+        for (const [key, value] of Object.entries(analysis.facts)) {
+            const lastFact = await getLastFact(key);
+            await upsertFact(key, userId, value);
+
+            if (lastFact && lastFact.reported_by !== userId && String(lastFact.value) !== String(value)) {
+                console.log(chalk.yellow.bold(`[Orchestrator] CONFLICT DETECTED on '${key}'`));
+                const conflictDetails = `User '${userId}' reported '${key}' as '${value}', contradicting '${lastFact.reported_by}'.`;
+                await addEscalation('CONFLICT', conflictDetails);
+                events.emit('escalate');
+                
+                const targetUserForClarification = lastFact.reported_by;
+                const clarificationQuestion = await generateMediatedClarification(targetUserForClarification, key);
+                events.emit('broadcast', {
+                    targetUsers: [targetUserForClarification],
+                    message: clarificationQuestion,
+                    from: 'personal-agent'
+                });
+            }
+        }
+    }
+
+    // Handle Criticality & Sharing
     if (analysis.criticality === 'HIGH') {
-        await escalateToDoctor('CRITICAL', `User '${userId}' reported: "${message}"`);
+        const criticalDetails = `User '${userId}' reported: "${message}"`;
+        await addEscalation('CRITICAL', criticalDetails);
+        events.emit('escalate');
     }
 
-    await broadcastToCareCircle(userId, message, analysis.privacyLevel);
-    await processFactsAndEvents(userId, analysis.facts || {}, analysis.criticality, message);
+    // Handle sharing based on consent, privacy, and suggestions
+    if (analysis.privacyLevel === 'PUBLIC') {
+        const contextualMessage = await generateSharingSummaryOrProbe(userId, 'all', message);
+        events.emit('broadcast', {
+            targetUsers: USER_ROLES.filter(r => r !== userId && r !== 'doctor'),
+            message: contextualMessage,
+            from: 'personal-agent'
+        });
+    } else if (analysis.sharingSuggestion && analysis.sharingSuggestion.target) {
+        const topic = Object.keys(analysis.facts)[0] || 'general';
+        const implied = await getImpliedConsent(userId, topic);
 
-    if (analysis.sharingSuggestion && analysis.sharingSuggestion.target) {
-        const { target, reason } = analysis.sharingSuggestion;
-        const requestMessage = await generateSharingRequest(target, reason);
-        await addMessage(userId, requestMessage);
-        await createPendingAction(userId, 'share', { originalMessage: message, target });
+        if (implied) {
+            console.log(`[Orchestrator] Implied consent found for topic '${topic}'. Sharing automatically.`);
+            const contextualMessage = await generateSharingSummaryOrProbe(userId, analysis.sharingSuggestion.target, message);
+            events.emit('broadcast', {
+                targetUsers: [analysis.sharingSuggestion.target],
+                message: contextualMessage,
+                from: 'personal-agent'
+            });
+        } else {
+             const actionId = randomUUID();
+             const request = await generateSharingRequest(analysis.sharingSuggestion.target, analysis.sharingSuggestion.reason);
+             await addPendingAction(actionId, userId, 'share_consent', {
+                 originatingUser: userId,
+                 target: analysis.sharingSuggestion.target,
+                 reason: analysis.sharingSuggestion.reason,
+                 originalMessage: { message, facts: analysis.facts || {} }
+             });
+             events.emit('broadcast', { targetUsers: [userId], reply: request, from: 'personal-agent' });
+        }
     }
-
-    messageCounter++;
-    if (messageCounter % 10 === 0) {
-        await triggerRelationshipAnalysis();
-    }
-
-    res.status(200).send({ status: 'ok' });
-};
-
-export const handleClearAll = async (req, res) => {
-    console.log("[Orchestrator] Clearing all data.");
-    await clearAllData();
-    res.status(200).send({ status: 'cleared' });
-};
+}
 

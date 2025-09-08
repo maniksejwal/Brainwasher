@@ -1,91 +1,77 @@
 Multi-Agent System for Patient Adherence
 
-This project is a command-line prototype of a multi-agent AI system designed to improve patient adherence through mediated communication between patients, caregivers, and doctors.
-Core Concepts & IP
+This project is a command-line prototype of a novel multi-agent system designed to improve patient adherence and facilitate communication within a "care circle" (patient, caregivers, doctor).
+Core
 
-    Multi-Agent Communication: Each user (patient, caregiver, doctor) interacts with a dedicated Personal AI Agent.
+    Multi-Agent Reconciliation Engine: The system uses a network of personal AI agents to gather information from multiple users, identify discrepancies in their reports, and escalate conflicts to a human professional (doctor).
 
-    Mediated Clarification: When the system detects conflicting information, it gently probes the other party to clarify the situation without causing direct confrontation.
+    Mediated Clarification: Instead of simply reporting conflicts, the AI can proactively and gently probe users for more information to clarify a situation without revealing the source of the contradictory report.
 
-    Dynamic Relationship Analysis: The system periodically analyzes conversation history to determine relationship type (e.g., spouse) and closeness, which is used to tailor communication.
+    Dynamic Relationship & Privacy Analysis: The system analyzes conversations to model the relationship between users (e.g., spouse, friend) and a closenessScore. This, combined with message analysis for privacyLevel and criticality, allows for highly granular and context-aware information sharing.
 
-    Dual Consent Model: The system supports two modes of consent:
+    Consent Manager with Implied Consent: Users have granular control over what they share. The system reduces friction by using an "implied consent" model, where permission for a specific topic is temporarily remembered.
 
-        Global Consent: Users can set a persistent sharing level (/consent <user> <level>).
+    Doctor-in-the-Loop Architecture: A dedicated doctor client receives real-time escalations for critical events and can issue directives, which are then translated by the AI into conversational actions for the patient or caregiver.
 
-        Per-Message Consent: For private information, the agent can proactively ask for permission to share a single message with a specific user, providing a reason. This allows for granular, in-the-moment decision-making.
+System Architecture
 
-    Privacy & Criticality Policy: The system categorizes every message based on a formal policy (policy.md) for both its privacy implications and its clinical urgency, allowing for nuanced and safe decision-making.
+The system consists of three main components:
 
-Architecture & File Structure
+    server.js: An Express server that handles all network communication, including API endpoints for sending messages and a real-time Server-Sent Events (SSE) stream for broadcasting updates.
 
-The system is composed of several key files:
+    orchestrator.js: The "brain" of the system. This module contains all the core logic for processing messages, running AI agents, detecting conflicts, managing consent, and handling escalations. It is a pure logic module, separate from the server.
 
-    server.js: The entry point. An Express.js server that handles all client connections and API requests.
+    client.js: A unified command-line interface that can be run for any role (patient, caregiver, doctor). Each client connects to the orchestrator to send and receive messages.
 
-    orchestrator.js: The "brain" of the system. It contains the core logic for routing messages, calling AI agents, detecting conflicts, and managing the consent and escalation workflows.
-
-    client.js: A simple command-line interface for users to interact with the system. You run a separate instance for each role (patient, caregiver, doctor).
-
-    agents.js: Contains the functions that interact with the Gemini API. It manages API key rotation and calls the various prompts.
-
-    prompts.js: A library of all the master prompts that define the AI agents' personas, goals, and response formats.
-
-    database.js: Manages the SQLite database, handling all data storage and retrieval for users, messages, facts, and consent states.
-
-    policy.md: A human-readable document defining the rules for data privacy and criticality levels.
-
-Consent and Privacy Explained
-
-The system's safety and trust model is built on the policies in policy.md.
-
-    Default Consent: By default, the consent level between any two users is none. No information is shared unless explicitly permitted.
-
-    Consent Levels:
-
-        none: No information is ever shared with this user.
-
-        limited: Only non-critical, PUBLIC messages are shared. (Future feature)
-
-        full: PUBLIC messages are shared with this user.
-
-    Criticality Overrides: As defined in the policy, a message with HIGH criticality (e.g., "I am having chest pains") will be escalated to the doctor regardless of consent levels, because safety is the top priority.
-
-    Dynamic Aspects: The Dynamic Relationship Analysis feature is designed to inform the AI's conversational tone. In the future, it could also suggest default consent levels based on inferred closeness.
-
+Licensed by Google
 How to Run
-
-You will need at least three terminal windows open simultaneously.
 1. Setup
 
-# Install dependencies
-npm install
+    Install Node.js (version 18 or higher).
 
-# Create the .env file with your API keys
-# GEMINI_API_KEY_1="key1"
-# GEMINI_API_KEY_2="key2"
+    In your terminal, in the project directory, run npm install.
 
-2. Run the Server (Terminal 1)
+    Create a .env file and add your Gemini API keys:
 
-node server.js
+    GEMINI_API_KEY_1="your_first_key_here"
+    GEMINI_API_KEY_2="your_second_key_here"
 
-3. Run the Clients (Terminals 2, 3, 4...)
+2. Running the System
 
-node client.js
+You will need at least three separate terminal windows.
 
-The client will ask for your role: patient, caregiver, or doctor.
-4. How to Test
+    Terminal 1 (Server): node server.js
 
-You can follow the detailed scripts in scenarios.md.
+    Terminal 2 (Patient): node client.js (enter patient when prompted)
 
-Testing Per-Message Consent:
+    Terminal 3 (Caregiver): node client.js (enter caregiver when prompted)
 
-    Start patient and caregiver clients.
+    (Optional) Terminal 4 (Doctor): node client.js (enter doctor when prompted)
 
-    In the patient's terminal, send a private but important message: I think I forgot to take my blood pressure pill this morning.
+3. Using Commands
 
-    The agent will reply and then ask: This seems important for your caregiver to know. May I share this update with them?
+The clients support special commands that begin with a forward slash (/).
 
-    In the patient's terminal, reply yes or proceed.
+    /clear: Clears the database. Useful for starting a fresh test.
 
-    Check the caregiver's terminal. They will now receive a [Care Circle Update] with the information.
+    /consent <targetUser> <level> <relationship>: Sets a sharing rule.
+
+        targetUser: The user you want to share with (e.g., caregiver, doctor).
+
+        level: The level of consent (none, limited, full). See policy.md for details.
+
+        relationship: The nature of your relationship (spouse, friend, sibling, etc.).
+
+        Example: /consent caregiver full spouse
+
+Core Policies (policy.md)
+
+This file defines the rules for data handling, including:
+
+    Privacy Levels: PUBLIC, PRIVATE, SENSITIVE.
+
+    Criticality Levels: NONE, LOW, HIGH.
+
+    Consent Levels: none, limited, full.
+
+    How these policies interact to determine when and how information is shared or escalated.

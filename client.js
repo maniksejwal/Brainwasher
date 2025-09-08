@@ -1,7 +1,7 @@
 import readline from 'readline';
 import chalk from 'chalk';
 import EventSource from 'eventsource';
-import config from './config.js';
+import config from './config.js'; // Import the centralized config
 
 const rl = readline.createInterface({
     input: process.stdin,
@@ -9,78 +9,97 @@ const rl = readline.createInterface({
 });
 
 let userId = '';
+let userRole = '';
+
+async function registerUser(role) {
+    try {
+        const response = await fetch(`${config.ORCHESTRATOR_URL}/user`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: role, role: role }) // Using role as userId for simplicity
+        });
+        if (!response.ok) throw new Error('Failed to register user');
+        const data = await response.json();
+        console.log(chalk.green(data.message));
+        userId = role;
+        userRole = role;
+        return true;
+    } catch (error) {
+        console.error(chalk.red('Error registering user:', error.message));
+        return false;
+    }
+}
+
+function listenForMessages() {
+    const es = new EventSource(`${config.ORCHESTRATOR_URL}/events`);
+
+    es.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleServerEvent(data);
+    };
+
+    es.onerror = () => {
+        console.log(chalk.yellow('Connection error. Attempting to reconnect...'));
+        // The eventsource library handles reconnection automatically
+    };
+}
+
+function handleServerEvent(data) {
+    if (data.type === 'message' && data.targetUsers.includes(userId)) {
+        const from = data.from === 'personal-agent' ? 'Personal Agent' : 'System';
+        const color = data.from === 'personal-agent' ? chalk.cyan : chalk.magenta;
+        readline.cursorTo(process.stdout, 0);
+        console.log(color(`[${from}]`), data.reply || data.message);
+        rl.prompt(true);
+    } else if (data.type === 'escalation' && userRole === 'doctor') {
+        // This is now handled by the unified client logic
+        const escalations = data.payload;
+         if (escalations && escalations.length > 0) {
+            readline.cursorTo(process.stdout, 0);
+            console.log(chalk.red.bold('\n--- NEW ESCALATIONS ---'));
+            escalations.forEach(e => {
+                 console.log(chalk.yellow(`[${new Date(e.timestamp).toLocaleTimeString()}] ${e.type}: ${e.details}`));
+            });
+            console.log(chalk.red.bold('-----------------------'));
+            rl.prompt(true);
+        }
+    }
+}
 
 async function sendMessage(message) {
     try {
         await fetch(`${config.ORCHESTRATOR_URL}/send`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId, message })
+            body: JSON.stringify({ userId, role: userRole, message })
         });
     } catch (error) {
-        console.log(chalk.red('Error: Could not send message to the orchestrator.'));
+        console.error(chalk.red('Error sending message:', error.message));
     }
 }
 
-function connectToServer() {
-    const eventsUrl = `${config.ORCHESTRATOR_URL}/events/${userId}`;
-    const es = new EventSource(eventsUrl);
-
-    es.on('open', () => {
-        console.log(chalk.green('Connection to orchestrator established.'));
-    });
-
-    es.on('message', (e) => {
-        try {
-            const data = JSON.parse(e.data);
-            const msg = data.message;
-            if (msg) {
-                 if (msg.startsWith('[System]') || msg.startsWith('[Escalation]')) {
-                    console.log(chalk.red.italic(msg));
-                } else if (msg.startsWith('[Care Circle Update]')) {
-                    console.log(chalk.blue.italic(msg));
-                } else {
-                    console.log(chalk.green(msg));
-                }
-                rl.prompt(true);
-            }
-        } catch (error) {
-             console.error(chalk.red('Error parsing message from server:'), error);
-        }
-    });
-
-    es.on('error', (err) => {
-        console.error(chalk.red('Connection error. Attempting to reconnect...'));
-        es.close();
-        setTimeout(connectToServer, 5000); // Reconnect after 5 seconds
-    });
-}
-
 function startChat() {
-    rl.setPrompt(chalk.yellow(`${userId} > `));
-    rl.prompt();
-
     rl.on('line', (line) => {
-        const message = line.trim();
-        if (message) {
-            sendMessage(message);
-        }
-        rl.prompt();
-    }).on('close', () => {
-        console.log(chalk.bold('\nHave a great day!'));
-        process.exit(0);
+        sendMessage(line);
+        rl.prompt(true);
     });
-
-    connectToServer();
+    rl.prompt(true);
 }
 
-rl.question('Enter your role (patient/caregiver/doctor): ', (role) => {
-    userId = role.trim().toLowerCase();
-    if (['patient', 'caregiver', 'doctor'].includes(userId)) {
-        console.log(chalk.bold.green(`\nWelcome, ${userId}. You can start typing now.`));
-        startChat();
+// Main execution
+rl.question('Enter your role (patient/caregiver/doctor): ', async (role) => {
+    const normalizedRole = role.toLowerCase();
+    if (['patient', 'caregiver', 'doctor'].includes(normalizedRole)) {
+        const registered = await registerUser(normalizedRole);
+        if (registered) {
+            listenForMessages();
+             rl.setPrompt(chalk.bold(`${userId} > `));
+             startChat();
+        } else {
+            rl.close();
+        }
     } else {
-        console.log(chalk.red('Invalid role. Please restart and enter "patient", "caregiver", or "doctor".'));
+        console.log(chalk.red('Invalid role. Please restart.'));
         rl.close();
     }
 });

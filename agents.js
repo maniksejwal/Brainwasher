@@ -1,177 +1,135 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { 
-    unifiedAgentPrompt, 
-    mediatedClarificationPrompt, 
-    doctorAgentPrompt, 
-    doctorDirectivePrompt,
-    relationshipAnalysisPrompt,
-    sharingRequestPrompt,
-    contextualSharingPrompt // new import
-} from './prompts.js';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import config from './config.js';
+import {
+    PROMPT_UNIFIED_AGENT,
+    PROMPT_SHARING_REQUEST,
+    PROMPT_MEDIATED_CLARIFICATION,
+    PROMPT_RELATIONSHIP_ANALYSIS,
+    PROMPT_SHARING_SUMMARY
+} from './prompts.js';
+import { getRecentMessages } from './database.js';
 
-// ... (Key Rotation, sleep, getModel are unchanged)
-const validApiKeys = config.API_KEYS.filter(key => key);
-if (validApiKeys.length === 0) {
-    throw new Error("No valid GEMINI_API_KEYs found in your .env file.");
-}
-let keyIndex = 0;
-const getNextApiKey = () => {
-    const key = validApiKeys[keyIndex];
-    keyIndex = (keyIndex + 1) % validApiKeys.length;
-    return key;
-};
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-const getModel = () => {
-    const apiKey = getNextApiKey();
-    const genAI = new GoogleGenerativeAI(apiKey);
-    return genAI.getGenerativeModel({ model: config.GEMINI_MODEL });
-};
+let genAIs = [];
 
-
-async function processUserMessage(userId, message, retries = 3) {
-    // ... (unchanged)
-    try {
-        const model = getModel();
-        const prompt = unifiedAgentPrompt
-            .replace('{{userId}}', userId)
-            .replace('{{message}}', message);
-        
-        const result = await model.generateContent(prompt);
-        const responseText = (await result.response).text().trim().replace(/```json|```/g, '');
-        return JSON.parse(responseText);
-
-    } catch (error) {
-        if (error.status === 429 && retries > 0) {
-            const retryDelayMatch = error.message.match(/retryDelay: '(\d+)s'/);
-            const delaySeconds = retryDelayMatch ? parseInt(retryDelayMatch[1], 10) + 1 : 60;
-            
-            console.warn(`[Agent] Rate limit hit. Retrying in ${delaySeconds} seconds... (${retries} retries left)`);
-            await sleep(delaySeconds * 1000);
-            return processUserMessage(userId, message, retries - 1);
+if (config.API_KEYS && config.API_KEYS.length > 0) {
+    genAIs = config.API_KEYS.map(apiKey => {
+        if (!apiKey) return null;
+        try {
+            return new GoogleGenerativeAI(apiKey).getGenerativeModel({ model: config.GEMINI_MODEL });
+        } catch (error) {
+            console.error('[Agent] Error initializing a Gemini client. Is the API key valid?', error.message);
+            return null;
         }
+    }).filter(Boolean);
+}
 
-        console.error("Error in unified agent processing:", error);
-        return {
-            reply: "I'm having some trouble processing that. Could you please rephrase?",
+if (genAIs.length === 0) {
+    console.error("\n[Agent] FATAL ERROR: No valid Gemini API keys found or initialized.");
+    console.error("Please check your .env file and ensure GEMINI_API_KEY_1 (and optionally GEMINI_API_KEY_2) are set correctly.\n");
+}
+
+
+let keyIndex = 0;
+function getNextClient() {
+    if (genAIs.length === 0) return null;
+    const client = genAIs[keyIndex];
+    keyIndex = (keyIndex + 1) % genAIs.length;
+    return client;
+}
+
+async function makeApiCall(prompt, history = []) {
+    const model = getNextClient();
+    if (!model) {
+         return {
+            reply: "The AI service is not configured. Please check the server logs.",
             privacyLevel: 'PRIVATE',
-            criticality: 'LOW',
-            sharingSuggestion: null,
-            facts: {}
+            criticality: 'NONE',
+            facts: {},
+            sharingSuggestion: null
         };
     }
-}
 
-async function generateSharingRequest(target, reason) {
-    // ... (unchanged)
-    try {
-        const model = getModel();
-        const prompt = sharingRequestPrompt
-            .replace('{{target}}', target)
-            .replace('{{reason}}', reason);
-        const result = await model.generateContent(prompt);
-        return (await result.response).text().trim();
-    } catch (error) {
-        console.error("Error generating sharing request:", error);
-        return `This seems important. May I share this with your ${target}?`;
+    const fullPrompt = `${history.join('\n')}\n\n${prompt}`;
+    
+    // ** ADDED: Retry logic with exponential backoff **
+    const maxRetries = 3;
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const result = await model.generateContent(fullPrompt);
+            const response = await result.response;
+            let text = response.text();
+            
+            const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
+            if (jsonMatch && jsonMatch[1]) {
+                return JSON.parse(jsonMatch[1]);
+            }
+            return { reply: text };
+
+        } catch (error) {
+            lastError = error;
+            // Only retry on specific server-side errors (like 503 or 429)
+            if (error.status === 503 || error.status === 429) {
+                const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000; // Exponential backoff with jitter
+                console.warn(`[Agent] API call failed with status ${error.status}. Retrying in ${Math.round(delay/1000)}s... (Attempt ${attempt}/${maxRetries})`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+            } else {
+                // For non-retryable errors, fail immediately
+                break;
+            }
+        }
     }
+
+    console.error("[Agent] Error calling Gemini API after all retries:", lastError);
+    return {
+        reply: "I'm having some trouble processing that right now. Could you please rephrase?",
+        privacyLevel: 'PRIVATE',
+        criticality: 'LOW',
+        facts: {},
+        sharingSuggestion: null
+    };
 }
 
-// --- New function to generate contextual shares ---
-async function generateContextualShare(originatingUser, targetUser, message) {
-    try {
-        const model = getModel();
-        const prompt = contextualSharingPrompt
-            .replace('{{originatingUser}}', originatingUser)
-            .replace('{{targetUser}}', targetUser)
-            .replace('{{message}}', message);
-        const result = await model.generateContent(prompt);
-        return (await result.response).text().trim();
-    } catch (error) {
-        console.error("Error generating contextual share:", error);
-        return `${originatingUser} shared an update: "${message}"`; // Fallback
+export async function processUserMessage(userId, role, message) {
+    const history = await getRecentMessages(userId, 5);
+    const historyText = history.map(h => `${h.user_id}: ${h.message}`);
+    const prompt = PROMPT_UNIFIED_AGENT
+        .replace('{{ROLE}}', role)
+        .replace('{{MESSAGE}}', message);
+    return makeApiCall(prompt, historyText);
+}
+
+export async function generateSharingRequest(target, reason) {
+    const prompt = PROMPT_SHARING_REQUEST
+        .replace('{{TARGET}}', target)
+        .replace('{{REASON}}', reason);
+    const result = await makeApiCall(prompt);
+    return result.reply;
+}
+
+export async function generateMediatedClarification(targetUser, factKey) {
+    const prompt = PROMPT_MEDIATED_CLARIFICATION
+        .replace('{{TARGET_USER}}', targetUser)
+        .replace('{{FACT_KEY}}', factKey);
+    const result = await makeApiCall(prompt);
+    return result.reply;
+}
+
+export async function analyzeRelationship(sharedHistory) {
+    if (!sharedHistory || sharedHistory.length === 0) {
+        return { relationshipType: 'unknown', closenessScore: 50 };
     }
+    const prompt = PROMPT_RELATIONSHIP_ANALYSIS.replace('{{CONVERSATION_LOG}}', sharedHistory.join('\n'));
+    return makeApiCall(prompt);
 }
 
-
-// ... (analyzeRelationship, generateDoctorAgentReply, etc. are unchanged)
-async function analyzeRelationship(history) {
-    try {
-        const model = getModel();
-        const formattedHistory = history.map(h => `${h.user_id}: ${h.content}`).join('\n');
-        const prompt = relationshipAnalysisPrompt.replace('{{history}}', formattedHistory);
-
-        const result = await model.generateContent(prompt);
-        const responseText = (await result.response).text().trim().replace(/```json|```/g, '');
-        return JSON.parse(responseText);
-    } catch (error) {
-        console.error("Error in relationship analysis:", error);
-        return { relationshipType: 'other', closenessScore: 5 }; // Return a default on error
-    }
+export async function generateSharingSummaryOrProbe(fromUser, toUser, message) {
+    const prompt = PROMPT_SHARING_SUMMARY
+        .replace('{{FROM_USER}}', fromUser)
+        .replace('{{TO_USER}}', toUser)
+        .replace('{{MESSAGE}}', message);
+    const result = await makeApiCall(prompt);
+    return result.reply;
 }
-
-async function generateDoctorAgentReply(type, details) {
-    try {
-        const model = getModel();
-        const prompt = doctorAgentPrompt
-            .replace('{{type}}', type)
-            .replace('{{details}}', details);
-
-        const result = await model.generateContent(prompt);
-        const responseText = (await result.response).text().trim().replace(/```json|```/g, '');
-        const parsedResponse = JSON.parse(responseText);
-        
-        return `[Clinical Summary] ${parsedResponse.summary}\n[Recommendation] ${parsedResponse.recommendation}`;
-
-    } catch (error) {
-        console.error("Error generating doctor reply:", error);
-        return "[Escalation] A critical event occurred, but the summary failed to generate. Please review logs.";
-    }
-}
-
-async function generateDoctorDirective(directive, targetUser) {
-    try {
-        const model = getModel();
-        const prompt = doctorDirectivePrompt
-            .replace('{{directive}}', directive)
-            .replace('{{targetUser}}', targetUser);
-        
-        const result = await model.generateContent(prompt);
-        const responseText = (await result.response).text().trim().replace(/```json|```/g, '');
-        const parsedResponse = JSON.parse(responseText);
-
-        return parsedResponse.messageForUser;
-
-    } catch(error) {
-        console.error("Error generating doctor directive:", error);
-        return `The doctor has an important update for you: ${directive}`;
-    }
-}
-
-
-async function generateMediatedClarification(targetUser, factKey) {
-     try {
-        const model = getModel();
-        const prompt = mediatedClarificationPrompt
-            .replace('{{targetUser}}', targetUser)
-            .replace('{{factKey}}', factKey);
-
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        return response.text().trim();
-    } catch (error) {
-        console.error("Error generating mediated clarification:", error);
-        return `I wanted to check in about the ${factKey.replace(/_/g, ' ')}. How are things?`;
-    }
-}
-
-export { 
-    processUserMessage, 
-    generateMediatedClarification, 
-    generateDoctorAgentReply, 
-    generateDoctorDirective,
-    analyzeRelationship,
-    generateSharingRequest,
-    generateContextualShare
-};
 

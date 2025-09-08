@@ -1,19 +1,21 @@
 {
-  "name": "multi-agent-prototype-js",
+  "name": "multi-agent-system",
   "version": "1.0.0",
-  "description": "A JS prototype of the multi-agent reconciliation system.",
-  "main": "orchestrator.js",
+  "description": "A multi-agent chatbot system for patient adherence.",
+  "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node orchestrator.js"
+    "start": "node server.js",
+    "test": "node test.js"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.11.3",
+    "@google/generative-ai": "^0.2.1",
     "chalk": "^5.3.0",
     "dotenv": "^16.4.5",
     "eventsource": "^2.0.2",
-    "express": "^4.19.2",
+    "express": "^4.18.3",
     "sqlite": "^5.1.1",
     "sqlite3": "^5.1.7"
   }
 }
+

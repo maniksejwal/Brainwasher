@@ -1,90 +1,88 @@
+import fetch from 'node-fetch';
 import assert from 'assert';
-import chalk from 'chalk';
+import config from './config.js'; // Import the centralized config
 
-const ORCHESTRATOR_URL = 'http://127.0.0.1:5000';
-let patientMessages = [];
-let caregiverMessages = [];
+const BASE_URL = config.ORCHESTRATOR_URL;
 
-// --- Mock Client Setup ---
-// This avoids needing a full SSE client for testing and just polls for messages
-const fetchMessagesForUser = async (userId) => {
-    // This is a simplified mock. In a real test suite, you'd have a more robust way
-    // to check for specific messages. For now, we'll rely on the server logs.
-    return []; 
-};
-
-const sendMessage = async (userId, message) => {
-    console.log(chalk.gray(`  -> Sending message from '${userId}': "${message}"`));
-    await fetch(`${ORCHESTRATOR_URL}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, message }),
-    });
-};
-
-const clearAll = async () => {
-    await fetch(`${ORCHESTRATOR_URL}/clear-all`, { method: 'POST' });
+async function clearDatabase() {
+    await fetch(`${BASE_URL}/clear`, { method: 'POST' });
+    console.log('Database cleared for testing.');
 }
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+async function registerUser(userId, role) {
+    await fetch(`${BASE_URL}/user`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, role }),
+    });
+}
+
+async function sendMessage(userId, role, message) {
+    await fetch(`${BASE_URL}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, role, message }),
+    });
+}
+
+async function getEscalations() {
+    const response = await fetch(`${BASE_URL}/doctor/escalations`);
+    return response.json();
+}
 
 async function runTest(name, testFn) {
-    console.log(chalk.blue.bold(`\n--- Running Test: ${name} ---`));
-    await clearAll();
+    console.log(`\n--- Running test: ${name} ---`);
     try {
+        await clearDatabase();
         await testFn();
-        console.log(chalk.green.bold(`¿ Test Passed: ${name}`));
+        console.log(`\u001b[32m¿ Test passed: ${name}\u001b[0m`);
     } catch (error) {
-        console.error(chalk.red.bold(`¿ Test Failed: ${name}`));
+        console.error(`\u001b[31m¿ Test failed: ${name}\u001b[0m`);
         console.error(error);
-        process.exit(1); // Exit on first failure
+        process.exit(1);
     }
 }
 
-async function main() {
-    console.log(chalk.yellow.bold('--- Starting Automated Test Suite ---'));
-    
-    await runTest('Critical Escalation', async () => {
-        await sendMessage('patient', 'I felt a sharp pain in my chest');
-        await sleep(2000); // Allow time for agent processing and escalation
-        // To truly test this, we'd need to peek into the doctor's message queue.
-        // For now, we rely on the orchestrator log showing "Escalating to doctor".
-        console.log(chalk.cyan('  (Verification: Check orchestrator log for CRITICAL escalation)'));
-    });
+// Test Suite
+(async () => {
+    await runTest('Conflict Escalation', async () => {
+        await registerUser('patient', 'patient');
+        await registerUser('caregiver', 'caregiver');
+        await sendMessage('patient', 'patient', 'I took my medicine today.');
+        // Wait a bit for processing
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        await sendMessage('caregiver', 'caregiver', 'He did not take his pills.');
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
-    await runTest('Conflict Detection and Mediation', async () => {
-        await sendMessage('patient', 'I took all my pills this morning.');
-        await sendMessage('caregiver', 'He missed his morning medication.');
-        await sleep(2000);
-        console.log(chalk.cyan('  (Verification: Check orchestrator log for CONFLICT and mediation)'));
-    });
-    
-    await runTest('Consent Management Blocks Broadcast', async () => {
-        console.log(chalk.gray('  Setting consent to limited...'));
-        await sendMessage('patient', '/consent caregiver limited');
-        
-        console.log(chalk.gray('  Patient sends a public message...'));
-        await sendMessage('patient', 'The weather is nice today.');
-        await sleep(2000);
-        
-        // This is a conceptual test. A real test would connect a caregiver client
-        // and assert that no message was received.
-        console.log(chalk.cyan('  (Verification: Check orchestrator log. Broadcast to caregiver should be BLOCKED)'));
+        const escalations = await getEscalations();
+        assert.strictEqual(escalations.length, 1, 'There should be exactly one escalation.');
+        assert.strictEqual(escalations[0].type, 'CONFLICT', 'The escalation type should be CONFLICT.');
+        assert.ok(escalations[0].details.includes('contradicting'), 'The details should mention a contradiction.');
     });
     
-    await runTest('Consent Management Allows Broadcast', async () => {
-        console.log(chalk.gray('  Setting consent to full...'));
-        await sendMessage('patient', '/consent caregiver full');
+    await runTest('Implied Consent Flow', async () => {
+        await registerUser('patient', 'patient');
+        await registerUser('caregiver', 'caregiver');
+
+        // 1. Patient reports something sensitive, agent asks to share
+        await sendMessage('patient', 'patient', 'I felt a bit dizzy after lunch.');
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for AI reply
+
+        // 2. Patient grants consent
+        await sendMessage('patient', 'patient', 'yes');
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for processing and broadcast
+
+        // 3. Patient sends a follow-up, which should be shared automatically
+        await sendMessage('patient', 'patient', 'The dizziness is gone now though.');
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
-        console.log(chalk.gray('  Patient sends a public message...'));
-        await sendMessage('patient', 'The weather is nice today.');
-        await sleep(2000);
-        
-        console.log(chalk.cyan('  (Verification: Check orchestrator log. Broadcast to caregiver should be ALLOWED)'));
+        // This test is harder to assert programmatically without seeing the client logs,
+        // but we can check that no new pending action was created for the second message.
+        // A more robust test would involve a client mock that listens for messages.
+        // For now, we confirm the flow doesn't crash.
+        console.log('Implied consent flow test completed without errors.');
     });
 
-    console.log(chalk.green.bold('\n--- All Tests Completed Successfully ---'));
-}
-
-main();
+    console.log('\n--- All tests passed successfully! ---');
+})();
 
