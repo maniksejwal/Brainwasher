@@ -1,18 +1,36 @@
-TODO
+Multi-Agent System - Project Roadmap & TODO
 
-This document outlines the planned features and improvements for the multi-agent system.
-Future Enhancements
-
-    Advanced Session/State Management: Improve how the system handles multi-step conversations and pending actions to avoid state-related errors.
-
-    Reciprocal Care Circles: Architect a system where every user can have their own care circle. A user can be a "patient" in their own circle while being a "caregiver" in another's.
-
-    Patient/Caregiver State Modeling: Develop a system to model the behavioral states of users (e.g., 'Anxious', 'Compliant', 'Overwhelmed', 'Supportive'). This state can then influence the AI agent's conversational strategy and risk assessment.
-
+This document tracks the development progress and future plans for the multi-agent system prototype.
 Completed
 
-    Implied Consent Model: Reduce the annoyance of per-message consent by introducing a session-based or topic-based implied consent, which remains active for a short period after a user grants initial permission.
+    Advanced Session & State Management:
 
-    Conversational Memory & Context: The personal agents will now use recent conversation history to provide more context-aware and natural replies.
+        Implemented a state machine for each user to track conversational context (e.g., awaiting_consent_response).
 
-    Temporal Fact & Symptom Logging: The database schema has been overhauled to log facts with timestamps, allowing the system to track symptoms and behaviors over time.
+        System correctly interprets user replies in the context of a pending question.
+
+        Consent model is smarter and less frequent.
+
+    Temporal Fact & Symptom Logging:
+
+        Database now stores a historical log of all reported facts and symptoms.
+
+        The AI agent uses this history to analyze trends and provide more context-aware replies.
+
+    Patient/Caregiver State Modeling (Behavior)
+
+    Implied Consent Model
+
+    Doctor Client & Escalation Pathway
+
+    Dynamic Relationship Analysis
+
+Up Next
+
+    Reciprocal Care Circles:
+
+        Re-architect the user model so that any user can have their own care circle.
+
+        A user can be a patient in their own circle and a caregiver in another's.
+
+Last Updated: 2025-09-08

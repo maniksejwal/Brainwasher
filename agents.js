@@ -1,13 +1,16 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import config from './config.js';
 import {
-    PROMPT_UNIFIED_AGENT,
+    PROMPT_UNIFIED_AGENT_WITH_STATE as PROMPT_UNIFIED_AGENT,
     PROMPT_SHARING_REQUEST,
     PROMPT_MEDIATED_CLARIFICATION,
     PROMPT_RELATIONSHIP_ANALYSIS,
     PROMPT_SHARING_SUMMARY
 } from './prompts.js';
-import { getRecentMessages } from './database.js';
+import { getRecentMessages, getUserState, getFactHistory } from './database.js';
+// FIX: Use named imports for the behavioral models, which now correctly matches the export style.
+import { STAGES_OF_CHANGE, COPING_STYLES } from './behavioral_models.js';
+
 
 let genAIs = [];
 
@@ -51,7 +54,6 @@ async function makeApiCall(prompt, history = []) {
 
     const fullPrompt = `${history.join('\n')}\n\n${prompt}`;
     
-    // ** ADDED: Retry logic with exponential backoff **
     const maxRetries = 3;
     let lastError = null;
 
@@ -69,13 +71,11 @@ async function makeApiCall(prompt, history = []) {
 
         } catch (error) {
             lastError = error;
-            // Only retry on specific server-side errors (like 503 or 429)
             if (error.status === 503 || error.status === 429) {
-                const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000; // Exponential backoff with jitter
+                const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
                 console.warn(`[Agent] API call failed with status ${error.status}. Retrying in ${Math.round(delay/1000)}s... (Attempt ${attempt}/${maxRetries})`);
                 await new Promise(resolve => setTimeout(resolve, delay));
             } else {
-                // For non-retryable errors, fail immediately
                 break;
             }
         }
@@ -94,9 +94,21 @@ async function makeApiCall(prompt, history = []) {
 export async function processUserMessage(userId, role, message) {
     const history = await getRecentMessages(userId, 5);
     const historyText = history.map(h => `${h.user_id}: ${h.message}`);
+    const currentState = await getUserState(userId);
+    const factHistory = await getFactHistory('all', 10);
+
+    const behavioralModels = {
+        stages_of_change: STAGES_OF_CHANGE,
+        coping_styles: COPING_STYLES
+    };
+
     const prompt = PROMPT_UNIFIED_AGENT
         .replace('{{ROLE}}', role)
-        .replace('{{MESSAGE}}', message);
+        .replace('{{MESSAGE}}', message)
+        .replace('{{USER_STATE}}', JSON.stringify(currentState, null, 2))
+        .replace('{{FACT_HISTORY}}', JSON.stringify(factHistory, null, 2))
+        .replace('{{BEHAVIORAL_MODELS}}', JSON.stringify(behavioralModels, null, 2));
+
     return makeApiCall(prompt, historyText);
 }
 

@@ -1,17 +1,27 @@
-Multi-Agent System for Patient Adherence
+Multi-Agent System for Patient Adherence & Behavioral Support
 
-This project is a command-line prototype of a novel multi-agent system designed to improve patient adherence and facilitate communication within a "care circle" (patient, caregivers, doctor).
-Core
+This project is a command-line prototype of a novel multi-agent system designed to improve patient adherence and facilitate communication within a "care circle" (patient, caregivers, doctor). It moves beyond simple chatbots to create a network of AI assistants that mediate, analyze, and support complex human interactions.
+Core Inventive Steps & Features
 
-    Multi-Agent Reconciliation Engine: The system uses a network of personal AI agents to gather information from multiple users, identify discrepancies in their reports, and escalate conflicts to a human professional (doctor).
+    Mediated Communication: Users (patient, caregiver, doctor) do not talk directly to each other. They interact exclusively with their personal AI agent. This allows the system to act as a thoughtful filter, mediator, and conflict resolver.
 
-    Mediated Clarification: Instead of simply reporting conflicts, the AI can proactively and gently probe users for more information to clarify a situation without revealing the source of the contradictory report.
+    Temporal Memory & Context: The AI maintains a temporal history of facts and conversations. This allows it to understand trends (e.g., "The patient has reported headaches three times this week") and provide context-aware, intelligent replies, rather than reacting to each message in isolation.
 
-    Dynamic Relationship & Privacy Analysis: The system analyzes conversations to model the relationship between users (e.g., spouse, friend) and a closenessScore. This, combined with message analysis for privacyLevel and criticality, allows for highly granular and context-aware information sharing.
+    Behavioral State Modeling: The system incorporates established psychological models (Stages of Change, Coping Styles) to analyze a user's behavioral state. The AI's conversational strategy adapts to this analysis (e.g., using reflective listening for a user in the "Pre-contemplation" stage, and offering concrete plans for a user in the "Preparation" stage).
 
-    Consent Manager with Implied Consent: Users have granular control over what they share. The system reduces friction by using an "implied consent" model, where permission for a specific topic is temporarily remembered.
+    Dynamic Relationship Analysis: The AI analyzes shared conversations to infer the relationshipType (e.g., spouse, friend) and a closenessScore between users, tailoring its communication style to the unique dynamics of the care circle.
 
-    Doctor-in-the-Loop Architecture: A dedicated doctor client receives real-time escalations for critical events and can issue directives, which are then translated by the AI into conversational actions for the patient or caregiver.
+    Smart Consent & Sharing: The system uses a multi-layered consent model to protect user privacy while reducing friction:
+
+        Global Consent: Users can set overall sharing rules (e.g., /consent caregiver full spouse).
+
+        Per-Message Consent: For sensitive topics, the agent can ask for one-time permission to share.
+
+        Implied Consent: Permission for a specific topic (e.g., "medication") is temporarily remembered to avoid repetitive requests.
+
+    Conflict Resolution & Clarification: When the system detects a factual conflict between users, it does not simply report it. It triggers a "Mediated Clarification," where the agent gently probes the other party for more information without revealing the source of the conflict, de-escalating potential arguments.
+
+    Doctor-in-the-Loop Architecture: A dedicated doctor client receives real-time escalations for critical events (HIGH criticality). The doctor can also issue directives (e.g., "ask patient about sleep"), which the AI translates into natural, conversational actions.
 
 System Architecture
 
@@ -19,11 +29,10 @@ The system consists of three main components:
 
     server.js: An Express server that handles all network communication, including API endpoints for sending messages and a real-time Server-Sent Events (SSE) stream for broadcasting updates.
 
-    orchestrator.js: The "brain" of the system. This module contains all the core logic for processing messages, running AI agents, detecting conflicts, managing consent, and handling escalations. It is a pure logic module, separate from the server.
+    orchestrator.js: The "brain" of the system. This module contains all the core logic for processing messages, running AI agents, detecting conflicts, managing consent, and handling escalations.
 
-    client.js: A unified command-line interface that can be run for any role (patient, caregiver, doctor). Each client connects to the orchestrator to send and receive messages.
+    client.js: A unified command-line interface that can be run for any role (patient, caregiver, doctor).
 
-Licensed by Google
 How to Run
 1. Setup
 
@@ -48,30 +57,12 @@ You will need at least three separate terminal windows.
 
     (Optional) Terminal 4 (Doctor): node client.js (enter doctor when prompted)
 
-3. Using Commands
+3. Running Automated Tests
 
-The clients support special commands that begin with a forward slash (/).
+The tests have been split into a tests/ directory for better organization. To run the full test suite, use the npm script:
 
-    /clear: Clears the database. Useful for starting a fresh test.
+npm test
 
-    /consent <targetUser> <level> <relationship>: Sets a sharing rule.
+To run a single test file, for example the consent test:
 
-        targetUser: The user you want to share with (e.g., caregiver, doctor).
-
-        level: The level of consent (none, limited, full). See policy.md for details.
-
-        relationship: The nature of your relationship (spouse, friend, sibling, etc.).
-
-        Example: /consent caregiver full spouse
-
-Core Policies (policy.md)
-
-This file defines the rules for data handling, including:
-
-    Privacy Levels: PUBLIC, PRIVATE, SENSITIVE.
-
-    Criticality Levels: NONE, LOW, HIGH.
-
-    Consent Levels: none, limited, full.
-
-    How these policies interact to determine when and how information is shared or escalated.
+node tests/test_consent.js

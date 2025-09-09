@@ -11,7 +11,9 @@ import {
     removePendingAction,
     addImpliedConsent,
     getImpliedConsent,
-    clearDatabase
+    clearDatabase,
+    updateUserState,
+    // FIX: Removed addFactHistory as it's handled by upsertFact
 } from './database.js';
 import {
     processUserMessage,
@@ -54,7 +56,6 @@ async function handleCommand(userId, message) {
         return { reply: `[System] Consent for '${targetUser}' set to '${level}' as your '${relationship}'.` };
     }
      if (command === 'clear') {
-        // In a real app, you'd have auth here. For now, any user can clear.
         events.emit('clear_db');
         return { reply: `[System] Database cleared.` };
     }
@@ -63,7 +64,7 @@ async function handleCommand(userId, message) {
 
 async function handlePendingAction(userId, message) {
     const pendingAction = await getPendingAction(userId);
-    if (!pendingAction) return null;
+    if (!pendingAction || pendingAction.state !== 'AWAITING_RESPONSE') return null;
 
     const positiveResponse = ['yes', 'yep', 'ok', 'okay', 'proceed', 'grant', 'granted', 'sure', 'do it'].includes(message.toLowerCase());
     await removePendingAction(pendingAction.action_id);
@@ -72,11 +73,9 @@ async function handlePendingAction(userId, message) {
         if (pendingAction.action_type === 'share_consent') {
             const { originatingUser, target, originalMessage } = pendingAction.details;
             
-            // Create an implied consent for the specific fact topic
             const topic = Object.keys(originalMessage.facts)[0] || 'general';
             await addImpliedConsent(originatingUser, topic);
             
-            // Generate and send the contextual message
             const contextualMessage = await generateSharingSummaryOrProbe(originatingUser, target, originalMessage.message);
             events.emit('broadcast', {
                 targetUsers: [target],
@@ -110,11 +109,18 @@ export async function handleMessage(userId, role, message) {
 
     await addMessage(userId, role, message, analysis.privacyLevel, analysis.criticality);
     events.emit('broadcast', { targetUsers: [userId], reply: analysis.reply, from: 'personal-agent' });
+    
+    // Update user's behavioral state if the AI detected a change
+    if (analysis.state_update) {
+        await updateUserState(userId, analysis.state_update);
+        console.log(`[Orchestrator] State for '${userId}' updated:`, analysis.state_update);
+    }
 
-    // Handle facts and conflicts
+    // Handle facts, conflicts, and temporal logging
     if (analysis.facts && Object.keys(analysis.facts).length > 0) {
         for (const [key, value] of Object.entries(analysis.facts)) {
             const lastFact = await getLastFact(key);
+            // This function now also writes to the fact_history table
             await upsertFact(key, userId, value);
 
             if (lastFact && lastFact.reported_by !== userId && String(lastFact.value) !== String(value)) {
@@ -141,7 +147,6 @@ export async function handleMessage(userId, role, message) {
         events.emit('escalate');
     }
 
-    // Handle sharing based on consent, privacy, and suggestions
     if (analysis.privacyLevel === 'PUBLIC') {
         const contextualMessage = await generateSharingSummaryOrProbe(userId, 'all', message);
         events.emit('broadcast', {
