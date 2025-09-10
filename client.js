@@ -1,7 +1,7 @@
 import readline from 'readline';
 import chalk from 'chalk';
 import EventSource from 'eventsource';
-import config from './config.js'; // Import the centralized config
+import config from './config.js';
 
 const rl = readline.createInterface({
     input: process.stdin,
@@ -11,59 +11,75 @@ const rl = readline.createInterface({
 let userId = '';
 let userRole = '';
 
-async function registerUser(role) {
+async function main() {
+    userRole = await new Promise(resolve => {
+        rl.question(chalk.bold('Enter your role (patient/caregiver/doctor): '), (answer) => {
+            // Use the role as the user ID for this simple prototype
+            userId = answer.toLowerCase();
+            resolve(answer.toLowerCase());
+        });
+    });
+
     try {
-        const response = await fetch(`${config.ORCHESTRATOR_URL}/user`, {
+        await fetch(`${config.ORCHESTRATOR_URL}/user`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: role, role: role }) // Using role as userId for simplicity
+            body: JSON.stringify({ userId, role: userRole }),
         });
-        if (!response.ok) throw new Error('Failed to register user');
-        const data = await response.json();
-        console.log(chalk.green(data.message));
-        userId = role;
-        userRole = role;
-        return true;
+        console.log(chalk.green(`Welcome, ${userId}. You are the ${userRole}.`));
+        console.log(chalk.gray('You can start typing now.'));
+        rl.prompt();
     } catch (error) {
         console.error(chalk.red('Error registering user:', error.message));
-        return false;
+        rl.close();
+        return;
     }
-}
 
-function listenForMessages() {
     const es = new EventSource(`${config.ORCHESTRATOR_URL}/events`);
 
-    es.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        handleServerEvent(data);
-    };
+    es.on('message', async (e) => {
+        const data = JSON.parse(e.data);
 
-    es.onerror = () => {
-        console.log(chalk.yellow('Connection error. Attempting to reconnect...'));
-        // The eventsource library handles reconnection automatically
-    };
-}
-
-function handleServerEvent(data) {
-    if (data.type === 'message' && data.targetUsers.includes(userId)) {
-        const from = data.from === 'personal-agent' ? 'Personal Agent' : 'System';
-        const color = data.from === 'personal-agent' ? chalk.cyan : chalk.magenta;
-        readline.cursorTo(process.stdout, 0);
-        console.log(color(`[${from}]`), data.reply || data.message);
-        rl.prompt(true);
-    } else if (data.type === 'escalation' && userRole === 'doctor') {
-        // This is now handled by the unified client logic
-        const escalations = data.payload;
-         if (escalations && escalations.length > 0) {
-            readline.cursorTo(process.stdout, 0);
-            console.log(chalk.red.bold('\n--- NEW ESCALATIONS ---'));
-            escalations.forEach(e => {
-                 console.log(chalk.yellow(`[${new Date(e.timestamp).toLocaleTimeString()}] ${e.type}: ${e.details}`));
-            });
-            console.log(chalk.red.bold('-----------------------'));
-            rl.prompt(true);
+        if (data.type === 'message') {
+            const { targetUsers, reply, from, message } = data;
+            if (targetUsers.includes(userId)) {
+                const prefix = chalk.bold.blue(`[${from}]:`);
+                const content = reply || message;
+                process.stdout.write(`\r${' '.repeat(rl.line.length)}\r`); // Clear current line
+                console.log(`${prefix} ${content}`);
+                rl.prompt();
+            }
+        } else if (data.type === 'escalation' && userRole === 'doctor') {
+            // ** FIX: Doctor client now fetches details after getting the ping **
+            try {
+                const response = await fetch(`${config.ORCHESTRATOR_URL}/doctor/escalations/unread`);
+                const escalations = await response.json();
+                if (escalations && escalations.length > 0) {
+                    process.stdout.write(`\r${' '.repeat(rl.line.length)}\r`);
+                    console.log(chalk.red.bold(`\n--- NEW ESCALATIONS RECEIVED ---`));
+                    escalations.forEach(item => {
+                        const message = `[${new Date(item.timestamp).toLocaleString()}] ${item.type}: ${item.details}`;
+                        console.log(chalk.yellow(message));
+                    });
+                    console.log(chalk.red.bold(`------------------------------`));
+                    rl.prompt();
+                }
+            } catch (error) {
+                 console.error(chalk.red('Error fetching escalations:', error.message));
+            }
         }
-    }
+    });
+
+    es.on('error', (err) => {
+        process.stdout.write(`\r${' '.repeat(rl.line.length)}\r`);
+        console.log(chalk.red('Connection error. Attempting to reconnect...'));
+        rl.prompt();
+    });
+
+    rl.on('line', (line) => {
+        sendMessage(line);
+        rl.prompt();
+    });
 }
 
 async function sendMessage(message) {
@@ -71,36 +87,12 @@ async function sendMessage(message) {
         await fetch(`${config.ORCHESTRATOR_URL}/send`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId, role: userRole, message })
+            body: JSON.stringify({ userId, role: userRole, message }),
         });
     } catch (error) {
         console.error(chalk.red('Error sending message:', error.message));
     }
 }
 
-function startChat() {
-    rl.on('line', (line) => {
-        sendMessage(line);
-        rl.prompt(true);
-    });
-    rl.prompt(true);
-}
-
-// Main execution
-rl.question('Enter your role (patient/caregiver/doctor): ', async (role) => {
-    const normalizedRole = role.toLowerCase();
-    if (['patient', 'caregiver', 'doctor'].includes(normalizedRole)) {
-        const registered = await registerUser(normalizedRole);
-        if (registered) {
-            listenForMessages();
-             rl.setPrompt(chalk.bold(`${userId} > `));
-             startChat();
-        } else {
-            rl.close();
-        }
-    } else {
-        console.log(chalk.red('Invalid role. Please restart.'));
-        rl.close();
-    }
-});
+main();
 

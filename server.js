@@ -1,7 +1,7 @@
 import express from 'express';
-import { initializeDatabase } from './database.js';
+import { initializeDatabase, getUnreadEscalations } from './database.js';
 import { handleNewUser, handleMessage, events } from './orchestrator.js';
-import config from './config.js'; // Import the centralized config
+import config from './config.js';
 
 const app = express();
 app.use(express.json());
@@ -23,7 +23,6 @@ app.get('/events', (req, res) => {
     clients.push(newClient);
     console.log(`[Server] Client connected: ${clientId}. Total clients: ${clients.length}`);
 
-    // Heartbeat to keep connection alive
     const heartbeat = setInterval(() => {
         res.write(': \n\n');
     }, 10000);
@@ -47,7 +46,12 @@ events.on('escalate', () => {
     broadcast({ type: 'escalation' });
 });
 
-// Endpoint to register a new user
+// ** FIX: Added the missing endpoint for the doctor to fetch escalation details **
+app.get('/doctor/escalations/unread', async (req, res) => {
+    const escalations = await getUnreadEscalations();
+    res.status(200).json(escalations);
+});
+
 app.post('/user', async (req, res) => {
     const { userId, role } = req.body;
     const result = await handleNewUser(userId, role);
@@ -57,7 +61,6 @@ app.post('/user', async (req, res) => {
     res.status(200).json(result);
 });
 
-// Endpoint to send a message
 app.post('/send', (req, res) => {
     const { userId, role, message } = req.body;
     if (!userId || !role || !message) {
@@ -67,18 +70,18 @@ app.post('/send', (req, res) => {
     res.status(202).send();
 });
 
-// Endpoint to clear the database
 app.post('/clear', (req, res) => {
     console.log('[Server] Received request to clear database.');
     events.emit('clear_db');
     res.status(200).send({ message: 'Database clear initiated.' });
 });
 
+const PORT = config.PORT;
+const HOST = config.HOST;
 initializeDatabase().then(() => {
-    // Use HOST and PORT from config
-    app.listen(config.PORT, config.HOST, () => {
+    app.listen(PORT, HOST, () => {
         console.log(`--- Multi-Agent Orchestrator (JS) is RUNNING ---`);
-        console.log(`Listening on http://${config.HOST}:${config.PORT}`);
+        console.log(`Listening on http://${HOST}:${PORT}`);
         console.log(`---------------------------------------------`);
     });
 }).catch(console.error);

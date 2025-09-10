@@ -22,8 +22,8 @@ export async function initializeDatabase() {
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
             role TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            session_state TEXT DEFAULT '{}' -- FIX: Added session_state column
+            session_state TEXT,
+            created_at INTEGER NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS messages (
@@ -36,14 +36,6 @@ export async function initializeDatabase() {
             timestamp INTEGER NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         );
-        
-        CREATE TABLE IF NOT EXISTS fact_history (
-            history_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fact_key TEXT NOT NULL,
-            reported_by TEXT NOT NULL,
-            value TEXT,
-            timestamp INTEGER NOT NULL
-        );
 
         CREATE TABLE IF NOT EXISTS facts (
             fact_key TEXT NOT NULL,
@@ -53,6 +45,14 @@ export async function initializeDatabase() {
             UNIQUE(fact_key, reported_by)
         );
         
+        CREATE TABLE IF NOT EXISTS fact_history (
+            history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fact_key TEXT NOT NULL,
+            reported_by TEXT NOT NULL,
+            value TEXT,
+            timestamp INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS escalations (
             escalation_id INTEGER PRIMARY KEY AUTOINCREMENT,
             type TEXT NOT NULL,
@@ -89,28 +89,37 @@ export async function initializeDatabase() {
 
 export async function clearDatabase() {
     const db = await getDb();
-    const tables = ['implied_consent', 'pending_actions', 'consent', 'escalations', 'facts', 'fact_history', 'messages', 'users'];
-    for (const table of tables) {
-        await db.exec(`DELETE FROM ${table};`);
-    }
+    await db.exec(`
+        DELETE FROM implied_consent;
+        DELETE FROM pending_actions;
+        DELETE FROM consent;
+        DELETE FROM escalations;
+        DELETE FROM fact_history;
+        DELETE FROM facts;
+        DELETE FROM messages;
+        DELETE FROM users;
+    `);
     console.log('[Database] Cleared.');
 }
 
 // User Functions
 export async function addUser(userId, role) {
     const db = await getDb();
-    await db.run('INSERT OR IGNORE INTO users (user_id, role, created_at, session_state) VALUES (?, ?, ?, ?)', [userId, role, Date.now(), '{}']);
-}
-
-export async function getUserState(userId) {
-    const db = await getDb();
-    const row = await db.get('SELECT session_state FROM users WHERE user_id = ?', userId);
-    return row ? JSON.parse(row.session_state) : {};
+    await db.run('INSERT OR IGNORE INTO users (user_id, role, created_at, session_state) VALUES (?, ?, ?, ?)', [userId, role, Date.now(), JSON.stringify({ state: 'IDLE' })]);
 }
 
 export async function updateUserState(userId, newState) {
     const db = await getDb();
-    await db.run('UPDATE users SET session_state = ? WHERE user_id = ?', [JSON.stringify(newState), userId]);
+    const currentStateRaw = await db.get('SELECT session_state FROM users WHERE user_id = ?', [userId]);
+    const currentState = currentStateRaw ? JSON.parse(currentStateRaw.session_state) : {};
+    const updatedState = { ...currentState, ...newState };
+    await db.run('UPDATE users SET session_state = ? WHERE user_id = ?', [JSON.stringify(updatedState), userId]);
+}
+
+export async function getUserState(userId) {
+    const db = await getDb();
+    const row = await db.get('SELECT session_state FROM users WHERE user_id = ?', [userId]);
+    return row ? JSON.parse(row.session_state) : { state: 'IDLE' };
 }
 
 
@@ -122,9 +131,7 @@ export async function addMessage(userId, role, message, privacy, criticality) {
 
 export async function getRecentMessages(userId, limit = 5) {
     const db = await getDb();
-    // Return messages in chronological order (oldest first) for better conversational context
-    const rows = await db.all('SELECT user_id, message FROM messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?', [userId, limit]);
-    return rows.reverse();
+    return db.all('SELECT user_id, message FROM messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?', [userId, limit]);
 }
 
 
@@ -137,7 +144,6 @@ export async function upsertFact(factKey, userId, factValue) {
          ON CONFLICT(fact_key, reported_by) DO UPDATE SET value = excluded.value, timestamp = excluded.timestamp`,
         [factKey, userId, factValue, now]
     );
-    // Also add to history
     await db.run('INSERT INTO fact_history (fact_key, reported_by, value, timestamp) VALUES (?, ?, ?, ?)', [factKey, userId, factValue, now]);
 }
 
@@ -147,8 +153,11 @@ export async function getLastFact(factKey) {
     return db.get('SELECT * FROM facts WHERE fact_key = ? ORDER BY timestamp DESC LIMIT 1', [factKey]);
 }
 
-export async function getFactHistory(factKey, limit = 5) {
+export async function getFactHistory(factKey = 'all', limit = 10) {
     const db = await getDb();
+    if (factKey === 'all') {
+        return db.all('SELECT * FROM fact_history ORDER BY timestamp DESC LIMIT ?', [limit]);
+    }
     return db.all('SELECT * FROM fact_history WHERE fact_key = ? ORDER BY timestamp DESC LIMIT ?', [factKey, limit]);
 }
 
@@ -159,6 +168,7 @@ export async function addEscalation(type, details) {
     await db.run('INSERT INTO escalations (type, details, timestamp) VALUES (?, ?, ?)', [type, details, Date.now()]);
 }
 
+// ** FIX: This new function fetches unread escalations and marks them as read **
 export async function getUnreadEscalations() {
     const db = await getDb();
     const escalations = await db.all('SELECT * FROM escalations WHERE is_read = 0 ORDER BY timestamp ASC');
@@ -193,28 +203,20 @@ export async function getImpliedConsent(userId, topic) {
 // Pending Action Functions
 export async function addPendingAction(actionId, userId, actionType, details) {
     const db = await getDb();
-    const currentState = await getUserState(userId);
-    currentState.pending_action = { actionId, actionType };
-    await updateUserState(userId, currentState);
     await db.run('INSERT INTO pending_actions (action_id, user_id, action_type, details, created_at) VALUES (?, ?, ?, ?, ?)', [actionId, userId, actionType, JSON.stringify(details), Date.now()]);
 }
 
-export async function getPendingAction(userId) {
+export async function getPendingAction(actionId) {
     const db = await getDb();
-    const row = await db.get('SELECT * FROM pending_actions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1', [userId]);
+    const row = await db.get('SELECT * FROM pending_actions WHERE action_id = ?', [actionId]);
     if (row) {
         row.details = JSON.parse(row.details);
     }
     return row;
 }
 
-export async function removePendingAction(actionId, userId) {
+export async function removePendingAction(actionId) {
     const db = await getDb();
-    const currentState = await getUserState(userId);
-    if (currentState.pending_action && currentState.pending_action.actionId === actionId) {
-        delete currentState.pending_action;
-        await updateUserState(userId, currentState);
-    }
     await db.run('DELETE FROM pending_actions WHERE action_id = ?', [actionId]);
 }
 

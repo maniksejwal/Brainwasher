@@ -6,14 +6,10 @@ import {
     getLastFact,
     addEscalation,
     setUserConsent,
-    addPendingAction,
-    getPendingAction,
-    removePendingAction,
     addImpliedConsent,
     getImpliedConsent,
     clearDatabase,
     updateUserState,
-    // FIX: Removed addFactHistory as it's handled by upsertFact
 } from './database.js';
 import {
     processUserMessage,
@@ -22,7 +18,8 @@ import {
     generateMediatedClarification,
 } from './agents.js';
 import { EventEmitter } from 'events';
-import { randomUUID } from 'crypto';
+// Import the new state manager
+import { createSharingConsentAction, handleUserResponseToAction } from './state_manager.js';
 
 export const events = new EventEmitter();
 events.on('clear_db', clearDatabase);
@@ -62,33 +59,34 @@ async function handleCommand(userId, message) {
     return { reply: `[System] Unknown command: ${command}` };
 }
 
-async function handlePendingAction(userId, message) {
-    const pendingAction = await getPendingAction(userId);
-    if (!pendingAction || pendingAction.state !== 'AWAITING_RESPONSE') return null;
+async function handleExplicitConsent(userId, message) {
+    const lowerCaseMessage = message.toLowerCase();
+    const shareKeywords = ['share', 'tell', 'update', 'send', 'doc'];
+    
+    if (shareKeywords.some(kw => lowerCaseMessage.includes(kw))) {
+        const targets = [];
+        if (lowerCaseMessage.includes('doctor') || lowerCaseMessage.includes('doc')) targets.push('doctor');
+        if (lowerCaseMessage.includes('caregiver') || lowerCaseMessage.includes('spouse')) targets.push('caregiver');
+        if (lowerCaseMessage.includes('patient')) targets.push('patient');
 
-    const positiveResponse = ['yes', 'yep', 'ok', 'okay', 'proceed', 'grant', 'granted', 'sure', 'do it'].includes(message.toLowerCase());
-    await removePendingAction(pendingAction.action_id);
-
-    if (positiveResponse) {
-        if (pendingAction.action_type === 'share_consent') {
-            const { originatingUser, target, originalMessage } = pendingAction.details;
-            
-            const topic = Object.keys(originalMessage.facts)[0] || 'general';
-            await addImpliedConsent(originatingUser, topic);
-            
-            const contextualMessage = await generateSharingSummaryOrProbe(originatingUser, target, originalMessage.message);
-            events.emit('broadcast', {
-                targetUsers: [target],
-                message: contextualMessage,
-                from: 'personal-agent'
-            });
-            return { reply: "[Personal Note] Thank you. I've shared that with them." };
+        if (targets.length > 0) {
+            console.log(`[Orchestrator] Detected explicit consent from ${userId} to share with: ${targets.join(', ')}`);
+            for (const target of targets) {
+                if (target === 'doctor') {
+                    await addEscalation('INFO', `User '${userId}' explicitly requested to share: "${message}"`);
+                    events.emit('escalate');
+                } else {
+                    const contextualMessage = await generateSharingSummaryOrProbe(userId, target, message);
+                    events.emit('broadcast', { targetUsers: [target], message: contextualMessage, from: 'personal-agent' });
+                }
+            }
+            events.emit('broadcast', { targetUsers: [userId], reply: "[Personal Note] I've shared the update as you requested.", from: 'personal-agent' });
+            return true;
         }
-    } else {
-        return { reply: "[Personal Note] Understood. I will not share it." };
     }
-    return null;
+    return false;
 }
+
 
 export async function handleMessage(userId, role, message) {
     if (message.startsWith('/')) {
@@ -97,30 +95,55 @@ export async function handleMessage(userId, role, message) {
         return;
     }
 
-    const pendingActionResponse = await handlePendingAction(userId, message);
-    if (pendingActionResponse) {
-        events.emit('broadcast', { targetUsers: [userId], reply: pendingActionResponse.reply, from: 'personal-agent' });
+    const wasHandledExplicitly = await handleExplicitConsent(userId, message);
+    if (wasHandledExplicitly) {
+        return;
+    }
+
+    const actionResult = await handleUserResponseToAction(userId, message);
+    if (actionResult) {
+        if (actionResult.action === 'execute') {
+            const { target, content_to_share, originatingUser } = actionResult.details;
+            if (target === 'doctor') {
+                await addEscalation('INFO', `User '${originatingUser}' consented to share: "${content_to_share}"`);
+                events.emit('escalate');
+            } else {
+                const contextualMessage = await generateSharingSummaryOrProbe(originatingUser, target, content_to_share);
+                events.emit('broadcast', { targetUsers: [target], message: contextualMessage, from: 'personal-agent' });
+            }
+        }
+        events.emit('broadcast', { targetUsers: [userId], reply: actionResult.reply, from: 'personal-agent' });
         return;
     }
     
     console.log(`[Orchestrator] Received message from '${userId}': '${message}'`);
-    const analysis = await processUserMessage(userId, role, message);
+    const analysis = await processUserMessage(userId, role, message, USER_ROLES);
     console.log(`[Orchestrator] Unified analysis complete:`, analysis);
 
     await addMessage(userId, role, message, analysis.privacyLevel, analysis.criticality);
+    
+    // ** FIX: Prioritize HIGH criticality above all else for safety **
+    if (analysis.criticality === 'HIGH') {
+        const criticalDetails = `User '${userId}' reported: "${message}"`;
+        await addEscalation('CRITICAL', criticalDetails);
+        events.emit('escalate');
+        // Override the AI's conversational reply with an action-oriented confirmation.
+        const confirmationReply = `This sounds serious. I have escalated this to the doctor immediately. ${analysis.reply}`;
+        events.emit('broadcast', { targetUsers: [userId], reply: confirmationReply, from: 'personal-agent' });
+        return; // Stop further processing to avoid asking for consent on an emergency.
+    }
+    
+    // If not critical, proceed with the normal conversational flow
     events.emit('broadcast', { targetUsers: [userId], reply: analysis.reply, from: 'personal-agent' });
     
-    // Update user's behavioral state if the AI detected a change
     if (analysis.state_update) {
         await updateUserState(userId, analysis.state_update);
         console.log(`[Orchestrator] State for '${userId}' updated:`, analysis.state_update);
     }
 
-    // Handle facts, conflicts, and temporal logging
     if (analysis.facts && Object.keys(analysis.facts).length > 0) {
         for (const [key, value] of Object.entries(analysis.facts)) {
             const lastFact = await getLastFact(key);
-            // This function now also writes to the fact_history table
             await upsertFact(key, userId, value);
 
             if (lastFact && lastFact.reported_by !== userId && String(lastFact.value) !== String(value)) {
@@ -140,13 +163,6 @@ export async function handleMessage(userId, role, message) {
         }
     }
 
-    // Handle Criticality & Sharing
-    if (analysis.criticality === 'HIGH') {
-        const criticalDetails = `User '${userId}' reported: "${message}"`;
-        await addEscalation('CRITICAL', criticalDetails);
-        events.emit('escalate');
-    }
-
     if (analysis.privacyLevel === 'PUBLIC') {
         const contextualMessage = await generateSharingSummaryOrProbe(userId, 'all', message);
         events.emit('broadcast', {
@@ -154,27 +170,33 @@ export async function handleMessage(userId, role, message) {
             message: contextualMessage,
             from: 'personal-agent'
         });
-    } else if (analysis.sharingSuggestion && analysis.sharingSuggestion.target) {
+    } else if (analysis.sharingSuggestion && analysis.sharingSuggestion.target && analysis.sharingSuggestion.content_to_share) {
+        const target = analysis.sharingSuggestion.target;
+        if (!USER_ROLES.includes(target)) {
+            console.log(`[Orchestrator] AI suggested sharing with invalid target '${target}'. Ignoring.`);
+            return;
+        }
+
         const topic = Object.keys(analysis.facts)[0] || 'general';
         const implied = await getImpliedConsent(userId, topic);
 
         if (implied) {
             console.log(`[Orchestrator] Implied consent found for topic '${topic}'. Sharing automatically.`);
-            const contextualMessage = await generateSharingSummaryOrProbe(userId, analysis.sharingSuggestion.target, message);
+            const contextualMessage = await generateSharingSummaryOrProbe(userId, target, analysis.sharingSuggestion.content_to_share);
             events.emit('broadcast', {
-                targetUsers: [analysis.sharingSuggestion.target],
+                targetUsers: [target],
                 message: contextualMessage,
                 from: 'personal-agent'
             });
         } else {
-             const actionId = randomUUID();
-             const request = await generateSharingRequest(analysis.sharingSuggestion.target, analysis.sharingSuggestion.reason);
-             await addPendingAction(actionId, userId, 'share_consent', {
+             const suggestion = {
                  originatingUser: userId,
-                 target: analysis.sharingSuggestion.target,
+                 target: target,
                  reason: analysis.sharingSuggestion.reason,
-                 originalMessage: { message, facts: analysis.facts || {} }
-             });
+                 content_to_share: analysis.sharingSuggestion.content_to_share,
+             };
+             await createSharingConsentAction(userId, suggestion);
+             const request = await generateSharingRequest(target, analysis.sharingSuggestion.reason, analysis.sharingSuggestion.content_to_share);
              events.emit('broadcast', { targetUsers: [userId], reply: request, from: 'personal-agent' });
         }
     }

@@ -5,10 +5,10 @@ import {
     PROMPT_SHARING_REQUEST,
     PROMPT_MEDIATED_CLARIFICATION,
     PROMPT_RELATIONSHIP_ANALYSIS,
-    PROMPT_SHARING_SUMMARY
+    PROMPT_SHARING_SUMMARY,
+    PROMPT_INTENT_CLASSIFICATION, // Import the new prompt
 } from './prompts.js';
 import { getRecentMessages, getUserState, getFactHistory } from './database.js';
-// FIX: Use named imports for the behavioral models, which now correctly matches the export style.
 import { STAGES_OF_CHANGE, COPING_STYLES } from './behavioral_models.js';
 
 
@@ -91,7 +91,16 @@ async function makeApiCall(prompt, history = []) {
     };
 }
 
-export async function processUserMessage(userId, role, message) {
+// ** FIX: This new agent classifies user intent to solve the "I can't" bug **
+export async function classifyUserIntent(message, context) {
+    const prompt = PROMPT_INTENT_CLASSIFICATION
+        .replace('{{USER_MESSAGE}}', message)
+        .replace('{{CONTEXT}}', context);
+    return makeApiCall(prompt);
+}
+
+
+export async function processUserMessage(userId, role, message, careCircleMembers) {
     const history = await getRecentMessages(userId, 5);
     const historyText = history.map(h => `${h.user_id}: ${h.message}`);
     const currentState = await getUserState(userId);
@@ -103,7 +112,9 @@ export async function processUserMessage(userId, role, message) {
     };
 
     const prompt = PROMPT_UNIFIED_AGENT
+        .replace('{{USER_ID}}', userId)
         .replace('{{ROLE}}', role)
+        .replace('{{CARE_CIRCLE_MEMBERS}}', careCircleMembers.join(', '))
         .replace('{{MESSAGE}}', message)
         .replace('{{USER_STATE}}', JSON.stringify(currentState, null, 2))
         .replace('{{FACT_HISTORY}}', JSON.stringify(factHistory, null, 2))
@@ -112,10 +123,11 @@ export async function processUserMessage(userId, role, message) {
     return makeApiCall(prompt, historyText);
 }
 
-export async function generateSharingRequest(target, reason) {
+export async function generateSharingRequest(target, reason, contentToShare) {
     const prompt = PROMPT_SHARING_REQUEST
         .replace('{{TARGET}}', target)
-        .replace('{{REASON}}', reason);
+        .replace('{{REASON}}', reason)
+        .replace('{{CONTENT_TO_SHARE}}', contentToShare);
     const result = await makeApiCall(prompt);
     return result.reply;
 }
