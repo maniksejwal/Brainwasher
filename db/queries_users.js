@@ -1,0 +1,78 @@
+import { getDb } from './connection.js';
+
+export async function findUserByUsername(username) {
+    const db = await getDb();
+    return db.get('SELECT * FROM users WHERE username = ?', [username]);
+}
+
+// ** FIX: Added new function to find a user by their UUID **
+export async function findUserById(userId) {
+    const db = await getDb();
+    return db.get('SELECT * FROM users WHERE user_id = ?', [userId]);
+}
+
+export async function findCircleByPatientId(patientId) {
+    const db = await getDb();
+    return db.get('SELECT * FROM care_circles WHERE primary_patient_id = ?', [patientId]);
+}
+
+export async function addUser(userId, username) {
+    const db = await getDb();
+    await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', [userId, username, Date.now()]);
+}
+
+export async function createCareCircle(circleId, patientId) {
+    const db = await getDb();
+    await db.run('INSERT OR IGNORE INTO care_circles (circle_id, primary_patient_id, created_at) VALUES (?, ?, ?)', [circleId, patientId, Date.now()]);
+    await addMemberToCircle(circleId, patientId, 'patient', 'self');
+}
+
+export async function addMemberToCircle(circleId, userId, role, relationship) {
+    const db = await getDb();
+    const defaultState = JSON.stringify({ state: 'IDLE' });
+    await db.run(
+        'INSERT OR IGNORE INTO care_circle_members (circle_id, user_id, role, relationship_type, session_state) VALUES (?, ?, ?, ?, ?)',
+        [circleId, userId, role, relationship, defaultState]
+    );
+}
+
+export async function getMemberInfo(userId, circleId) {
+    const db = await getDb();
+    return db.get('SELECT * FROM care_circle_members WHERE user_id = ? AND circle_id = ?', [userId, circleId]);
+}
+
+export async function getCircleMembers(circleId) {
+    const db = await getDb();
+    return db.all(`
+        SELECT m.user_id, m.role, m.relationship_type, m.consent_level, u.username
+        FROM care_circle_members m
+        JOIN users u ON m.user_id = u.user_id
+        WHERE m.circle_id = ?
+    `, [circleId]);
+}
+
+export async function getUserCircles(userId) {
+    const db = await getDb();
+    return db.all(`
+        SELECT c.circle_id, c.primary_patient_id, p.username as patient_username
+        FROM care_circle_members m
+        JOIN care_circles c ON m.circle_id = c.circle_id
+        JOIN users p ON c.primary_patient_id = p.user_id
+        WHERE m.user_id = ?
+    `, [userId]);
+}
+
+export async function updateUserState(userId, circleId, newState) {
+    const db = await getDb();
+    const currentStateRaw = await db.get('SELECT session_state FROM care_circle_members WHERE user_id = ? AND circle_id = ?', [userId, circleId]);
+    const currentState = currentStateRaw ? JSON.parse(currentStateRaw.session_state) : {};
+    const updatedState = { ...currentState, ...newState };
+    await db.run('UPDATE care_circle_members SET session_state = ? WHERE user_id = ? AND circle_id = ?', [JSON.stringify(updatedState), userId, circleId]);
+}
+
+export async function getUserState(userId, circleId) {
+    const db = await getDb();
+    const row = await db.get('SELECT session_state FROM care_circle_members WHERE user_id = ? AND circle_id = ?', [userId, circleId]);
+    return row ? JSON.parse(row.session_state) : { state: 'IDLE' };
+}
+

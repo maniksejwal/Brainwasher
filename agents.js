@@ -6,9 +6,10 @@ import {
     PROMPT_MEDIATED_CLARIFICATION,
     PROMPT_RELATIONSHIP_ANALYSIS,
     PROMPT_SHARING_SUMMARY,
-    PROMPT_INTENT_CLASSIFICATION, // Import the new prompt
+    PROMPT_INTENT_CLASSIFICATION,
 } from './prompts.js';
-import { getRecentMessages, getUserState, getFactHistory } from './database.js';
+// FIX: Update import path to the new db package index
+import { getRecentMessages, getUserState, getFactHistory } from './db/index.js';
 import { STAGES_OF_CHANGE, COPING_STYLES } from './behavioral_models.js';
 
 
@@ -91,7 +92,6 @@ async function makeApiCall(prompt, history = []) {
     };
 }
 
-// ** FIX: This new agent classifies user intent to solve the "I can't" bug **
 export async function classifyUserIntent(message, context) {
     const prompt = PROMPT_INTENT_CLASSIFICATION
         .replace('{{USER_MESSAGE}}', message)
@@ -101,10 +101,10 @@ export async function classifyUserIntent(message, context) {
 
 
 export async function processUserMessage(userId, role, message, careCircleMembers) {
-    const history = await getRecentMessages(userId, 5);
+    const history = await getRecentMessages(userId, 5); // This needs circleId
     const historyText = history.map(h => `${h.user_id}: ${h.message}`);
-    const currentState = await getUserState(userId);
-    const factHistory = await getFactHistory('all', 10);
+    const currentState = await getUserState(userId); // This needs circleId
+    const factHistory = await getFactHistory('all', 10); // This needs circleId
 
     const behavioralModels = {
         stages_of_change: STAGES_OF_CHANGE,
