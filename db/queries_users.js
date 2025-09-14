@@ -1,3 +1,8 @@
+/**
+ * @fileoverview This file contains all database query functions related to users and care circles.
+ * It handles creating, finding, and managing user accounts and their memberships in various circles.
+ */
+
 import { getDb } from './connection.js';
 
 export async function findUserByUsername(username) {
@@ -5,7 +10,6 @@ export async function findUserByUsername(username) {
     return db.get('SELECT * FROM users WHERE username = ?', [username]);
 }
 
-// ** FIX: Added new function to find a user by their UUID **
 export async function findUserById(userId) {
     const db = await getDb();
     return db.get('SELECT * FROM users WHERE user_id = ?', [userId]);

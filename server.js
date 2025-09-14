@@ -1,6 +1,12 @@
+/**
+ * @fileoverview The main Express.js server for the application.
+ * This file sets up all API endpoints, manages real-time client connections
+ * using Server-Sent Events (SSE), and dispatches requests to the orchestrator.
+ */
+
 import express from 'express';
-// FIX: Update import path to the new db package index
-import { initializeDatabase, getUnreadEscalations } from './db/index.js';
+// FIX: Import the correct function
+import { initializeDatabase, getUnreadEscalationsForUser } from './db/index.js';
 import { handleLogin, handleMessage, handleCommand, events } from './orchestrator.js';
 import config from './config.js';
 
@@ -52,8 +58,10 @@ events.on('escalate', (payload) => {
     });
 });
 
-app.get('/doctor/escalations/unread', async (req, res) => {
-    const escalations = await getUnreadEscalations();
+// FIX: Update endpoint to be user-specific for security and correctness
+app.get('/doctor/escalations/unread/:userId', async (req, res) => {
+    const { userId } = req.params;
+    const escalations = await getUnreadEscalationsForUser(userId);
     res.status(200).json(escalations);
 });
 

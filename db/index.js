@@ -8,7 +8,7 @@
 import { initializeDatabase, clearDatabase } from './schema.js';
 import {
     findUserByUsername,
-    findUserById, // FIX: Added the missing function to the import list
+    findUserById,
     findCircleByPatientId,
     addUser,
     createCareCircle,
@@ -28,12 +28,16 @@ import {
 } from './queries_messages.js';
 import {
     addEscalation,
-    getUnreadEscalations,
+    getUnreadEscalationsForCircle,
+    getUnreadEscalationsForUser, // FIX: Export the new function
+    markCircleEscalationsAsRead,
+    addDirective,
     updateMemberConsent,
     addImpliedConsent,
     getImpliedConsent,
     addPendingAction,
     getPendingAction,
+    getActivePendingActions,
     removePendingAction
 } from './queries_actions.js';
 
@@ -41,7 +45,7 @@ export {
     initializeDatabase,
     clearDatabase,
     findUserByUsername,
-    findUserById, // FIX: Added the missing function to the export list
+    findUserById,
     findCircleByPatientId,
     addUser,
     createCareCircle,
@@ -57,12 +61,16 @@ export {
     getLastFact,
     getFactHistory,
     addEscalation,
-    getUnreadEscalations,
+    getUnreadEscalationsForCircle,
+    getUnreadEscalationsForUser, // FIX: Export the new function
+    markCircleEscalationsAsRead,
+    addDirective,
     updateMemberConsent,
     addImpliedConsent,
     getImpliedConsent,
     addPendingAction,
     getPendingAction,
+    getActivePendingActions,
     removePendingAction
 };
 

@@ -1,3 +1,9 @@
+/**
+ * @fileoverview This file contains all database query functions related to actions,
+ * consent, and escalations. It manages the logic for creating and resolving
+ * pending actions, setting consent levels, and logging critical events for doctors.
+ */
+
 import { getDb } from './connection.js';
 
 export async function addEscalation(circleId, type, details) {
@@ -5,14 +11,37 @@ export async function addEscalation(circleId, type, details) {
     await db.run('INSERT INTO escalations (circle_id, type, details, timestamp) VALUES (?, ?, ?, ?)', [circleId, type, details, Date.now()]);
 }
 
-export async function getUnreadEscalations() {
+export async function getUnreadEscalationsForCircle(circleId) {
     const db = await getDb();
-    const escalations = await db.all('SELECT * FROM escalations WHERE is_read = 0 ORDER BY timestamp ASC');
-    if (escalations.length > 0) {
-        const ids = escalations.map(e => e.escalation_id);
-        await db.run(`UPDATE escalations SET is_read = 1 WHERE escalation_id IN (${ids.join(',')})`);
-    }
+    return db.all('SELECT * FROM escalations WHERE circle_id = ? AND is_read = 0 ORDER BY timestamp ASC', [circleId]);
+}
+
+// FIX: New function to get all unread escalations for a doctor across all their circles.
+export async function getUnreadEscalationsForUser(userId) {
+    const db = await getDb();
+    // This query finds all circles where the user is a doctor, then gets unread escalations for those circles.
+    const escalations = await db.all(`
+        SELECT e.*, p.username as patient_username
+        FROM escalations e
+        JOIN care_circle_members m ON e.circle_id = m.circle_id
+        JOIN care_circles c ON e.circle_id = c.circle_id
+        JOIN users p ON c.primary_patient_id = p.user_id
+        WHERE m.user_id = ? AND m.role = 'doctor' AND e.is_read = 0
+        ORDER BY e.timestamp ASC
+    `, [userId]);
+    
     return escalations;
+}
+
+export async function markCircleEscalationsAsRead(circleId) {
+    const db = await getDb();
+    await db.run('UPDATE escalations SET is_read = 1 WHERE circle_id = ?', [circleId]);
+}
+
+
+export async function addDirective(circleId, doctorId, type, details) {
+    const db = await getDb();
+    await db.run('INSERT INTO directives (circle_id, doctor_id, type, details, timestamp) VALUES (?, ?, ?, ?, ?)', [circleId, doctorId, type, details, Date.now()]);
 }
 
 export async function updateMemberConsent(circleId, targetUserId, consentLevel) {
@@ -49,7 +78,18 @@ export async function getPendingAction(actionId) {
     return row;
 }
 
+export async function getActivePendingActions(userId, circleId) {
+    const db = await getDb();
+    const rows = await db.all('SELECT * FROM pending_actions WHERE user_id = ? AND circle_id = ? ORDER BY created_at ASC', [userId, circleId]);
+    return rows.map(row => {
+        row.details = JSON.parse(row.details);
+        return row;
+    });
+}
+
+
 export async function removePendingAction(actionId) {
     const db = await getDb();
     await db.run('DELETE FROM pending_actions WHERE action_id = ?', [actionId]);
 }
+
