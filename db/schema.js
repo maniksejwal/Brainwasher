@@ -1,3 +1,11 @@
+/**
+ * @fileoverview Defines the database schema and provides initialization functions.
+ * This module is responsible for creating all the necessary tables and ensuring
+ * the database is ready for use when the application starts. The schema is designed
+ * to support the Reciprocal Care Circles architecture, with distinct tables for
+ * users, circles, memberships, messages, facts, and various action types.
+ */
+
 import { getDb } from './connection.js';
 
 export async function initializeDatabase() {
@@ -5,6 +13,7 @@ export async function initializeDatabase() {
     await db.exec(`
         PRAGMA journal_mode = WAL;
         PRAGMA foreign_keys = ON;
+
         CREATE TABLE IF NOT EXISTS users ( user_id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL );
         CREATE TABLE IF NOT EXISTS care_circles ( circle_id TEXT PRIMARY KEY, primary_patient_id TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY (primary_patient_id) REFERENCES users(user_id) );
         CREATE TABLE IF NOT EXISTS care_circle_members ( member_id INTEGER PRIMARY KEY AUTOINCREMENT, circle_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, relationship_type TEXT, consent_level TEXT DEFAULT 'none', session_state TEXT, UNIQUE(circle_id, user_id), FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id), FOREIGN KEY (user_id) REFERENCES users(user_id) );
@@ -12,13 +21,12 @@ export async function initializeDatabase() {
         CREATE TABLE IF NOT EXISTS facts ( fact_key TEXT NOT NULL, circle_id TEXT NOT NULL, reported_by TEXT NOT NULL, value TEXT, timestamp INTEGER NOT NULL, UNIQUE(fact_key, circle_id, reported_by) );
         CREATE TABLE IF NOT EXISTS fact_history ( history_id INTEGER PRIMARY KEY AUTOINCREMENT, fact_key TEXT NOT NULL, circle_id TEXT NOT NULL, reported_by TEXT NOT NULL, value TEXT, timestamp INTEGER NOT NULL );
         CREATE TABLE IF NOT EXISTS escalations ( escalation_id INTEGER PRIMARY KEY AUTOINCREMENT, circle_id TEXT NOT NULL, type TEXT NOT NULL, details TEXT NOT NULL, timestamp INTEGER NOT NULL, is_read INTEGER DEFAULT 0 );
-        
-        -- NEW: Table for confidential doctor directives and notes
+
         CREATE TABLE IF NOT EXISTS directives (
             directive_id INTEGER PRIMARY KEY AUTOINCREMENT,
             circle_id TEXT NOT NULL,
             doctor_id TEXT NOT NULL,
-            type TEXT NOT NULL, -- 'confidential_note', 'order_test', etc.
+            type TEXT NOT NULL,
             details TEXT NOT NULL,
             timestamp INTEGER NOT NULL,
             is_acknowledged INTEGER DEFAULT 0,

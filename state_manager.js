@@ -6,69 +6,66 @@
 import {
     addPendingAction,
     removePendingAction,
-    updateUserState,
-    getActivePendingActions // Use the new function to get the whole stack
+    getActivePendingActions,
+    addMessage,
+    findUserById
 } from './db/index.js';
 import { randomUUID } from 'crypto';
 import { classifyUserIntent, matchResponseToAction } from './agents/index.js';
 
-/**
- * Creates a new pending action and adds it to the user's stack.
- */
-export async function createSharingConsentAction(userId, circleId, sharingSuggestion) {
+export async function createSharingConsentAction(userId, circleId, suggestion, actionType = 'share_consent') {
     const actionId = randomUUID();
-    await addPendingAction(actionId, circleId, userId, 'share_consent', sharingSuggestion);
-    // We no longer need to manage a single state in the user table, the presence
-    // of items in the pending_actions table IS the state.
+    await addPendingAction(actionId, circleId, userId, actionType, suggestion);
     return actionId;
 }
 
-/**
- * Handles a user's response by checking it against a stack of pending actions.
- */
 export async function handleUserResponseToAction(userId, circleId, message) {
     const pendingActions = await getActivePendingActions(userId, circleId);
-
-    // If there are no pending actions, there's nothing to do.
     if (pendingActions.length === 0) {
         return null;
     }
 
-    // Use the new AI agent to match the response to a specific pending action
     const matchResult = await matchResponseToAction(message, pendingActions);
-
     if (!matchResult || !matchResult.matched_action_id) {
-        // The user's message is not a direct reply to any pending question.
         return null;
     }
 
     const matchedAction = pendingActions.find(a => a.action_id === matchResult.matched_action_id);
     if (!matchedAction) {
-        // This should rarely happen, but it's a good safeguard.
         return null;
     }
 
-    // Now, classify the intent of the message for the matched action.
     const intent = await classifyUserIntent(message, matchedAction.details.reason);
-
     if (intent.intent === 'UNCLEAR') {
-        // Let the main agent handle the clarification. Don't resolve the action yet.
         return null;
     }
 
-    // If intent is clear, resolve the action by removing it from the stack.
     await removePendingAction(matchedAction.action_id);
 
     if (intent.intent === 'CONSENT_GRANTED') {
-        return {
-            action: 'execute',
-            details: matchedAction.details,
-            reply: "[Personal Note] Thank you. I've acted on your request."
-        };
+        // NEW: Handle the specific action for an implied context switch.
+        if (matchedAction.action_type === 'implied_switch_consent') {
+            const { originatingUser, originalMessage, targetCircleId, targetPatientUsername } = matchedAction.details;
+            const originatingUserInfo = await findUserById(originatingUser);
+            // This is the core action: log the original message into the TARGET circle.
+            await addMessage(targetCircleId, originatingUser, 'contextual_note', `(Regarding ${targetPatientUsername}): ${originalMessage}`, 'PRIVATE', 'NONE');
+            console.log(`[StateManager] Logged message from ${originatingUserInfo.username} into circle ${targetCircleId}`);
+            return {
+                action: 'execute',
+                details: null, // The action is self-contained, no further details needed for the handler.
+                reply: `[Personal Note] Thank you. I've logged that note in ${targetPatientUsername}'s circle.`
+            };
+        } else { // Default 'share_consent'
+            return {
+                action: 'execute',
+                details: matchedAction.details,
+                reply: "[Personal Note] Thank you. I've acted on your request."
+            };
+        }
     } else { // CONSENT_DENIED
         return {
             action: 'cancel',
-            reply: "[Personal Note] Understood. I will not share it."
+            reply: "[Personal Note] Understood. I will not log it."
         };
     }
 }

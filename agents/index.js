@@ -4,7 +4,7 @@
  * them, so other modules can import all agent functions from a single place.
  */
 
-import { processUserMessage } from './unifiedAgent.js';
+import { processUserMessage, performContextEnrichment } from './unifiedAgent.js';
 import { generateDoctorSummary, generateDelegatedProbe } from './doctorAgent.js';
 import {
     classifyUserIntent,
@@ -17,6 +17,7 @@ import { matchResponseToAction } from './stateAgent.js';
 
 export {
     processUserMessage,
+    performContextEnrichment, // NEW
     generateDoctorSummary,
     generateDelegatedProbe,
     classifyUserIntent,

@@ -7,7 +7,6 @@ import { makeApiCall } from './api_client.js';
 import { PROMPT_RESPONSE_MATCHER } from '../prompts/state_agent_prompts.js';
 
 export async function matchResponseToAction(userMessage, pendingActions) {
-    // Format the pending actions for the prompt
     const actionList = pendingActions.map(action =>
         `- ID: ${action.action_id}, Question: ${action.details.reason || 'General inquiry'}`
     ).join('\n');
@@ -16,5 +15,7 @@ export async function matchResponseToAction(userMessage, pendingActions) {
         .replace('{{PENDING_ACTIONS}}', actionList)
         .replace('{{USER_MESSAGE}}', userMessage);
 
-    return makeApiCall(prompt);
+    // FIX: This agent expects a JSON response
+    return makeApiCall(prompt, [], true);
 }
+

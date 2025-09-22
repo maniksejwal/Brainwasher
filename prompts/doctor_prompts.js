@@ -17,6 +17,7 @@ Generate a natural language summary. For example:
 "Summary for patient {{PATIENT_USERNAME}}: There are 2 new critical alerts regarding chest pain and a potential fall. The main point of conflict is medication adherence. Recent conversation suggests the patient is in the 'Contemplation' stage."
 `;
 
+// NEW: Prompt for generating a natural question based on the doctor's topic.
 export const PROMPT_DELEGATED_PROBE = `
 You are a personal AI assistant. The doctor has asked you to inquire about a specific topic with a user.
 Your task is to rephrase the doctor's clinical request into a natural, gentle, and open-ended question for the user.

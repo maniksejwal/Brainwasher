@@ -15,7 +15,8 @@ export async function generateDoctorSummary(patientUsername, escalations, conver
         .replace('{{ESCALATIONS}}', escalationText)
         .replace('{{CONVERSATION_LOG}}', logText);
     
-    const result = await makeApiCall(prompt);
+    // FIX: This agent does NOT expect a JSON response
+    const result = await makeApiCall(prompt, [], false);
     return result.reply;
 }
 
@@ -24,6 +25,8 @@ export async function generateDelegatedProbe(targetUser, topic) {
         .replace('{{TARGET_USER}}', targetUser)
         .replace('{{TOPIC}}', topic);
     
-    const result = await makeApiCall(prompt);
+    // FIX: This agent does NOT expect a JSON response
+    const result = await makeApiCall(prompt, [], false);
     return result.reply;
 }
+

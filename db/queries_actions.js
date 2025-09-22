@@ -2,6 +2,7 @@
  * @fileoverview This file contains all database query functions related to actions,
  * consent, and escalations. It manages the logic for creating and resolving
  * pending actions, setting consent levels, and logging critical events for doctors.
+ * This includes confidential directives and managing the read/unread status of alerts.
  */
 
 import { getDb } from './connection.js';
@@ -16,10 +17,8 @@ export async function getUnreadEscalationsForCircle(circleId) {
     return db.all('SELECT * FROM escalations WHERE circle_id = ? AND is_read = 0 ORDER BY timestamp ASC', [circleId]);
 }
 
-// FIX: New function to get all unread escalations for a doctor across all their circles.
 export async function getUnreadEscalationsForUser(userId) {
     const db = await getDb();
-    // This query finds all circles where the user is a doctor, then gets unread escalations for those circles.
     const escalations = await db.all(`
         SELECT e.*, p.username as patient_username
         FROM escalations e
@@ -37,7 +36,6 @@ export async function markCircleEscalationsAsRead(circleId) {
     const db = await getDb();
     await db.run('UPDATE escalations SET is_read = 1 WHERE circle_id = ?', [circleId]);
 }
-
 
 export async function addDirective(circleId, doctorId, type, details) {
     const db = await getDb();
@@ -69,15 +67,7 @@ export async function addPendingAction(actionId, circleId, userId, actionType, d
     await db.run('INSERT INTO pending_actions (action_id, circle_id, user_id, action_type, details, created_at) VALUES (?, ?, ?, ?, ?, ?)', [actionId, circleId, userId, actionType, detailsJson, Date.now()]);
 }
 
-export async function getPendingAction(actionId) {
-    const db = await getDb();
-    const row = await db.get('SELECT * FROM pending_actions WHERE action_id = ?', [actionId]);
-    if (row) {
-        row.details = JSON.parse(row.details);
-    }
-    return row;
-}
-
+// FIX: Removed the duplicate declaration of this function.
 export async function getActivePendingActions(userId, circleId) {
     const db = await getDb();
     const rows = await db.all('SELECT * FROM pending_actions WHERE user_id = ? AND circle_id = ? ORDER BY created_at ASC', [userId, circleId]);
@@ -87,6 +77,14 @@ export async function getActivePendingActions(userId, circleId) {
     });
 }
 
+export async function getPendingAction(actionId) {
+    const db = await getDb();
+    const row = await db.get('SELECT * FROM pending_actions WHERE action_id = ?', [actionId]);
+    if (row) {
+        row.details = JSON.parse(row.details);
+    }
+    return row;
+}
 
 export async function removePendingAction(actionId) {
     const db = await getDb();

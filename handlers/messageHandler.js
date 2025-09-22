@@ -1,31 +1,52 @@
 /**
- * @fileoverview Handles all regular user messages (non-commands).
- * This is the core logic for AI analysis, conflict detection, consent checks,
- * and broadcasting replies and updates.
+ * @fileoverview The main dispatcher for handling all regular user messages (non-commands).
+ * This module follows a clear "chain of thought" to process incoming messages,
+ * including entity resolution and implied context switching.
  */
 
-import chalk from 'chalk';
-import {
-    addMessage,
-    updateUserState,
-    upsertFact,
-    getLastFact,
-    addEscalation,
-    getImpliedConsent,
-    addImpliedConsent,
-    getMemberInfo,
-    getCircleMembers,
-    findUserByUsername,
-    findUserById
-} from '../db/index.js';
-import {
-    processUserMessage,
-    generateSharingRequest,
-    generateSharingSummaryOrProbe,
-    generateMediatedClarification,
-} from '../agents/index.js';
-import { createSharingConsentAction, handleUserResponseToAction } from '../state_manager.js';
+import { getMemberInfo, findUserById, findCircleByPatientId, findCircleByPatientUsername } from '../db/index.js';
+import { performAiAnalysis } from './message_logic/aiAnalysisHandler.js';
+import { handleFactProcessing } from './message_logic/conflictHandler.js';
+import { handleSharingAndEscalation } from './message_logic/sharingHandler.js';
+import { handlePendingActionResponse } from './message_logic/actionResponseHandler.js';
+import { createSharingConsentAction } from '../state_manager.js';
 import { events } from '../orchestrator.js';
+
+// This function checks if a message is about another user and initiates the context switch flow.
+async function handleImpliedContextSwitch(userId, circleId, message, analysis) {
+    if (!analysis.mentioned_usernames || analysis.mentioned_usernames.length === 0) {
+        return false;
+    }
+
+    const currentUser = await findUserById(userId);
+    const currentCircle = await findCircleByPatientId(circleId);
+    if (!currentCircle || !currentUser) return false;
+    const currentPatient = await findUserById(currentCircle.primary_patient_id);
+
+    for (const username of analysis.mentioned_usernames) {
+        if (username === currentUser.username || username === currentPatient.username) {
+            continue;
+        }
+
+        const targetCircle = await findCircleByPatientUsername(username);
+        if (targetCircle) {
+            const memberInfo = await getMemberInfo(userId, targetCircle.circle_id);
+            if (memberInfo) {
+                const suggestion = {
+                    originatingUser: userId,
+                    originalMessage: message,
+                    targetCircleId: targetCircle.circle_id,
+                    targetPatientUsername: username
+                };
+                await createSharingConsentAction(userId, circleId, suggestion, 'implied_switch_consent');
+                const request = `This message seems to be about ${username}. Is it okay if I log it in their care circle for context? You can reply with /yes or /no.`;
+                events.emit('broadcast', { targetUsers: [userId], reply: request, from: 'personal-agent', circleId, patientUsername: currentPatient.username });
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 export async function handleMessage(userId, circleId, message) {
     const memberInfo = await getMemberInfo(userId, circleId);
@@ -34,96 +55,27 @@ export async function handleMessage(userId, circleId, message) {
         return;
     }
 
-    const role = memberInfo.role;
+    // ** FIX: Re-architected Chain of Thought **
 
-    const actionResult = await handleUserResponseToAction(userId, circleId, message);
-    if (actionResult) {
-        if (actionResult.action === 'execute') {
-            const { target, content_to_share, originatingUser } = actionResult.details;
-            
-            if (target === 'doctor') {
-                await addEscalation(circleId, 'INFO', `User with ID '${originatingUser}' consented to share: "${content_to_share}"`);
-                events.emit('escalate', { circleId });
-            } else {
-                const targetUserInfo = await findUserByUsername(target);
-                if (targetUserInfo) {
-                    const contextualMessage = await generateSharingSummaryOrProbe(originatingUser, target, content_to_share);
-                    events.emit('broadcast', { targetUsers: [targetUserInfo.user_id], message: contextualMessage, from: 'personal-agent', circleId });
-                }
-            }
-        }
-        events.emit('broadcast', { targetUsers: [userId], reply: actionResult.reply, from: 'personal-agent', circleId });
-        return;
+    // Step 1: Handle any pending user actions (like responding to a consent request).
+    const wasActionHandled = await handlePendingActionResponse(userId, circleId, message);
+    if (wasActionHandled) {
+        return; // If the user's message was a response, our work is done.
     }
 
-    console.log(`[MessageHandler] Processing message from '${userId}' in circle '${circleId}'`);
+    // Step 2: If it's a new message, perform the full AI analysis.
+    const analysis = await performAiAnalysis(userId, memberInfo.role, message, circleId);
 
-    const members = await getCircleMembers(circleId);
-    const memberRoles = members.map(m => m.role);
-
-    const analysis = await processUserMessage(userId, role, message, memberRoles, circleId);
-    console.log(`[MessageHandler] Unified analysis complete for circle ${circleId}:`, analysis);
-
-    await addMessage(circleId, userId, role, message, analysis.privacyLevel, analysis.criticality);
-    events.emit('broadcast', { targetUsers: [userId], reply: analysis.reply, from: 'personal-agent', circleId });
-
-    if (analysis.state_update) {
-        await updateUserState(userId, circleId, analysis.state_update);
-        console.log(`[MessageHandler] State for '${userId}' in circle '${circleId}' updated:`, analysis.state_update);
+    // Step 3: Check for Implied Context Switching. This must happen BEFORE escalation.
+    const wasImpliedSwitchHandled = await handleImpliedContextSwitch(userId, circleId, message, analysis);
+    if (wasImpliedSwitchHandled) {
+        return; // Stop processing in the current circle if we've asked for a context switch.
     }
+    
+    // Step 4: If no context switch, proceed with fact processing and conflict detection.
+    await handleFactProcessing(userId, circleId, analysis);
 
-    if (analysis.facts && Object.keys(analysis.facts).length > 0) {
-        for (const [key, value] of Object.entries(analysis.facts)) {
-            const lastFact = await getLastFact(circleId, key);
-            await upsertFact(circleId, key, userId, value);
-
-            if (lastFact && lastFact.reported_by !== userId && String(lastFact.value) !== String(value)) {
-                console.log(chalk.yellow.bold(`[MessageHandler] CONFLICT DETECTED in circle ${circleId} on '${key}'`));
-                const conflictDetails = `Reports on '${key}' are conflicting.`;
-                await addEscalation(circleId, 'CONFLICT', conflictDetails);
-                events.emit('escalate', { circleId });
-
-                const otherMember = await getMemberInfo(lastFact.reported_by, circleId);
-                if (otherMember) {
-                    const otherUser = await findUserById(otherMember.user_id);
-                    const clarificationQuestion = await generateMediatedClarification(otherUser.username, key);
-                    events.emit('broadcast', { targetUsers: [otherMember.user_id], message: clarificationQuestion, from: 'personal-agent', circleId });
-                }
-            }
-        }
-    }
-
-    if (analysis.criticality === 'HIGH') {
-        const criticalDetails = `User '${userId}' (${role}) reported: "${message}"`;
-        await addEscalation(circleId, 'CRITICAL', criticalDetails);
-        events.emit('escalate', { circleId });
-        const confirmationReply = `This sounds serious. I have escalated this to the doctor immediately. ${analysis.reply}`;
-        events.emit('broadcast', { targetUsers: [userId], reply: confirmationReply, from: 'personal-agent', circleId });
-        return;
-    }
-
-    if (analysis.sharingSuggestion && analysis.sharingSuggestion.target && analysis.sharingSuggestion.content_to_share) {
-        const targetRole = analysis.sharingSuggestion.target;
-        const targetMember = members.find(m => m.role === targetRole && m.user_id !== userId);
-
-        if (!targetMember) {
-            console.log(`[MessageHandler] AI suggested sharing with role '${targetRole}' but no such member found.`);
-            return;
-        }
-
-        const topic = Object.keys(analysis.facts)[0] || 'general';
-        const implied = await getImpliedConsent(userId, circleId, topic);
-
-        if (implied || targetMember.consent_level === 'full') {
-            console.log(`[MessageHandler] Sharing with ${targetMember.username} based on consent.`);
-            const contextualMessage = await generateSharingSummaryOrProbe(userId, targetMember.username, analysis.sharingSuggestion.content_to_share);
-            events.emit('broadcast', { targetUsers: [targetMember.user_id], message: contextualMessage, from: 'personal-agent', circleId });
-        } else {
-            const suggestion = { originatingUser: userId, target: targetMember.username, ...analysis.sharingSuggestion };
-            await createSharingConsentAction(userId, circleId, suggestion);
-            const request = await generateSharingRequest(targetRole, analysis.sharingSuggestion.reason, analysis.sharingSuggestion.content_to_share);
-            events.emit('broadcast', { targetUsers: [userId], reply: request, from: 'personal-agent', circleId });
-        }
-    }
+    // Step 5: Finally, handle escalations and proactive sharing suggestions.
+    await handleSharingAndEscalation(userId, memberInfo.role, message, circleId, analysis);
 }
 

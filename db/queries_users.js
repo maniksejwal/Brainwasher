@@ -1,5 +1,6 @@
 /**
- * @fileoverview This file contains all database query functions related to users and care circles.
+ * @fileoverview db/queries_users.js
+ * This file contains all database query functions related to users and care circles.
  * It handles creating, finding, and managing user accounts and their memberships in various circles.
  */
 
@@ -20,6 +21,14 @@ export async function findCircleByPatientId(patientId) {
     return db.get('SELECT * FROM care_circles WHERE primary_patient_id = ?', [patientId]);
 }
 
+export async function findCircleByPatientUsername(patientUsername) {
+    const db = await getDb();
+    const patient = await findUserByUsername(patientUsername);
+    if (!patient) return null;
+    return findCircleByPatientId(patient.user_id);
+}
+
+
 export async function addUser(userId, username) {
     const db = await getDb();
     await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', [userId, username, Date.now()]);
@@ -39,6 +48,18 @@ export async function addMemberToCircle(circleId, userId, role, relationship) {
         [circleId, userId, role, relationship, defaultState]
     );
 }
+
+export async function updateMemberRelationship(circleId, userId, relationship) {
+    const db = await getDb();
+    await db.run('UPDATE care_circle_members SET relationship_type = ? WHERE circle_id = ? AND user_id = ?', [relationship, circleId, userId]);
+}
+
+// NEW: Function to update a member's role in a circle.
+export async function updateMemberRole(circleId, userId, newRole) {
+    const db = await getDb();
+    await db.run('UPDATE care_circle_members SET role = ? WHERE circle_id = ? AND user_id = ?', [newRole, circleId, userId]);
+}
+
 
 export async function getMemberInfo(userId, circleId) {
     const db = await getDb();

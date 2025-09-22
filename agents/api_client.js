@@ -1,73 +1,99 @@
 /**
  * @fileoverview This module is the central client for all interactions with the
- * external Gemini API. It manages API key rotation and implements a robust
- * retry mechanism with exponential backoff to handle transient server errors.
+ * external LLM APIs. It supports both Google Gemini and OpenAI GPT, defaulting to
+ * OpenAI if a key is provided. It manages API key rotation and implements a robust
+ * retry mechanism.
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import OpenAI from 'openai';
 import config from '../config.js';
 
-let genAIs = [];
+let geminiClients = [];
+let openAIClient;
+let useOpenAI = false;
 
-if (config.API_KEYS && config.API_KEYS.length > 0) {
-    genAIs = config.API_KEYS.map(apiKey => {
+if (config.CHAT_GPT_KEY) {
+    try {
+        openAIClient = new OpenAI({ apiKey: config.CHAT_GPT_KEY });
+        useOpenAI = true;
+        console.log('[Agent] OpenAI client initialized. Will use as default.');
+    } catch (error) {
+        console.error('[Agent] Error initializing OpenAI client:', error.message);
+    }
+}
+
+if (config.GEMINI_API_KEYS && config.GEMINI_API_KEYS.length > 0) {
+    geminiClients = config.GEMINI_API_KEYS.map(apiKey => {
         if (!apiKey) return null;
         try {
             return new GoogleGenerativeAI(apiKey).getGenerativeModel({ model: config.GEMINI_MODEL });
         } catch (error) {
-            console.error('[Agent] Error initializing a Gemini client. Is the API key valid?', error.message);
+            console.error('[Agent] Error initializing a Gemini client:', error.message);
             return null;
         }
     }).filter(Boolean);
+    if (geminiClients.length > 0) {
+        console.log(`[Agent] ${geminiClients.length} Gemini client(s) initialized.`);
+    }
 }
 
-if (genAIs.length === 0) {
-    console.error("\n[Agent] FATAL ERROR: No valid Gemini API keys found or initialized.");
-    console.error("Please check your .env file and ensure GEMINI_API_KEY_1 (and optionally GEMINI_API_KEY_2) are set correctly.\n");
+if (!useOpenAI && geminiClients.length === 0) {
+    console.error("\n[Agent] FATAL ERROR: No valid API keys found for OpenAI or Gemini.");
 }
 
-let keyIndex = 0;
-function getNextClient() {
-    if (genAIs.length === 0) return null;
-    const client = genAIs[keyIndex];
-    keyIndex = (keyIndex + 1) % genAIs.length;
+let geminiKeyIndex = 0;
+function getNextGeminiClient() {
+    if (geminiClients.length === 0) return null;
+    const client = geminiClients[geminiKeyIndex];
+    geminiKeyIndex = (geminiKeyIndex + 1) % geminiClients.length;
     return client;
 }
 
-export async function makeApiCall(prompt, history = []) {
-    const model = getNextClient();
-    if (!model) {
-         return {
-            reply: "The AI service is not configured. Please check the server logs.",
-            privacyLevel: 'PRIVATE',
-            criticality: 'NONE',
-            facts: {},
-            sharingSuggestion: null
-        };
-    }
-
+// FIX: Added 'expectJson' parameter to conditionally request JSON from OpenAI
+export async function makeApiCall(prompt, history = [], expectJson = false) {
     const fullPrompt = `${history.join('\n')}\n\n${prompt}`;
-    
     const maxRetries = 3;
     let lastError = null;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const result = await model.generateContent(fullPrompt);
-            const response = await result.response;
-            let text = response.text();
-            
-            const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
-            if (jsonMatch && jsonMatch[1]) {
-                return JSON.parse(jsonMatch[1]);
+            let text;
+            if (useOpenAI) {
+                const requestBody = {
+                    model: config.OPENAI_MODEL,
+                    messages: [{ role: 'user', content: fullPrompt }],
+                };
+                if (expectJson) {
+                    requestBody.response_format = { type: "json_object" };
+                }
+                const completion = await openAIClient.chat.completions.create(requestBody);
+                text = completion.choices[0].message.content;
+            } else {
+                const model = getNextGeminiClient();
+                if (!model) throw new Error("No Gemini clients available.");
+                const result = await model.generateContent(fullPrompt);
+                const response = await result.response;
+                text = response.text();
+            }
+
+            if (expectJson) {
+                const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
+                if (jsonMatch && jsonMatch[1]) {
+                    return JSON.parse(jsonMatch[1]);
+                }
+                if (useOpenAI) {
+                    return JSON.parse(text);
+                }
             }
             return { reply: text };
 
         } catch (error) {
             lastError = error;
-            if (error.status === 503 || error.status === 429) {
+            const status = error.status || (error.response ? error.response.status : 500);
+            if (status === 503 || status === 429) {
                 const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
-                console.warn(`[Agent] API call failed with status ${error.status}. Retrying in ${Math.round(delay/1000)}s... (Attempt ${attempt}/${maxRetries})`);
+                console.warn(`[Agent] API call failed with status ${status}. Retrying in ${Math.round(delay/1000)}s...`);
                 await new Promise(resolve => setTimeout(resolve, delay));
             } else {
                 break;
@@ -75,12 +101,13 @@ export async function makeApiCall(prompt, history = []) {
         }
     }
 
-    console.error("[Agent] Error calling Gemini API after all retries:", lastError);
+    console.error("[Agent] Error calling API after all retries:", lastError);
     return {
-        reply: "I'm having some trouble processing that right now. Could you please rephrase?",
+        reply: "I'm having some trouble processing that right now.",
         privacyLevel: 'PRIVATE',
         criticality: 'LOW',
         facts: {},
         sharingSuggestion: null
     };
 }
+

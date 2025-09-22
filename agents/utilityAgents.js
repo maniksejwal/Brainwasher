@@ -16,7 +16,8 @@ export async function classifyUserIntent(message, context) {
     const prompt = PROMPT_INTENT_CLASSIFICATION
         .replace('{{USER_MESSAGE}}', message)
         .replace('{{CONTEXT}}', context);
-    return makeApiCall(prompt);
+    // FIX: This agent expects a JSON response
+    return makeApiCall(prompt, [], true);
 }
 
 export async function generateSharingRequest(target, reason, contentToShare) {
@@ -24,7 +25,8 @@ export async function generateSharingRequest(target, reason, contentToShare) {
         .replace('{{TARGET}}', target)
         .replace('{{REASON}}', reason)
         .replace('{{CONTENT_TO_SHARE}}', contentToShare);
-    const result = await makeApiCall(prompt);
+    // FIX: This agent does NOT expect a JSON response
+    const result = await makeApiCall(prompt, [], false);
     return result.reply;
 }
 
@@ -32,7 +34,8 @@ export async function generateMediatedClarification(targetUser, factKey) {
     const prompt = PROMPT_MEDIATED_CLARIFICATION
         .replace('{{TARGET_USER}}', targetUser)
         .replace('{{FACT_KEY}}', factKey);
-    const result = await makeApiCall(prompt);
+    // FIX: This agent does NOT expect a JSON response
+    const result = await makeApiCall(prompt, [], false);
     return result.reply;
 }
 
@@ -41,7 +44,8 @@ export async function analyzeRelationship(sharedHistory) {
         return { relationshipType: 'unknown', closenessScore: 50 };
     }
     const prompt = PROMPT_RELATIONSHIP_ANALYSIS.replace('{{CONVERSATION_LOG}}', sharedHistory.join('\n'));
-    return makeApiCall(prompt);
+    // FIX: This agent expects a JSON response
+    return makeApiCall(prompt, [], true);
 }
 
 export async function generateSharingSummaryOrProbe(fromUser, toUser, message) {
@@ -49,6 +53,8 @@ export async function generateSharingSummaryOrProbe(fromUser, toUser, message) {
         .replace('{{FROM_USER}}', fromUser)
         .replace('{{TO_USER}}', toUser)
         .replace('{{MESSAGE}}', message);
-    const result = await makeApiCall(prompt);
+    // FIX: This agent does NOT expect a JSON response
+    const result = await makeApiCall(prompt, [], false);
     return result.reply;
 }
+

@@ -1,7 +1,8 @@
 /**
  * @fileoverview Handles the '/switch' command logic.
  * This module allows a user to change their active care circle context to another
- * circle they are a member of.
+ * circle they are a member of. It is a critical component for the multi-circle
+ * architecture, ensuring user actions are always performed in the correct context.
  */
 
 import { findUserByUsername, findUserById, findCircleByPatientId, getMemberInfo } from '../../db/index.js';
@@ -15,12 +16,16 @@ export async function handleSwitchCommand(userId, circleId, parts) {
         return;
     }
 
-    // Allow switching back to the user's own personal circle.
     const currentUser = await findUserById(userId);
     if (targetPatientUsername === currentUser.username) {
         const personalCircle = await findCircleByPatientId(userId);
-        events.emit('context_switch', { userId, newCircleId: personalCircle.circle_id });
-        await generateAndSendSummary(userId, personalCircle.circle_id, currentUser.username);
+        // FIX: Ensure the correct payload is sent
+        events.emit('context_switch', {
+            userId,
+            newCircleId: personalCircle.circle_id,
+            patientUsername: currentUser.username,
+            newRole: 'patient'
+        });
         return;
     }
 
@@ -38,8 +43,13 @@ export async function handleSwitchCommand(userId, circleId, parts) {
 
     const memberInfo = await getMemberInfo(userId, targetCircle.circle_id);
     if (memberInfo) {
-        events.emit('context_switch', { userId, newCircleId: targetCircle.circle_id });
-        // If the user is a doctor switching into a patient's circle, provide a summary.
+        // FIX: Ensure the correct payload is sent
+        events.emit('context_switch', {
+            userId,
+            newCircleId: targetCircle.circle_id,
+            patientUsername: targetPatient.username,
+            newRole: memberInfo.role
+        });
         if (memberInfo.role === 'doctor') {
             await generateAndSendSummary(userId, targetCircle.circle_id, targetPatient.username);
         }
@@ -47,3 +57,4 @@ export async function handleSwitchCommand(userId, circleId, parts) {
         events.emit('broadcast', { targetUsers: [userId], reply: `[System] You are not a member of the care circle for patient '${targetPatientUsername}'.`, from: 'system', circleId });
     }
 }
+
