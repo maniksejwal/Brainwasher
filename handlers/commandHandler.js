@@ -1,12 +1,14 @@
 /**
  * @fileoverview handlers/commandHandler.js
  * The main command dispatcher for the application. This module receives all
- * user commands that begin with a '/', parses them, and routes them to the
- * appropriate specialized handler file in the 'commands' subdirectory.
+ * user commands and routes them to the appropriate handler. It now recognizes
+ * response commands like /yes and /no.
  */
 
 import { getMemberInfo, updateMemberRole } from '../db/index.js';
 import { events } from '../orchestrator.js';
+import { handleUserResponseToAction } from '../state_manager.js';
+import { executeResolvedAction } from './message_logic/actionExecutor.js';
 
 import { handleAddCommand } from './commands/addMember.js';
 import { handleSwitchCommand } from './commands/switchContext.js';
@@ -34,6 +36,15 @@ export async function handleCommand(userId, circleId, message) {
     }
 
     switch (command) {
+        case '/yes':
+        case '/no':
+            const actionResult = await handleUserResponseToAction(userId, circleId, message);
+            if (actionResult) {
+                await executeResolvedAction(actionResult, userId, circleId);
+            } else {
+                events.emit('broadcast', { targetUsers: [userId], reply: `[System] There are no pending questions for you to answer right now.`, from: 'system', circleId });
+            }
+            break;
         case '/care':
         case '/doc':
             await handleAddCommand(userId, circleId, message);
@@ -63,7 +74,6 @@ export async function handleCommand(userId, circleId, message) {
             await handleShowCircleCommand(userId, circleId);
             break;
         case '/spec':
-             // FIX: Permissive logic to allow any user to become a doctor.
              if (currentUserInfo.role !== 'doctor') {
                 await updateMemberRole(circleId, userId, 'doctor');
                 events.emit('broadcast', { targetUsers: [userId], reply: `[System] Your role in this circle has been updated to 'doctor'.`, from: 'system', circleId });

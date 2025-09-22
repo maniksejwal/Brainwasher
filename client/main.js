@@ -1,12 +1,11 @@
 /**
- * @fileoverview The main entry point for the command-line client application.
- * This file orchestrates the login process, sets up the real-time event
- * listener, and handles the main loop for user input.
+ * @fileoverview client/main.js
+ * The main entry point for the command-line client application.
  */
 
 import chalk from 'chalk';
 import { state, updateUserState } from './state.js';
-import { rl, updatePrompt } from './ui.js';
+import { rl, updatePrompt, showLoginMessage } from './ui.js';
 import { login, connectToEventSource, sendCommand, sendMessage } from './network.js';
 
 async function main() {
@@ -38,3 +37,4 @@ async function main() {
 }
 
 main();
+

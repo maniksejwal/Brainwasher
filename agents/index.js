@@ -1,5 +1,6 @@
 /**
- * @fileoverview This file serves as the public interface for the agents module.
+ * @fileoverview agents/index.js
+ * This file serves as the public interface for the agents module.
  * It imports all the agent functions from their specialized files and re-exports
  * them, so other modules can import all agent functions from a single place.
  */
@@ -17,7 +18,7 @@ import { matchResponseToAction } from './stateAgent.js';
 
 export {
     processUserMessage,
-    performContextEnrichment, // NEW
+    performContextEnrichment,
     generateDoctorSummary,
     generateDelegatedProbe,
     classifyUserIntent,

@@ -1,10 +1,12 @@
 /**
- * @fileoverview Handles all network communication for the client.
- * This includes logging in, sending messages and commands via fetch, and
- * managing the persistent real-time connection using EventSource.
+ * @fileoverview client/network.js
+ * Handles all network communication for the client. This includes logging in,
+ * sending messages and commands via fetch, and managing the persistent
+ * real-time connection using EventSource for receiving updates from the server.
  */
 
 import EventSource from 'eventsource';
+import chalk from 'chalk'; // FIX: Added the missing import for the chalk library.
 import config from '../config.js';
 import { state, updateUserState } from './state.js';
 import { showLoginMessage, updatePrompt, clearLine, displayMessage, displayEscalations, displayContextSwitch } from './ui.js';
@@ -92,3 +94,4 @@ export async function sendMessage(message) {
         console.error(chalk.red('Error sending message:', error.message));
     }
 }
+

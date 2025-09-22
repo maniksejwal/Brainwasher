@@ -1,68 +1,81 @@
-Multi-Agent System for Patient Adherence & Behavioral Support
+Multi-Agent AI System for Mediated Communication
 
-This project is a command-line prototype of a novel multi-agent system designed to improve patient adherence and facilitate communication within a "care circle" (patient, caregivers, doctor). It moves beyond simple chatbots to create a network of AI assistants that mediate, analyze, and support complex human interactions.
-Core Inventive Steps & Features
+This project is a Node.js prototype of a multi-agent AI system designed to solve the "information asymmetry" problem in multi-user groups. It creates a network of personal AI agents that mediate communication, reconcile conflicting reports, and provide a more accurate, unified understanding of a situation for a decision-maker.
+Core Concepts
 
-    Mediated Communication: Users (patient, caregiver, doctor) do not talk directly to each other. They interact exclusively with their personal AI agent. This allows the system to act as a thoughtful filter, mediator, and conflict resolver.
+    Reciprocal Care Circles: The architecture supports multiple, distinct Care Circles. Any user can be a patient in their own personal circle while also being a caregiver or doctor in others.
 
-    Temporal Memory & Context: The AI maintains a temporal history of facts and conversations. This allows it to understand trends (e.g., "The patient has reported headaches three times this week") and provide context-aware, intelligent replies, rather than reacting to each message in isolation.
+    Context Switching: Users must explicitly switch their active context using the /switch command to ensure privacy and clarity.
 
-    Behavioral State Modeling: The system incorporates established psychological models (Stages of Change, Coping Styles) to analyze a user's behavioral state. The AI's conversational strategy adapts to this analysis (e.g., using reflective listening for a user in the "Pre-contemplation" stage, and offering concrete plans for a user in the "Preparation" stage).
+    Implied Context Switching: The system can infer when a user is talking about another patient and ask for consent to log the message in the correct circle.
 
-    Dynamic Relationship Analysis: The AI analyzes shared conversations to infer the relationshipType (e.g., spouse, friend) and a closenessScore between users, tailoring its communication style to the unique dynamics of the care circle.
+    Multi-Layered Consent: A sophisticated consent model manages information flow, including global commands (/consent), per-message requests, and implied consent.
 
-    Smart Consent & Sharing: The system uses a multi-layered consent model to protect user privacy while reducing friction:
+    AI-Powered Agents: The system's intelligence is driven by a suite of specialized AI agents using LLMs (Gemini or OpenAI).
 
-        Global Consent: Users can set overall sharing rules (e.g., /consent caregiver full spouse).
+    State Management: A robust session state machine tracks conversational context to handle multi-step interactions without losing track.
 
-        Per-Message Consent: For sensitive topics, the agent can ask for one-time permission to share.
+Setup & Installation
 
-        Implied Consent: Permission for a specific topic (e.g., "medication") is temporarily remembered to avoid repetitive requests.
+    Prerequisites: You must have Node.js (version 18 or higher) and npm installed.
 
-    Conflict Resolution & Clarification: When the system detects a factual conflict between users, it does not simply report it. It triggers a "Mediated Clarification," where the agent gently probes the other party for more information without revealing the source of the conflict, de-escalating potential arguments.
+    Install Dependencies: In your project's root directory, run:
 
-    Doctor-in-the-Loop Architecture: A dedicated doctor client receives real-time escalations for critical events (HIGH criticality). The doctor can also issue directives (e.g., "ask patient about sleep"), which the AI translates into natural, conversational actions.
+    npm install
 
-System Architecture
+    Set Up API Keys: Create a file named .env in the root of the project. Open it and add your API keys. The system defaults to OpenAI if CHAT_GPT_KEY is present.
 
-The system consists of three main components:
-
-    server.js: An Express server that handles all network communication, including API endpoints for sending messages and a real-time Server-Sent Events (SSE) stream for broadcasting updates.
-
-    orchestrator.js: The "brain" of the system. This module contains all the core logic for processing messages, running AI agents, detecting conflicts, managing consent, and handling escalations.
-
-    client.js: A unified command-line interface that can be run for any role (patient, caregiver, doctor).
+    # .env file
+    CHAT_GPT_KEY="sk-..."
+    GEMINI_API_KEY_1="YOUR_GEMINI_KEY_HERE"
 
 How to Run
-1. Setup
 
-    Install Node.js (version 18 or higher).
+    Start the Server: In one terminal, run:
 
-    In your terminal, in the project directory, run npm install.
+    node server.js
 
-    Create a .env file and add your Gemini API keys:
+    Start Clients: In separate terminals, run the client application:
 
-    GEMINI_API_KEY_1="your_first_key_here"
-    GEMINI_API_KEY_2="your_second_key_here"
+    node client/main.js
 
-2. Running the System
+    You will be prompted to log in with a username (e.g., alice, bob, dr_evans).
 
-You will need at least three separate terminal windows.
+How to Use: Key Commands
+All Users
 
-    Terminal 1 (Server): node server.js
+    /switch <patient_username> - Switch to another care circle you are a member of.
 
-    Terminal 2 (Patient): node client.js (enter patient when prompted)
+    /circle - View the members of your currently active care circle.
 
-    Terminal 3 (Caregiver): node client.js (enter caregiver when prompted)
+    /yes or /no - Respond unambiguously to a question from your agent.
 
-    (Optional) Terminal 4 (Doctor): node client.js (enter doctor when prompted)
+Patient Workflow
 
-3. Running Automated Tests
+When you log in for the first time, a personal care circle is created for you. You can then build your circle using the following commands:
 
-The tests have been split into a tests/ directory for better organization. To run the full test suite, use the npm script:
+    /care <username> as <relationship> - Add a caregiver (e.g., spouse, friend, nurse) to your personal care circle.
+
+    /doc <username> - Add a doctor to your personal care circle.
+
+    /consent <username> <level> - Set a standing consent level (none, limited, full) for a member of your circle.
+
+Doctor's Workflow
+
+A user becomes a "doctor" in a care circle when a patient adds them using the /doc <username> command. This grants them doctor-level permissions only within that specific circle.
+
+    /spec <specialty> - Set your clinical specialty (e.g., Cardiology) for your role in the current circle.
+
+    /log "note" - Log a confidential note in the patient's record.
+
+    /order "test/medication" - Log a confidential order request.
+
+    /agent ask <role> "topic" - Have your agent ask a question on your behalf.
+
+Testing
+
+The project includes an automated test suite. To run all tests, use the command:
 
 npm test
 
-To run a single test file, for example the consent test:
-
-node tests/test_consent.js
+This will execute all test files located in the tests/ directory and report the results.

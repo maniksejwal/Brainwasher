@@ -1,8 +1,6 @@
 /**
- * @fileoverview This file handles the user login and registration process.
- * On first login, it creates a new user account and a personal care circle for them,
- * ensuring every user has a primary context. For returning users, it fetches
- * their existing information and sets their initial active care circle.
+ * @fileoverview handlers/loginHandler.js
+ * This file handles the user login and registration process.
  */
 
 import {
@@ -33,6 +31,7 @@ export async function handleLogin(username) {
         message: `Logged in as ${username}. Your active care circle is your own (patient: ${username}).`,
         userId: userId,
         activeCircleId: personalCircle.circle_id,
+        // FIX: Provide the patient username for the client prompt
         patientUsername: username
     };
 }

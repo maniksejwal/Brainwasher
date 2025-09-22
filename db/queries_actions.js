@@ -1,8 +1,8 @@
 /**
- * @fileoverview This file contains all database query functions related to actions,
+ * @fileoverview db/queries_actions.js
+ * This file contains all database query functions related to actions,
  * consent, and escalations. It manages the logic for creating and resolving
  * pending actions, setting consent levels, and logging critical events for doctors.
- * This includes confidential directives and managing the read/unread status of alerts.
  */
 
 import { getDb } from './connection.js';
@@ -31,6 +31,7 @@ export async function getUnreadEscalationsForUser(userId) {
     
     return escalations;
 }
+
 
 export async function markCircleEscalationsAsRead(circleId) {
     const db = await getDb();
@@ -67,11 +68,12 @@ export async function addPendingAction(actionId, circleId, userId, actionType, d
     await db.run('INSERT INTO pending_actions (action_id, circle_id, user_id, action_type, details, created_at) VALUES (?, ?, ?, ?, ?, ?)', [actionId, circleId, userId, actionType, detailsJson, Date.now()]);
 }
 
-// FIX: Removed the duplicate declaration of this function.
+// ** NEW: Fetches ALL active pending actions for a user in a circle **
 export async function getActivePendingActions(userId, circleId) {
     const db = await getDb();
     const rows = await db.all('SELECT * FROM pending_actions WHERE user_id = ? AND circle_id = ? ORDER BY created_at ASC', [userId, circleId]);
     return rows.map(row => {
+        // Ensure details are parsed from JSON
         row.details = JSON.parse(row.details);
         return row;
     });
