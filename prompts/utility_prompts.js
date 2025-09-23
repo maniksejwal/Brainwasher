@@ -20,7 +20,7 @@ Return ONLY a single, valid JSON object in a markdown block with the following s
 `;
 
 export const PROMPT_SHARING_REQUEST = `
-Generate a short, polite question asking for permission to share the following information with {{TARGET}}: "{{CONTENT_TO_SHARE}}". Keep the question natural and concise. Example: "Is it okay if I let the doctor know you're experiencing some knee pain?"
+Generate a short, polite question asking for permission to share the following information with {{TARGET}}: "{{CONTENT_TO_SHARE}}". Keep the question natural and concise. Return ONLY the question text without quotes or markdown formatting. Example: Is it okay if I let the doctor know you're experiencing some knee pain?
 `;
 
 export const PROMPT_MEDIATED_CLARIFICATION = `

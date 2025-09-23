@@ -8,7 +8,7 @@ import { PROMPT_RESPONSE_MATCHER } from '../prompts/state_agent_prompts.js';
 
 export async function matchResponseToAction(userMessage, pendingActions) {
     const actionList = pendingActions.map(action =>
-        `- ID: ${action.action_id}, Question: ${action.details.reason || 'General inquiry'}`
+        `- ID: ${action.action_id}, Question: ${action.details.full_question || action.details.reason || 'General inquiry'}`
     ).join('\n');
 
     const prompt = PROMPT_RESPONSE_MATCHER

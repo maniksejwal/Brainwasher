@@ -52,7 +52,15 @@ export function clearLine() {
 
 export function displayMessage(data) {
     const patientName = data.patientUsername || data.circleId;
-    const prefix = chalk.bold.blue(`[${data.from}@${patientName}]:`);
+    
+    // Use cleaner display for system messages
+    let prefix;
+    if (data.from === 'system') {
+        prefix = chalk.bold.red(`[system]:`);
+    } else {
+        prefix = chalk.bold.blue(`[${data.from}@${patientName}]:`);
+    }
+    
     console.log(`${prefix} ${data.reply || data.message}`);
 }
 
@@ -60,13 +68,13 @@ export function displayEscalations(escalations) {
     console.log(chalk.red.bold(`\n--- NEW ESCALATIONS RECEIVED ---`));
     escalations.forEach(item => {
         const message = `[${new Date(item.timestamp).toLocaleString()}] ${item.type} in circle for ${item.patient_username}: ${item.details}`;
-        console.log(chalk.yellow(message));
+        console.log(chalk.red(message));
     });
     console.log(chalk.red.bold(`------------------------------`));
 }
 
 export function displayContextSwitch(data) {
-    console.log(chalk.yellow(`Switched context to circle for patient: ${data.patientUsername} (Your role: ${data.newRole})`));
+    console.log(chalk.green(`Switched context to circle for patient: ${data.patientUsername} (Your role: ${data.newRole})`));
     // FIX: Check all roles to see if the user is a doctor.
     if (state.allRoles.includes('doctor')) {
         console.log(doctorCommands);

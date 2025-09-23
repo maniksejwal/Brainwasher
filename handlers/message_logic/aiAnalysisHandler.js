@@ -58,7 +58,10 @@ export async function performAiAnalysis(userId, role, message, circleId) {
     const patientUsername = (await findUserById(currentCircle.primary_patient_id)).username;
 
     // Persist the original message to the database with the *final, enriched* analysis.
-    await addMessage(circleId, userId, role, message, analysis.privacyLevel, analysis.criticality);
+    // Add safety defaults to prevent database constraint errors
+    const criticality = analysis.criticality || 'NONE';
+    const privacyLevel = analysis.privacyLevel || 'PRIVATE';
+    await addMessage(circleId, userId, role, message, privacyLevel, criticality);
     
     // Send the agent's conversational reply back to the original user.
     events.emit('broadcast', { targetUsers: [userId], reply: analysis.reply, from: 'personal-agent', circleId, patientUsername });

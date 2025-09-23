@@ -48,7 +48,12 @@ events.on('broadcast', (payload) => {
 
 events.on('context_switch', (payload) => {
      if (clients[payload.userId]) {
-        clients[payload.userId].write(`data: ${JSON.stringify({ type: 'context_switched', newCircleId: payload.newCircleId })}\n\n`);
+        clients[payload.userId].write(`data: ${JSON.stringify({ 
+            type: 'context_switched', 
+            newCircleId: payload.newCircleId,
+            patientUsername: payload.patientUsername,
+            newRole: payload.newRole
+        })}\n\n`);
     }
 });
 

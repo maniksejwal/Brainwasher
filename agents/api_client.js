@@ -77,23 +77,30 @@ export async function makeApiCall(prompt, history = [], expectJson = false) {
                 text = response.text();
             }
 
+            // Process the response
             if (expectJson) {
-                const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
-                if (jsonMatch && jsonMatch[1]) {
-                    return JSON.parse(jsonMatch[1]);
+                const parsedResponse = parseJsonResponse(text, attempt, maxRetries);
+                if (parsedResponse) {
+                    return parsedResponse;
                 }
-                if (useOpenAI) {
-                    return JSON.parse(text);
+                // If parsing failed and we have retries left, continue to retry
+                if (attempt < maxRetries) {
+                    console.warn(`[Agent] JSON parsing failed on attempt ${attempt}, retrying...`);
+                    continue;
                 }
+                // Last attempt failed - return fallback
+                return createFallbackResponse(text);
             }
+            
             return { reply: text };
 
         } catch (error) {
             lastError = error;
-            const status = error.status || (error.response ? error.response.status : 500);
-            if (status === 503 || status === 429) {
-                const delay = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
-                console.warn(`[Agent] API call failed with status ${status}. Retrying in ${Math.round(delay/1000)}s...`);
+            const shouldRetry = shouldRetryError(error, attempt, maxRetries);
+            
+            if (shouldRetry) {
+                const delay = calculateRetryDelay(attempt);
+                console.warn(`[Agent] API call failed on attempt ${attempt}, retrying in ${Math.round(delay/1000)}s...`, error.message);
                 await new Promise(resolve => setTimeout(resolve, delay));
             } else {
                 break;
@@ -102,11 +109,69 @@ export async function makeApiCall(prompt, history = [], expectJson = false) {
     }
 
     console.error("[Agent] Error calling API after all retries:", lastError);
+    return createFallbackResponse("I'm having some trouble processing that right now.");
+}
+
+function parseJsonResponse(text, attempt, maxRetries) {
+    // Try markdown-wrapped JSON first
+    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
+    if (jsonMatch && jsonMatch[1]) {
+        try {
+            return JSON.parse(jsonMatch[1]);
+        } catch (e) {
+            console.warn(`[Agent] Failed to parse markdown JSON on attempt ${attempt}:`, e.message);
+        }
+    }
+    
+    // Try raw JSON
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        console.warn(`[Agent] Failed to parse raw JSON on attempt ${attempt}:`, e.message);
+        return null;
+    }
+}
+
+function shouldRetryError(error, attempt, maxRetries) {
+    if (attempt >= maxRetries) return false;
+    
+    const status = error.status || (error.response ? error.response.status : 500);
+    const errorMessage = error.message?.toLowerCase() || '';
+    
+    // Retry on network/rate limit errors
+    if (status === 503 || status === 429 || status === 502 || status === 504) {
+        return true;
+    }
+    
+    // Retry on timeout errors
+    if (errorMessage.includes('timeout') || errorMessage.includes('network')) {
+        return true;
+    }
+    
+    // Retry on API key rotation for Gemini
+    if (errorMessage.includes('api key') || errorMessage.includes('quota')) {
+        return true;
+    }
+    
+    return false;
+}
+
+function calculateRetryDelay(attempt) {
+    // Exponential backoff with jitter
+    const baseDelay = Math.pow(2, attempt) * 1000;
+    const jitter = Math.random() * 1000;
+    return baseDelay + jitter;
+}
+
+function createFallbackResponse(reply) {
     return {
-        reply: "I'm having some trouble processing that right now.",
+        intent: 'ASKING_QUESTION',
+        state_update: null,
+        reply: reply,
         privacyLevel: 'PRIVATE',
-        criticality: 'LOW',
+        criticality: 'NONE',
         facts: {},
+        mentioned_usernames: [],
         sharingSuggestion: null
     };
 }
