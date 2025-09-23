@@ -1,5 +1,6 @@
 /**
- * @fileoverview Handles all user interface logic for the command-line client.
+ * @fileoverview client/ui.js
+ * Handles all user interface logic for the command-line client.
  * This includes managing the readline prompt, displaying formatted messages,
  * and showing context-specific command lists.
  */
@@ -19,7 +20,7 @@ ${chalk.bold('Doctor Commands:')}
   /switch <patient_username>   - Switch to a patient's care circle.
   /log "note"                  - Log a confidential note.
   /order "test/medication"     - Log a confidential order request.
-  /agent ask <role> "topic"    - Have your agent ask a question on your behalf.
+  /agent ask <username> "topic"    - Have your agent ask a question on your behalf.
 `;
 
 const patientCommands = `
@@ -31,7 +32,7 @@ ${chalk.bold('Patient Commands:')}
 
 export function showLoginMessage(message) {
     console.log(chalk.green(message));
-    if (state.username.startsWith('dr_')) {
+    if (state.allRoles.includes('doctor')) {
         console.log(doctorCommands);
     } else {
         console.log(patientCommands);
@@ -39,7 +40,9 @@ export function showLoginMessage(message) {
 }
 
 export function updatePrompt() {
-    rl.setPrompt(chalk.bold(`${state.username}@${state.currentPatientUsername}> `));
+    // FIX: Fallback logic to ensure the prompt never shows 'undefined'.
+    const patientName = state.currentPatientUsername || state.currentCircleId;
+    rl.setPrompt(chalk.bold(`${state.username}@${patientName}> `));
     rl.prompt();
 }
 
@@ -48,7 +51,8 @@ export function clearLine() {
 }
 
 export function displayMessage(data) {
-    const prefix = chalk.bold.blue(`[${data.from}@${data.patientUsername}]:`);
+    const patientName = data.patientUsername || data.circleId;
+    const prefix = chalk.bold.blue(`[${data.from}@${patientName}]:`);
     console.log(`${prefix} ${data.reply || data.message}`);
 }
 
@@ -63,7 +67,9 @@ export function displayEscalations(escalations) {
 
 export function displayContextSwitch(data) {
     console.log(chalk.yellow(`Switched context to circle for patient: ${data.patientUsername} (Your role: ${data.newRole})`));
-    if (data.newRole === 'doctor') {
+    // FIX: Check all roles to see if the user is a doctor.
+    if (state.allRoles.includes('doctor')) {
         console.log(doctorCommands);
     }
 }
+

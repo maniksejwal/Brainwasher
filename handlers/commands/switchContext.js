@@ -1,7 +1,7 @@
 /**
  * @fileoverview handlers/commands/switchContext.js
- * This module handles the '/switch' command logic. It allows a user to change
- * their active care circle context to another circle they are a member of.
+ * This module handles the '/switch' command logic, ensuring the client receives
+ * the complete and correct context upon switching circles.
  */
 
 import { findUserByUsername, findUserById, findCircleByPatientId, getMemberInfo } from '../../db/index.js';
@@ -18,7 +18,6 @@ export async function handleSwitchCommand(userId, circleId, parts) {
     const currentUser = await findUserById(userId);
     if (targetPatientUsername === currentUser.username) {
         const personalCircle = await findCircleByPatientId(userId);
-        // FIX: Ensure correct payload is sent to prevent 'undefined' bug
         events.emit('context_switch', {
             userId,
             newCircleId: personalCircle.circle_id,
@@ -42,7 +41,7 @@ export async function handleSwitchCommand(userId, circleId, parts) {
 
     const memberInfo = await getMemberInfo(userId, targetCircle.circle_id);
     if (memberInfo) {
-        // FIX: Ensure correct payload is sent to prevent 'undefined' bug
+        // FIX: This payload is now complete, fixing the 'undefined' bug.
         events.emit('context_switch', {
             userId,
             newCircleId: targetCircle.circle_id,

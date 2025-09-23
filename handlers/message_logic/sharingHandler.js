@@ -1,56 +1,56 @@
 /**
  * @fileoverview handlers/message_logic/sharingHandler.js
- * Handles all logic for sharing information, including criticality checks,
- * inter-agent communication based on implied consent, and explicit consent requests.
+ * Handles all logic for sharing information, now driven by the AI's intent analysis.
+ * This is a critical module that decides when to escalate, when to mediate advice,
+ * and when to ask for consent.
  */
 
-import { addEscalation, getImpliedConsent, getCircleMembers, findUserById, findCircleByPatientId, getMemberInfo } from '../../db/index.js';
+import { addEscalation, getImpliedConsent, getCircleMembers, findUserById, findCircleByPatientId } from '../../db/index.js';
 import { generateSharingRequest, generateSharingSummaryOrProbe } from '../../agents/index.js';
 import { createSharingConsentAction } from '../../state_manager.js';
 import { events } from '../../orchestrator.js';
 
-// This is the new agent-centric sharing logic
-async function handleInterAgentSharing(userId, circleId, analysis) {
-    // Check if the message was about another user in a shared circle.
-    if (!analysis.facts || Object.keys(analysis.facts).length === 0) return false;
+/**
+ * Handles the specific case where one user gives advice for another.
+ * Instead of escalating, it mediates the advice to the target user's agent.
+ * @returns {boolean} - True if the advice was handled, otherwise false.
+ */
+async function handleAdviceSharing(userId, circleId, analysis) {
+    if (analysis.intent !== 'GIVING_ADVICE_FOR_OTHER' || !analysis.facts || !analysis.sharingSuggestion) {
+        return false;
+    }
 
     const factKey = Object.keys(analysis.facts)[0];
     const fact = analysis.facts[factKey];
-
-    if (!fact.subject || fact.subject === (await findUserById(userId)).username) {
-        return false; // Fact is about the speaker, not another user.
-    }
+    if (!fact.subject) return false;
 
     const members = await getCircleMembers(circleId);
-    const subjectMember = members.find(m => m.username === fact.subject);
-    if (!subjectMember) return false; // Subject is not in the current circle.
+    const targetMember = members.find(m => m.username === fact.subject);
+    if (!targetMember) return false;
 
-    // We've confirmed the speaker is talking about another member in the same circle.
-    // Now, check consent and privacy.
-    console.log(`[SharingHandler] User '${userId}' mentioned '${fact.subject}'. Checking consent.`);
+    console.log(`[SharingHandler] Detected advice from '${userId}' for '${targetMember.username}'. Mediating.`);
+    const currentUser = await findUserById(userId);
+    const patient = await findUserById((await findCircleByPatientId(circleId)).primary_patient_id);
 
-    if (analysis.privacyLevel !== 'SENSITIVE' && subjectMember.consent_level === 'full') {
-        console.log(`[SharingHandler] Sharing with '${fact.subject}' based on full consent.`);
-        const contextualMessage = await generateSharingSummaryOrProbe(userId, fact.subject, analysis.sharingSuggestion.content_to_share);
-        const patient = await findUserById((await findCircleByPatientId(circleId)).primary_patient_id);
+    // Generate a natural language message for the target user's agent to deliver.
+    const contextualMessage = await generateSharingSummaryOrProbe(currentUser.username, targetMember.username, analysis.sharingSuggestion.content_to_share);
+    
+    events.emit('broadcast', {
+        targetUsers: [targetMember.user_id],
+        message: contextualMessage,
+        from: 'personal-agent',
+        circleId,
+        patientUsername: patient.username
+    });
 
-        events.emit('broadcast', {
-            targetUsers: [subjectMember.user_id],
-            message: contextualMessage,
-            from: 'personal-agent',
-            circleId,
-            patientUsername: patient.username
-        });
-        return true; // Information was shared.
-    }
-    return false; // Conditions for automatic sharing not met.
+    return true; // The advice was successfully mediated.
 }
-
 
 export async function handleSharingAndEscalation(userId, role, message, circleId, analysis) {
     const currentCircle = await findCircleByPatientId(circleId);
     const patientUsername = (await findUserById(currentCircle.primary_patient_id)).username;
 
+    // 1. Handle HIGH criticality events first. This is a safety override.
     if (analysis.criticality === 'HIGH') {
         const criticalDetails = `User '${userId}' (${role}) reported: "${message}"`;
         await addEscalation(circleId, 'CRITICAL', criticalDetails);
@@ -59,14 +59,16 @@ export async function handleSharingAndEscalation(userId, role, message, circleId
         events.emit('broadcast', { targetUsers: [userId], reply: confirmationReply, from: 'personal-agent', circleId, patientUsername });
         return;
     }
-
-    // Attempt inter-agent sharing first for non-sensitive info.
-    const wasShared = await handleInterAgentSharing(userId, circleId, analysis);
-    if (wasShared) return;
+    
+    // 2. Handle the specific intent of GIVING_ADVICE_FOR_OTHER.
+    const wasAdviceHandled = await handleAdviceSharing(userId, circleId, analysis);
+    if (wasAdviceHandled) {
+        return;
+    }
 
     const members = await getCircleMembers(circleId);
 
-    // If not shared automatically, fall back to explicit consent suggestion.
+    // 3. Fall back to the standard proactive sharing suggestion flow.
     if (analysis.sharingSuggestion && analysis.sharingSuggestion.target && analysis.sharingSuggestion.content_to_share) {
         const targetUsername = analysis.sharingSuggestion.target;
         const targetMember = members.find(m => m.username === targetUsername && m.user_id !== userId);
@@ -78,12 +80,13 @@ export async function handleSharingAndEscalation(userId, role, message, circleId
         const topic = Object.keys(analysis.facts || {})[0] || 'general';
         const implied = await getImpliedConsent(userId, circleId, topic);
 
-        if (implied) {
-            console.log(`[SharingHandler] Sharing with ${targetMember.username} based on implied consent.`);
+        if (implied || targetMember.consent_level === 'full') {
+            console.log(`[SharingHandler] Sharing with ${targetMember.username} based on implied or full consent.`);
             const contextualMessage = await generateSharingSummaryOrProbe(userId, targetMember.username, analysis.sharingSuggestion.content_to_share);
             events.emit('broadcast', { targetUsers: [targetMember.user_id], message: contextualMessage, from: 'personal-agent', circleId, patientUsername });
         } else {
-            const suggestion = { originatingUser: userId, ...analysis.sharingSuggestion };
+            const currentUser = await findUserById(userId);
+            const suggestion = { originatingUser: currentUser.username, ...analysis.sharingSuggestion };
             await createSharingConsentAction(userId, circleId, suggestion);
             const request = await generateSharingRequest(targetMember.role, analysis.sharingSuggestion.reason, analysis.sharingSuggestion.content_to_share);
             events.emit('broadcast', { targetUsers: [userId], reply: request, from: 'personal-agent', circleId, patientUsername });

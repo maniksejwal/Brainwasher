@@ -68,7 +68,19 @@ export async function addPendingAction(actionId, circleId, userId, actionType, d
     await db.run('INSERT INTO pending_actions (action_id, circle_id, user_id, action_type, details, created_at) VALUES (?, ?, ?, ?, ?, ?)', [actionId, circleId, userId, actionType, detailsJson, Date.now()]);
 }
 
-// ** NEW: Fetches ALL active pending actions for a user in a circle **
+export async function findPendingAction(userId, circleId, actionType, detailKey, detailValue) {
+     const db = await getDb();
+    const rows = await db.all('SELECT * FROM pending_actions WHERE user_id = ? AND circle_id = ? AND action_type = ?', [userId, circleId, actionType]);
+    
+    for (const row of rows) {
+        const details = JSON.parse(row.details);
+        if (details && details[detailKey] === detailValue) {
+            return { ...row, details };
+        }
+    }
+    return null;
+}
+
 export async function getActivePendingActions(userId, circleId) {
     const db = await getDb();
     const rows = await db.all('SELECT * FROM pending_actions WHERE user_id = ? AND circle_id = ? ORDER BY created_at ASC', [userId, circleId]);

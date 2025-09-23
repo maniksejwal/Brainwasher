@@ -1,7 +1,8 @@
 /**
- * @fileoverview Handles the '/circle' command logic.
- * This module fetches and displays a structured list of all members in the
- * user's currently active care circle, grouped by their role.
+ * @fileoverview handlers/commands/showCircle.js
+ * Handles the '/circle' command logic. This module fetches and displays a
+ * structured list of all members in the user's currently active care circle,
+ * now including their consent status.
  */
 
 import { getCircleMembers, findUserById, findCircleByPatientId } from '../../db/index.js';
@@ -26,12 +27,12 @@ export async function handleShowCircleCommand(userId, circleId) {
 
     let caregiverInfo = 'Caregivers: None';
     if (caregivers.length > 0) {
-        caregiverInfo = 'Caregivers: ' + caregivers.map(c => `${c.username} (${c.relationship_type})`).join(', ');
+        // FIX: Added consent level to the display string.
+        caregiverInfo = 'Caregivers: ' + caregivers.map(c => `${c.username} (relation: ${c.relationship_type}, consent: ${c.consent_level})`).join(', ');
     }
 
     let doctorInfo = 'Doctors: None';
     if (doctors.length > 0) {
-        // For doctors, the 'relationship_type' stores their specialization.
         doctorInfo = 'Doctors: ' + doctors.map(d => `${d.username} (${d.relationship_type || 'General Physician'})`).join(', ');
     }
 

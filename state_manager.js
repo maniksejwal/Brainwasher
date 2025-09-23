@@ -15,7 +15,6 @@ import {
 } from './db/index.js';
 import { randomUUID } from 'crypto';
 import { classifyUserIntent, matchResponseToAction } from './agents/index.js';
-// NOTE: This module does NOT import from orchestrator.js to avoid circular dependencies.
 
 /**
  * Creates a new pending action and adds it to the user's question stack.
@@ -56,7 +55,16 @@ export async function handleUserResponseToAction(userId, circleId, message) {
         return null;
     }
 
-    const intent = await classifyUserIntent(message, matchedAction.details.reason);
+    let intent = { intent: 'UNCLEAR' };
+    const lowerCaseMessage = message.toLowerCase().trim();
+    if (['/yes', 'yes', 'go', 'proceed'].includes(lowerCaseMessage)) {
+        intent.intent = 'CONSENT_GRANTED';
+    } else if (['/no', 'no'].includes(lowerCaseMessage)) {
+        intent.intent = 'CONSENT_DENIED';
+    } else {
+        intent = await classifyUserIntent(message, matchedAction.details.reason);
+    }
+
 
     if (intent.intent === 'UNCLEAR') {
         return null;
@@ -66,22 +74,15 @@ export async function handleUserResponseToAction(userId, circleId, message) {
 
     if (intent.intent === 'CONSENT_GRANTED') {
         if (matchedAction.action_type === 'implied_switch_consent') {
-            // Package up the details for the executor.
             return {
                 action: 'execute',
-                details: {
-                    ...matchedAction.details,
-                    action_type: 'implied_switch_consent'
-                },
+                details: { ...matchedAction, ...matchedAction.details }, // Spread details into top level
                 reply: `[Personal Note] Thank you. I've logged that note.`
             };
         } else { // Default 'share_consent'
             return {
                 action: 'execute',
-                details: {
-                    ...matchedAction.details,
-                    action_type: 'share_consent'
-                },
+                details: { ...matchedAction, ...matchedAction.details },
                 reply: "[Personal Note] Thank you. I've acted on your request."
             };
         }

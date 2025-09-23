@@ -2,8 +2,10 @@
  * @fileoverview db/index.js
  * This file serves as the central public interface for the database module.
  * It consolidates and re-exports all the query functions from the specialized
- * query files. This allows other modules in the application to import all database
- * functions from a single, consistent location, simplifying dependency management.
+ * query files (e.g., queries_users.js, queries_actions.js). This allows other
+ * modules in the application to import all database functions from a single,
+ * consistent location, simplifying dependency management and abstracting the
+ * internal structure of the database package.
  */
 
 import { initializeDatabase, clearDatabase } from './schema.js';
@@ -20,7 +22,7 @@ import {
     getUserCircles,
     updateUserState,
     updateMemberRelationship,
-    updateMemberRole, // NEW
+    updateMemberRole,
     getUserState
 } from './queries_users.js';
 import {
@@ -42,6 +44,7 @@ import {
     addPendingAction,
     getActivePendingActions,
     getPendingAction,
+    findPendingAction,
     removePendingAction
 } from './queries_actions.js';
 
@@ -60,7 +63,7 @@ export {
     getUserCircles,
     updateUserState,
     updateMemberRelationship,
-    updateMemberRole, // NEW
+    updateMemberRole,
     getUserState,
     addMessage,
     getRecentMessages,
@@ -78,6 +81,7 @@ export {
     addPendingAction,
     getActivePendingActions,
     getPendingAction,
+    findPendingAction,
     removePendingAction
 };
 

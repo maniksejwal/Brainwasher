@@ -1,8 +1,7 @@
 /**
  * @fileoverview agents/unifiedAgent.js
  * This module defines the main conversational agent that interacts
- * with patients and caregivers. It gathers context, builds the prompt, calls the
- * API client, and also handles the context enrichment re-evaluation step.
+ * with patients and caregivers.
  */
 
 import { makeApiCall } from './api_client.js';
@@ -19,7 +18,6 @@ export async function processUserMessage(userId, role, message, careCircleMember
     const speaker = await findUserById(userId);
     const circle = await findCircleByPatientId(circleId);
     const patient = await findUserById(circle.primary_patient_id);
-
 
     const behavioralModels = {
         stages_of_change: STAGES_OF_CHANGE,
@@ -39,7 +37,6 @@ export async function processUserMessage(userId, role, message, careCircleMember
     return makeApiCall(prompt, historyText, true);
 }
 
-// FIX: Added the 'export' keyword to make this function available to other modules.
 export async function performContextEnrichment(userMessage, originalAnalysis, entityMentioned, actualUsername, actualRole) {
     const prompt = PROMPT_CONTEXT_ENRICHMENT
         .replace('{{USER_MESSAGE}}', userMessage)

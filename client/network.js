@@ -6,7 +6,7 @@
  */
 
 import EventSource from 'eventsource';
-import chalk from 'chalk'; // FIX: Added the missing import for the chalk library.
+import chalk from 'chalk';
 import config from '../config.js';
 import { state, updateUserState } from './state.js';
 import { showLoginMessage, updatePrompt, clearLine, displayMessage, displayEscalations, displayContextSwitch } from './ui.js';
@@ -23,7 +23,8 @@ export async function login() {
             userId: data.userId,
             currentCircleId: data.activeCircleId,
             currentPatientUsername: data.patientUsername,
-            userRoleInCurrentCircle: 'patient'
+            userRoleInCurrentCircle: 'patient',
+            allRoles: data.allRoles || []
         });
         showLoginMessage(data.message);
         return true;
@@ -53,6 +54,7 @@ export function connectToEventSource() {
                 console.error(chalk.red('Error fetching escalations:', error.message));
             }
         } else if (data.type === 'context_switched') {
+            // FIX: Ensure all state variables are correctly updated from the complete payload.
             updateUserState({
                 currentCircleId: data.newCircleId,
                 userRoleInCurrentCircle: data.newRole,

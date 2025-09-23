@@ -1,14 +1,13 @@
 /**
  * @fileoverview agents/index.js
- * This file serves as the public interface for the agents module.
- * It imports all the agent functions from their specialized files and re-exports
- * them, so other modules can import all agent functions from a single place.
+ * The public interface for the agents module.
  */
 
 import { processUserMessage, performContextEnrichment } from './unifiedAgent.js';
 import { generateDoctorSummary, generateDelegatedProbe } from './doctorAgent.js';
 import {
     classifyUserIntent,
+    classifyExplicitIntent, // NEW
     generateSharingRequest,
     generateMediatedClarification,
     analyzeRelationship,
@@ -22,6 +21,7 @@ export {
     generateDoctorSummary,
     generateDelegatedProbe,
     classifyUserIntent,
+    classifyExplicitIntent, // NEW
     generateSharingRequest,
     generateMediatedClarification,
     analyzeRelationship,

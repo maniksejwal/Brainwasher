@@ -117,3 +117,73 @@ The architecture consists of three primary layers: the Clients, the Web Server, 
     server.js catches the event and writes the message data to the SSE connection of the target user(s).
 
     The user's client.js receives the SSE message and displays the AI's reply in their terminal.
+
+2.4. Testing & Reinforcement Learning Architecture
+
+The system maintains a clear separation between traditional testing and reinforcement learning components to ensure reliability and maintainability.
+
+2.4.1. Testing Layer (tests/)
+
+The testing layer focuses on deterministic verification of system correctness:
+
+    Unit Tests: Verify individual component functionality
+        - test_basic.js: Login, messaging, basic operations
+        - test_conflict.js: Conflict detection and resolution
+        - test_consent.js: Privacy and consent mechanisms
+        - test_escalation.js: Critical event handling
+
+    Integration Tests: Verify end-to-end workflows
+        - test_circles.js: Care circle management
+        - test_doctor.js: Doctor-specific functionality
+        - test_behavioural.js: Behavioral model integration
+
+    Test Infrastructure:
+        - test_runner.js: Test orchestration and assertion framework
+        - Automated test execution with npm test
+        - Database clearing and user simulation
+
+2.4.2. Reinforcement Learning Layer (rl/)
+
+The RL layer focuses on performance optimization and continuous improvement:
+
+    Simulation Engine (simulator.js):
+        - Synthetic user generation with predefined personas
+        - Automated conversation simulation
+        - Adversarial testing (medical complications, privacy attacks)
+        - Scenario-based training data generation
+
+    Training Infrastructure:
+        - trainer.js: Training orchestration
+        - annotator.js: Human-in-the-loop feedback collection
+        - training_log.jsonl: Structured training data pipeline
+
+    Evaluation Framework:
+        - performance_tests.js: RL performance evaluation
+        - benchmark_tests.js: A/B testing for prompt versions
+        - simulation_tests.js: Synthetic user validation
+
+2.4.3. Architecture Separation Benefits
+
+    Clear Responsibilities:
+        - Tests: Verify correctness, catch regressions
+        - RL: Optimize performance, learn from feedback
+
+    Different Reliability Requirements:
+        - Tests: Must be deterministic and fast
+        - RL: Involves AI responses, human feedback, stochastic processes
+
+    Independent Development:
+        - Teams can work on testing and RL separately
+        - Different CI/CD pipelines (tests on every commit, RL evaluation periodically)
+        - Easier debugging and maintenance
+
+2.4.4. Integration Points
+
+The testing and RL systems interact at specific interfaces:
+
+    RL Component Testing: Traditional tests verify RL infrastructure works correctly
+    Performance Evaluation: RL evaluation measures system improvements
+    Regression Testing: Traditional tests run after RL updates to ensure no breaking changes
+    Data Validation: Tests verify training data pipeline integrity
+
+This architecture ensures that the system maintains both reliability (through testing) and continuous improvement (through RL) without compromising either objective.

@@ -27,8 +27,16 @@ async function main() {
 
     rl.on('line', (line) => {
         const trimmedLine = line.trim();
-        if (trimmedLine.startsWith('/') || ['yes', 'no'].includes(trimmedLine.toLowerCase())) {
-            sendCommand(trimmedLine);
+        // FIX: Route both natural language and command-based consent to the command endpoint
+        // to be handled by the state manager.
+        if (trimmedLine.startsWith('/') || ['yes', 'no', 'go', 'proceed'].includes(trimmedLine.toLowerCase())) {
+            let messageToSend = trimmedLine;
+            if (['yes', 'go', 'proceed'].includes(trimmedLine.toLowerCase())) {
+                messageToSend = '/yes';
+            } else if (trimmedLine.toLowerCase() === 'no') {
+                messageToSend = '/no';
+            }
+            sendCommand(messageToSend);
         } else {
             sendMessage(trimmedLine);
         }

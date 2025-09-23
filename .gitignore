@@ -1,4 +1,5 @@
 .env
 node_modules/*
-care_circle.db
+./care_circle.db
+care_circle.db*
 
