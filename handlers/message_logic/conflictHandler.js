@@ -4,9 +4,10 @@
  */
 
 import chalk from 'chalk';
-import { upsertFact, getLastFact, addEscalation, getMemberInfo, findUserById } from '../../db/index.js';
+import { upsertFact, getLastFact, addEscalation, getMemberInfo, findUserById, findCircleByPatientId } from '../../db/index.js';
 import { generateMediatedClarification } from '../../agents/index.js';
 import { events } from '../../orchestrator.js';
+import { getAgentName } from '../utils/agentIdentity.js';
 
 export async function handleFactProcessing(userId, circleId, analysis) {
     if (!analysis.facts || Object.keys(analysis.facts).length === 0) {
@@ -28,7 +29,8 @@ export async function handleFactProcessing(userId, circleId, analysis) {
             if (otherMember) {
                 const otherUser = await findUserById(otherMember.user_id);
                 const clarificationQuestion = await generateMediatedClarification(otherUser.username, key);
-                events.emit('broadcast', { targetUsers: [otherMember.user_id], message: clarificationQuestion, from: 'personal-agent', circleId });
+                const agentName = await getAgentName(otherMember.user_id, circleId);
+                events.emit('broadcast', { targetUsers: [otherMember.user_id], message: clarificationQuestion, from: agentName, circleId });
             }
         }
     }

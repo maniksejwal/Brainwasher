@@ -7,7 +7,7 @@
 import { getMemberInfo, findUserById, findCircleByPatientId, getCircleMembers, addMessage } from '../db/index.js';
 import { performAiAnalysis } from './message_logic/aiAnalysisHandler.js';
 import { handleFactProcessing } from './message_logic/conflictHandler.js';
-import { handleSharingAndEscalation } from './message_logic/sharingHandler.js';
+import { handleSharingAndEscalation } from './message_logic/sharing/index.js';
 import { handlePendingActionResponse } from './message_logic/actionResponseHandler.js';
 import { events } from '../orchestrator.js';
 

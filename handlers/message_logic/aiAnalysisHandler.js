@@ -8,6 +8,7 @@
 import { getCircleMembers, addMessage, updateUserState, findUserById, findCircleByPatientId } from '../../db/index.js';
 import { processUserMessage, performContextEnrichment } from '../../agents/index.js';
 import { events } from '../../orchestrator.js';
+import { getAgentName } from '../utils/agentIdentity.js';
 
 async function resolveEntitiesAndEnrichContext(message, analysis, circleId) {
     if (!analysis.mentioned_usernames || analysis.mentioned_usernames.length === 0) {
@@ -63,8 +64,11 @@ export async function performAiAnalysis(userId, role, message, circleId) {
     const privacyLevel = analysis.privacyLevel || 'PRIVATE';
     await addMessage(circleId, userId, role, message, privacyLevel, criticality);
     
+    // Determine the appropriate agent name based on context
+    const agentName = await getAgentName(userId, circleId);
+    
     // Send the agent's conversational reply back to the original user.
-    events.emit('broadcast', { targetUsers: [userId], reply: analysis.reply, from: 'personal-agent', circleId, patientUsername });
+    events.emit('broadcast', { targetUsers: [userId], reply: analysis.reply, from: agentName, circleId, patientUsername });
     
     if (analysis.state_update) {
         await updateUserState(userId, circleId, analysis.state_update);

@@ -6,31 +6,37 @@
  * track the delegated task.
  */
 
-// FIX: Corrected imports. This handler interacts directly with the database
-// to log a pending action, it does not use the higher-level state manager.
-import { getCircleMembers, findUserByUsername, findUserById, addPendingAction } from '../../db/index.js';
+// This handler interacts directly with the database to log a pending action, it does not use the higher-level state manager.
+import { getCircleMembers, findUserByUsername, findUserById, addPendingAction, findCircleByPatientId } from '../../db/index.js';
 import { generateDelegatedProbe } from '../../agents/index.js';
 import { events } from '../../orchestrator.js';
 import { randomUUID } from 'crypto';
+import { getAgentName } from '../utils/agentIdentity.js';
 
 export async function handleAgentDelegateCommand(userId, circleId, message) {
     const match = message.match(/^\/agent ask (\w+) "(.*)"/);
     if (!match) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `[System] Invalid format. Use: /agent ask <username> "your question"`, from: 'system', circleId });
+        events.emit('broadcast', { targetUsers: [userId], reply: `[System] Invalid format. Use: /agent ask <username_or_role> "your question"`, from: 'system', circleId });
         return;
     }
 
-    const [, targetUsername, topic] = match;
+    const [, targetIdentifier, topic] = match;
 
     const members = await getCircleMembers(circleId);
-    const targetMember = members.find(m => m.username === targetUsername);
     const doctor = await findUserById(userId);
     const circle = await findCircleByPatientId(circleId);
     const patient = await findUserById(circle.primary_patient_id);
 
+    // Try to find target by username first, then by role
+    let targetMember = members.find(m => m.username === targetIdentifier);
+    
+    if (!targetMember) {
+        // If not found by username, try to find by role
+        targetMember = members.find(m => m.role === targetIdentifier);
+    }
 
     if (!targetMember) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `[System] Error: No user with the name '${targetUsername}' found in this care circle.`, from: 'system', circleId });
+        events.emit('broadcast', { targetUsers: [userId], reply: `[System] Error: No user with the name or role '${targetIdentifier}' found in this care circle.`, from: 'system', circleId });
         return;
     }
 
@@ -46,14 +52,15 @@ export async function handleAgentDelegateCommand(userId, circleId, message) {
         { topic, target_user_id: targetMember.user_id }
     );
     
+    const agentName = await getAgentName(targetMember.user_id, circleId);
     events.emit('broadcast', {
         targetUsers: [targetMember.user_id],
         message: probeMessage,
-        from: 'personal-agent',
+        from: agentName,
         circleId,
         patientUsername: patient.username
     });
 
-    events.emit('broadcast', { targetUsers: [userId], reply: `[System] I have asked ${targetUsername} about "${topic}" on your behalf. I will notify you when they respond.`, from: 'system', circleId });
+    events.emit('broadcast', { targetUsers: [userId], reply: `[System] I have asked ${targetMember.username} (${targetMember.role}) about "${topic}" on your behalf. I will notify you when they respond.`, from: 'system', circleId });
 }
 

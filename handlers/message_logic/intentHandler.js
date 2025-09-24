@@ -5,8 +5,9 @@
  */
 
 import { classifyExplicitIntent } from '../../agents/index.js';
-import { addEscalation } from '../../db/index.js';
+import { addEscalation, findCircleByPatientId } from '../../db/index.js';
 import { events } from '../../orchestrator.js';
+import { getAgentName } from '../utils/agentIdentity.js';
 
 export async function handleExplicitIntent(userId, circleId, message) {
     const intentAnalysis = await classifyExplicitIntent(message);
@@ -16,7 +17,8 @@ export async function handleExplicitIntent(userId, circleId, message) {
         await addEscalation(circleId, 'CRITICAL', details);
         events.emit('escalate', { circleId });
         const reply = "I understand you want to talk to the doctor. I have sent them an urgent notification.";
-        events.emit('broadcast', { targetUsers: [userId], reply, from: 'personal-agent', circleId });
+        const agentName = await getAgentName(userId, circleId);
+        events.emit('broadcast', { targetUsers: [userId], reply, from: agentName, circleId });
         return true; // Indicates the message has been handled.
     }
 
@@ -25,7 +27,8 @@ export async function handleExplicitIntent(userId, circleId, message) {
         // This is a placeholder for the logic to find the target user and share.
         // For now, we confirm the intent was understood.
         const reply = `Okay, I will share this update with the ${targetRole}.`;
-        events.emit('broadcast', { targetUsers: [userId], reply, from: 'personal-agent', circleId });
+        const agentName = await getAgentName(userId, circleId);
+        events.emit('broadcast', { targetUsers: [userId], reply, from: agentName, circleId });
         return true;
     }
 

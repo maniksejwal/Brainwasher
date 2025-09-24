@@ -53,10 +53,14 @@ export function clearLine() {
 export function displayMessage(data) {
     const patientName = data.patientUsername || data.circleId;
     
-    // Use cleaner display for system messages
+    // Use cleaner display for system messages and different colors for agent types
     let prefix;
     if (data.from === 'system') {
         prefix = chalk.bold.red(`[system]:`);
+    } else if (data.from === 'PersonalAgent') {
+        prefix = chalk.bold.green(`[PersonalAgent@${patientName}]:`);
+    } else if (data.from === 'CareAgent') {
+        prefix = chalk.bold.cyan(`[CareAgent@${patientName}]:`);
     } else {
         prefix = chalk.bold.blue(`[${data.from}@${patientName}]:`);
     }

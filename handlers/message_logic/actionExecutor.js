@@ -9,6 +9,7 @@
 import { events } from '../../orchestrator.js';
 import { addEscalation, findUserByUsername, findUserById, findCircleByPatientId, addMessage } from '../../db/index.js';
 import { generateSharingSummaryOrProbe } from '../../agents/index.js';
+import { getAgentName } from '../utils/agentIdentity.js';
 
 export async function executeResolvedAction(actionResult, userId, circleId) {
     const currentCircle = await findCircleByPatientId(circleId);
@@ -34,12 +35,14 @@ export async function executeResolvedAction(actionResult, userId, circleId) {
                 const targetUserInfo = await findUserByUsername(target);
                 if (targetUserInfo) {
                     const contextualMessage = await generateSharingSummaryOrProbe(originatingUser, target, content_to_share);
-                    events.emit('broadcast', { targetUsers: [targetUserInfo.user_id], message: contextualMessage, from: 'personal-agent', circleId, patientUsername });
+                    const agentName = await getAgentName(targetUserInfo.user_id, circleId);
+                    events.emit('broadcast', { targetUsers: [targetUserInfo.user_id], message: contextualMessage, from: agentName, circleId, patientUsername });
                 }
             }
         }
     }
     
     // Send the final confirmation/cancellation reply to the user who responded.
-    events.emit('broadcast', { targetUsers: [userId], reply: actionResult.reply, from: 'personal-agent', circleId, patientUsername });
+    const agentName = await getAgentName(userId, circleId);
+    events.emit('broadcast', { targetUsers: [userId], reply: actionResult.reply, from: agentName, circleId, patientUsername });
 }
