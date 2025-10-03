@@ -155,3 +155,141 @@ The testing and RL systems interact at specific interfaces:
 - **Data Validation**: Tests verify training data pipeline integrity
 
 This architecture ensures that the system maintains both reliability (through testing) and continuous improvement (through RL) without compromising either objective.
+
+## 5. UML Sequence Diagrams
+
+This section contains UML sequence diagrams that illustrate the interactions between different components of the multi-agent AI system. Each diagram focuses on a specific aspect of the system's functionality and provides detailed interaction views that complement the high-level architecture overview.
+
+### 5.1 Available Diagrams
+
+#### [Basic Message Flow](uml_diagrams/basic_message_flow.md)
+Shows the basic message flow when a user sends a message to their agent and the system processes it through the orchestrator to determine the appropriate response.
+
+**Key Components:**
+- User A and User B
+- PersonalAgent A and CareAgent B
+- Orchestrator
+- AI Analysis Handler
+- Intent Handler
+- Action Executor
+- State Manager
+- Database
+
+#### [Conflict Resolution](uml_diagrams/conflict_resolution.md)
+Illustrates the conflict detection and resolution process when users report contradictory information about the same topic.
+
+**Key Components:**
+- User A and User B
+- PersonalAgent A and CareAgent B
+- Orchestrator
+- Fact Reporting Handler
+- Conflict Handler
+- Database
+
+#### [Consent Management](uml_diagrams/consent_management.md)
+Demonstrates the consent management process when users want to share information with others in their care circle.
+
+**Key Components:**
+- User A and User B
+- PersonalAgent A and CareAgent B
+- Orchestrator
+- Sharing Handler
+- Consent Manager
+- State Manager
+- Database
+
+#### [Escalation Flow](uml_diagrams/escalation_flow.md)
+Shows the escalation process when critical health events are detected and need immediate attention from healthcare providers and family members.
+
+**Key Components:**
+- User
+- PersonalAgent
+- Orchestrator
+- Critical Events Handler
+- Database
+- Doctor
+- Family Members
+- Caregivers
+- Dashboard
+
+#### [Context Switching](uml_diagrams/context_switching.md)
+Illustrates the context switching process when users move between different care circles, changing their agent identity and role context.
+
+**Key Components:**
+- User
+- Current Agent and New Agent
+- Command Handler
+- State Manager
+- Database
+
+### 5.2 Diagram Conventions
+
+#### Participant Types
+- **👤 User**: Human users (patients, caregivers, family members)
+- **🤖 Agent**: AI agents (PersonalAgent, CareAgent)
+- **🎯 Orchestrator**: Central decision-making component
+- **🧠 Handler**: Specialized handlers for specific functions
+- **📊 Manager**: State and context management components
+- **💾 Database**: Data storage and retrieval
+- **👨‍⚕️ Doctor**: Healthcare providers
+- **👥 Family**: Family members
+- **📊 Dashboard**: Monitoring and tracking systems
+
+#### Message Types
+- **Solid Arrows**: Synchronous calls
+- **Dashed Arrows**: Asynchronous responses
+- **Parallel Blocks**: Concurrent operations
+- **Alt Blocks**: Conditional flows
+- **Notes**: Additional context and explanations
+
+#### Color Coding
+- **Blue**: User interactions
+- **Green**: Successful operations
+- **Red**: Error conditions
+- **Orange**: Decision points
+- **Purple**: State management
+- **Yellow**: AI processing
+
+### 5.3 Usage Guidelines
+
+#### Reading the Diagrams
+1. **Start from the top**: Follow the sequence from top to bottom
+2. **Identify participants**: Understand who is involved in each interaction
+3. **Follow the flow**: Track the message flow between components
+4. **Note conditions**: Pay attention to alt blocks and conditional flows
+5. **Understand context**: Read the accompanying explanations
+
+#### Understanding Interactions
+- **Synchronous**: Caller waits for response
+- **Asynchronous**: Caller continues without waiting
+- **Parallel**: Multiple operations happen simultaneously
+- **Conditional**: Different paths based on conditions
+
+#### System Architecture Integration
+These diagrams complement the main architecture documentation by providing detailed interaction views. They show:
+- **Component Relationships**: How components interact
+- **Data Flow**: How information moves through the system
+- **Decision Points**: Where the system makes choices
+- **Error Handling**: How errors are managed
+- **State Changes**: How system state evolves
+
+### 5.4 Maintenance
+
+#### Updating Diagrams
+When system components change:
+1. Update the relevant sequence diagram
+2. Update the component descriptions
+3. Update the integration notes
+4. Test the diagram for accuracy
+
+#### Adding New Diagrams
+For new system features:
+1. Create a new sequence diagram file in `uml_diagrams/`
+2. Follow the established conventions
+3. Include comprehensive explanations
+4. Update this section with the new diagram reference
+
+#### Version Control
+- Diagrams are version controlled with the codebase
+- Changes should be reviewed and tested
+- Documentation should be kept in sync with implementation
