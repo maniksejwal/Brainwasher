@@ -103,7 +103,7 @@ graph TD
     F -->|New Message| H[🧠 AI Analysis Handler]
     
     %% AI Processing (Red)
-    H --> I[🤖 Unified Agent]
+    H --> I[🤖 Agent]
     I --> J[🎯 Intent Classification]
     J --> K[📝 Fact Extraction]
     K --> L[⚠️ Criticality Assessment]
@@ -706,5 +706,92 @@ Each diagram uses emojis to quickly identify component types:
 - 📊 **State Management**: Conversation state tracking
 - 🎯 **Orchestration**: Central workflow coordination
 - 📡 **Output**: Response delivery and notifications
+
+## 10. Role Reciprocity and Care Circle Fluidity
+
+This section explains how users and agents adapt their roles based on context, creating fluid care circles where individuals can be both patients and caregivers.
+
+### 10.1 Role Reciprocity Framework
+
+This diagram shows how users and agents dynamically adapt their roles based on the care circle context:
+
+```mermaid
+graph TD
+    %% User Identity (Blue)
+    A[👤 User Identity] --> B{🏠 Which Circle?}
+    
+    %% Own Circle (Green)
+    B -->|Own Circle| C[🤖 PersonalAgent<br/>👤 Patient Role]
+    C --> D[💬 Patient needs help]
+    
+    %% Other's Circle (Orange)
+    B -->|Spouse's Circle| E[🤖 CareAgent<br/>👤 Caregiver Role]
+    E --> F[💬 Caregiver provides support]
+    
+    %% Role Fluidity (Purple)
+    D --> G[🔄 Role Switch]
+    F --> G
+    G --> H[📱 /switch command]
+    H --> I[🔄 Context Change]
+    I --> B
+    
+    %% Styling
+    classDef user fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef decision fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    classDef patient fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    classDef caregiver fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    classDef fluidity fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    
+    class A user
+    class B decision
+    class C,D patient
+    class E,F caregiver
+    class G,H,I fluidity
+```
+
+**Role Reciprocity Explained:**
+- **Same Person, Different Roles**: A user can be a patient in their own circle and a caregiver in their spouse's circle
+- **Agent Adaptation**: The same user gets PersonalAgent (patient) or CareAgent (caregiver) based on context
+- **Dynamic Switching**: Users can switch between circles using `/switch` commands
+- **Context-Aware Responses**: Agents adapt their language and capabilities based on the user's role
+
+### 10.2 Care Circle Fluidity
+
+This diagram shows how care circles overlap with spouses and siblings as caregivers:
+
+```mermaid
+graph TD
+    %% Care Circles
+    subgraph "Circle A - Patient A"
+        A1[👤 Patient A<br/>🤖 PersonalAgent]
+        A2[👤 Spouse B<br/>🤖 CareAgent]
+        A3[👤 Sibling C<br/>🤖 CareAgent]
+    end
+    
+    subgraph "Circle B - Patient B"
+        B1[👤 Patient B<br/>🤖 PersonalAgent]
+        B2[👤 Spouse A<br/>🤖 CareAgent]
+        B3[👤 Sibling C<br/>🤖 CareAgent]
+    end
+    
+    %% Role Fluidity
+    A2 -.->|/switch B| B1
+    B2 -.->|/switch A| A1
+    
+    %% Styling
+    classDef patient fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    classDef caregiver fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
+    classDef switch fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,stroke-dasharray: 5 5
+    
+    class A1,B1 patient
+    class A2,B2,A3,B3 caregiver
+```
+
+**Care Circle Fluidity Explained:**
+- **Two Patients**: Patient A and Patient B each have their own care circles
+- **Spouse Caregivers**: Spouse A cares for Patient B, Spouse B cares for Patient A
+- **Sibling Caregivers**: Sibling C provides care in both circles
+- **Role Switching**: Spouses can switch between patient and caregiver roles
+- **Shared Caregivers**: Siblings can be caregivers in multiple circles
 
 This framework provides a robust foundation for the multi-agent healthcare system, ensuring clear responsibilities, effective communication, and reliable decision-making processes.
