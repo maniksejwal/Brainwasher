@@ -456,50 +456,59 @@ This section explains the Orchestrator's decision logic (referring to the green 
 The main diagram shows "Orchestrator" as a single green box, but this section details the specific decision logic that determines which specialized handler processes the message.
 
 **Decision Tree Logic:**
-The orchestrator uses a priority-based decision tree:
-1. **Critical Events First**: HIGH criticality events bypass all other logic for immediate escalation
-2. **Intent-Based Routing**: Non-critical messages are routed based on detected intents
-3. **Fallback Handling**: Messages that don't match specific intents use the standard sharing flow
+The orchestrator uses a priority-based decision tree that prioritizes reliability for critical events:
+1. **Critical Events First**: HIGH criticality events take a direct, reliable path to ensure guaranteed completion
+2. **Complex Handler Bypass**: Critical events skip complex handler logic to improve reliability and speed
+3. **Essential Processing**: Fact processing runs separately/parallel for critical events to capture important data
+4. **Intent-Based Routing**: Non-critical messages are routed through complex handlers based on detected intents
+5. **Fallback Handling**: Messages that don't match specific intents use the standard sharing flow
 
-**Grouped Operations**: Multiple decision points are grouped together as they represent a single analysis phase:
-- Fact About Others + Doctor Request + Mediation Request + Advice for Others are all part of the same intent analysis
+**Reliability Design**: Different handlers work differently - critical path is simplified for reliability while complex handlers are avoided for critical events.
 
 ```mermaid
 graph TD
     %% Input (Blue)
     A[📨 Message Received] --> B{🚨 Critical Event?}
     
-    %% Critical Path (Red)
-    B -->|Yes| C[⚡ Immediate Escalation]
+    %% Critical Path (Red) - Direct and Reliable
+    B -->|Yes| C[⚡ Immediate Escalation<br/>Guaranteed Completion]
+    C --> D[📡 Direct Response Action]
     
-    %% Non-Critical Path (Orange) - Grouped Analysis
-    B -->|No| D{🧠 Intent Analysis<br/>Fact About Others?<br/>Doctor Request?<br/>Mediation Request?<br/>Advice for Others?}
-    D -->|Fact About Others| E[📝 Fact Reporting Handler]
-    D -->|Doctor Request| F[🏥 Doctor Request Handler]
-    D -->|Mediation Request| G[💬 Mediation Handler]
-    D -->|Advice for Others| H[🎯 Advice Sharing Handler]
-    D -->|None Match| I[🔄 Fallback Sharing]
+    %% Essential Processing (Purple) - Runs Separately
+    C --> E[📝 Fact Processing<br/>Runs Separately/Parallel]
+    E --> F[📊 Update Fact History]
+    
+    %% Non-Critical Path (Orange) - Complex Handler Analysis
+    B -->|No| G{🧠 Intent Analysis<br/>Fact About Others?<br/>Doctor Request?<br/>Mediation Request?<br/>Advice for Others?}
+    G -->|Fact About Others| H[📝 Fact Reporting Handler]
+    G -->|Doctor Request| I[🏥 Doctor Request Handler]
+    G -->|Mediation Request| J[💬 Mediation Handler]
+    G -->|Advice for Others| K[🎯 Advice Sharing Handler]
+    G -->|None Match| L[🔄 Fallback Sharing]
     
     %% All Paths Lead to Output (Green)
-    C --> J[📡 Response Broadcast]
-    E --> J
-    F --> J
-    G --> J
-    H --> J
-    I --> J
+    D --> M[📡 Response Action]
+    F --> M
+    H --> M
+    I --> M
+    J --> M
+    K --> M
+    L --> M
     
     %% Styling
     classDef input fill:#e1f5fe,stroke:#01579b,stroke-width:2px
     classDef critical fill:#ffebee,stroke:#c62828,stroke-width:2px
+    classDef essential fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
     classDef analysis fill:#fff3e0,stroke:#ef6c00,stroke-width:2px
     classDef handler fill:#fffde7,stroke:#f57f17,stroke-width:2px
     classDef output fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
     
     class A input
-    class B critical
-    class D analysis
-    class E,F,G,H,I handler
-    class J output
+    class B,C critical
+    class D,E,F essential
+    class G analysis
+    class H,I,J,K,L handler
+    class M output
 ```
 
 ### 6.2 Consent Management
