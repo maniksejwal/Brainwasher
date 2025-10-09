@@ -1,8 +1,7 @@
 /**
  * @fileoverview client/network.js
- * Handles all network communication for the client. This includes logging in,
- * sending messages and commands via fetch, and managing the persistent
- * real-time connection using EventSource for receiving updates from the server.
+ * Handles all network communication for the client.
+ * NOW USES SHARED API CLIENT - zero duplication!
  */
 
 import EventSource from 'eventsource';
@@ -10,15 +9,15 @@ import chalk from 'chalk';
 import config from '../config.js';
 import { state, updateUserState } from './state.js';
 import { showLoginMessage, updatePrompt, clearLine, displayMessage, displayEscalations, displayContextSwitch } from './ui.js';
+import ApiClient from '../shared/apiClient.js';
+
+// Create shared API client instance
+const api = new ApiClient(config.ORCHESTRATOR_URL);
 
 export async function login() {
     try {
-        const response = await fetch(`${config.ORCHESTRATOR_URL}/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: state.username }),
-        });
-        const data = await response.json();
+        const data = await api.login(state.username);
+        
         updateUserState({
             userId: data.userId,
             currentCircleId: data.activeCircleId,
@@ -35,7 +34,8 @@ export async function login() {
 }
 
 export function connectToEventSource() {
-    const es = new EventSource(`${config.ORCHESTRATOR_URL}/events/${state.userId}`);
+    // Use EventSource package for Node.js (browser uses native)
+    const es = new EventSource(api.getEventSourceUrl(state.userId));
 
     es.on('message', async (e) => {
         const data = JSON.parse(e.data);
@@ -45,8 +45,7 @@ export function connectToEventSource() {
             displayMessage(data);
         } else if (data.type === 'escalation') {
             try {
-                const res = await fetch(`${config.ORCHESTRATOR_URL}/doctor/escalations/unread/${state.userId}`);
-                const escalations = await res.json();
+                const escalations = await api.getUnreadEscalations(state.userId);
                 if (escalations && escalations.length > 0) {
                     displayEscalations(escalations);
                 }
@@ -74,11 +73,7 @@ export function connectToEventSource() {
 
 export async function sendCommand(message) {
     try {
-        await fetch(`${config.ORCHESTRATOR_URL}/command`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: state.userId, circleId: state.currentCircleId, message }),
-        });
+        await api.sendCommand(state.userId, state.currentCircleId, message);
     } catch (error) {
         console.error(chalk.red('Error sending command:', error.message));
     }
@@ -87,11 +82,7 @@ export async function sendCommand(message) {
 export async function sendMessage(message) {
     if (!message) return;
     try {
-        await fetch(`${config.ORCHESTRATOR_URL}/send`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: state.userId, circleId: state.currentCircleId, message }),
-        });
+        await api.sendMessage(state.userId, state.currentCircleId, message);
     } catch (error) {
         console.error(chalk.red('Error sending message:', error.message));
     }

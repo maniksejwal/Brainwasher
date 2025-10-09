@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Care Circle</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- Login Screen -->
+    <div id="login-screen" class="screen active">
+        <div class="container">
+            <h1>Care Circle</h1>
+            <input type="text" id="username" placeholder="Enter username" autofocus>
+            <button id="login-btn" class="primary">Continue</button>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app-screen" class="screen">
+        <!-- Header -->
+        <header>
+            <div class="header-left">
+                <h2 id="current-context">Loading...</h2>
+                <span id="role-badge" class="badge"></span>
+            </div>
+            <div class="header-right">
+                <button id="view-selector" class="tab-button">Chat</button>
+                <button id="circle-btn" class="icon-button" title="Care Circle">👥</button>
+                <button id="feedback-btn" class="icon-button" title="View Feedback">📊</button>
+                <span id="username-display" class="username"></span>
+            </div>
+        </header>
+
+        <!-- Main Content Area -->
+        <div class="content">
+            <!-- Chat View (Default) -->
+            <div id="chat-view" class="view active">
+                <div id="messages" class="messages"></div>
+                <div class="input-container">
+                    <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
+                    <button id="send-btn" class="primary">Send</button>
+                </div>
+            </div>
+
+            <!-- Feedback View -->
+            <div id="feedback-view" class="view">
+                <div class="view-header">
+                    <h3>Training & Feedback</h3>
+                    <button id="refresh-feedback" class="secondary">Refresh</button>
+                </div>
+                
+                <div class="tabs">
+                    <button class="tab active" data-tab="my-feedback">My Feedback</button>
+                    <button class="tab" data-tab="simulations">Simulations</button>
+                    <button class="tab" data-tab="analysis">Analysis</button>
+                </div>
+
+                <div id="my-feedback" class="tab-content active">
+                    <div id="feedback-list"></div>
+                </div>
+
+                <div id="simulations" class="tab-content">
+                    <button id="run-simulation" class="primary">Run Simulation</button>
+                    <div id="simulation-results"></div>
+                </div>
+
+                <div id="analysis" class="tab-content">
+                    <button id="generate-analysis" class="primary">Generate Analysis</button>
+                    <div id="analysis-results"></div>
+                </div>
+            </div>
+
+            <!-- Circle View -->
+            <div id="circle-view" class="view">
+                <div class="view-header">
+                    <h3>Care Circle</h3>
+                </div>
+                <div id="circle-members"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Feedback Modal -->
+    <div id="feedback-modal" class="modal">
+        <div class="modal-content">
+            <h3>Rate Interaction</h3>
+            <div class="feedback-buttons">
+                <button class="feedback-btn positive" data-score="1">👍 Good</button>
+                <button class="feedback-btn neutral" data-score="0">👌 Neutral</button>
+                <button class="feedback-btn negative" data-score="-1">👎 Bad</button>
+            </div>
+            <input type="text" id="feedback-comment" placeholder="Optional comment...">
+            <div class="modal-actions">
+                <button id="submit-feedback" class="primary">Submit</button>
+                <button id="cancel-feedback" class="secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
+
