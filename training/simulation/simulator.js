@@ -9,6 +9,7 @@ import OpenAI from 'openai';
 import config from '../../config.js';
 import { getPersona } from './personas.js';
 import { logger as trainingLogger, metrics as metricsCollector } from '../core/index.js';
+import { SimulationFeedback } from './simulation_feedback.js';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import fs from 'fs/promises';
@@ -137,6 +138,8 @@ class SimulationDriver {
         this.conversationId = `sim_${Date.now()}`;
         this.maxTurns = options.maxTurns || 10;
         this.logResults = options.logResults !== false;
+        this.autoFeedback = options.autoFeedback !== false; // Enable by default
+        this.feedbackCollector = new SimulationFeedback(this.conversationId);
     }
 
     /**
@@ -283,6 +286,27 @@ class SimulationDriver {
 
             // Record agent response
             patientUser.recordAgentResponse(agentResult.agent_response);
+
+            // Automatic feedback from simulation
+            if (this.autoFeedback) {
+                const feedback = await this.feedbackCollector.provideFeedback(
+                    `${this.conversationId}_${patientUser.userId}_${turn}`,
+                    patientUser.userId,
+                    patientUser.userId, // circleId = userId for patient's own circle
+                    null, // messageId - would need to query DB
+                    userMessage,
+                    agentResult.agent_response,
+                    agentResult.orchestrator_action,
+                    userMessage
+                );
+
+                if (feedback.issuesFound > 0) {
+                    console.log(`    🔍 Auto-detected ${feedback.issuesFound} issue(s):`);
+                    feedback.issues.forEach(issue => {
+                        console.log(`       ${issue.category}: ${issue.description}`);
+                    });
+                }
+            }
 
             // Log interaction
             if (this.logResults) {

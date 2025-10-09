@@ -1,6 +1,6 @@
 /**
  * @fileoverview Simulation infrastructure
- * Exports personas, simulator, and scenario runner
+ * Exports personas, simulator, scenario runner, and feedback
  */
 
 export { 
@@ -14,4 +14,5 @@ export {
 
 export { SimulationDriver, SyntheticUser } from './simulator.js';
 export { ScenarioRunner } from './scenario_runner.js';
+export { SimulationFeedback } from './simulation_feedback.js';
 

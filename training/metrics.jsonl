@@ -1,0 +1,8 @@
+{"timestamp":1760025463401,"type":"response_time","agent_type":"full_analysis","duration_ms":6667,"success":true}
+{"timestamp":1760025463401,"type":"message_length","user_id":"ae5a5e84-7d15-4ca0-9707-ed316e58c498","message_length":2,"response_length":0}
+{"timestamp":1760025524823,"type":"response_time","agent_type":"full_analysis","duration_ms":13170,"success":true}
+{"timestamp":1760025524823,"type":"message_length","user_id":"ae5a5e84-7d15-4ca0-9707-ed316e58c498","message_length":23,"response_length":0}
+{"timestamp":1760025635143,"type":"response_time","agent_type":"full_analysis","duration_ms":10751,"success":true}
+{"timestamp":1760025635143,"type":"message_length","user_id":"ae5a5e84-7d15-4ca0-9707-ed316e58c498","message_length":26,"response_length":0}
+{"timestamp":1760025866628,"type":"response_time","agent_type":"full_analysis","duration_ms":10499,"success":true}
+{"timestamp":1760025866628,"type":"message_length","user_id":"160de0ab-1e0f-479f-827d-61583d045f15","message_length":47,"response_length":0}

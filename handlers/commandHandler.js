@@ -18,6 +18,8 @@ import { handleAgentDelegateCommand } from './commands/agentDelegate.js';
 import { handleShowCircleCommand } from './commands/showCircle.js';
 import { handleSetSpecialtyCommand } from './commands/setSpecialty.js';
 import { handleScoreCommand } from './commands/scoreCommand.js';
+import { handleReportCommand } from './commands/reportCommand.js';
+import { handleFeedbackCommand } from './commands/feedbackCommand.js';
 
 export async function handleCommand(userId, circleId, message) {
     const parts = message.toLowerCase().split(' ');
@@ -95,6 +97,30 @@ export async function handleCommand(userId, circleId, message) {
                 });
             };
             await handleScoreCommand(userId, circleId, parts, sendMessageToUser);
+            break;
+        case '/report':
+            // Reuse the same helper function
+            const sendReportMessage = (targetUserId, msg) => {
+                events.emit('broadcast', { 
+                    targetUsers: [targetUserId], 
+                    reply: msg, 
+                    from: 'system', 
+                    circleId 
+                });
+            };
+            await handleReportCommand(userId, circleId, parts, sendReportMessage);
+            break;
+        case '/feedback':
+            // Unified feedback command
+            const sendFeedbackMessage = (targetUserId, msg) => {
+                events.emit('broadcast', { 
+                    targetUsers: [targetUserId], 
+                    reply: msg, 
+                    from: 'system', 
+                    circleId 
+                });
+            };
+            await handleFeedbackCommand(userId, circleId, parts, sendFeedbackMessage);
             break;
         default:
             events.emit('broadcast', { targetUsers: [userId], reply: `[System] Unknown command: ${command}`, from: 'system', circleId });

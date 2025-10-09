@@ -14,29 +14,103 @@ export const rl = readline.createInterface({
     output: process.stdout
 });
 
-const doctorCommands = `
-${chalk.bold('Doctor Commands:')}
-  /spec <specialty>            - Set your clinical specialty (e.g., Cardiology).
-  /switch <patient_username>   - Switch to a patient's care circle.
-  /log "note"                  - Log a confidential note.
-  /order "test/medication"     - Log a confidential order request.
-  /agent ask <username> "topic"    - Have your agent ask a question on your behalf.
-`;
+const generalCommands = `
+${chalk.bold.cyan('General Commands (All Users):')}
+  ${chalk.yellow('/circle')}                    - Show your current care circle members and roles
+  ${chalk.yellow('/switch <username>')}         - Switch to another care circle
+  ${chalk.yellow('/feedback +1/-1')}            - Quick rating OR detailed report
+  ${chalk.yellow('/feedback bug "description"')} - Report specific issues (bug, privacy, tone, etc.)
+  ${chalk.yellow('/yes')} or ${chalk.yellow('/no')}              - Respond to system questions
+
+${chalk.italic.gray('Note: /score and /report still work, but /feedback is preferred (unified command)')}`;
 
 const patientCommands = `
-${chalk.bold('Patient Commands:')}
-  /care <username> as <relationship> - Add a caregiver to your circle.
-  /doc <username>                  - Add a doctor to your circle.
-  /consent <username> <level>      - Set consent for a member.
+${chalk.bold.green('Patient Commands:')}
+  ${chalk.yellow('/care <username> as <relationship>')} - Add a caregiver to YOUR circle
+  ${chalk.yellow('/doc <username>')}                   - Add a doctor to YOUR circle
+  ${chalk.yellow('/consent <username> <level>')}       - Set consent level (NONE/MEDIUM/FULL) for a member
 `;
 
-export function showLoginMessage(message) {
-    console.log(chalk.green(message));
-    if (state.allRoles.includes('doctor')) {
-        console.log(doctorCommands);
+const caregiverCommands = `
+${chalk.bold.blue('Caregiver Commands:')}
+  ${chalk.yellow('/consent <username> <level>')} - Set your consent level in this circle
+  ${chalk.italic('(Talk naturally - your agent will help coordinate care)')}
+`;
+
+const doctorCommands = `
+${chalk.bold.magenta('Doctor Commands:')}
+  ${chalk.yellow('/spec <specialty>')}            - Set your clinical specialty (e.g., Cardiology)
+  ${chalk.yellow('/log "note"')}                  - Log a confidential note in the patient's record
+  ${chalk.yellow('/order "test/medication"')}     - Log a confidential order request
+  ${chalk.yellow('/agent ask <username> "topic"')} - Have your agent ask a question on your behalf
+`;
+
+function getWelcomeMessage(isNewUser, username, roles) {
+    if (isNewUser) {
+        return `
+${chalk.bold.green('═'.repeat(60))}
+${chalk.bold.green('🎉 Welcome to the Multi-Agent Care System, ' + username + '!')}
+${chalk.bold.green('═'.repeat(60))}
+
+${chalk.cyan('You\'re starting fresh! Here\'s what you can do:')}
+
+${chalk.bold('1. Build Your Care Circle:')}
+   ${chalk.yellow('/care alice as spouse')}  - Add a caregiver
+   ${chalk.yellow('/doc dr_smith')}          - Add a doctor
+
+${chalk.bold('2. Just Talk Naturally:')}
+   Type anything to your personal AI agent
+   Example: "I took my medication this morning"
+
+${chalk.bold('3. Help Improve the System:')}
+   After any interaction, rate it with ${chalk.yellow('/score +1')} or ${chalk.yellow('/score -1')}
+`;
     } else {
+        const roleList = roles.length > 0 ? roles.join(', ') : 'patient';
+        return `
+${chalk.bold.green('═'.repeat(60))}
+${chalk.bold.green('👋 Welcome back, ' + username + '!')}
+${chalk.bold.green('═'.repeat(60))}
+
+${chalk.cyan('Your roles:')} ${chalk.bold(roleList)}
+${chalk.cyan('Active circle:')} Your personal circle (you as patient)
+
+${chalk.bold('Quick Actions:')}
+  • ${chalk.yellow('/circle')} - See your care circle status
+  • ${chalk.yellow('/switch <name>')} - Switch to another circle
+  • Just type naturally to talk to your AI agent
+  • ${chalk.yellow('/score +1')} after good interactions to help improve the system
+`;
+    }
+}
+
+function showCommandsByRoles(roles) {
+    console.log(chalk.bold('\n📋 Available Commands:\n'));
+    
+    // Always show general commands
+    console.log(generalCommands);
+    
+    // Show role-specific commands
+    if (roles.includes('patient') || roles.length === 0) {
         console.log(patientCommands);
     }
+    
+    if (roles.includes('caregiver')) {
+        console.log(caregiverCommands);
+    }
+    
+    if (roles.includes('doctor')) {
+        console.log(doctorCommands);
+    }
+    
+    console.log(chalk.bold.green('═'.repeat(60)));
+    console.log(chalk.italic.gray('Tip: Just type naturally - your AI agent understands conversation!\n'));
+}
+
+export function showLoginMessage(message, isNewUser = false) {
+    const roles = state.allRoles || [];
+    console.log(getWelcomeMessage(isNewUser, state.username, roles));
+    showCommandsByRoles(roles);
 }
 
 export function updatePrompt() {
@@ -78,10 +152,18 @@ export function displayEscalations(escalations) {
 }
 
 export function displayContextSwitch(data) {
-    console.log(chalk.green(`Switched context to circle for patient: ${data.patientUsername} (Your role: ${data.newRole})`));
-    // FIX: Check all roles to see if the user is a doctor.
-    if (state.allRoles.includes('doctor')) {
-        console.log(doctorCommands);
+    console.log(chalk.green.bold('\n' + '═'.repeat(60)));
+    console.log(chalk.green(`✓ Switched to circle for patient: ${chalk.bold(data.patientUsername)}`));
+    console.log(chalk.green(`  Your role in this circle: ${chalk.bold(data.newRole)}`));
+    console.log(chalk.green.bold('═'.repeat(60) + '\n'));
+    
+    // Show role-specific reminder
+    if (data.newRole === 'doctor') {
+        console.log(chalk.italic.gray('💡 Remember: Use /log for private notes, /order for prescriptions\n'));
+    } else if (data.newRole === 'caregiver') {
+        console.log(chalk.italic.gray('💡 Remember: Talk naturally - your agent coordinates with the patient\'s agent\n'));
+    } else if (data.newRole === 'patient') {
+        console.log(chalk.italic.gray('💡 Remember: Use /care to add caregivers, /doc to add doctors\n'));
     }
 }
 

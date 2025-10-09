@@ -33,10 +33,27 @@ export async function executeResolvedAction(actionResult, userId, circleId) {
                 events.emit('escalate', { circleId });
             } else {
                 const targetUserInfo = await findUserByUsername(target);
-                if (targetUserInfo) {
-                    const contextualMessage = await generateSharingSummaryOrProbe(originatingUser, target, content_to_share);
+                const originatingUserInfo = await findUserById(originatingUser);
+                
+                if (targetUserInfo && originatingUserInfo) {
+                    // FIX #1: Use username instead of UUID for template replacement
+                    const contextualMessage = await generateSharingSummaryOrProbe(
+                        originatingUserInfo.username,  // ✅ Now passes username, not UUID
+                        target, 
+                        content_to_share
+                    );
+                    
+                    // FIX #2: Use TARGET's agent to maintain proper agent-user boundaries
+                    // The target user's own agent should deliver the message, not the originating user's agent
                     const agentName = await getAgentName(targetUserInfo.user_id, circleId);
-                    events.emit('broadcast', { targetUsers: [targetUserInfo.user_id], message: contextualMessage, from: agentName, circleId, patientUsername });
+                    
+                    events.emit('broadcast', { 
+                        targetUsers: [targetUserInfo.user_id], 
+                        message: contextualMessage, 
+                        from: agentName,  // ✅ Target's agent, respecting architectural boundaries
+                        circleId, 
+                        patientUsername 
+                    });
                 }
             }
         }

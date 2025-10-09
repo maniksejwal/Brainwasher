@@ -17,12 +17,14 @@ import { randomUUID } from 'crypto';
 export async function handleLogin(username) {
     let user = await findUserByUsername(username);
     let userId;
+    let isNewUser = false;
 
     if (!user) {
         console.log(`[LoginHandler] First time login for '${username}'. Creating user and personal care circle.`);
         userId = randomUUID();
         await addUser(userId, username);
         await createCareCircle(userId, userId);
+        isNewUser = true;
     } else {
         userId = user.user_id;
     }
@@ -39,7 +41,8 @@ export async function handleLogin(username) {
         userId: userId,
         activeCircleId: personalCircle.circle_id,
         patientUsername: username,
-        allRoles: allRoles // Send all roles to the client
+        allRoles: allRoles, // Send all roles to the client
+        isNewUser: isNewUser // Indicate if this is their first login
     };
 }
 

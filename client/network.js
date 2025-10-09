@@ -26,7 +26,7 @@ export async function login() {
             userRoleInCurrentCircle: 'patient',
             allRoles: data.allRoles || []
         });
-        showLoginMessage(data.message);
+        showLoginMessage(data.message, data.isNewUser);
         return true;
     } catch (error) {
         console.error(chalk.red('Error logging in:', error.message));
