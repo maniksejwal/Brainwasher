@@ -17,6 +17,7 @@ import { handleDirectiveCommand } from './commands/logDirective.js';
 import { handleAgentDelegateCommand } from './commands/agentDelegate.js';
 import { handleShowCircleCommand } from './commands/showCircle.js';
 import { handleSetSpecialtyCommand } from './commands/setSpecialty.js';
+import { handleScoreCommand } from './commands/scoreCommand.js';
 
 export async function handleCommand(userId, circleId, message) {
     const parts = message.toLowerCase().split(' ');
@@ -82,6 +83,18 @@ export async function handleCommand(userId, circleId, message) {
             break;
         case '/clear':
             events.emit('clear_db');
+            break;
+        case '/score':
+            // Helper function to send message back to user
+            const sendMessageToUser = (targetUserId, msg) => {
+                events.emit('broadcast', { 
+                    targetUsers: [targetUserId], 
+                    reply: msg, 
+                    from: 'system', 
+                    circleId 
+                });
+            };
+            await handleScoreCommand(userId, circleId, parts, sendMessageToUser);
             break;
         default:
             events.emit('broadcast', { targetUsers: [userId], reply: `[System] Unknown command: ${command}`, from: 'system', circleId });

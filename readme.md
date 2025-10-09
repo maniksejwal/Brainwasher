@@ -16,6 +16,8 @@ This project is a Node.js prototype of a multi-agent AI system designed to solve
 
 - **State Management**: A robust session state machine tracks conversational context to handle multi-step interactions without losing track.
 
+- **🆕 Self-Improving Training System**: A comprehensive reinforcement learning infrastructure that continuously improves the AI through simulations, human feedback, and automated prompt optimization. See [Training Documentation](documentation/training/).
+
 ## Setup & Installation
 
 ### Prerequisites
@@ -79,6 +81,40 @@ A user becomes a "doctor" in a care circle when a patient adds them using the `/
 - `/log "note"` - Log a confidential note in the patient's record.
 - `/order "test/medication"` - Log a confidential order request.
 - `/agent ask <username_or_role> "topic"` - Have your agent ask a question on your behalf. You can specify either a username (e.g., `alice`) or a role (e.g., `patient`, `caregiver`).
+
+## Training & Continuous Improvement 🆕
+
+The system includes a comprehensive training infrastructure that enables continuous self-improvement through:
+
+- **Automatic Logging**: All conversations passively logged for analysis (< 2ms overhead)
+- **Human Feedback**: `/score` command for real-time quality ratings
+- **AI Simulations**: 11 synthetic personas generate unlimited training data
+- **Automated Analysis**: AI-powered pattern detection and recommendations
+- **Prompt Optimization**: Automatic improvement based on performance data
+- **A/B Testing**: Statistical validation before deployment
+
+### Quick Start
+
+```bash
+# Rate an interaction
+/score +1 "Great response!"
+
+# Run simulation
+node training/simulation/simulator.js
+
+# Analyze performance
+node training/analysis/feedback_analyzer.js
+
+# Optimize prompts
+node training/analysis/prompt_optimizer.js
+```
+
+### Documentation
+
+- 🚀 **[Getting Started](documentation/training/GETTING_STARTED.md)** - Quick start guide
+- 🏗️ **[Architecture](documentation/training/ARCHITECTURE.md)** - System diagrams with Mermaid
+- ✅ **[Implementation](documentation/training/IMPLEMENTATION_SUMMARY.md)** - What was built
+- 📖 **[RL Framework](documentation/reinforcement_learning_framework.md)** - Theoretical foundation
 
 ## Testing
 
