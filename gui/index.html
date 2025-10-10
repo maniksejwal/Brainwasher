@@ -33,6 +33,7 @@
             </div>
             <div class="header-right">
                 <button id="view-selector" class="tab-button">Chat</button>
+                <button id="help-btn" class="icon-button" title="Help & Commands">❓</button>
                 <button id="circle-btn" class="icon-button" title="Care Circle">👥</button>
                 <button id="feedback-btn" class="icon-button" title="View Feedback">📊</button>
                 <span id="username-display" class="username"></span>
@@ -45,7 +46,7 @@
             <div id="chat-view" class="view active">
                 <div id="messages" class="messages"></div>
                 <div class="input-container">
-                    <input type="text" id="message-input" placeholder="Type a message..." autocomplete="off">
+                    <input type="text" id="message-input" placeholder="Type a message or /command (❓ for help)" autocomplete="off">
                     <button id="send-btn" class="primary">Send</button>
                 </div>
             </div>
@@ -93,6 +94,7 @@
             <div id="circle-view" class="view">
                 <div class="view-header">
                     <h3>Care Circle</h3>
+                    <button id="back-to-chat" class="secondary">Back to Chat</button>
                 </div>
                 <div id="circle-members"></div>
             </div>
@@ -102,17 +104,98 @@
     <!-- Quick Feedback Modal -->
     <div id="feedback-modal" class="modal">
         <div class="modal-content">
-            <h3>Rate Interaction</h3>
+            <h3>Rate Last Interaction</h3>
+            <p style="font-size: 14px; color: #666; margin-bottom: 16px;">
+                How was the agent's response? This helps improve the system.
+            </p>
             <div class="feedback-buttons">
-                <button class="feedback-btn positive" data-score="1">👍 Good</button>
-                <button class="feedback-btn neutral" data-score="0">👌 Neutral</button>
-                <button class="feedback-btn negative" data-score="-1">👎 Bad</button>
+                <button class="feedback-btn positive" data-score="1">
+                    <div>👍 Good</div>
+                    <small>Helpful & accurate</small>
+                </button>
+                <button class="feedback-btn neutral" data-score="0">
+                    <div>👌 Neutral</div>
+                    <small>Could be better</small>
+                </button>
+                <button class="feedback-btn negative" data-score="-1">
+                    <div>👎 Bad</div>
+                    <small>Unhelpful or wrong</small>
+                </button>
             </div>
-            <input type="text" id="feedback-comment" placeholder="Optional comment...">
+            <input type="text" id="feedback-comment" placeholder="Optional: Explain why...">
+            <div style="font-size: 12px; color: #999; margin: 8px 0;">
+                Examples: /feedback +1 "Great!", /feedback -1 "Missed key detail"
+            </div>
             <div class="modal-actions">
                 <button id="submit-feedback" class="primary">Submit</button>
                 <button id="cancel-feedback" class="secondary">Cancel</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Add Member Modal -->
+    <div id="add-member-modal" class="modal">
+        <div class="modal-content">
+            <h3>Add Member to Circle</h3>
+            <p style="font-size: 14px; color: #666;">Choose member type:</p>
+            <div style="margin: 16px 0;">
+                <button id="add-caregiver-btn" class="primary" style="margin-right: 8px;">Add Caregiver</button>
+                <button id="add-doctor-btn" class="primary">Add Doctor</button>
+            </div>
+            <div id="caregiver-form" style="display:none; margin-top: 16px;">
+                <input type="text" id="caregiver-username" placeholder="Username" style="width: 100%; margin-bottom: 8px;">
+                <input type="text" id="caregiver-relationship" placeholder="Relationship (e.g., mother, spouse)" style="width: 100%; margin-bottom: 8px;">
+                <p style="font-size: 12px; color: #999;">Command: /care username as relationship</p>
+            </div>
+            <div id="doctor-form" style="display:none; margin-top: 16px;">
+                <input type="text" id="doctor-username" placeholder="Doctor's username" style="width: 100%; margin-bottom: 8px;">
+                <p style="font-size: 12px; color: #999;">Command: /doc username</p>
+            </div>
+            <div class="modal-actions" style="margin-top: 16px;">
+                <button id="submit-add-member" class="primary">Add</button>
+                <button id="cancel-add-member" class="secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Help Modal -->
+    <div id="help-modal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <button id="close-help" style="float:right; background:none; border:none; font-size:20px; cursor:pointer;">✖</button>
+            <h3>How to Use Care Circles</h3>
+            
+            <h4>What is this?</h4>
+            <p>A multi-agent system where each person has their own AI assistant. Agents coordinate care while respecting privacy boundaries.</p>
+            
+            <h4>Available Commands</h4>
+            <div style="font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 12px; border-radius: 4px; margin: 12px 0;">
+                <div style="margin: 8px 0;"><strong>/care</strong> username as relationship - Add caregiver (e.g., /care mom as mother)</div>
+                <div style="margin: 8px 0;"><strong>/doc</strong> username - Add doctor to circle (e.g., /doc dr_smith)</div>
+                <div style="margin: 8px 0;"><strong>/circle</strong> - Show circle members and their roles</div>
+                <div style="margin: 8px 0;"><strong>/switch</strong> username - Switch to another circle (role changes automatically)</div>
+                <div style="margin: 8px 0;"><strong>/feedback</strong> +1|-1 "comment" - Rate interaction (e.g., /feedback +1 "Great!")</div>
+                <div style="margin: 8px 0;"><strong>/consent</strong> username level - Set consent (none/limited/full)</div>
+            </div>
+            
+            <h4>How Roles Work</h4>
+            <p style="font-size: 14px; color: #666;">
+                Your role changes automatically based on which circle you're in:
+            </p>
+            <ul style="font-size: 14px; color: #666; margin-left: 20px;">
+                <li>In your own circle: You're the <strong>patient</strong></li>
+                <li>When added to someone else's circle: You're a <strong>caregiver</strong> or <strong>doctor</strong></li>
+                <li>Use <code>/switch username</code> to change circles (your role updates automatically)</li>
+                <li>Check your current role in the header badge and browser tab title</li>
+            </ul>
+            
+            <h4>Keyboard Shortcuts</h4>
+            <div style="font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 12px; border-radius: 4px;">
+                <div style="margin: 8px 0;"><strong>Ctrl+F</strong> - Quick feedback</div>
+            </div>
+            
+            <h4>Terminology</h4>
+            <p><strong>Interaction:</strong> Single message exchange (your message + agent response)</p>
+            <p><strong>Conversation:</strong> Full chat session (multiple interactions grouped together)</p>
         </div>
     </div>
 

@@ -206,7 +206,12 @@ app.post('/api/simulate', async (req, res) => {
         
         // Import and run simulator
         const { SimulationDriver } = await import('./training/simulation/simulator.js');
-        const { PERSONAS } = await import('./training/simulation/personas.js');
+        const personasModule = await import('./training/simulation/personas.js');
+        const PERSONAS = personasModule.PERSONAS || personasModule.default;
+        
+        if (!PERSONAS) {
+            throw new Error('PERSONAS not found in personas.js');
+        }
         
         const personaKeys = Object.keys(PERSONAS);
         const randomPersona = personaKeys[Math.floor(Math.random() * personaKeys.length)];
@@ -231,8 +236,8 @@ app.post('/api/simulate', async (req, res) => {
             persona: randomPersona
         });
     } catch (error) {
-        console.error('[Server] Simulation error:', error.message);
-        res.status(500).json({ error: error.message });
+        console.error('[Server] Simulation error:', error);
+        res.status(500).json({ error: error.message, stack: error.stack });
     }
 });
 
@@ -272,6 +277,36 @@ app.get('/api/logs', (req, res) => {
     const limit = parseInt(req.query.limit) || 100;
     const recent = logBuffer.slice(-limit);
     res.json({ logs: recent });
+});
+
+// Get circle members
+app.get('/api/circle/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { getCircleMembers, getUserCircles } = await import('./db/index.js');
+        
+        // Get user's circles
+        const circles = await getUserCircles(userId);
+        
+        if (!circles || circles.length === 0) {
+            return res.json({ members: [], circleId: null });
+        }
+        
+        // Get the primary circle (where user is patient)
+        const primaryCircle = circles.find(c => c.circle_id === userId) || circles[0];
+        
+        // Get members of that circle
+        const members = await getCircleMembers(primaryCircle.circle_id);
+        
+        res.json({ 
+            members: members || [], 
+            circleId: primaryCircle.circle_id,
+            patientUsername: primaryCircle.patient_username
+        });
+    } catch (error) {
+        console.error('[Server] Circle API error:', error);
+        res.status(500).json({ error: error.message, members: [] });
+    }
 });
 
 const PORT = config.PORT;

@@ -13,3 +13,7 @@
 {"timestamp":1760079628452,"type":"message_length","user_id":"alice","message_length":87,"response_length":40}
 {"timestamp":1760086113341,"type":"response_time","agent_type":"full_analysis","duration_ms":3733,"success":true}
 {"timestamp":1760086113341,"type":"message_length","user_id":"34a0c04a-7894-4a67-bdbd-d5d7af9ce9ed","message_length":2,"response_length":0}
+{"timestamp":1760089277490,"type":"response_time","agent_type":"full_analysis","duration_ms":3071,"success":true}
+{"timestamp":1760089277490,"type":"message_length","user_id":"34a0c04a-7894-4a67-bdbd-d5d7af9ce9ed","message_length":2,"response_length":0}
+{"timestamp":1760090484454,"type":"response_time","agent_type":"full_analysis","duration_ms":4492,"success":true}
+{"timestamp":1760090484454,"type":"message_length","user_id":"34a0c04a-7894-4a67-bdbd-d5d7af9ce9ed","message_length":2,"response_length":0}

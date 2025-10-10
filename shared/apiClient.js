@@ -212,6 +212,24 @@ export class ApiClient {
     }
 
     /**
+     * Get circle members
+     */
+    async getCircleMembers(userId) {
+        try {
+            const response = await fetch(`${this.baseUrl}/api/circle/${userId}`);
+
+            if (!response.ok) {
+                throw new Error(`Failed to get circle: ${response.status}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('[ApiClient] Circle error:', error.message);
+            throw error;
+        }
+    }
+
+    /**
      * Create EventSource connection (works in both Node & Browser)
      * Note: In Node.js, requires 'eventsource' package
      * In browser, uses native EventSource

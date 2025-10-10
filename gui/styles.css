@@ -330,6 +330,19 @@ input:focus {
     flex: 1;
     padding: 16px;
     font-size: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.feedback-btn div {
+    font-weight: 600;
+}
+
+.feedback-btn small {
+    font-size: 11px;
+    color: #666;
 }
 
 .feedback-btn.positive:hover { background: #E8F5E9; }

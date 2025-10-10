@@ -48,14 +48,38 @@ In one terminal, run:
 node server.js
 ```
 
-### Start Clients
-In separate terminals, run the client application:
+The server runs on `http://localhost:5000` and serves:
+- API endpoints for chat, commands, and training
+- GUI static files at `/gui`
+- Real-time updates via Server-Sent Events (SSE)
+
+### Client Options
+
+#### Option 1: Web GUI (Recommended)
+Open your browser to:
+```
+http://localhost:5000/gui/
+```
+
+Features:
+- ✅ Visual chat interface
+- ✅ Real-time updates
+- ✅ Training dashboard (view conversations, feedback, run simulations)
+- ✅ Server log viewer
+- ✅ Help system (click ❓ icon)
+
+See [GUI Guide](documentation/gui_guide.md) for details.
+
+#### Option 2: Terminal CLI
+In separate terminals, run:
 
 ```bash
 node client/main.js
 ```
 
 You will be prompted to log in with a username (e.g., `alice`, `bob`, `dr_evans`).
+
+**Note:** Both CLI and GUI connect to the same server and share the same backend API (zero duplication).
 
 ## How to Use: Key Commands
 
@@ -82,12 +106,60 @@ A user becomes a "doctor" in a care circle when a patient adds them using the `/
 - `/order "test/medication"` - Log a confidential order request.
 - `/agent ask <username_or_role> "topic"` - Have your agent ask a question on your behalf. You can specify either a username (e.g., `alice`) or a role (e.g., `patient`, `caregiver`).
 
+## Architecture Overview
+
+### System Components
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Clients                                                │
+│  ├─ Web GUI (http://localhost:5000/gui/)               │
+│  │  └─ Visual interface with training dashboard        │
+│  └─ Terminal CLI (client/main.js)                      │
+│     └─ Command-line interface                          │
+└──────────────────┬──────────────────────────────────────┘
+                   │ HTTP/SSE (shared API)
+┌──────────────────▼──────────────────────────────────────┐
+│  Server (server.js)                                     │
+│  ├─ API Endpoints (/login, /send, /command, /api/*)   │
+│  ├─ Static File Serving (/gui, /shared)               │
+│  ├─ SSE for Real-time Updates                         │
+│  └─ Log Capture & Buffering                           │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+      ┌────────────┴────────────┐
+      │                         │
+┌─────▼──────┐         ┌───────▼────────┐
+│ Orchestrator│         │  Training      │
+│ ├─ Agents   │         │  ├─ Logger     │
+│ ├─ State    │         │  ├─ Simulator  │
+│ └─ Handlers │         │  └─ Analyzer   │
+└─────┬──────┘         └───────┬────────┘
+      │                         │
+      └────────────┬────────────┘
+                   │
+            ┌──────▼──────┐
+            │  Database   │
+            │  (SQLite)   │
+            └─────────────┘
+```
+
+### GUI Architecture
+
+The GUI is a **single-page application** served by the server:
+- **No CORS issues**: GUI served from same origin as API
+- **Shared API client**: Both CLI and GUI use `shared/apiClient.js` (zero duplication)
+- **Real-time updates**: SSE connection for live message delivery
+- **Multiple views**: Chat, Circle, Training Dashboard (Feedback/Conversations/Simulations/Analysis/Logs)
+
+See [Architecture Documentation](documentation/architecture.md) for technical details.
+
 ## Training & Continuous Improvement 🆕
 
 The system includes a comprehensive training infrastructure that enables continuous self-improvement through:
 
 - **Automatic Logging**: All conversations passively logged for analysis (< 2ms overhead)
-- **Human Feedback**: `/score` command for real-time quality ratings
+- **Human Feedback**: `/feedback` command for real-time quality ratings
 - **AI Simulations**: 11 synthetic personas generate unlimited training data
 - **Automated Analysis**: AI-powered pattern detection and recommendations
 - **Prompt Optimization**: Automatic improvement based on performance data
@@ -95,9 +167,12 @@ The system includes a comprehensive training infrastructure that enables continu
 
 ### Quick Start
 
+**In GUI:** Click 📊 → Simulations → "Run Simulation"
+
+**In CLI:**
 ```bash
 # Rate an interaction
-/score +1 "Great response!"
+/feedback +1 "Great response!"
 
 # Run simulation
 node training/simulation/simulator.js
