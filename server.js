@@ -5,15 +5,41 @@
  */
 
 import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
 // FIX: Import the correct function
-import { initializeDatabase, getUnreadEscalationsForUser } from './db/index.js';
+import { initializeDatabase, getUnreadEscalationsForUser, getDb } from './db/index.js';
 import { handleLogin, handleMessage, handleCommand, events } from './orchestrator.js';
 import config from './config.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(express.json());
 
 const clients = {};
+
+// Log buffer for GUI (circular buffer, last 200 entries)
+const logBuffer = [];
+const MAX_LOGS = 200;
+
+// Override console.log to capture logs
+const originalLog = console.log;
+const originalError = console.error;
+
+console.log = (...args) => {
+    const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+    logBuffer.push({ timestamp: Date.now(), level: 'info', message });
+    if (logBuffer.length > MAX_LOGS) logBuffer.shift();
+    originalLog(...args);
+};
+
+console.error = (...args) => {
+    const message = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+    logBuffer.push({ timestamp: Date.now(), level: 'error', message });
+    if (logBuffer.length > MAX_LOGS) logBuffer.shift();
+    originalError(...args);
+};
 
 app.get('/events/:userId', (req, res) => {
     const { userId } = req.params;
@@ -95,6 +121,157 @@ app.post('/send', (req, res) => {
     }
     handleMessage(userId, circleId, message);
     res.status(202).send();
+});
+
+// ========== GUI & TRAINING API ENDPOINTS ==========
+
+// Serve GUI static files
+app.use('/gui', express.static(path.join(__dirname, 'gui')));
+app.use('/shared', express.static(path.join(__dirname, 'shared')));
+
+// Get conversation history (grouped by conversation_id)
+app.get('/api/conversations/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const fs = await import('fs/promises');
+        
+        // Read training log
+        const logData = await fs.readFile('./training/training_log.jsonl', 'utf-8');
+        const lines = logData.trim().split('\n').filter(line => line);
+        
+        // Parse and filter by user
+        const allLogs = lines.map(line => JSON.parse(line));
+        const userLogs = allLogs.filter(log => log.user_id === userId);
+        
+        // Group by conversation_id
+        const conversations = {};
+        userLogs.forEach(log => {
+            const convId = log.conversation_id;
+            if (!conversations[convId]) {
+                conversations[convId] = {
+                    conversation_id: convId,
+                    messages: [],
+                    start_time: log.timestamp,
+                    end_time: log.timestamp
+                };
+            }
+            conversations[convId].messages.push(log);
+            conversations[convId].end_time = Math.max(conversations[convId].end_time, log.timestamp);
+        });
+        
+        // Convert to array and sort by most recent
+        const result = Object.values(conversations).sort((a, b) => b.start_time - a.start_time);
+        
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error: error.message, conversations: [] });
+    }
+});
+
+// Get user's feedback history from database
+app.get('/api/feedback/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const db = await getDb();
+        
+        // Check if feedback table exists
+        const tableExists = await db.get(`
+            SELECT name FROM sqlite_master 
+            WHERE type='table' AND name='feedback'
+        `);
+        
+        if (!tableExists) {
+            // Table doesn't exist yet - return empty array
+            return res.json([]);
+        }
+        
+        const feedback = await db.all(`
+            SELECT * FROM feedback 
+            WHERE user_id = ? 
+            ORDER BY timestamp DESC 
+            LIMIT 100
+        `, [userId]);
+        
+        res.json(feedback || []);
+    } catch (error) {
+        console.error('[Server] Feedback error:', error.message);
+        res.status(500).json({ error: error.message, feedback: [] });
+    }
+});
+
+// Trigger simulation
+app.post('/api/simulate', async (req, res) => {
+    try {
+        const { runs = 5 } = req.body;
+        
+        // Import and run simulator
+        const { SimulationDriver } = await import('./training/simulation/simulator.js');
+        const { PERSONAS } = await import('./training/simulation/personas.js');
+        
+        const personaKeys = Object.keys(PERSONAS);
+        const randomPersona = personaKeys[Math.floor(Math.random() * personaKeys.length)];
+        
+        const scenario = {
+            name: `GUI Simulation - ${randomPersona}`,
+            users: [
+                { userId: 'sim_patient', role: 'patient', personaKey: randomPersona }
+            ],
+            circle: { patientId: 'sim_patient', caregiverIds: [] },
+            turns: 3
+        };
+
+        const sim = new SimulationDriver({ logResults: true });
+        await sim.runScenario(scenario);
+        await sim.cleanup();
+
+        res.json({ 
+            success: true, 
+            runs: 1, 
+            message: `Simulation complete (${randomPersona})`,
+            persona: randomPersona
+        });
+    } catch (error) {
+        console.error('[Server] Simulation error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Generate analysis report
+app.post('/api/analyze', async (req, res) => {
+    try {
+        const fs = await import('fs/promises');
+        
+        // Read training log
+        const logData = await fs.readFile('./training/training_log.jsonl', 'utf-8');
+        const lines = logData.trim().split('\n').filter(line => line);
+        const allLogs = lines.map(line => JSON.parse(line));
+        
+        // Calculate simple stats
+        const totalInteractions = allLogs.length;
+        const avgLatency = allLogs.reduce((sum, log) => sum + (log.latency_ms || 0), 0) / totalInteractions;
+        const escalations = allLogs.filter(log => log.escalated).length;
+        const shares = allLogs.filter(log => log.shared).length;
+        
+        res.json({
+            success: true,
+            total: totalInteractions,
+            avgScore: 0, // Would need feedback data
+            avgLatency: Math.round(avgLatency),
+            escalations,
+            shares,
+            report: 'Analysis complete'
+        });
+    } catch (error) {
+        console.error('[Server] Analysis error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get server logs (NO LOGGING HERE to avoid infinite loop!)
+app.get('/api/logs', (req, res) => {
+    const limit = parseInt(req.query.limit) || 100;
+    const recent = logBuffer.slice(-limit);
+    res.json({ logs: recent });
 });
 
 const PORT = config.PORT;

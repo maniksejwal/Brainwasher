@@ -8,6 +8,7 @@
  * internal structure of the database package.
  */
 
+import { getDb } from './connection.js';
 import { initializeDatabase, clearDatabase } from './schema.js';
 import {
     findUserByUsername,
@@ -49,6 +50,7 @@ import {
 } from './queries_actions.js';
 
 export {
+    getDb,
     initializeDatabase,
     clearDatabase,
     findUserByUsername,

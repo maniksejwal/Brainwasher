@@ -176,6 +176,42 @@ export class ApiClient {
     }
 
     /**
+     * Get conversation history
+     */
+    async getConversations(userId) {
+        try {
+            const response = await fetch(`${this.baseUrl}/api/conversations/${userId}`);
+
+            if (!response.ok) {
+                throw new Error(`Failed to get conversations: ${response.status}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('[ApiClient] Conversations error:', error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * Get server logs
+     */
+    async getLogs(limit = 100) {
+        try {
+            const response = await fetch(`${this.baseUrl}/api/logs?limit=${limit}`);
+
+            if (!response.ok) {
+                throw new Error(`Failed to get logs: ${response.status}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('[ApiClient] Logs error:', error.message);
+            throw error;
+        }
+    }
+
+    /**
      * Create EventSource connection (works in both Node & Browser)
      * Note: In Node.js, requires 'eventsource' package
      * In browser, uses native EventSource

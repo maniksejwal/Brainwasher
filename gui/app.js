@@ -211,6 +211,7 @@ document.getElementById('circle-btn').addEventListener('click', () => {
 document.getElementById('feedback-btn').addEventListener('click', () => {
     switchView('feedback');
     loadFeedbackData();
+    loadConversationsData();
 });
 
 document.getElementById('view-selector').addEventListener('click', () => {
@@ -277,8 +278,102 @@ document.querySelectorAll('.tab').forEach(tab => {
         
         tab.classList.add('active');
         document.getElementById(tabName).classList.add('active');
+        
+        // Load data for specific tabs
+        if (tabName === 'conversations') {
+            loadConversationsData();
+        } else if (tabName === 'logs') {
+            loadServerLogs();
+        }
     });
 });
+
+// ====== CONVERSATIONS DATA (NEW!) ======
+async function loadConversationsData() {
+    const conversationsList = document.getElementById('conversations-list');
+    conversationsList.innerHTML = '<div class="loading">Loading conversations...</div>';
+
+    try {
+        // Use shared API client
+        const conversations = await api.getConversations(state.userId);
+
+        if (conversations.length === 0) {
+            conversationsList.innerHTML = '<p>No conversations yet.</p>';
+            return;
+        }
+
+        conversationsList.innerHTML = '';
+        conversations.forEach(conv => {
+            const div = document.createElement('div');
+            div.className = 'conversation-item';
+            
+            const startDate = new Date(conv.start_time).toLocaleString();
+            const messageCount = conv.messages.length;
+            
+            div.innerHTML = `
+                <div class="conversation-header">
+                    <strong>${startDate}</strong>
+                    <span class="badge">${messageCount} messages</span>
+                </div>
+                <div class="conversation-preview">
+                    ${conv.messages[0]?.message?.substring(0, 80) || 'No preview'}...
+                </div>
+            `;
+            
+            // Click to expand
+            div.addEventListener('click', () => {
+                showConversationDetail(conv);
+            });
+            
+            conversationsList.appendChild(div);
+        });
+    } catch (error) {
+        conversationsList.innerHTML = '<p>Error loading conversations</p>';
+    }
+}
+
+function showConversationDetail(conversation) {
+    const detail = document.createElement('div');
+    detail.className = 'conversation-detail';
+    detail.style.position = 'fixed';
+    detail.style.top = '50px';
+    detail.style.left = '50%';
+    detail.style.transform = 'translateX(-50%)';
+    detail.style.width = '80%';
+    detail.style.maxHeight = '80vh';
+    detail.style.overflow = 'auto';
+    detail.style.background = 'white';
+    detail.style.border = '1px solid #ddd';
+    detail.style.borderRadius = '8px';
+    detail.style.padding = '20px';
+    detail.style.boxShadow = '0 4px 20px rgba(0,0,0,0.1)';
+    detail.style.zIndex = '1000';
+    
+    let html = `
+        <button id="close-detail" style="float:right;">✖</button>
+        <h3>Conversation Detail</h3>
+        <p><strong>Started:</strong> ${new Date(conversation.start_time).toLocaleString()}</p>
+        <hr>
+    `;
+    
+    conversation.messages.forEach(msg => {
+        html += `
+            <div style="margin: 20px 0; padding: 10px; border-left: 3px solid #4285F4;">
+                <div style="color: #666; font-size: 12px;">${new Date(msg.timestamp).toLocaleString()}</div>
+                <div style="margin: 8px 0;"><strong>User:</strong> ${msg.message}</div>
+                <div style="margin: 8px 0;"><strong>Agent:</strong> ${msg.agent_response || '<em>No response</em>'}</div>
+                <div style="color: #999; font-size: 11px;">Latency: ${msg.latency_ms}ms</div>
+            </div>
+        `;
+    });
+    
+    detail.innerHTML = html;
+    document.body.appendChild(detail);
+    
+    document.getElementById('close-detail').addEventListener('click', () => {
+        document.body.removeChild(detail);
+    });
+}
 
 // ====== SIMULATION (NEW - CLI doesn't have this!) ======
 document.getElementById('run-simulation').addEventListener('click', async () => {
@@ -310,5 +405,42 @@ document.getElementById('generate-analysis').addEventListener('click', async () 
     } catch (error) {
         resultsDiv.innerHTML = `<p>❌ Error: ${error.message}</p>`;
     }
+});
+
+// ====== SERVER LOGS ======
+async function loadServerLogs() {
+    const logsContainer = document.getElementById('logs-container');
+    logsContainer.innerHTML = '<div class="loading">Loading logs...</div>';
+
+    try {
+        const data = await api.getLogs(100);
+        
+        if (data.logs.length === 0) {
+            logsContainer.innerHTML = '<p>No logs yet.</p>';
+            return;
+        }
+
+        logsContainer.innerHTML = '';
+        data.logs.forEach(log => {
+            const div = document.createElement('div');
+            div.style.marginBottom = '4px';
+            div.style.padding = '4px';
+            div.style.borderLeft = log.level === 'error' ? '3px solid #f44336' : '3px solid #4285F4';
+            
+            const time = new Date(log.timestamp).toLocaleTimeString();
+            div.innerHTML = `<span style="color: #666;">[${time}]</span> ${log.message}`;
+            
+            logsContainer.appendChild(div);
+        });
+        
+        // Auto-scroll to bottom
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+    } catch (error) {
+        logsContainer.innerHTML = '<p>Error loading logs</p>';
+    }
+}
+
+document.getElementById('refresh-logs').addEventListener('click', () => {
+    loadServerLogs();
 });
 

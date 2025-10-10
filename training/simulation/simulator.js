@@ -158,9 +158,35 @@ class SimulationDriver {
             driver: sqlite3.Database
         });
 
-        // Import schema
-        const schemaModule = await import('../../db/schema.js');
-        await schemaModule.initializeSchema(this.db);
+        // Initialize minimal schema for simulation DB
+        await this.db.exec(`
+            PRAGMA journal_mode = WAL;
+            PRAGMA foreign_keys = ON;
+
+            CREATE TABLE IF NOT EXISTS users ( 
+                user_id TEXT PRIMARY KEY, 
+                username TEXT UNIQUE NOT NULL, 
+                role TEXT,
+                created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000) 
+            );
+            CREATE TABLE IF NOT EXISTS care_circles ( 
+                circle_id TEXT PRIMARY KEY, 
+                primary_patient_id TEXT NOT NULL, 
+                created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000), 
+                FOREIGN KEY (primary_patient_id) REFERENCES users(user_id) 
+            );
+            CREATE TABLE IF NOT EXISTS circle_members ( 
+                member_id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                circle_id TEXT NOT NULL, 
+                user_id TEXT NOT NULL, 
+                role TEXT NOT NULL, 
+                relationship_type TEXT, 
+                consent_level TEXT DEFAULT 'FULL', 
+                UNIQUE(circle_id, user_id), 
+                FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id), 
+                FOREIGN KEY (user_id) REFERENCES users(user_id) 
+            );
+        `);
 
         console.log('[Simulator] Test database initialized');
     }
