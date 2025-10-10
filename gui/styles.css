@@ -82,12 +82,30 @@ header {
     margin-right: 12px;
 }
 
-.badge {
+/* Scrollable content areas */
+.scrollable-content {
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+    padding-right: 8px;
+}
+
+/* Scrollbar styling */
+.scrollable-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.scrollable-content::-webkit-scrollbar-track {
     background: var(--gray-100);
-    padding: 4px 12px;
-    border-radius: 12px;
-    font-size: 12px;
-    color: var(--gray-700);
+    border-radius: 3px;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb {
+    background: var(--gray-300);
+    border-radius: 3px;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb:hover {
+    background: var(--gray-700);
 }
 
 .header-right {
@@ -196,14 +214,22 @@ input:focus {
 
 .message.user {
     align-self: flex-end;
-    background: var(--google-blue);
-    color: var(--white);
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    color: var(--gray-900);
 }
 
 .message.agent, .message.system {
     align-self: flex-start;
     background: var(--white);
     border: 1px solid var(--gray-200);
+}
+
+.message.human {
+    /* For future use: messages from other humans (not the current user) */
+    align-self: flex-start;
+    background: var(--google-blue);
+    color: var(--white);
 }
 
 .message-header {
@@ -314,6 +340,8 @@ input:focus {
     border-radius: 8px;
     min-width: 400px;
     box-shadow: 0 8px 16px rgba(0,0,0,0.15);
+    overflow-y: auto;
+    max-height: 80vh;
 }
 
 .modal-content h3 {

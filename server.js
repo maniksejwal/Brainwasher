@@ -280,6 +280,53 @@ app.get('/api/logs', (req, res) => {
 });
 
 // Get circle members
+app.get('/api/user/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { findUserById } = await import('./db/index.js');
+        
+        const user = await findUserById(userId);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        
+        res.json({ user });
+    } catch (error) {
+        console.error('[Server] User API error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get all circles for a user
+app.get('/api/mycircles/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { getUserCircles } = await import('./db/index.js');
+        
+        const circles = await getUserCircles(userId);
+        res.json({ circles });
+    } catch (error) {
+        console.error('[Server] MyCircles API error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get patients for a doctor
+app.get('/api/patients/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { getUserCircles } = await import('./db/index.js');
+        
+        const allCircles = await getUserCircles(userId);
+        const doctorCircles = allCircles.filter(circle => circle.role === 'doctor');
+        
+        res.json({ patients: doctorCircles });
+    } catch (error) {
+        console.error('[Server] Patients API error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 app.get('/api/circle/:userId', async (req, res) => {
     try {
         const { userId } = req.params;

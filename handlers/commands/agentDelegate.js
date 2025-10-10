@@ -16,7 +16,7 @@ import { getAgentName } from '../utils/agentIdentity.js';
 export async function handleAgentDelegateCommand(userId, circleId, message) {
     const match = message.match(/^\/agent ask (\w+) "(.*)"/);
     if (!match) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `[System] Invalid format. Use: /agent ask <username_or_role> "your question"`, from: 'system', circleId });
+        events.emit('broadcast', { targetUsers: [userId], reply: `Invalid format. Use: /agent ask <username_or_role> "your question"`, from: 'system', circleId });
         return;
     }
 
@@ -36,7 +36,7 @@ export async function handleAgentDelegateCommand(userId, circleId, message) {
     }
 
     if (!targetMember) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `[System] Error: No user with the name or role '${targetIdentifier}' found in this care circle.`, from: 'system', circleId });
+        events.emit('broadcast', { targetUsers: [userId], reply: `Error: No user with the name or role '${targetIdentifier}' found in this care circle.`, from: 'system', circleId });
         return;
     }
 
@@ -61,6 +61,6 @@ export async function handleAgentDelegateCommand(userId, circleId, message) {
         patientUsername: patient.username
     });
 
-    events.emit('broadcast', { targetUsers: [userId], reply: `[System] I have asked ${targetMember.username} (${targetMember.role}) about "${topic}" on your behalf. I will notify you when they respond.`, from: 'system', circleId });
+    events.emit('broadcast', { targetUsers: [userId], reply: `I have asked ${targetMember.username} (${targetMember.role}) about "${topic}" on your behalf. I will notify you when they respond.`, from: 'system', circleId });
 }
 

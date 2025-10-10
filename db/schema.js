@@ -36,6 +36,31 @@ export async function initializeDatabase() {
 
         CREATE TABLE IF NOT EXISTS pending_actions ( action_id TEXT PRIMARY KEY, circle_id TEXT NOT NULL, user_id TEXT NOT NULL, action_type TEXT NOT NULL, details TEXT NOT NULL, created_at INTEGER NOT NULL );
         CREATE TABLE IF NOT EXISTS implied_consent ( user_id TEXT NOT NULL, circle_id TEXT NOT NULL, topic TEXT NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (user_id, circle_id, topic) );
+        
+        CREATE TABLE IF NOT EXISTS feedback (
+            feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT,
+            user_id TEXT NOT NULL,
+            circle_id TEXT,
+            score INTEGER NOT NULL,
+            comment TEXT,
+            category TEXT,
+            prompt_version TEXT,
+            timestamp INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+        
+        CREATE TABLE IF NOT EXISTS detailed_feedback (
+            report_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT,
+            user_id TEXT NOT NULL,
+            circle_id TEXT,
+            category TEXT NOT NULL,
+            details TEXT NOT NULL,
+            prompt_version TEXT,
+            timestamp INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
     `);
     console.log('[Database] Initialized.');
 }

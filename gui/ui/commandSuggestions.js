@@ -7,12 +7,18 @@ import { MESSAGES } from '../config/messages.js';
 let suggestionBox = null;
 
 const COMMANDS = [
-    MESSAGES.COMMANDS.CARE + ' - Add caregiver',
-    MESSAGES.COMMANDS.DOC + ' - Add doctor',
-    MESSAGES.COMMANDS.CIRCLE + ' - Show circle',
-    MESSAGES.COMMANDS.SWITCH + ' - Switch circles',
-    MESSAGES.COMMANDS.FEEDBACK + ' - Rate interaction',
-    MESSAGES.COMMANDS.CONSENT + ' - Set consent'
+    MESSAGES.COMMANDS.CARE + ' username as relationship - Add caregiver',
+    MESSAGES.COMMANDS.DOC + ' username [as specialty] - Add doctor',
+    MESSAGES.COMMANDS.CIRCLE + ' - Show circle members',
+    MESSAGES.COMMANDS.SWITCH + ' username - Switch circles',
+    MESSAGES.COMMANDS.MYCIRCLES + ' - Show all your circles',
+    MESSAGES.COMMANDS.PATIENTS + ' - Show patients (doctors)',
+    MESSAGES.COMMANDS.SPEC + ' specialty - Set specialty (doctors)',
+    MESSAGES.COMMANDS.LOG + ' "directive" - Log directive (doctors)',
+    MESSAGES.COMMANDS.ORDER + ' medication - Order medication (doctors)',
+    MESSAGES.COMMANDS.AGENT + ' ask username "question" - Delegate to agent (doctors)',
+    MESSAGES.COMMANDS.FEEDBACK + ' +1|-1 "comment" - Rate interaction',
+    MESSAGES.COMMANDS.CONSENT + ' username level - Set consent (none/limited/full)'
 ];
 
 export function setupCommandSuggestions(inputElement) {

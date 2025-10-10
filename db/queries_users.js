@@ -8,7 +8,8 @@ import { getDb } from './connection.js';
 
 export async function findUserByUsername(username) {
     const db = await getDb();
-    return db.get('SELECT * FROM users WHERE username = ?', [username]);
+    // Case-insensitive username lookup
+    return db.get('SELECT * FROM users WHERE username = ? COLLATE NOCASE', [username]);
 }
 
 export async function findUserById(userId) {
@@ -79,11 +80,18 @@ export async function getCircleMembers(circleId) {
 export async function getUserCircles(userId) {
     const db = await getDb();
     return db.all(`
-        SELECT c.circle_id, c.primary_patient_id, p.username as patient_username
+        SELECT 
+            c.circle_id, 
+            c.primary_patient_id, 
+            p.username as patient_username, 
+            m.role, 
+            m.relationship_type,
+            m.consent_level
         FROM care_circle_members m
         JOIN care_circles c ON m.circle_id = c.circle_id
         JOIN users p ON c.primary_patient_id = p.user_id
         WHERE m.user_id = ?
+        ORDER BY c.primary_patient_id
     `, [userId]);
 }
 

@@ -45,6 +45,18 @@ GEMINI_API_KEY_1="YOUR_GEMINI_KEY_HERE"
 In one terminal, run:
 
 ```bash
+nodemon server.js
+```
+
+**Why nodemon?** Auto-restarts server when you make code changes (no manual restarts needed!)
+
+**Don't have nodemon?** Install it globally:
+```bash
+npm install -g nodemon
+```
+
+Or use regular Node (but you'll need to restart manually after changes):
+```bash
 node server.js
 ```
 

@@ -38,10 +38,16 @@ export const MESSAGES = {
         <p>Your care circle members will appear here.</p>
         <button id="add-member-btn" class="primary" style="margin: 16px 0;">Add Member</button>
         <p style="color: #666; font-size: 14px;">
-            Or use commands: <code>/care username as relationship</code> or <code>/doc username</code>
+            Or use commands: <code>/care username as relationship</code> or <code>/doc username [as specialty]</code>
         </p>
         <p style="color: #666; font-size: 14px;">
-            Examples: <code>/care mom as mother</code> or <code>/doc dr_smith</code>
+            Examples: <code>/care mom as mother</code>, <code>/doc dr_smith</code>, <code>/doc dr_jones as Cardiology</code>
+        </p>
+        <p style="color: #666; font-size: 13px; margin-top: 16px;">
+            💡 <strong>Consent levels:</strong> Control what information circle members can see.<br>
+            • <strong>none</strong> - No access to your information<br>
+            • <strong>limited</strong> - Basic updates only<br>
+            • <strong>full</strong> - Complete access to all information
         </p>
     `,
     
@@ -52,12 +58,18 @@ export const MESSAGES = {
     
     // Commands list
     COMMANDS: {
-        CARE: '/care username as relationship',
-        DOC: '/doc username',
+        CARE: '/care',
+        DOC: '/doc',
         CIRCLE: '/circle',
-        SWITCH: '/switch username',
-        FEEDBACK: '/feedback +1|-1 "comment"',
-        CONSENT: '/consent username level'
+        SWITCH: '/switch',
+        MYCIRCLES: '/mycircles',
+        PATIENTS: '/patients',
+        SPEC: '/spec',
+        LOG: '/log',
+        ORDER: '/order',
+        AGENT: '/agent',
+        FEEDBACK: '/feedback',
+        CONSENT: '/consent'
     },
     
     // Feedback options

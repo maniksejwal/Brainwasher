@@ -11,7 +11,7 @@ export async function handleDirectiveCommand(userId, circleId, message, command)
     // Expected format: /log "details" or /order "details"
     const details = message.match(/"(.*?)"/)?.[1];
     if (!details) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `[System] Invalid format. Use: ${command} "details in quotes"`, from: 'system', circleId });
+        events.emit('broadcast', { targetUsers: [userId], reply: `Invalid format. Use: ${command} "details in quotes"`, from: 'system', circleId });
         return;
     }
 
@@ -19,5 +19,5 @@ export async function handleDirectiveCommand(userId, circleId, message, command)
     const directiveType = command === '/log' ? 'confidential_note' : 'order_request';
 
     await addDirective(circleId, userId, directiveType, details);
-    events.emit('broadcast', { targetUsers: [userId], reply: `[System] Confidential directive of type '${directiveType}' was logged successfully.`, from: 'system', circleId });
+    events.emit('broadcast', { targetUsers: [userId], reply: `Confidential directive of type '${directiveType}' was logged successfully.`, from: 'system', circleId });
 }

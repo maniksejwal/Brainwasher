@@ -298,6 +298,7 @@ export function getRandomPersona(category) {
 
 /**
  * Get persona by key
+ * If key not found in specified category, searches all categories
  */
 export function getPersona(category, key) {
     let personas;
@@ -315,11 +316,26 @@ export function getPersona(category, key) {
             throw new Error(`Unknown persona category: ${category}`);
     }
     
-    if (!personas[key]) {
-        throw new Error(`Persona ${key} not found in category ${category}`);
+    // Try specified category first
+    if (personas[key]) {
+        return { key, ...personas[key] };
     }
     
-    return { key, ...personas[key] };
+    // If not found, search all categories (persona might be in wrong category)
+    if (PATIENT_PERSONAS[key]) {
+        console.warn(`[Personas] Warning: ${key} found in PATIENT_PERSONAS, not ${category}`);
+        return { key, ...PATIENT_PERSONAS[key] };
+    }
+    if (CAREGIVER_PERSONAS[key]) {
+        console.warn(`[Personas] Warning: ${key} found in CAREGIVER_PERSONAS, not ${category}`);
+        return { key, ...CAREGIVER_PERSONAS[key] };
+    }
+    if (DOCTOR_PERSONAS[key]) {
+        console.warn(`[Personas] Warning: ${key} found in DOCTOR_PERSONAS, not ${category}`);
+        return { key, ...DOCTOR_PERSONAS[key] };
+    }
+    
+    throw new Error(`Persona ${key} not found in any category`);
 }
 
 /**
@@ -347,4 +363,11 @@ export function listPersonas(category) {
         description: personas[key].description
     }));
 }
+
+// Combined export for backward compatibility and easier imports
+export const PERSONAS = {
+    ...PATIENT_PERSONAS,
+    ...CAREGIVER_PERSONAS,
+    ...DOCTOR_PERSONAS
+};
 

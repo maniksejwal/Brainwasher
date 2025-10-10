@@ -16,6 +16,8 @@ import { handleConsentCommand } from './commands/setConsent.js';
 import { handleDirectiveCommand } from './commands/logDirective.js';
 import { handleAgentDelegateCommand } from './commands/agentDelegate.js';
 import { handleShowCircleCommand } from './commands/showCircle.js';
+import { handleShowPatientsCommand } from './commands/showPatients.js';
+import { handleShowMyCirclesCommand } from './commands/showMyCircles.js';
 import { handleSetSpecialtyCommand } from './commands/setSpecialty.js';
 import { handleScoreCommand } from './commands/scoreCommand.js';
 import { handleReportCommand } from './commands/reportCommand.js';
@@ -33,7 +35,7 @@ export async function handleCommand(userId, circleId, message) {
 
     if (currentUserInfo.role === 'doctor' && circleId === userId) {
         if (!['/switch', '/spec', '/circle'].includes(command)) {
-            events.emit('broadcast', { targetUsers: [userId], reply: `[System] Safety alert: You can only use /switch, /circle, or /spec in your personal circle.`, from: 'system', circleId });
+            events.emit('broadcast', { targetUsers: [userId], reply: `Safety alert: You can only use /switch, /circle, or /spec in your personal circle.`, from: 'system', circleId });
             return;
         }
     }
@@ -45,7 +47,7 @@ export async function handleCommand(userId, circleId, message) {
             if (actionResult) {
                 await executeResolvedAction(actionResult, userId, circleId);
             } else {
-                events.emit('broadcast', { targetUsers: [userId], reply: `[System] There are no pending questions for you to answer right now.`, from: 'system', circleId });
+                events.emit('broadcast', { targetUsers: [userId], reply: `There are no pending questions for you to answer right now.`, from: 'system', circleId });
             }
             break;
         case '/care':
@@ -61,14 +63,14 @@ export async function handleCommand(userId, circleId, message) {
         case '/log':
         case '/order':
             if (currentUserInfo.role !== 'doctor') {
-                events.emit('broadcast', { targetUsers: [userId], reply: `[System] This command is only available to doctors.`, from: 'system', circleId });
+                events.emit('broadcast', { targetUsers: [userId], reply: `This command is only available to doctors.`, from: 'system', circleId });
                 return;
             }
             await handleDirectiveCommand(userId, circleId, message, command);
             break;
         case '/agent':
              if (currentUserInfo.role !== 'doctor') {
-                events.emit('broadcast', { targetUsers: [userId], reply: `[System] This command is only available to doctors.`, from: 'system', circleId });
+                events.emit('broadcast', { targetUsers: [userId], reply: `This command is only available to doctors.`, from: 'system', circleId });
                 return;
             }
             await handleAgentDelegateCommand(userId, circleId, message);
@@ -76,11 +78,17 @@ export async function handleCommand(userId, circleId, message) {
         case '/circle':
             await handleShowCircleCommand(userId, circleId);
             break;
+        case '/patients':
+            await handleShowPatientsCommand(userId, circleId);
+            break;
+        case '/mycircles':
+            await handleShowMyCirclesCommand(userId, circleId);
+            break;
         case '/spec':
-             if (currentUserInfo.role !== 'doctor') {
+            if (currentUserInfo.role !== 'doctor') {
                 await updateMemberRole(circleId, userId, 'doctor');
-                events.emit('broadcast', { targetUsers: [userId], reply: `[System] Your role in this circle has been updated to 'doctor'.`, from: 'system', circleId });
-             }
+                events.emit('broadcast', { targetUsers: [userId], reply: `Your role in this circle has been updated to 'doctor'.`, from: 'system', circleId });
+            }
             await handleSetSpecialtyCommand(userId, circleId, parts);
             break;
         case '/clear':
@@ -123,7 +131,7 @@ export async function handleCommand(userId, circleId, message) {
             await handleFeedbackCommand(userId, circleId, parts, sendFeedbackMessage);
             break;
         default:
-            events.emit('broadcast', { targetUsers: [userId], reply: `[System] Unknown command: ${command}`, from: 'system', circleId });
+            events.emit('broadcast', { targetUsers: [userId], reply: `Unknown command: ${command}`, from: 'system', circleId });
     }
 }
 

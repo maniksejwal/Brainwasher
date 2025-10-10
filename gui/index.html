@@ -29,12 +29,13 @@
         <header>
             <div class="header-left">
                 <h2 id="current-context">Loading...</h2>
-                <span id="role-badge" class="badge"></span>
             </div>
             <div class="header-right">
                 <button id="view-selector" class="tab-button">Chat</button>
                 <button id="help-btn" class="icon-button" title="Help & Commands">❓</button>
-                <button id="circle-btn" class="icon-button" title="Care Circle">👥</button>
+                <button id="circle-btn" class="icon-button" title="Current Circle">👥</button>
+                <button id="mycircles-btn" class="icon-button" title="My Circles">🔄</button>
+                <button id="patients-btn" class="icon-button" title="My Patients">🩺</button>
                 <button id="feedback-btn" class="icon-button" title="View Feedback">📊</button>
                 <span id="username-display" class="username"></span>
             </div>
@@ -98,6 +99,24 @@
                 </div>
                 <div id="circle-members"></div>
             </div>
+
+            <!-- My Circles View -->
+            <div id="mycircles-view" class="view">
+                <div class="view-header">
+                    <h3>My Circles</h3>
+                    <button id="back-to-chat-mycircles" class="secondary">Back to Chat</button>
+                </div>
+                <div id="mycircles-list" class="scrollable-content"></div>
+            </div>
+
+            <!-- Patients View (for doctors) -->
+            <div id="patients-view" class="view">
+                <div class="view-header">
+                    <h3>My Patients</h3>
+                    <button id="back-to-chat-patients" class="secondary">Back to Chat</button>
+                </div>
+                <div id="patients-list" class="scrollable-content"></div>
+            </div>
         </div>
     </div>
 
@@ -149,7 +168,11 @@
             </div>
             <div id="doctor-form" style="display:none; margin-top: 16px;">
                 <input type="text" id="doctor-username" placeholder="Doctor's username" style="width: 100%; margin-bottom: 8px;">
-                <p style="font-size: 12px; color: #999;">Command: /doc username</p>
+                <input type="text" id="doctor-specialty" placeholder="Specialty (optional, e.g., Cardiology)" style="width: 100%; margin-bottom: 8px;">
+                <p style="font-size: 12px; color: #999;">Command: /doc username [as specialty]</p>
+                <p style="font-size: 11px; color: #666; margin-top: 8px;">
+                    ℹ️ Specialty is optional - doctor can also set it later with /spec command
+                </p>
             </div>
             <div class="modal-actions" style="margin-top: 16px;">
                 <button id="submit-add-member" class="primary">Add</button>
@@ -170,11 +193,14 @@
             <h4>Available Commands</h4>
             <div style="font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 12px; border-radius: 4px; margin: 12px 0;">
                 <div style="margin: 8px 0;"><strong>/care</strong> username as relationship - Add caregiver (e.g., /care mom as mother)</div>
-                <div style="margin: 8px 0;"><strong>/doc</strong> username - Add doctor to circle (e.g., /doc dr_smith)</div>
+                <div style="margin: 8px 0;"><strong>/doc</strong> username [as specialty] - Add doctor (e.g., /doc dr_smith as Cardiology)</div>
                 <div style="margin: 8px 0;"><strong>/circle</strong> - Show circle members and their roles</div>
                 <div style="margin: 8px 0;"><strong>/switch</strong> username - Switch to another circle (role changes automatically)</div>
+                <div style="margin: 8px 0;"><strong>/mycircles</strong> - Show all your care circles</div>
+                <div style="margin: 8px 0;"><strong>/patients</strong> - Show all your patients (for doctors)</div>
                 <div style="margin: 8px 0;"><strong>/feedback</strong> +1|-1 "comment" - Rate interaction (e.g., /feedback +1 "Great!")</div>
                 <div style="margin: 8px 0;"><strong>/consent</strong> username level - Set consent (none/limited/full)</div>
+                <div style="font-size: 12px; color: #999; margin-left: 16px;">Or use the dropdown in Circle view</div>
             </div>
             
             <h4>How Roles Work</h4>
@@ -186,6 +212,17 @@
                 <li>When added to someone else's circle: You're a <strong>caregiver</strong> or <strong>doctor</strong></li>
                 <li>Use <code>/switch username</code> to change circles (your role updates automatically)</li>
                 <li>Check your current role in the header badge and browser tab title</li>
+            </ul>
+            
+            <h4>Doctor-Specific Commands</h4>
+            <p style="font-size: 14px; color: #666;">
+                If you're a doctor, first set your specialty:
+            </p>
+            <ul style="font-size: 14px; color: #666; margin-left: 20px;">
+                <li><code>/spec Cardiology</code> - Set your specialty (unlocks doctor features)</li>
+                <li><code>/log "note"</code> - Add confidential notes to patient record</li>
+                <li><code>/order "test/medication"</code> - Log orders</li>
+                <li><code>/agent ask patient "topic"</code> - Delegate questions to patient's agent</li>
             </ul>
             
             <h4>Keyboard Shortcuts</h4>

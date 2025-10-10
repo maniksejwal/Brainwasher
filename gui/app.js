@@ -9,7 +9,7 @@ import { MESSAGES } from './config/messages.js';
 import { displayMessage, addUserMessage, addSystemMessage, displayEscalation } from './ui/messages.js';
 import { setupCommandSuggestions } from './ui/commandSuggestions.js';
 import { setupFeedbackModal } from './ui/feedback.js';
-import { switchView, loadCircleInfo, loadFeedbackData, loadConversationsData, loadServerLogs } from './ui/dataLoaders.js';
+import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs } from './ui/dataLoaders.js';
 
 // Create shared API client
 const api = new ApiClient(config.ORCHESTRATOR_URL);
@@ -44,7 +44,6 @@ document.getElementById('login-btn').addEventListener('click', async () => {
         
         document.getElementById('current-context').textContent = `@${data.patientUsername}`;
         document.getElementById('username-display').textContent = username;
-        document.getElementById('role-badge').textContent = data.allRoles.join(', ') || 'patient';
 
         // Update browser tab title
         const role = data.allRoles.join(', ') || 'patient';
@@ -78,8 +77,8 @@ function connectToEventSource() {
         } else if (data.type === 'context_switched') {
             state.currentCircleId = data.newCircleId;
             state.currentPatientUsername = data.patientUsername;
+            window.currentCircleId = data.newCircleId; // Make available globally for consent dropdown
             document.getElementById('current-context').textContent = `@${data.patientUsername}`;
-            document.getElementById('role-badge').textContent = data.newRole;
             document.title = `${state.username} (${data.newRole}) - Care Circles`;
             addSystemMessage(MESSAGES.CONTEXT_SWITCHED(data.patientUsername, data.newRole));
         }
@@ -127,10 +126,25 @@ setupCommandSuggestions(document.getElementById('message-input'));
 // Setup feedback modal
 setupFeedbackModal(sendMessage);
 
+// Listen for circle view refresh events
+window.addEventListener('refreshCircleView', () => {
+    loadCircleInfo(api, state.userId);
+});
+
 // ====== VIEW SWITCHING ======
 document.getElementById('circle-btn').addEventListener('click', () => {
     switchView('circle');
     loadCircleInfo(api, state.userId);
+});
+
+document.getElementById('mycircles-btn').addEventListener('click', () => {
+    switchView('mycircles');
+    loadMyCirclesData(api, state.userId);
+});
+
+document.getElementById('patients-btn').addEventListener('click', () => {
+    switchView('patients');
+    loadPatientsData(api, state.userId);
 });
 
 document.getElementById('feedback-btn').addEventListener('click', () => {
@@ -144,6 +158,14 @@ document.getElementById('view-selector').addEventListener('click', () => {
 });
 
 document.getElementById('back-to-chat').addEventListener('click', () => {
+    switchView('chat');
+});
+
+document.getElementById('back-to-chat-mycircles').addEventListener('click', () => {
+    switchView('chat');
+});
+
+document.getElementById('back-to-chat-patients').addEventListener('click', () => {
     switchView('chat');
 });
 
@@ -247,13 +269,16 @@ document.getElementById('submit-add-member').addEventListener('click', async () 
         command = `/care ${username} as ${relationship}`;
     } else if (currentMemberType === 'doctor') {
         const username = document.getElementById('doctor-username').value.trim();
+        const specialty = document.getElementById('doctor-specialty').value.trim();
         
         if (!username) {
             alert('Please enter doctor username');
             return;
         }
         
-        command = `/doc ${username}`;
+        command = specialty 
+            ? `/doc ${username} as ${specialty}`
+            : `/doc ${username}`;
     } else {
         alert('Please select member type first');
         return;
@@ -283,5 +308,6 @@ document.getElementById('cancel-add-member').addEventListener('click', () => {
     document.getElementById('caregiver-username').value = '';
     document.getElementById('caregiver-relationship').value = '';
     document.getElementById('doctor-username').value = '';
+    document.getElementById('doctor-specialty').value = '';
     currentMemberType = null;
 });

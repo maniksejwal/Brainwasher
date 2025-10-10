@@ -11,7 +11,7 @@ import { generateAndSendSummary } from './commandHelpers.js';
 export async function handleSwitchCommand(userId, circleId, parts) {
     const targetPatientUsername = parts[1];
     if (!targetPatientUsername) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `[System] Invalid format. Use: /switch <patient_username>`, from: 'system', circleId });
+        events.emit('broadcast', { targetUsers: [userId], reply: `Invalid format. Use: /switch <patient_username>`, from: 'system', circleId });
         return;
     }
 
@@ -29,13 +29,13 @@ export async function handleSwitchCommand(userId, circleId, parts) {
 
     const targetPatient = await findUserByUsername(targetPatientUsername);
     if (!targetPatient) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `[System] Error: Patient '${targetPatientUsername}' not found.`, from: 'system', circleId });
+        events.emit('broadcast', { targetUsers: [userId], reply: `Error: Patient '${targetPatientUsername}' not found.`, from: 'system', circleId });
         return;
     }
 
     const targetCircle = await findCircleByPatientId(targetPatient.user_id);
     if (!targetCircle) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `[System] No care circle found for patient '${targetPatientUsername}'.`, from: 'system', circleId });
+        events.emit('broadcast', { targetUsers: [userId], reply: `No care circle found for patient '${targetPatientUsername}'.`, from: 'system', circleId });
         return;
     }
 
@@ -52,7 +52,7 @@ export async function handleSwitchCommand(userId, circleId, parts) {
             await generateAndSendSummary(userId, targetCircle.circle_id, targetPatient.username);
         }
     } else {
-        events.emit('broadcast', { targetUsers: [userId], reply: `[System] You are not a member of the care circle for patient '${targetPatientUsername}'.`, from: 'system', circleId });
+        events.emit('broadcast', { targetUsers: [userId], reply: `You are not a member of the care circle for patient '${targetPatientUsername}'.`, from: 'system', circleId });
     }
 }
 
