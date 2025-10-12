@@ -11,9 +11,9 @@
  *   node run_simulation.js --list                   # List available personas
  */
 
-import { SimulationDriver } from './training/simulation/simulator.js';
-import { PERSONAS } from './training/simulation/personas.js';
-import { getDb } from './db/connection.js';
+import { SimulationDriver } from '../training/simulation/simulator.js';
+import { PERSONAS } from '../training/simulation/personas.js';
+import { getDb } from '../db/connection.js';
 import fs from 'fs';
 import readline from 'readline';
 

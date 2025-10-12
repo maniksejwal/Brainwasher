@@ -318,28 +318,75 @@ export async function loadFeedbackData(api, userId) {
         const feedback = await api.getFeedback(userId);
 
         if (feedback.length === 0) {
-            feedbackList.innerHTML = '<p>' + MESSAGES.NO_FEEDBACK + '</p>';
+            feedbackList.innerHTML = `
+                <div style="padding: 16px; background: var(--gray-50); border-radius: 8px;">
+                    <p>No feedback yet.</p>
+                    <p style="font-size: 13px; color: var(--gray-600); margin-top: 8px;">
+                        Run simulations and provide feedback to see it here.
+                    </p>
+                </div>
+            `;
             return;
         }
 
-        feedbackList.innerHTML = '';
+        // Categorize feedback
+        const simulation = feedback.filter(f => 
+            f.conversation_id.includes('sim') || f.comment?.includes('[Turn') || f.comment?.includes('[Overall]')
+        );
+        const real = feedback.filter(f => 
+            !f.conversation_id.includes('sim') && !f.comment?.includes('[Turn') && !f.comment?.includes('[Overall]')
+        );
+
+        feedbackList.innerHTML = `
+            <div style="margin-bottom: 16px;">
+                <h4 style="margin: 0 0 8px 0;">📊 Feedback Summary</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div style="padding: 12px; background: var(--blue-50); border-radius: 4px;">
+                        <div style="font-size: 11px; color: var(--gray-600);">Simulation Feedback</div>
+                        <div style="font-size: 20px; font-weight: 500;">${simulation.length}</div>
+                    </div>
+                    <div style="padding: 12px; background: var(--green-50); border-radius: 4px;">
+                        <div style="font-size: 11px; color: var(--gray-600);">Real User Feedback</div>
+                        <div style="font-size: 20px; font-weight: 500;">${real.length}</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Display all feedback (most recent first)
+        const allFeedbackDiv = document.createElement('div');
+        
         feedback.forEach(item => {
+            const isSimulation = item.conversation_id.includes('sim') || item.comment?.includes('[Turn');
             const div = document.createElement('div');
             div.className = 'feedback-item';
+            div.style.cssText = 'margin-bottom: 12px; padding: 12px; background: white; border-radius: 4px; border: 1px solid var(--gray-200);';
             
-            const scoreClass = item.score > 0 ? 'positive' : item.score < 0 ? 'negative' : 'neutral';
-            const scoreText = item.score > 0 ? '+1' : item.score < 0 ? '-1' : '0';
+            const scoreEmoji = item.score > 0 ? '👍' : item.score < 0 ? '👎' : '😐';
+            const scoreColor = item.score > 0 ? 'var(--green-600)' : item.score < 0 ? 'var(--red-600)' : 'var(--gray-600)';
+            const typeLabel = isSimulation ? '🤖 Simulation' : '👤 Real';
             
             div.innerHTML = `
-                <span class="feedback-score ${scoreClass}">${scoreText}</span>
-                <span>${new Date(item.timestamp).toLocaleString()}</span>
-                ${item.comment ? `<p style="margin-top:8px">${item.comment}</p>` : ''}
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div>
+                        <span style="font-size: 18px;">${scoreEmoji}</span>
+                        <span style="color: ${scoreColor}; font-weight: 500; margin-left: 8px;">Score: ${item.score}</span>
+                        <span style="margin-left: 12px; font-size: 11px; color: var(--gray-600);">${typeLabel}</span>
+                    </div>
+                    <span style="font-size: 11px; color: var(--gray-600);">${new Date(item.timestamp).toLocaleString()}</span>
+                </div>
+                ${item.comment ? `<div style="color: var(--gray-700); font-size: 13px;">${item.comment}</div>` : ''}
+                <div style="font-size: 11px; color: var(--gray-500); margin-top: 4px;">Conversation: ${item.conversation_id}</div>
             `;
             
-            feedbackList.appendChild(div);
+            allFeedbackDiv.appendChild(div);
         });
+        
+        feedbackList.appendChild(allFeedbackDiv);
+        
     } catch (error) {
         feedbackList.innerHTML = '<p>Error loading feedback</p>';
+        console.error('[Feedback] Load error:', error);
     }
 }
 
