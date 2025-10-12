@@ -13,7 +13,9 @@
 
 import { SimulationDriver } from './training/simulation/simulator.js';
 import { PERSONAS } from './training/simulation/personas.js';
+import { getDb } from './db/connection.js';
 import fs from 'fs';
+import readline from 'readline';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -129,8 +131,84 @@ async function runSimulation() {
         console.log(`   Turns: ${turns}`);
         console.log(`   Feedback: Auto-generated (see above)`);
         
+        // Offer per-message feedback
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        
+        console.log('\n💬 Feedback Options:');
+        console.log('   Press ENTER to skip feedback');
+        console.log('   Type message number (e.g., "1", "2") to give feedback on that turn');
+        console.log('   Type "all" to give overall feedback');
+        
+        const choice = await new Promise(resolve => {
+            rl.question('\n❓ Provide feedback? (enter/1/2/all): ', resolve);
+        });
+        
+        if (choice && choice !== '') {
+            const db = await getDb();
+            
+            if (choice.toLowerCase() === 'all') {
+                // Overall feedback
+                const score = await new Promise(resolve => {
+                    rl.question('Overall quality (-1/0/1): ', resolve);
+                });
+                const comment = await new Promise(resolve => {
+                    rl.question('What should improve? ', resolve);
+                });
+                
+                const feedbackScore = parseInt(score);
+                if (!isNaN(feedbackScore) && feedbackScore >= -1 && feedbackScore <= 1) {
+                    await db.run(`
+                        INSERT INTO feedback (conversation_id, user_id, circle_id, score, comment, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    `, [
+                        `cli_sim_${Date.now()}`,
+                        `cli_${role}_1`,
+                        `cli_${role}_1`,
+                        feedbackScore,
+                        `[Overall] ${comment}`,
+                        Date.now()
+                    ]);
+                    console.log('✅ Overall feedback saved!');
+                }
+            } else {
+                // Specific turn feedback
+                const turnNum = parseInt(choice);
+                if (!isNaN(turnNum) && turnNum >= 1 && turnNum <= turns) {
+                    console.log(`\n📝 Feedback for Turn ${turnNum}:`);
+                    const score = await new Promise(resolve => {
+                        rl.question('Quality (-1/0/1): ', resolve);
+                    });
+                    const comment = await new Promise(resolve => {
+                        rl.question('What was wrong/right? ', resolve);
+                    });
+                    
+                    const feedbackScore = parseInt(score);
+                    if (!isNaN(feedbackScore) && feedbackScore >= -1 && feedbackScore <= 1) {
+                        await db.run(`
+                            INSERT INTO feedback (conversation_id, user_id, circle_id, score, comment, timestamp)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        `, [
+                            `cli_sim_${Date.now()}_turn${turnNum}`,
+                            `cli_${role}_1`,
+                            `cli_${role}_1`,
+                            feedbackScore,
+                            `[Turn ${turnNum}] ${comment}`,
+                            Date.now()
+                        ]);
+                        console.log(`✅ Turn ${turnNum} feedback saved!`);
+                    }
+                }
+            }
+        }
+        
+        rl.close();
+        
     } catch (error) {
         console.error('\n❌ Simulation failed:', error.message);
+        console.error('Stack:', error.stack);
         process.exit(1);
     } finally {
         await sim.cleanup();

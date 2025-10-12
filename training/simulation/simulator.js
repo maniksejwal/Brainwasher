@@ -416,9 +416,14 @@ class SimulationDriver {
         console.log('='.repeat(80));
 
         // Emit progress events if callback provided
-        const emitProgress = (step, description, details) => {
+        const emitProgress = (step, description, details, extraData) => {
             if (this.progressCallback) {
-                this.progressCallback({ step, description, details });
+                this.progressCallback({ 
+                    step, 
+                    description, 
+                    details: extraData || details,
+                    ...(extraData && { originalDetails: details })
+                });
             }
         };
 

@@ -6,11 +6,12 @@
 import config from './config.js';
 import ApiClient from '../shared/apiClient.js';
 import { MESSAGES } from './config/messages.js';
-import { displayMessage, addUserMessage, addSystemMessage, displayEscalation, displayAnalysisProgress, displaySimulationProgress } from './ui/messages.js';
+import { displayMessage, addUserMessage, addSystemMessage, displayEscalation, displayAnalysisProgress } from './ui/messages.js';
+import { initSimulationUI, displaySimulationMessage } from './ui/simulationUI_new.js';
 import { setupCommandSuggestions } from './ui/commandSuggestions.js';
 import { setupFeedbackModal } from './ui/feedback.js';
 import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs } from './ui/dataLoaders.js';
-import { renderScenariosDropdown, showSimulationStarting, showSimulationComplete, showSimulationError, getSelectedScenarioInfo, showSimulationFeedback } from './ui/simulationUI.js';
+// Old simulationUI.js removed - using simulationUI_new.js instead
 import { generateAndShowAnalysis } from './ui/analysisUI.js';
 
 // Create shared API client
@@ -64,24 +65,15 @@ document.getElementById('login-btn').addEventListener('click', async () => {
         }
         
         // Load scenarios for simulation tab
-        loadScenarios();
+        // Initialize new fresh simulation UI
+        initSimulationUI(api, state);
     } catch (error) {
         alert(MESSAGES.LOGIN_FAILED(error.message));
     }
 });
 
 // ====== LOAD SCENARIOS ======
-async function loadScenarios() {
-    try {
-        const { scenarios } = await api.getScenarios();
-        renderScenariosDropdown(scenarios);
-    } catch (error) {
-        const select = document.getElementById('scenario-select');
-        if (select) {
-            select.innerHTML = '<option value="random_single">🎲 Random Scenario</option>';
-        }
-    }
-}
+// loadScenarios moved to simulationUI_new.js
 
 // ====== SERVER-SENT EVENTS ======
 function connectToEventSource() {
@@ -104,7 +96,7 @@ function connectToEventSource() {
         } else if (data.type === 'analysis_progress') {
             displayAnalysisProgress(data);
         } else if (data.type === 'simulation_progress') {
-            displaySimulationProgress(data);
+            displaySimulationMessage(data);
         }
     };
 
@@ -215,7 +207,7 @@ document.querySelectorAll('.tab').forEach(tab => {
         
         // Load data when switching tabs
         if (tabName === 'my-feedback' && state.userId) {
-            loadFeedbackData(state.userId);
+            loadFeedbackData(api, state.userId);
         } else if (tabName === 'conversations' && state.userId) {
             loadConversationsData(api, state.userId);
         } else if (tabName === 'logs') {
@@ -225,28 +217,9 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 // ====== SIMULATION ======
-document.getElementById('run-simulation')?.addEventListener('click', async () => {
-    const scenarioInfo = getSelectedScenarioInfo();
-    if (!scenarioInfo) return;
-    
-    const { scenarioKey, scenarioName, turns, isRandom } = scenarioInfo;
-    const summaryDiv = document.getElementById('simulation-summary');
-    
-    if (summaryDiv) summaryDiv.style.display = 'none';
-    showSimulationStarting(scenarioName, turns, isRandom);
+// Simulation handler moved to simulationUI_new.js - initSimulationUI()
 
-    try {
-        const results = await api.runSimulation(5, scenarioKey, turns);
-        showSimulationComplete(results);
-    } catch (error) {
-        showSimulationError(error);
-    }
-});
-
-// Handle "View Feedback" button
-document.getElementById('view-feedback-btn').addEventListener('click', () => {
-    showSimulationFeedback(api, state.userId);
-});
+// Feedback button removed - use inline feedback in simulation tab
 
 document.getElementById('generate-analysis').addEventListener('click', () => {
     generateAndShowAnalysis(api);

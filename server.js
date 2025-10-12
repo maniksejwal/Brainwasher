@@ -210,6 +210,31 @@ app.get('/api/feedback/:userId', async (req, res) => {
     }
 });
 
+// POST endpoint to submit feedback
+app.post('/api/feedback', async (req, res) => {
+    try {
+        const { userId, conversationId, score, comment } = req.body;
+        const db = await getDb();
+        
+        await db.run(`
+            INSERT INTO feedback (conversation_id, user_id, circle_id, score, comment, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `, [
+            conversationId,
+            userId,
+            userId, // circle_id same as user_id for now
+            score,
+            comment || null,
+            Date.now()
+        ]);
+        
+        res.json({ success: true, message: 'Feedback saved' });
+    } catch (error) {
+        console.error('[Server] Save feedback error:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get available scenarios and personas
 app.get('/api/scenarios', async (req, res) => {
     try {
@@ -251,16 +276,36 @@ app.post('/api/simulate', async (req, res) => {
         }
         
         // Get scenario definition
-        let scenarioDef = SCENARIOS[scenarioKey];
-        if (!scenarioDef) {
-            // Fallback to random single user
-            const personaKeys = Object.keys(PERSONAS);
-            const randomPersona = personaKeys[Math.floor(Math.random() * personaKeys.length)];
-            scenarioDef = {
-                name: `Random - ${PERSONAS[randomPersona]?.name || randomPersona}`,
-                complexity: 1,
-                users: [{ role: 'patient', personaKey: randomPersona }]
-            };
+        let scenarioDef;
+        if (scenarioKey === 'random') {
+            // Truly random - pick any scenario
+            const allScenarioKeys = Object.keys(SCENARIOS);
+            if (allScenarioKeys.length > 0) {
+                const randomKey = allScenarioKeys[Math.floor(Math.random() * allScenarioKeys.length)];
+                scenarioDef = SCENARIOS[randomKey];
+                console.log(`[Server] Random scenario selected: ${randomKey} - ${scenarioDef.name}`);
+            } else {
+                // Fallback if no scenarios
+                const personaKeys = Object.keys(PERSONAS);
+                const randomPersona = personaKeys[Math.floor(Math.random() * personaKeys.length)];
+                scenarioDef = {
+                    name: `Random - ${PERSONAS[randomPersona]?.name || randomPersona}`,
+                    complexity: 1,
+                    users: [{ role: 'patient', personaKey: randomPersona }]
+                };
+            }
+        } else {
+            scenarioDef = SCENARIOS[scenarioKey];
+            if (!scenarioDef) {
+                // Fallback to random single user
+                const personaKeys = Object.keys(PERSONAS);
+                const randomPersona = personaKeys[Math.floor(Math.random() * personaKeys.length)];
+                scenarioDef = {
+                    name: `Random - ${PERSONAS[randomPersona]?.name || randomPersona}`,
+                    complexity: 1,
+                    users: [{ role: 'patient', personaKey: randomPersona }]
+                };
+            }
         }
         
         // Build simulation config
@@ -284,10 +329,12 @@ app.post('/api/simulate', async (req, res) => {
             instructions: scenarioDef.instructions
         };
 
-        const sim = new SimulationDriver({ logResults: true });
+        const sim = new SimulationDriver('./care_circle_simulation.db', true, true); // dbPath, autoFeedback, logResults
         
         // Set up progress callback to emit events
         sim.progressCallback = (progress) => {
+            console.log('[Server] Simulation progress:', progress);
+            
             // Emit simulation progress to all connected clients
             Object.keys(clients).forEach(clientId => {
                 clients[clientId].write(`data: ${JSON.stringify({ 

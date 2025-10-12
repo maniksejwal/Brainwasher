@@ -133,6 +133,32 @@ export class ApiClient {
         }
     }
 
+    async provideFeedback(userId, conversationId, score, comment) {
+        try {
+            const response = await fetch(`${this.baseUrl}/api/feedback`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    userId,
+                    conversationId,
+                    score,
+                    comment
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Provide feedback failed: ${response.status}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('[ApiClient] Provide feedback error:', error.message);
+            throw error;
+        }
+    }
+
     /**
      * Get available scenarios
      */

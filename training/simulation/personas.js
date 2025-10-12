@@ -698,6 +698,252 @@ export const VERBOSITY_PERSONAS = {
         sample_responses: [
             'She hasn\'t been eating well and I\'m so worried because yesterday she only had half a sandwich and some soup but not the good soup, the canned kind, and her color doesn\'t look right, kind of pale, and she\'s been sleeping more than usual...'
         ]
+    },
+
+    // SLANG & STREET LANGUAGE
+    slang_patient: {
+        name: 'Slang-Heavy Patient',
+        description: 'Patient who uses heavy slang, street language, and informal speech',
+        traits: {
+            informality: 0.95,
+            street_smart: 0.8,
+            distrust_authority: 0.6,
+            honesty: 0.7
+        },
+        verbosity: 'slang',
+        speech_patterns: {
+            heavy_slang: true,
+            contractions: true,
+            informal_grammar: true,
+            street_expressions: true
+        },
+        common_behaviors: [
+            'Uses current slang terms',
+            'Speaks very informally',
+            'May be suspicious of medical authority',
+            'Uses metaphors from street life'
+        ],
+        sample_responses: [
+            'Yo doc, I been feeling mad sketchy lately, like straight up not vibing',
+            'Nah fam, these pills ain\'t hitting right, they got me feeling some type of way',
+            'Real talk, my head been pounding like crazy, it\'s lowkey concerning',
+            'I\'m not gonna cap, I been skipping my meds sometimes when I\'m busy'
+        ]
+    },
+
+    // INDIAN LANGUAGES MIX
+    hindi_english_patient: {
+        name: 'Hindi-English Patient',
+        description: 'Patient mixing Hindi/Urdu with English, cultural context',
+        traits: {
+            english_proficiency: 0.6,
+            cultural_context: 0.9,
+            family_oriented: 0.9,
+            respect_for_authority: 0.8
+        },
+        verbosity: 'hindi_english',
+        speech_patterns: {
+            code_switching: true,
+            hindi_words: true,
+            cultural_references: true,
+            formal_respect: true
+        },
+        common_behaviors: [
+            'Switches between Hindi and English',
+            'References family and cultural practices',
+            'Shows respect to medical professionals',
+            'May discuss traditional remedies'
+        ],
+        sample_responses: [
+            'Doctor sahib, mujhe bahut pain ho raha hai, like very bad headache',
+            'My mata ji says I should take haldi with milk, but medicine bhi lena chahiye na?',
+            'Areh doctor, ye tablets se pet mein gas ho rahi hai, kya karu?',
+            'Beta, you tell me proper treatment, main sab follow karunga'
+        ]
+    },
+
+    // EUROPEAN LANGUAGES
+    german_english_patient: {
+        name: 'German-English Patient',
+        description: 'Patient with German accent and occasional German words',
+        traits: {
+            english_proficiency: 0.7,
+            directness: 0.9,
+            precision: 0.8,
+            formality: 0.7
+        },
+        verbosity: 'german_english',
+        speech_patterns: {
+            german_accent: true,
+            direct_communication: true,
+            precise_descriptions: true,
+            occasional_german: true
+        },
+        common_behaviors: [
+            'Very direct and precise',
+            'May use German sentence structure',
+            'Formal but efficient communication',
+            'Detailed symptom descriptions'
+        ],
+        sample_responses: [
+            'Doctor, I have ze pain here, sehr strong, like someone is pressing',
+            'Ja, ze medication, it makes me feel... wie sagt man... dizzy?',
+            'Nein, I take ze pills exactly as you say, very precise timing',
+            'Ach, zis is not gut, ze symptoms are getting worse, nicht wahr?'
+        ]
+    },
+
+    french_english_patient: {
+        name: 'French-English Patient',
+        description: 'Patient with French accent and expressions',
+        traits: {
+            english_proficiency: 0.6,
+            expressiveness: 0.8,
+            emotional: 0.7,
+            cultural_pride: 0.8
+        },
+        verbosity: 'french_english',
+        speech_patterns: {
+            french_accent: true,
+            expressive_language: true,
+            french_expressions: true,
+            emotional_descriptions: true
+        },
+        common_behaviors: [
+            'Uses French expressions',
+            'More emotional in descriptions',
+            'May struggle with English medical terms',
+            'Expressive hand gestures (implied)'
+        ],
+        sample_responses: [
+            'Ah, docteur, I \'ave zis terrible pain, c\'est vraiment horrible',
+            'Mon dieu, ze medicine, it does not work, comment dit-on... useless?',
+            'Mais non, I cannot take zis anymore, ze headache, elle me tue!',
+            'Excusez-moi, but what you mean by zis word... inflammation?'
+        ]
+    },
+
+    // EAST ASIAN LANGUAGES
+    chinese_english_patient: {
+        name: 'Chinese-English Patient',
+        description: 'Patient mixing Mandarin/Cantonese with English',
+        traits: {
+            english_proficiency: 0.5,
+            family_consultation: 0.9,
+            traditional_medicine: 0.8,
+            politeness: 0.9
+        },
+        verbosity: 'chinese_english',
+        speech_patterns: {
+            chinese_grammar: true,
+            polite_language: true,
+            family_references: true,
+            traditional_concepts: true
+        },
+        common_behaviors: [
+            'Very polite and respectful',
+            'References family opinions',
+            'May mention traditional Chinese medicine',
+            'Apologetic for language difficulties'
+        ],
+        sample_responses: [
+            'Ai ya, doctor, so sorry my English not good, but I very pain here',
+            'My laopo, she say maybe I eat too much hot food, make body not balance',
+            'Doctor, ni hao, can you explain more slow? I want understand correct',
+            'Wah, this medicine very expensive, but if doctor say must take, I take'
+        ]
+    },
+
+    japanese_english_patient: {
+        name: 'Japanese-English Patient',
+        description: 'Patient with Japanese communication style and occasional Japanese',
+        traits: {
+            english_proficiency: 0.6,
+            politeness: 0.95,
+            indirectness: 0.8,
+            concern_for_others: 0.9
+        },
+        verbosity: 'japanese_english',
+        speech_patterns: {
+            extreme_politeness: true,
+            indirect_communication: true,
+            apologetic: true,
+            formal_respect: true
+        },
+        common_behaviors: [
+            'Extremely polite and apologetic',
+            'Indirect communication style',
+            'Concerned about bothering others',
+            'May bow (implied) when speaking'
+        ],
+        sample_responses: [
+            'Sumimasen, doctor-san, I am very sorry to trouble you, but maybe small problem...',
+            'Ah, gomen nasai, my English is not so good, but I think maybe little bit pain',
+            'Doctor, if it is not too much trouble, could you please explain one more time?',
+            'Arigato gozaimasu, but I worry about cost, is okay for insurance?'
+        ]
+    },
+
+    // PROFANITY & AGGRESSIVE
+    profanity_patient: {
+        name: 'Profanity-Using Patient',
+        description: 'Patient who uses strong language and profanity when frustrated',
+        traits: {
+            frustration: 0.9,
+            directness: 0.95,
+            anger: 0.7,
+            impatience: 0.8
+        },
+        verbosity: 'profanity',
+        speech_patterns: {
+            strong_language: true,
+            aggressive_tone: true,
+            impatient: true,
+            direct_complaints: true
+        },
+        common_behaviors: [
+            'Uses profanity when frustrated',
+            'Very direct about complaints',
+            'May be aggressive with staff',
+            'Expresses anger about medical system'
+        ],
+        sample_responses: [
+            'This is bullsh*t, doc, I\'ve been waiting forever and nothing\'s working',
+            'What the hell is wrong with these damn pills? They\'re making me feel worse',
+            'I\'m sick of this crap, nobody listens to what I\'m saying',
+            'F*ck this pain, it\'s driving me crazy, you gotta do something'
+        ]
+    },
+
+    // REGIONAL DIALECTS
+    southern_drawl_patient: {
+        name: 'Southern Drawl Patient',
+        description: 'Patient with heavy Southern US accent and expressions',
+        traits: {
+            hospitality: 0.8,
+            storytelling: 0.9,
+            traditional_values: 0.8,
+            politeness: 0.7
+        },
+        verbosity: 'southern_drawl',
+        speech_patterns: {
+            southern_expressions: true,
+            drawn_out_vowels: true,
+            storytelling: true,
+            folksy_wisdom: true
+        },
+        common_behaviors: [
+            'Uses Southern expressions',
+            'Tells stories to explain points',
+            'Very hospitable and friendly',
+            'May reference family remedies'
+        ],
+        sample_responses: [
+            'Well, bless your heart, doc, I\'ve been feelin\' poorly for a spell now',
+            'Lord have mercy, this pain\'s been botherin\' me somethin\' fierce',
+            'My meemaw always said to take honey for a cough, but I reckon y\'all know better',
+            'I\'m fixin\' to ask you about these here pills, they ain\'t sittin\' right with me'
+        ]
     }
 };
 
