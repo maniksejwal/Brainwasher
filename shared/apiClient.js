@@ -120,15 +120,15 @@ export class ApiClient {
      */
     async getDetailedFeedback(userId) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/feedback/detailed/${userId}`);
+            const response = await fetch(`${this.baseUrl}/api/feedback/${userId}`);
             
             if (!response.ok) {
-                throw new Error(`Fetch detailed feedback failed: ${response.status}`);
+                throw new Error(`Fetch feedback failed: ${response.status}`);
             }
 
             return await response.json();
         } catch (error) {
-            console.error('[ApiClient] Detailed feedback error:', error.message);
+            console.error('[ApiClient] Feedback error:', error.message);
             return [];
         }
     }

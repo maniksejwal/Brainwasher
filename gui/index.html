@@ -71,11 +71,11 @@
                     <div id="feedback-list"></div>
                 </div>
 
-                <div id="conversations" class="tab-content">
+                <div id="conversations" class="tab-content scrollable-content">
                     <div id="conversations-list"></div>
                 </div>
 
-                <div id="simulations" class="tab-content">
+                <div id="simulations" class="tab-content scrollable-content">
                     <div style="margin-bottom: 16px; padding: 12px; background: var(--gray-50); border-radius: 8px;">
                         <h4 style="margin: 0 0 8px 0;">📚 How Simulations Work</h4>
                         <p style="font-size: 13px; color: var(--gray-700); margin: 0;">
@@ -86,30 +86,21 @@
                     </div>
                     
                     <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 4px; font-weight: 500;">Persona Type:</label>
-                        <select id="persona-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
-                            <option value="random">🎲 Random (surprise me!)</option>
-                            <option value="elderly_cognitive">👴 Elderly with Cognitive Decline</option>
-                            <option value="medication_nonadherent">💊 Medication Non-Adherent</option>
-                            <option value="denial_prone">🙈 Denial-Prone Patient</option>
-                            <option value="anxious_patient">😰 Highly Anxious</option>
-                            <option value="complex_comorbid">🏥 Complex Comorbidities</option>
-                            <option value="recently_diagnosed">🆕 Recently Diagnosed</option>
-                            <option value="terminal_acceptance">🕊️ Terminal - Acceptance Stage</option>
-                            <option value="helicopter_caregiver">🚁 Helicopter Caregiver</option>
-                            <option value="burned_out_caregiver">😓 Burned Out Caregiver</option>
-                            <option value="distant_family">📱 Distant Family Member</option>
+                        <label style="display: block; margin-bottom: 4px; font-weight: 500;">Scenario Type:</label>
+                        <select id="scenario-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                            <option value="">Loading scenarios from server...</option>
                         </select>
                     </div>
                     
                     <div style="margin-bottom: 16px;">
                         <label style="display: block; margin-bottom: 4px; font-weight: 500;">Conversation Length:</label>
                         <select id="turns-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
-                            <option value="3">3 turns (Quick test)</option>
-                            <option value="5">5 turns (Standard)</option>
-                            <option value="10">10 turns (Deep dive)</option>
-                            <option value="15">15 turns (Extended conversation)</option>
-                            <option value="20">20 turns (Full scenario)</option>
+                            <option value="random" selected>Random (3-20 turns)</option>
+                            <option value="3">3 turns</option>
+                            <option value="5">5 turns</option>
+                            <option value="10">10 turns</option>
+                            <option value="15">15 turns</option>
+                            <option value="20">20 turns</option>
                         </select>
                     </div>
                     
@@ -125,12 +116,12 @@
                     </div>
                 </div>
 
-                <div id="analysis" class="tab-content">
+                <div id="analysis" class="tab-content scrollable-content">
                     <button id="generate-analysis" class="primary">Generate Analysis</button>
                     <div id="analysis-results"></div>
                 </div>
 
-                <div id="logs" class="tab-content">
+                <div id="logs" class="tab-content scrollable-content">
                     <button id="refresh-logs" class="secondary">Refresh</button>
                     <div id="logs-container" style="font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 16px; border-radius: 4px; max-height: 500px; overflow-y: auto;"></div>
                 </div>

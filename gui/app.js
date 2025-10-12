@@ -10,7 +10,8 @@ import { displayMessage, addUserMessage, addSystemMessage, displayEscalation, di
 import { setupCommandSuggestions } from './ui/commandSuggestions.js';
 import { setupFeedbackModal } from './ui/feedback.js';
 import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs } from './ui/dataLoaders.js';
-import { renderScenariosDropdown, showSimulationStarting, showSimulationComplete, showSimulationError, getSelectedScenarioInfo } from './ui/simulationUI.js';
+import { renderScenariosDropdown, showSimulationStarting, showSimulationComplete, showSimulationError, getSelectedScenarioInfo, showSimulationFeedback } from './ui/simulationUI.js';
+import { generateAndShowAnalysis } from './ui/analysisUI.js';
 
 // Create shared API client
 const api = new ApiClient(config.ORCHESTRATOR_URL);
@@ -75,7 +76,10 @@ async function loadScenarios() {
         const { scenarios } = await api.getScenarios();
         renderScenariosDropdown(scenarios);
     } catch (error) {
-        console.error('Failed to load scenarios:', error);
+        const select = document.getElementById('scenario-select');
+        if (select) {
+            select.innerHTML = '<option value="random_single">🎲 Random Scenario</option>';
+        }
     }
 }
 
@@ -220,16 +224,15 @@ document.querySelectorAll('.tab').forEach(tab => {
     });
 });
 
-// ====== SIMULATION & ANALYSIS ======
 // ====== SIMULATION ======
-document.getElementById('run-simulation').addEventListener('click', async () => {
+document.getElementById('run-simulation')?.addEventListener('click', async () => {
     const scenarioInfo = getSelectedScenarioInfo();
     if (!scenarioInfo) return;
     
     const { scenarioKey, scenarioName, turns, isRandom } = scenarioInfo;
     const summaryDiv = document.getElementById('simulation-summary');
     
-    summaryDiv.style.display = 'none';
+    if (summaryDiv) summaryDiv.style.display = 'none';
     showSimulationStarting(scenarioName, turns, isRandom);
 
     try {
@@ -240,40 +243,13 @@ document.getElementById('run-simulation').addEventListener('click', async () => 
     }
 });
 
-// Handle "View Feedback" button - switch to my-feedback tab
+// Handle "View Feedback" button
 document.getElementById('view-feedback-btn').addEventListener('click', () => {
-    const myFeedbackTab = document.querySelector('[data-tab="my-feedback"]');
-    if (myFeedbackTab) {
-        myFeedbackTab.click(); // Trigger tab switch which will load data
-    }
+    showSimulationFeedback(api, state.userId);
 });
 
-document.getElementById('generate-analysis').addEventListener('click', async () => {
-    const resultsDiv = document.getElementById('analysis-results');
-    resultsDiv.innerHTML = `
-        <div class="analysis-progress" style="padding: 16px; background: var(--gray-50); border-radius: 8px; border-left: 4px solid var(--google-blue);">
-            <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-size: 18px;">⠋</span>
-                <div>
-                    <div style="font-weight: 500; color: var(--google-blue);">Generating Analysis...</div>
-                    <div style="font-size: 12px; color: var(--gray-700);">Processing training logs and feedback</div>
-                </div>
-            </div>
-        </div>
-    `;
-
-    try {
-        const analysis = await api.generateAnalysis();
-        resultsDiv.innerHTML = `
-            <h4>Performance Analysis</h4>
-            <p>Total Interactions: ${analysis.total}</p>
-            <p>Average Latency: ${analysis.avgLatency}ms</p>
-            <p>Escalations: ${analysis.escalations}</p>
-            <p>Shares: ${analysis.shares}</p>
-        `;
-    } catch (error) {
-        resultsDiv.innerHTML = `<p>❌ Error: ${error.message}</p>`;
-    }
+document.getElementById('generate-analysis').addEventListener('click', () => {
+    generateAndShowAnalysis(api);
 });
 
 document.getElementById('refresh-logs').addEventListener('click', () => {

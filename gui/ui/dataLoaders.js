@@ -402,7 +402,7 @@ export async function loadConversationsData(api, userId) {
 }
 
 export async function loadServerLogs(api) {
-    const logsList = document.getElementById('logs-list');
+    const logsList = document.getElementById('logs-container');
     logsList.innerHTML = '<div class="loading">Loading server logs...</div>';
 
     try {

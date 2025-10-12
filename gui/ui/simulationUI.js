@@ -108,8 +108,7 @@ export function showSimulationComplete(results) {
         <div style="padding: 12px; background: var(--green-50); border-radius: 4px; border-left: 4px solid var(--green-500);">
             <div style="color: var(--green-700); font-weight: 500;">✅ Simulation complete!</div>
             <div style="font-size: 12px; color: var(--green-600); margin-top: 4px;">
-                Check the <strong>My Feedback</strong> tab to see automatic analysis of response quality, 
-                escalation handling, consent enforcement, and empathy scores.
+                ✅ Conversation and AI feedback shown above. Review the agent responses and improvement suggestions.
             </div>
         </div>
     `;
@@ -133,17 +132,49 @@ export function showSimulationError(error) {
 }
 
 /**
+ * Show simulation feedback inline
+ */
+export async function showSimulationFeedback(api, userId) {
+    const resultsDiv = document.getElementById('simulation-results');
+    if (!resultsDiv) return;
+    
+    resultsDiv.innerHTML = '<div class="loading">Loading feedback...</div>';
+    
+    try {
+        const feedback = await api.getDetailedFeedback(userId);
+        
+        if (!feedback || feedback.length === 0) {
+            resultsDiv.innerHTML = '<p>No feedback yet. Simulations will appear here after they complete.</p>';
+            return;
+        }
+        
+        resultsDiv.innerHTML = `
+            <h4 style="margin-bottom: 12px;">Recent Simulation Feedback</h4>
+            ${feedback.slice(0, 10).map(f => `
+                <div style="padding: 12px; margin-bottom: 8px; background: white; border-left: 4px solid ${f.score > 0 ? 'var(--green-500)' : 'var(--red-500)'}; border-radius: 4px;">
+                    <div style="font-weight: 500;">${f.score > 0 ? '👍' : '👎'} ${f.score > 0 ? '+1' : '-1'} - ${f.reason || 'No reason'}</div>
+                    <div style="font-size: 12px; color: var(--gray-600); margin-top: 4px;">Turn ${f.turn_number || '?'}</div>
+                    ${f.category ? `<div style="font-size: 11px; color: var(--gray-500); margin-top: 2px;">Category: ${f.category}</div>` : ''}
+                </div>
+            `).join('')}
+        `;
+    } catch (error) {
+        resultsDiv.innerHTML = `<p style="color: var(--red-500);">Error: ${error.message}</p>`;
+    }
+}
+
+/**
  * Get selected scenario info
  */
 export function getSelectedScenarioInfo() {
     const scenarioSelect = document.getElementById('scenario-select');
     const turnsSelect = document.getElementById('turns-select');
     
-    if (!scenarioSelect || !turnsSelect) {
-        return null;
-    }
+    if (!scenarioSelect || !turnsSelect) return null;
     
     const scenarioKey = scenarioSelect.value;
+    if (!scenarioKey || scenarioKey === '') return null;
+    
     const scenarioName = scenarioSelect.options[scenarioSelect.selectedIndex].text;
     const turnsValue = turnsSelect.value;
     

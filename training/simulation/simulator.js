@@ -334,6 +334,7 @@ class SimulationDriver {
             patientUser.recordAgentResponse(agentResult.agent_response);
 
             // Automatic feedback from simulation
+            let feedbackData = null;
             if (this.autoFeedback) {
                 const feedback = await this.feedbackCollector.provideFeedback(
                     `${this.conversationId}_${patientUser.userId}_${turn}`,
@@ -346,12 +347,35 @@ class SimulationDriver {
                     userMessage
                 );
 
+                feedbackData = {
+                    issuesFound: feedback.issuesFound,
+                    issues: feedback.issues,
+                    empathyScore: feedback.empathyScore,
+                    escalationScore: feedback.escalationScore,
+                    consentScore: feedback.consentScore,
+                    overallScore: feedback.overallScore,
+                    improvementSuggestions: feedback.improvementSuggestions
+                };
+
                 if (feedback.issuesFound > 0) {
                     console.log(`    🔍 Auto-detected ${feedback.issuesFound} issue(s):`);
                     feedback.issues.forEach(issue => {
                         console.log(`       ${issue.category}: ${issue.description}`);
                     });
                 }
+            }
+
+            // Emit conversation message with feedback to GUI
+            if (emitProgress) {
+                emitProgress(4, `Turn ${turn + 1}/${maxTurns}`, '', {
+                    type: 'simulation_conversation',
+                    turn: turn + 1,
+                    maxTurns,
+                    userMessage,
+                    agentResponse: agentResult.agent_response,
+                    action: agentResult.orchestrator_action,
+                    feedback: feedbackData
+                });
             }
 
             // Log interaction

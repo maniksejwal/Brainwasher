@@ -17,6 +17,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json());
 
+// Simulation feedback is displayed inline - no copying needed
+
 const clients = {};
 
 // Log buffer for GUI (circular buffer, last 200 entries)
@@ -227,7 +229,14 @@ app.get('/api/scenarios', async (req, res) => {
 // Trigger simulation
 app.post('/api/simulate', async (req, res) => {
     try {
-        const { runs = 5, scenario: scenarioKey = 'random_single', turns = 3 } = req.body;
+        let { runs = 5, scenario: scenarioKey = 'random_single', turns = 3 } = req.body;
+        
+        // Handle random turns
+        if (turns === 'random') {
+            turns = [3, 5, 10, 15, 20][Math.floor(Math.random() * 5)];
+        } else {
+            turns = parseInt(turns) || 3;
+        }
         
         // Import modules
         const { SimulationDriver } = await import('./training/simulation/simulator.js');
@@ -289,6 +298,9 @@ app.post('/api/simulate', async (req, res) => {
         };
         
         await sim.runScenario(simConfig);
+        
+        // No need to copy - simulation results are shown inline
+        
         await sim.cleanup();
 
         res.json({ 
