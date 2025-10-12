@@ -36,7 +36,7 @@
                 <button id="circle-btn" class="icon-button" title="Current Circle">👥</button>
                 <button id="mycircles-btn" class="icon-button" title="My Circles">🔄</button>
                 <button id="patients-btn" class="icon-button" title="My Patients">🩺</button>
-                <button id="feedback-btn" class="icon-button" title="View Feedback">📊</button>
+                <button id="feedback-btn" class="icon-button" title="Admin">⚙️</button>
                 <span id="username-display" class="username"></span>
             </div>
         </header>
@@ -76,8 +76,53 @@
                 </div>
 
                 <div id="simulations" class="tab-content">
-                    <button id="run-simulation" class="primary">Run Simulation</button>
-                    <div id="simulation-results"></div>
+                    <div style="margin-bottom: 16px; padding: 12px; background: var(--gray-50); border-radius: 8px;">
+                        <h4 style="margin: 0 0 8px 0;">📚 How Simulations Work</h4>
+                        <p style="font-size: 13px; color: var(--gray-700); margin: 0;">
+                            Simulations create synthetic users with realistic personas (anxious, forgetful, in denial, etc.) 
+                            and run conversations to test the AI agent. Each simulation automatically generates feedback 
+                            on response quality, escalation handling, and empathy. View results in the "Feedback" tab.
+                        </p>
+                    </div>
+                    
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 4px; font-weight: 500;">Persona Type:</label>
+                        <select id="persona-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                            <option value="random">🎲 Random (surprise me!)</option>
+                            <option value="elderly_cognitive">👴 Elderly with Cognitive Decline</option>
+                            <option value="medication_nonadherent">💊 Medication Non-Adherent</option>
+                            <option value="denial_prone">🙈 Denial-Prone Patient</option>
+                            <option value="anxious_patient">😰 Highly Anxious</option>
+                            <option value="complex_comorbid">🏥 Complex Comorbidities</option>
+                            <option value="recently_diagnosed">🆕 Recently Diagnosed</option>
+                            <option value="terminal_acceptance">🕊️ Terminal - Acceptance Stage</option>
+                            <option value="helicopter_caregiver">🚁 Helicopter Caregiver</option>
+                            <option value="burned_out_caregiver">😓 Burned Out Caregiver</option>
+                            <option value="distant_family">📱 Distant Family Member</option>
+                        </select>
+                    </div>
+                    
+                    <div style="margin-bottom: 16px;">
+                        <label style="display: block; margin-bottom: 4px; font-weight: 500;">Conversation Length:</label>
+                        <select id="turns-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                            <option value="3">3 turns (Quick test)</option>
+                            <option value="5">5 turns (Standard)</option>
+                            <option value="10">10 turns (Deep dive)</option>
+                            <option value="15">15 turns (Extended conversation)</option>
+                            <option value="20">20 turns (Full scenario)</option>
+                        </select>
+                    </div>
+                    
+                    <button id="run-simulation" class="primary" style="width: 100%;">🔬 Run Simulation</button>
+                    <div id="simulation-results" style="margin-top: 16px;"></div>
+                    
+                    <div id="simulation-summary" style="display: none; margin-top: 16px; padding: 16px; background: var(--gray-50); border-radius: 8px;">
+                        <h4 style="margin: 0 0 12px 0;">📊 Simulation Complete</h4>
+                        <div id="simulation-stats"></div>
+                        <button id="view-feedback-btn" class="secondary" style="margin-top: 12px; width: 100%;">
+                            📋 View Detailed Feedback & Analysis
+                        </button>
+                    </div>
                 </div>
 
                 <div id="analysis" class="tab-content">

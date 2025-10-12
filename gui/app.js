@@ -6,13 +6,15 @@
 import config from './config.js';
 import ApiClient from '../shared/apiClient.js';
 import { MESSAGES } from './config/messages.js';
-import { displayMessage, addUserMessage, addSystemMessage, displayEscalation } from './ui/messages.js';
+import { displayMessage, addUserMessage, addSystemMessage, displayEscalation, displayAnalysisProgress, displaySimulationProgress } from './ui/messages.js';
 import { setupCommandSuggestions } from './ui/commandSuggestions.js';
 import { setupFeedbackModal } from './ui/feedback.js';
 import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs } from './ui/dataLoaders.js';
+import { renderScenariosDropdown, showSimulationStarting, showSimulationComplete, showSimulationError, getSelectedScenarioInfo } from './ui/simulationUI.js';
 
 // Create shared API client
 const api = new ApiClient(config.ORCHESTRATOR_URL);
+window.api = api; // Make globally accessible for UI modules
 
 // Application state
 const state = {
@@ -24,6 +26,7 @@ const state = {
     messages: [],
     eventSource: null
 };
+window.state = state; // Make globally accessible for UI modules
 
 // ====== LOGIN ======
 document.getElementById('login-btn').addEventListener('click', async () => {
@@ -58,10 +61,23 @@ document.getElementById('login-btn').addEventListener('click', async () => {
         } else {
             addSystemMessage(MESSAGES.WELCOME_BACK(username));
         }
+        
+        // Load scenarios for simulation tab
+        loadScenarios();
     } catch (error) {
         alert(MESSAGES.LOGIN_FAILED(error.message));
     }
 });
+
+// ====== LOAD SCENARIOS ======
+async function loadScenarios() {
+    try {
+        const { scenarios } = await api.getScenarios();
+        renderScenariosDropdown(scenarios);
+    } catch (error) {
+        console.error('Failed to load scenarios:', error);
+    }
+}
 
 // ====== SERVER-SENT EVENTS ======
 function connectToEventSource() {
@@ -81,6 +97,10 @@ function connectToEventSource() {
             document.getElementById('current-context').textContent = `@${data.patientUsername}`;
             document.title = `${state.username} (${data.newRole}) - Care Circles`;
             addSystemMessage(MESSAGES.CONTEXT_SWITCHED(data.patientUsername, data.newRole));
+        } else if (data.type === 'analysis_progress') {
+            displayAnalysisProgress(data);
+        } else if (data.type === 'simulation_progress') {
+            displaySimulationProgress(data);
         }
     };
 
@@ -189,7 +209,10 @@ document.querySelectorAll('.tab').forEach(tab => {
         tab.classList.add('active');
         document.getElementById(tabName).classList.add('active');
         
-        if (tabName === 'conversations') {
+        // Load data when switching tabs
+        if (tabName === 'my-feedback' && state.userId) {
+            loadFeedbackData(state.userId);
+        } else if (tabName === 'conversations' && state.userId) {
             loadConversationsData(api, state.userId);
         } else if (tabName === 'logs') {
             loadServerLogs(api);
@@ -198,21 +221,46 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 // ====== SIMULATION & ANALYSIS ======
+// ====== SIMULATION ======
 document.getElementById('run-simulation').addEventListener('click', async () => {
-    const resultsDiv = document.getElementById('simulation-results');
-    resultsDiv.innerHTML = '<div class="loading">' + MESSAGES.LOADING_SIMULATION + '</div>';
+    const scenarioInfo = getSelectedScenarioInfo();
+    if (!scenarioInfo) return;
+    
+    const { scenarioKey, scenarioName, turns, isRandom } = scenarioInfo;
+    const summaryDiv = document.getElementById('simulation-summary');
+    
+    summaryDiv.style.display = 'none';
+    showSimulationStarting(scenarioName, turns, isRandom);
 
     try {
-        const results = await api.runSimulation(5);
-        resultsDiv.innerHTML = `<p>✅ Completed simulation: ${results.persona}</p>`;
+        const results = await api.runSimulation(5, scenarioKey, turns);
+        showSimulationComplete(results);
     } catch (error) {
-        resultsDiv.innerHTML = `<p>❌ Error: ${error.message}</p>`;
+        showSimulationError(error);
+    }
+});
+
+// Handle "View Feedback" button - switch to my-feedback tab
+document.getElementById('view-feedback-btn').addEventListener('click', () => {
+    const myFeedbackTab = document.querySelector('[data-tab="my-feedback"]');
+    if (myFeedbackTab) {
+        myFeedbackTab.click(); // Trigger tab switch which will load data
     }
 });
 
 document.getElementById('generate-analysis').addEventListener('click', async () => {
     const resultsDiv = document.getElementById('analysis-results');
-    resultsDiv.innerHTML = '<div class="loading">' + MESSAGES.LOADING_ANALYSIS + '</div>';
+    resultsDiv.innerHTML = `
+        <div class="analysis-progress" style="padding: 16px; background: var(--gray-50); border-radius: 8px; border-left: 4px solid var(--google-blue);">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-size: 18px;">⠋</span>
+                <div>
+                    <div style="font-weight: 500; color: var(--google-blue);">Generating Analysis...</div>
+                    <div style="font-size: 12px; color: var(--gray-700);">Processing training logs and feedback</div>
+                </div>
+            </div>
+        </div>
+    `;
 
     try {
         const analysis = await api.generateAnalysis();

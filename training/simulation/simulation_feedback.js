@@ -7,15 +7,16 @@
 import { getDb } from '../../db/connection.js';
 
 class SimulationFeedback {
-    constructor(simulationId = 'sim_default') {
+    constructor(simulationId = 'sim_default', dbConnection = null) {
         this.simulationId = simulationId;
+        this.dbConnection = dbConnection; // Use provided DB or fall back to main DB
     }
 
     /**
      * Automatically score an interaction
      */
     async autoScore(conversationId, userId, circleId, messageId, score, reason) {
-        const db = await getDb();
+        const db = this.dbConnection || await getDb();
         
         await db.run(`
             CREATE TABLE IF NOT EXISTS feedback (
@@ -44,7 +45,7 @@ class SimulationFeedback {
      * Automatically report an issue
      */
     async autoReport(conversationId, userId, circleId, messageId, category, description, context) {
-        const db = await getDb();
+        const db = this.dbConnection || await getDb();
         
         await db.run(`
             CREATE TABLE IF NOT EXISTS detailed_feedback (

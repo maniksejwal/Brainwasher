@@ -45,15 +45,40 @@ async function resolveEntitiesAndEnrichContext(message, analysis, circleId) {
 
 
 export async function performAiAnalysis(userId, role, message, circleId) {
+    // Step 1: Initial Analysis
     console.log(`[AIAnalysisHandler] Step 1: Performing initial analysis...`);
+    events.emit('analysis_progress', { 
+        userId, 
+        step: 1, 
+        description: 'Analyzing your message...', 
+        details: 'Processing content and intent'
+    });
+    
     const members = await getCircleMembers(circleId);
     const memberUsernames = members.map(m => m.username);
     
     let analysis = await processUserMessage(userId, role, message, memberUsernames, circleId);
     console.log(`[AIAnalysisHandler] Initial analysis complete. Mentioned entities: ${analysis.mentioned_usernames?.join(', ')}`);
 
-    // Step 2: Perform Entity Resolution and Context Enrichment.
+    // Step 2: Entity Resolution and Context Enrichment
+    if (analysis.mentioned_usernames && analysis.mentioned_usernames.length > 0) {
+        events.emit('analysis_progress', { 
+            userId, 
+            step: 2, 
+            description: 'Resolving mentions and context...', 
+            details: `Processing mentions: ${analysis.mentioned_usernames.join(', ')}`
+        });
+    }
+    
     analysis = await resolveEntitiesAndEnrichContext(message, analysis, circleId);
+    
+    // Step 3: Database Operations
+    events.emit('analysis_progress', { 
+        userId, 
+        step: 3, 
+        description: 'Saving conversation...', 
+        details: 'Storing message and analysis'
+    });
     
     const currentCircle = await findCircleByPatientId(circleId);
     const patientUsername = (await findUserById(currentCircle.primary_patient_id)).username;
@@ -63,6 +88,14 @@ export async function performAiAnalysis(userId, role, message, circleId) {
     const criticality = analysis.criticality || 'NONE';
     const privacyLevel = analysis.privacyLevel || 'PRIVATE';
     await addMessage(circleId, userId, role, message, privacyLevel, criticality);
+    
+    // Step 4: Agent Response
+    events.emit('analysis_progress', { 
+        userId, 
+        step: 4, 
+        description: 'Preparing response...', 
+        details: 'Generating personalized reply'
+    });
     
     // Determine the appropriate agent name based on context
     const agentName = await getAgentName(userId, circleId);
@@ -74,6 +107,15 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         await updateUserState(userId, circleId, analysis.state_update);
         console.log(`[AIAnalysisHandler] State for '${userId}' in circle '${circleId}' updated:`, analysis.state_update);
     }
+
+    // Step 5: Complete
+    events.emit('analysis_progress', { 
+        userId, 
+        step: 5, 
+        description: 'Analysis complete', 
+        details: 'Response ready',
+        complete: true
+    });
 
     return analysis;
 }

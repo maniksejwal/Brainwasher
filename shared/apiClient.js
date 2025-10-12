@@ -134,14 +134,32 @@ export class ApiClient {
     }
 
     /**
+     * Get available scenarios
+     */
+    async getScenarios() {
+        try {
+            const response = await fetch(`${this.baseUrl}/api/scenarios`);
+            
+            if (!response.ok) {
+                throw new Error(`Failed to load scenarios: ${response.status}`);
+            }
+            
+            return await response.json();
+        } catch (error) {
+            console.error('[ApiClient] Scenarios error:', error.message);
+            return { personas: {}, scenarios: {} };
+        }
+    }
+
+    /**
      * Run simulation
      */
-    async runSimulation(runs = 5) {
+    async runSimulation(runs = 5, scenarioKey = 'random_single', turns = 3) {
         try {
             const response = await fetch(`${this.baseUrl}/api/simulate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ runs })
+                body: JSON.stringify({ runs, scenario: scenarioKey, turns })
             });
 
             if (!response.ok) {

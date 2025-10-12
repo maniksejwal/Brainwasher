@@ -343,6 +343,33 @@ export async function loadFeedbackData(api, userId) {
     }
 }
 
+function showConversationDetails(conversation) {
+    const conversationsList = document.getElementById('conversations-list');
+    conversationsList.innerHTML = `
+        <button id="back-to-conversations" class="secondary" style="margin-bottom: 16px;">← Back to List</button>
+        <div style="padding: 16px; background: var(--gray-50); border-radius: 8px;">
+            <h3>Conversation #${conversation.conversation_id}</h3>
+            <p><strong>Messages:</strong> ${conversation.messages.length}</p>
+            <p><strong>Started:</strong> ${new Date(conversation.start_time).toLocaleString()}</p>
+            <p><strong>Ended:</strong> ${new Date(conversation.end_time).toLocaleString()}</p>
+        </div>
+        <div style="margin-top: 16px;">
+            ${conversation.messages.map(msg => `
+                <div class="message-log" style="padding: 12px; margin: 8px 0; background: white; border-left: 3px solid var(--google-blue); border-radius: 4px;">
+                    <div style="font-size: 12px; color: var(--gray-600);">${new Date(msg.timestamp).toLocaleString()}</div>
+                    <div style="margin-top: 4px;"><strong>User:</strong> ${msg.message}</div>
+                    <div style="margin-top: 4px;"><strong>Agent:</strong> ${msg.agent_response}</div>
+                    ${msg.orchestrator_action?.type !== 'NONE' ? `<div style="margin-top: 4px; color: var(--yellow); font-size: 12px;">⚡ Action: ${msg.orchestrator_action.type}</div>` : ''}
+                </div>
+            `).join('')}
+        </div>
+    `;
+    
+    document.getElementById('back-to-conversations').addEventListener('click', () => {
+        loadConversationsData(window.api, window.state.userId);
+    });
+}
+
 export async function loadConversationsData(api, userId) {
     const conversationsList = document.getElementById('conversations-list');
     conversationsList.innerHTML = '<div class="loading">' + MESSAGES.LOADING_CONVERSATIONS + '</div>';
@@ -360,10 +387,13 @@ export async function loadConversationsData(api, userId) {
             const div = document.createElement('div');
             div.className = 'conversation-item';
             div.innerHTML = `
-                <h4>Conversation ${conversation.id}</h4>
+                <h4>Conversation #${conversation.conversation_id}</h4>
                 <p>Messages: ${conversation.messages.length}</p>
-                <p>Date: ${new Date(conversation.timestamp).toLocaleString()}</p>
+                <p>Started: ${new Date(conversation.start_time).toLocaleString()}</p>
             `;
+            div.addEventListener('click', () => {
+                showConversationDetails(conversation);
+            });
             conversationsList.appendChild(div);
         });
     } catch (error) {

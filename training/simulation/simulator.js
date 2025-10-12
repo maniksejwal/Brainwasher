@@ -139,7 +139,7 @@ class SimulationDriver {
         this.maxTurns = options.maxTurns || 10;
         this.logResults = options.logResults !== false;
         this.autoFeedback = options.autoFeedback !== false; // Enable by default
-        this.feedbackCollector = new SimulationFeedback(this.conversationId);
+        this.feedbackCollector = null; // Will be initialized after DB is ready
     }
 
     /**
@@ -186,9 +186,24 @@ class SimulationDriver {
                 FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id), 
                 FOREIGN KEY (user_id) REFERENCES users(user_id) 
             );
+            CREATE TABLE IF NOT EXISTS detailed_feedback (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT,
+                message_id INTEGER,
+                user_id TEXT,
+                circle_id TEXT,
+                category TEXT,
+                description TEXT,
+                context TEXT,
+                timestamp INTEGER,
+                source TEXT DEFAULT 'simulation'
+            );
         `);
 
         console.log('[Simulator] Test database initialized');
+        
+        // Initialize feedback collector with simulation database
+        this.feedbackCollector = new SimulationFeedback(this.conversationId, this.db);
     }
 
     /**
@@ -277,7 +292,7 @@ class SimulationDriver {
     /**
      * Run a simulated conversation
      */
-    async runConversation(patientUser, turns = null) {
+    async runConversation(patientUser, turns = null, emitProgress = null) {
         const maxTurns = turns || this.maxTurns;
         console.log(`\n[Simulator] Starting conversation with ${patientUser.userId} (${maxTurns} turns max)`);
         console.log(`  Persona: ${patientUser.persona.name}`);
@@ -285,6 +300,11 @@ class SimulationDriver {
 
         for (let turn = 0; turn < maxTurns; turn++) {
             console.log(`  Turn ${turn + 1}/${maxTurns}:`);
+
+            // Emit turn progress
+            if (emitProgress) {
+                emitProgress(4, `Turn ${turn + 1}/${maxTurns}`, `Generating conversation with ${patientUser.persona.name}`);
+            }
 
             // Generate user message
             const lastAgentMsg = patientUser.conversationHistory.length > 0
@@ -371,14 +391,24 @@ class SimulationDriver {
         console.log(`SIMULATION SCENARIO: ${scenarioConfig.name}`);
         console.log('='.repeat(80));
 
+        // Emit progress events if callback provided
+        const emitProgress = (step, description, details) => {
+            if (this.progressCallback) {
+                this.progressCallback({ step, description, details });
+            }
+        };
+
         // Initialize
+        emitProgress(1, 'Initializing simulation database...', 'Setting up test environment');
         await this.initializeDatabase();
 
         // Create users
+        emitProgress(2, 'Creating synthetic users...', `Setting up ${scenarioConfig.users.length} test users`);
         await this.createSyntheticUsers(scenarioConfig.users);
 
         // Create care circle if specified
         if (scenarioConfig.circle) {
+            emitProgress(3, 'Setting up care circle...', 'Creating patient-caregiver relationships');
             await this.createCareCircle(
                 scenarioConfig.circle.patientId,
                 scenarioConfig.circle.caregiverIds || []
@@ -386,11 +416,14 @@ class SimulationDriver {
         }
 
         // Run conversations
+        emitProgress(4, 'Starting conversations...', `Running ${scenarioConfig.turns} conversation turns`);
         for (const user of this.syntheticUsers) {
             if (user.role === 'patient') {
-                await this.runConversation(user, scenarioConfig.turns);
+                await this.runConversation(user, scenarioConfig.turns, emitProgress);
             }
         }
+        
+        emitProgress(5, 'Simulation complete!', 'Analyzing results and generating feedback', { complete: true });
 
         console.log('='.repeat(80));
         console.log('SIMULATION COMPLETE');

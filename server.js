@@ -89,6 +89,15 @@ events.on('escalate', (payload) => {
     });
 });
 
+events.on('analysis_progress', (payload) => {
+    if (clients[payload.userId]) {
+        clients[payload.userId].write(`data: ${JSON.stringify({ 
+            type: 'analysis_progress', 
+            ...payload 
+        })}\n\n`);
+    }
+});
+
 // FIX: Update endpoint to be user-specific for security and correctness
 app.get('/doctor/escalations/unread/:userId', async (req, res) => {
     const { userId } = req.params;
@@ -199,41 +208,98 @@ app.get('/api/feedback/:userId', async (req, res) => {
     }
 });
 
+// Get available scenarios and personas
+app.get('/api/scenarios', async (req, res) => {
+    try {
+        const personasModule = await import('./training/simulation/personas.js');
+        const scenariosModule = await import('./training/simulation/scenarios.js');
+        
+        res.json({
+            personas: personasModule.PERSONAS || {},
+            scenarios: scenariosModule.SCENARIOS || {}
+        });
+    } catch (error) {
+        console.error('[Server] Error loading scenarios:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Trigger simulation
 app.post('/api/simulate', async (req, res) => {
     try {
-        const { runs = 5 } = req.body;
+        const { runs = 5, scenario: scenarioKey = 'random_single', turns = 3 } = req.body;
         
-        // Import and run simulator
+        // Import modules
         const { SimulationDriver } = await import('./training/simulation/simulator.js');
         const personasModule = await import('./training/simulation/personas.js');
+        const scenariosModule = await import('./training/simulation/scenarios.js');
+        
         const PERSONAS = personasModule.PERSONAS || personasModule.default;
+        const SCENARIOS = scenariosModule.SCENARIOS || {};
         
         if (!PERSONAS) {
-            throw new Error('PERSONAS not found in personas.js');
+            throw new Error('PERSONAS not found');
         }
         
-        const personaKeys = Object.keys(PERSONAS);
-        const randomPersona = personaKeys[Math.floor(Math.random() * personaKeys.length)];
+        // Get scenario definition
+        let scenarioDef = SCENARIOS[scenarioKey];
+        if (!scenarioDef) {
+            // Fallback to random single user
+            const personaKeys = Object.keys(PERSONAS);
+            const randomPersona = personaKeys[Math.floor(Math.random() * personaKeys.length)];
+            scenarioDef = {
+                name: `Random - ${PERSONAS[randomPersona]?.name || randomPersona}`,
+                complexity: 1,
+                users: [{ role: 'patient', personaKey: randomPersona }]
+            };
+        }
         
-        const scenario = {
-            name: `GUI Simulation - ${randomPersona}`,
-            users: [
-                { userId: 'sim_patient', role: 'patient', personaKey: randomPersona }
-            ],
-            circle: { patientId: 'sim_patient', caregiverIds: [] },
-            turns: 3
+        // Build simulation config
+        const simConfig = {
+            name: `GUI: ${scenarioDef.name}`,
+            users: scenarioDef.users.map((user, idx) => ({
+                userId: `sim_${user.role}_${idx}`,
+                role: user.role,
+                personaKey: user.personaKey === 'random' ? 
+                    Object.keys(PERSONAS)[Math.floor(Math.random() * Object.keys(PERSONAS).length)] :
+                    user.personaKey,
+                relationship: user.relationship,
+                consent: user.consent
+            })),
+            circle: { 
+                patientId: `sim_${scenarioDef.users[0].role}_0`,
+                caregiverIds: scenarioDef.users.slice(1).map((_, idx) => `sim_${scenarioDef.users[idx + 1].role}_${idx + 1}`)
+            },
+            turns: parseInt(turns) || 3,
+            complexity: scenarioDef.complexity,
+            instructions: scenarioDef.instructions
         };
 
         const sim = new SimulationDriver({ logResults: true });
-        await sim.runScenario(scenario);
+        
+        // Set up progress callback to emit events
+        sim.progressCallback = (progress) => {
+            // Emit simulation progress to all connected clients
+            Object.keys(clients).forEach(clientId => {
+                clients[clientId].write(`data: ${JSON.stringify({ 
+                    type: 'simulation_progress', 
+                    ...progress 
+                })}\n\n`);
+            });
+        };
+        
+        await sim.runScenario(simConfig);
         await sim.cleanup();
 
         res.json({ 
             success: true, 
             runs: 1, 
-            message: `Simulation complete (${randomPersona})`,
-            persona: randomPersona
+            message: `Simulation complete: ${scenarioDef.name}`,
+            scenarioKey,
+            scenarioName: scenarioDef.name,
+            complexity: scenarioDef.complexity,
+            turns: simConfig.turns,
+            timestamp: new Date().toISOString()
         });
     } catch (error) {
         console.error('[Server] Simulation error:', error);
