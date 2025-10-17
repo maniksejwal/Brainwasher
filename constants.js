@@ -135,3 +135,29 @@ export const TIME_KEYWORDS = {
     RECENT: ['this week', 'past few days', 'lately', 'recently'],
     CHRONIC: ['weeks', 'months', 'years', 'always', 'chronic', 'ongoing']
 };
+
+// Patient Denial Patterns
+export const DENIAL_PATTERNS = [
+    'i don\'t need help',
+    'i can manage',
+    'i\'m fine',
+    'nothing serious',
+    'not a big deal',
+    'i\'ll be okay',
+    'i\'ll handle it',
+    'no need to worry',
+    'i\'ve got this',
+    'i\'m okay'
+];
+
+// Generic Response Patterns
+export const GENERIC_RESPONSES = [
+    'discuss with healthcare provider',
+    'speak with your doctor',
+    'contact your healthcare team',
+    'that\'s great to hear',
+    'i\'m here for you',
+    'let me know if you need anything',
+    'feel free to reach out',
+    'i understand your concern'
+];

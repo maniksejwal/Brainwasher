@@ -7,6 +7,7 @@ import { logger as trainingLogger, metrics as metricsCollector } from '../core/i
 import { SimulationFeedback } from './simulation_feedback.js';
 import { SimulationAI } from './ai_integration.js';
 import { RealisticConversationEngine } from './realistic_conversation.js';
+import chalk from 'chalk';
 
 export class ConversationRunner {
     constructor(simulationDb, conversationId, autoFeedback = true, logResults = true) {
@@ -54,14 +55,14 @@ export class ConversationRunner {
                 break;
             }
 
-            console.log(`    **${user.role.toUpperCase()}**: ${userMessage}`);
+            console.log(`    ${chalk.bold(user.role.toUpperCase())}: ${userMessage}`);
 
             // Get AI response (real or fallback)
             const startTime = Date.now();
             const agentResult = await this.aiIntegration.getAgentResponse(user.userId, userMessage);
             const latency = Date.now() - startTime;
 
-            console.log(`    Agent: ${agentResult.agent_response}`);
+            console.log(`    ${chalk.bold('AGENT')}: ${agentResult.agent_response}`);
             if (agentResult.fallback) {
                 console.log(`    ⚠️  Using fallback response (real AI unavailable)`);
             }
@@ -144,7 +145,7 @@ export class ConversationRunner {
                 break;
             }
 
-            console.log(`    **${activeUser.role.toUpperCase()}** (${activeUser.persona.name}): ${userMessage}`);
+            console.log(`    ${chalk.bold(activeUser.role.toUpperCase())} (${activeUser.persona.name}): ${userMessage}`);
 
             // Add to conversation history
             conversationHistory.push({
@@ -167,7 +168,7 @@ export class ConversationRunner {
             });
             const latency = Date.now() - startTime;
 
-            console.log(`    Agent: ${agentResult.agent_response}`);
+            console.log(`    ${chalk.bold('AGENT')}: ${agentResult.agent_response}`);
 
             // Record agent response for all users (they all see it)
             users.forEach(user => user.recordAgentResponse(agentResult.agent_response));

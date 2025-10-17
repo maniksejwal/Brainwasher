@@ -5,7 +5,7 @@
  */
 
 import { getDb } from '../../db/connection.js';
-import { URGENCY_LEVELS, SYMPTOM_URGENCY, TIME_CONTEXTS, ESCALATION_TYPES, MEDICAL_SYMPTOMS, PATIENT_CONCERNS, EMPATHY_LOOP_PHRASES } from '../../constants.js';
+import { URGENCY_LEVELS, SYMPTOM_URGENCY, TIME_CONTEXTS, ESCALATION_TYPES, MEDICAL_SYMPTOMS, PATIENT_CONCERNS, EMPATHY_LOOP_PHRASES, DENIAL_PATTERNS, GENERIC_RESPONSES } from '../../constants.js';
 
 class SimulationFeedback {
     constructor(simulationId = 'sim_default', dbConnection = null) {
@@ -81,6 +81,9 @@ class SimulationFeedback {
         const issues = [];
         const scores = [];
 
+        // Get urgency assessment FIRST
+        const urgencyAssessment = this._assessUrgency(userMessage, agentResponse);
+
         // Check for template variable issues
         if (agentResponse.includes('{{') || agentResponse.includes('}}')) {
             issues.push({
@@ -125,8 +128,31 @@ class SimulationFeedback {
             scores.push({ score: -3, reason: 'Empathy loop - high penalty' });
         }
 
+        // Check for patient denial patterns - CRITICAL FAILURE
+        const hasDenial = DENIAL_PATTERNS.some(pattern => userMessage.toLowerCase().includes(pattern));
+        const hasCriticalSymptoms = urgencyAssessment.level === URGENCY_LEVELS.CRITICAL;
+        
+        if (hasDenial && hasCriticalSymptoms) {
+            issues.push({
+                category: 'denial_acceptance',
+                description: 'CRITICAL: Patient denying help despite critical symptoms - AI must escalate, not accept denial',
+                severity: 'critical'
+            });
+            scores.push({ score: -3, reason: 'CRITICAL: Accepted patient denial of critical symptoms' });
+        }
+
+        // Check for generic responses to critical situations
+        const isGeneric = GENERIC_RESPONSES.some(response => agentResponse.toLowerCase().includes(response));
+        if (isGeneric && hasCriticalSymptoms) {
+            issues.push({
+                category: 'generic_critical',
+                description: 'CRITICAL: Generic response to critical medical situation - must ask specific questions and escalate',
+                severity: 'critical'
+            });
+            scores.push({ score: -2, reason: 'Generic response to critical situation' });
+        }
+
         // Check for missing escalation based on urgency context
-        const urgencyAssessment = this._assessUrgency(userMessage, agentResponse);
         if (urgencyAssessment.level === URGENCY_LEVELS.CRITICAL && orchestratorAction.type !== 'ESCALATE') {
             issues.push({
                 category: 'escalation',
@@ -158,6 +184,37 @@ class SimulationFeedback {
 
     _assessUrgency(userMessage, agentResponse) {
         const messageLower = userMessage.toLowerCase();
+        
+        // CRITICAL: Check for dangerous symptom combinations FIRST
+        const criticalCombinations = [
+            { 
+                symptoms: ['dizzy', 'chest'], 
+                level: URGENCY_LEVELS.CRITICAL, 
+                symptom: 'Dizziness + chest pain', 
+                context: TIME_CONTEXTS.IMMEDIATE, 
+                reason: 'CRITICAL: Cardiac symptoms with neurological signs - immediate evaluation needed' 
+            },
+            { 
+                symptoms: ['dizzy', 'confusion', 'remember'], 
+                level: URGENCY_LEVELS.CRITICAL, 
+                symptom: 'Dizziness + confusion', 
+                context: TIME_CONTEXTS.IMMEDIATE, 
+                reason: 'CRITICAL: Neurological symptoms - possible stroke or cardiac event' 
+            },
+            { 
+                symptoms: ['chest', 'pain', 'shortness'], 
+                level: URGENCY_LEVELS.CRITICAL, 
+                symptom: 'Chest pain + breathing difficulty', 
+                context: TIME_CONTEXTS.IMMEDIATE, 
+                reason: 'CRITICAL: Cardiac emergency - immediate medical attention required' 
+            }
+        ];
+        
+        for (const combo of criticalCombinations) {
+            if (combo.symptoms.every(symptom => messageLower.includes(symptom))) {
+                return combo;
+            }
+        }
         
         // Chest pain urgency based on timing
         if (messageLower.includes('chest pain') || messageLower.includes('chest discomfort')) {
@@ -237,6 +294,14 @@ class SimulationFeedback {
                 case 'empathy_loop':
                     const repeatedPhrase = this._detectRepeatedPhrase(agentResponse);
                     feedback.push(`🔄 EMPATHY LOOP: Stop saying "${repeatedPhrase}" - instead offer specific help like "Let me help you organize your medications" or "I'll connect you with your care team"`);
+                    break;
+                    
+                case 'denial_acceptance':
+                    feedback.push(`🚨 CRITICAL FAILURE: Patient is denying help despite critical symptoms - DO NOT accept denial! Ask specific questions: "When did the dizziness start?" "Is the chest pain getting worse?" "Can you describe exactly what you're feeling?" Then escalate to doctor immediately`);
+                    break;
+                    
+                case 'generic_critical':
+                    feedback.push(`🚨 CRITICAL FAILURE: Generic response to medical emergency - Ask specific questions: "How long have you had these symptoms?" "Are they getting worse?" "Any other symptoms?" Then escalate to doctor immediately`);
                     break;
                     
                 case 'bug':

@@ -277,6 +277,9 @@ async function runSimulation() {
         
         rl.close();
         
+        // Show post-simulation menu
+        await showPostSimulationMenu();
+        
     } catch (error) {
         console.error('\n❌ Simulation failed:', error.message);
         console.error('Stack:', error.stack);
@@ -361,6 +364,105 @@ async function selectScenarioInteractively() {
     }
 
     return { key: selected.key, ...selected.scenario };
+}
+
+/**
+ * Interactive menu after simulation completion
+ */
+async function showPostSimulationMenu() {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    const question = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
+
+    try {
+        console.log('\n🎯 Simulation Complete! What would you like to do next?');
+        console.log('1. Run another simulation');
+        console.log('2. List available scenarios');
+        console.log('3. List available personas');
+        console.log('4. Exit');
+        
+        const choice = await question('\nEnter your choice (1-4): ');
+        
+        switch (choice.trim()) {
+            case '1':
+                console.log('\n🔄 Starting new simulation...\n');
+                rl.close();
+                await runSimulation(); // Recursive call
+                break;
+                
+            case '2':
+                console.log('\n📋 Available Scenarios:');
+                const categories = {
+                    '🎲 Basic Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'basic'),
+                    '🔺 Complex Multi-User': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'complex'),
+                    '🚨 Privacy & Consent': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'privacy'),
+                    '⚠️ Conflict Resolution': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'conflict'),
+                    '📉 Longitudinal': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'longitudinal'),
+                    '⚡ Stress Testing': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'stress_test'),
+                    '🤐 Deception': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'deception'),
+                    '🚑 Escalation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation')
+                };
+                
+                for (const [category, scenarios] of Object.entries(categories)) {
+                    if (scenarios.length > 0) {
+                        console.log(`\n${category}:`);
+                        scenarios.forEach(([key, scenario]) => {
+                            const complexity = '★'.repeat(scenario.complexity);
+                            const multiUser = scenario.users.length > 1 ? '👥' : '👤';
+                            const multiSession = scenario.multiSession ? '📅' : '';
+                            console.log(`  ${key.padEnd(25)} - ${scenario.name} ${multiUser}${multiSession} ${complexity}`);
+                        });
+                    }
+                }
+                rl.close();
+                await showPostSimulationMenu(); // Show menu again
+                break;
+                
+            case '3':
+                console.log('\n👥 Available Personas:');
+                const personaCategories = {
+                    'Patient Personas': Object.keys(PERSONAS).filter(k => 
+                        k.includes('patient') || ['medication_nonadherent', 'recently_diagnosed', 'complex_comorbid', 'terminal_acceptance'].includes(k)
+                    ),
+                    'Caregiver Personas': Object.keys(PERSONAS).filter(k => k.includes('caregiver')),
+                    'Doctor Personas': Object.keys(PERSONAS).filter(k => k.includes('doctor')),
+                    'Verbosity Variations': Object.keys(PERSONAS).filter(k => 
+                        ['minimal_words_patient', 'poor_grammar_patient', 'non_english_patient', 'verbose_patient', 'rambling_caregiver'].includes(k)
+                    )
+                };
+                
+                for (const [category, personas] of Object.entries(personaCategories)) {
+                    if (personas.length > 0) {
+                        console.log(`\n${category}:`);
+                        personas.forEach(persona => {
+                            const info = PERSONAS[persona];
+                            console.log(`  ${persona.padEnd(25)} - ${info.name}`);
+                        });
+                    }
+                }
+                rl.close();
+                await showPostSimulationMenu(); // Show menu again
+                break;
+                
+            case '4':
+                console.log('\n👋 Goodbye!');
+                rl.close();
+                process.exit(0);
+                break;
+                
+            default:
+                console.log('\n❌ Invalid choice. Please enter 1-4.');
+                rl.close();
+                await showPostSimulationMenu(); // Show menu again
+        }
+    } catch (error) {
+        console.error(`❌ Menu error: ${error.message}`);
+        rl.close();
+        process.exit(1);
+    }
 }
 
 // Run the simulation

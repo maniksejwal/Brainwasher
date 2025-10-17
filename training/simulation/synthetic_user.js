@@ -161,11 +161,19 @@ export class SyntheticUser {
     }
 
     /**
-     * Move to next goal
+     * Move to next goal with context-aware mixing
      */
     advanceGoal() {
-        if (this.currentGoalIndex < this.goals.length - 1) {
-            this.currentGoalIndex++;
+        if (this.goals.length <= 1) {
+            return false; // No other goals to switch to
+        }
+        
+        // Mix goals instead of sequential advancement
+        const availableGoals = this.goals.filter((goal, index) => index !== this.currentGoalIndex);
+        if (availableGoals.length > 0) {
+            // Randomly select from available goals
+            const randomIndex = Math.floor(Math.random() * availableGoals.length);
+            this.currentGoalIndex = this.goals.findIndex(goal => goal === availableGoals[randomIndex]);
             return true;
         }
         return false;
