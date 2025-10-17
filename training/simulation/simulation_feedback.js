@@ -5,6 +5,7 @@
  */
 
 import { getDb } from '../../db/connection.js';
+import { URGENCY_LEVELS, SYMPTOM_URGENCY, TIME_CONTEXTS, ESCALATION_TYPES, MEDICAL_SYMPTOMS, PATIENT_CONCERNS, EMPATHY_LOOP_PHRASES } from '../../constants.js';
 
 class SimulationFeedback {
     constructor(simulationId = 'sim_default', dbConnection = null) {
@@ -112,16 +113,34 @@ class SimulationFeedback {
             scores.push({ score: -1, reason: 'Response too brief' });
         }
 
-        // Check for missing escalation on critical keywords
-        const criticalKeywords = ['dizzy', 'chest pain', 'bleeding', 'unconscious', 'can\'t breathe'];
-        const hasCriticalKeyword = criticalKeywords.some(k => userMessage.toLowerCase().includes(k));
-        if (hasCriticalKeyword && orchestratorAction.type !== 'ESCALATE') {
+        // Check for repetitive empathy loops - HIGH PENALTY
+        if (agentResponse.toLowerCase().includes('i understand') && 
+            agentResponse.toLowerCase().includes('how') && 
+            agentResponse.toLowerCase().includes('feel')) {
+            issues.push({
+                category: 'empathy_loop',
+                description: 'Repetitive empathy pattern detected - "I understand how you feel"',
+                severity: 'critical'
+            });
+            scores.push({ score: -3, reason: 'Empathy loop - high penalty' });
+        }
+
+        // Check for missing escalation based on urgency context
+        const urgencyAssessment = this._assessUrgency(userMessage, agentResponse);
+        if (urgencyAssessment.level === URGENCY_LEVELS.CRITICAL && orchestratorAction.type !== 'ESCALATE') {
             issues.push({
                 category: 'escalation',
-                description: `Critical symptom detected ("${criticalKeywords.find(k => userMessage.toLowerCase().includes(k))}") but no escalation`,
+                description: `${urgencyAssessment.symptom} (${urgencyAssessment.context}) - ${urgencyAssessment.reason}`,
                 severity: 'critical'
             });
             scores.push({ score: -1, reason: 'Missed critical escalation' });
+        } else if (urgencyAssessment.level === URGENCY_LEVELS.HIGH && orchestratorAction.type !== 'ESCALATE') {
+            issues.push({
+                category: 'escalation',
+                description: `${urgencyAssessment.symptom} (${urgencyAssessment.context}) - Consider escalation`,
+                severity: 'medium'
+            });
+            scores.push({ score: 0, reason: 'Consider escalation' });
         }
 
         // Positive scoring for good responses
@@ -135,6 +154,129 @@ class SimulationFeedback {
     _extractTemplateVars(text) {
         const matches = text.match(/\{\{[^}]+\}\}/g);
         return matches ? matches.join(', ') : '';
+    }
+
+    _assessUrgency(userMessage, agentResponse) {
+        const messageLower = userMessage.toLowerCase();
+        
+        // Chest pain urgency based on timing
+        if (messageLower.includes('chest pain') || messageLower.includes('chest discomfort')) {
+            if (messageLower.includes('severe') || messageLower.includes('crushing') || messageLower.includes('intense')) {
+                return { level: SYMPTOM_URGENCY.CHEST_PAIN.SEVERE, symptom: 'Severe chest pain', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Could indicate heart attack' };
+            } else if (messageLower.includes('recent') || messageLower.includes('just started') || messageLower.includes('today')) {
+                return { level: SYMPTOM_URGENCY.CHEST_PAIN.RECENT, symptom: 'Recent chest pain', context: TIME_CONTEXTS.ACUTE, reason: 'New onset requires evaluation' };
+            } else if (messageLower.includes('weeks') || messageLower.includes('months') || messageLower.includes('chronic')) {
+                return { level: SYMPTOM_URGENCY.CHEST_PAIN.CHRONIC, symptom: 'Chronic chest pain', context: TIME_CONTEXTS.CHRONIC, reason: 'Chronic condition, routine follow-up' };
+            }
+        }
+        
+        // Dizziness urgency based on context
+        if (messageLower.includes('dizzy') || messageLower.includes('dizziness')) {
+            if (messageLower.includes('severe') || messageLower.includes('can\'t stand') || messageLower.includes('falling')) {
+                return { level: SYMPTOM_URGENCY.DIZZINESS.SEVERE, symptom: 'Severe dizziness', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Fall risk, needs evaluation' };
+            } else if (messageLower.includes('medication') || messageLower.includes('side effect')) {
+                return { level: SYMPTOM_URGENCY.DIZZINESS.MEDICATION_RELATED, symptom: 'Medication-related dizziness', context: TIME_CONTEXTS.RECENT, reason: 'Review medication timing' };
+            } else {
+                return { level: SYMPTOM_URGENCY.DIZZINESS.MILD, symptom: 'Mild dizziness', context: TIME_CONTEXTS.RECENT, reason: 'Monitor and follow up' };
+            }
+        }
+        
+        // Bleeding - always critical
+        if (messageLower.includes('bleeding') || messageLower.includes('blood')) {
+            return { level: SYMPTOM_URGENCY.BLEEDING, symptom: 'Bleeding', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Requires immediate attention' };
+        }
+        
+        // Breathing issues - always critical
+        if (messageLower.includes('can\'t breathe') || messageLower.includes('shortness of breath') || messageLower.includes('difficulty breathing')) {
+            return { level: SYMPTOM_URGENCY.BREATHING_DIFFICULTY, symptom: 'Breathing difficulty', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Respiratory emergency' };
+        }
+        
+        // Unconscious - always critical
+        if (messageLower.includes('unconscious') || messageLower.includes('passed out') || messageLower.includes('fainted')) {
+            return { level: SYMPTOM_URGENCY.UNCONSCIOUS, symptom: 'Loss of consciousness', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Medical emergency' };
+        }
+        
+        // Meningitis symptoms - timing dependent
+        if (messageLower.includes('stiff neck') || messageLower.includes('fever') || messageLower.includes('headache')) {
+            if (messageLower.includes('severe') || messageLower.includes('sudden')) {
+                return { level: SYMPTOM_URGENCY.MENINGITIS_SYMPTOMS.SEVERE, symptom: 'Meningitis symptoms', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Could be meningitis - urgent' };
+            } else {
+                return { level: SYMPTOM_URGENCY.MENINGITIS_SYMPTOMS.MILD, symptom: 'Possible meningitis symptoms', context: TIME_CONTEXTS.ACUTE, reason: 'Rule out meningitis' };
+            }
+        }
+        
+        return { level: URGENCY_LEVELS.LOW, symptom: 'General concern', context: TIME_CONTEXTS.RECENT, reason: 'Routine follow-up appropriate' };
+    }
+
+    _generateActionableFeedback(issues, userMessage, agentResponse) {
+        if (issues.length === 0) {
+            return ["✅ Response looks good - no issues detected"];
+        }
+        
+        const feedback = [];
+        const userWords = userMessage.toLowerCase();
+        const agentWords = agentResponse.toLowerCase();
+        
+        issues.forEach(issue => {
+            switch (issue.category) {
+                case 'escalation':
+                    const symptom = this._extractSymptom(userMessage);
+                    feedback.push(`🚨 ESCALATION: Patient mentioned "${symptom}" - ask specific follow-up questions about timing, severity, and associated symptoms, then consider escalating to doctor`);
+                    break;
+                    
+                case 'verbosity':
+                    const ratio = Math.round((agentResponse.split(/\s+/).length / userMessage.split(/\s+/).length) * 10) / 10;
+                    feedback.push(`📝 VERBOSITY: Response is ${ratio}x longer than user message - focus on 1-2 key points that directly address "${this._extractMainConcern(userMessage)}"`);
+                    break;
+                    
+                case 'brevity':
+                    const concern = this._extractMainConcern(userMessage);
+                    feedback.push(`💬 BREVITY: User asked about "${concern}" but got generic response - provide specific guidance like "Let's create a medication schedule" or "I'll help you track symptoms"`);
+                    break;
+                    
+                case 'empathy_loop':
+                    const repeatedPhrase = this._detectRepeatedPhrase(agentResponse);
+                    feedback.push(`🔄 EMPATHY LOOP: Stop saying "${repeatedPhrase}" - instead offer specific help like "Let me help you organize your medications" or "I'll connect you with your care team"`);
+                    break;
+                    
+                case 'bug':
+                    const templateVars = this._extractTemplateVars(agentResponse);
+                    feedback.push(`🐛 BUG: Template variables not replaced: ${templateVars} - check prompt processing and variable substitution`);
+                    break;
+                    
+                default:
+                    feedback.push(`⚠️ ${issue.category.toUpperCase()}: ${issue.description}`);
+            }
+        });
+        
+        return feedback;
+    }
+    
+    _extractSymptom(message) {
+        for (const symptom of MEDICAL_SYMPTOMS) {
+            if (message.toLowerCase().includes(symptom)) {
+                return symptom;
+            }
+        }
+        return 'symptoms';
+    }
+    
+    _extractMainConcern(message) {
+        for (const concern of PATIENT_CONCERNS) {
+            if (message.toLowerCase().includes(concern)) {
+                return concern;
+            }
+        }
+        return 'their concern';
+    }
+    
+    _detectRepeatedPhrase(response) {
+        for (const phrase of EMPATHY_LOOP_PHRASES) {
+            if (response.toLowerCase().includes(phrase)) {
+                return phrase;
+            }
+        }
+        return 'repetitive empathy phrases';
     }
 
     /**
@@ -168,10 +310,14 @@ class SimulationFeedback {
             );
         }
 
+        // Generate actionable feedback
+        const actionableFeedback = this._generateActionableFeedback(analysis.issues, userMessage, agentResponse);
+        
         return {
             issuesFound: analysis.issues.length,
             scores: analysis.scores,
-            issues: analysis.issues
+            issues: analysis.issues,
+            actionableFeedback: actionableFeedback
         };
     }
 }

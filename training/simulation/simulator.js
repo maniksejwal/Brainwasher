@@ -46,11 +46,12 @@ class SyntheticUser {
         const {
             lastAgentMessage = '',
             currentGoal = this.goals[this.currentGoalIndex],
-            conversationTurn = this.conversationHistory.length
+            conversationTurn = this.conversationHistory.length,
+            multiUserContext = null
         } = context;
 
         // Build prompt for synthetic user
-        const prompt = this._buildMessagePrompt(lastAgentMessage, currentGoal, conversationTurn);
+        const prompt = this._buildMessagePrompt(lastAgentMessage, currentGoal, conversationTurn, multiUserContext);
 
         try {
             let message;
@@ -90,18 +91,40 @@ class SyntheticUser {
     /**
      * Build prompt for message generation
      */
-    _buildMessagePrompt(lastAgentMessage, goal, turn) {
+    _buildMessagePrompt(lastAgentMessage, goal, turn, multiUserContext) {
         let prompt = `This is conversation turn ${turn + 1}.\n`;
         
         if (goal) {
             prompt += `Your current goal: ${goal}\n`;
+        }
+
+        // Add multi-user context if available
+        if (multiUserContext) {
+            const { otherUsers, patientUser, caregiverUsers, doctorUsers } = multiUserContext;
+            prompt += `\nMulti-user conversation context:\n`;
+            
+            if (patientUser && this.role !== 'patient') {
+                prompt += `- Patient: ${patientUser.persona.name}\n`;
+            }
+            if (caregiverUsers.length > 0 && this.role !== 'caregiver') {
+                prompt += `- Caregivers: ${caregiverUsers.map(u => u.persona.name).join(', ')}\n`;
+            }
+            if (doctorUsers.length > 0 && this.role !== 'doctor') {
+                prompt += `- Doctors: ${doctorUsers.map(u => u.persona.name).join(', ')}\n`;
+            }
+            
+            prompt += `\nYou are speaking as a ${this.role}. Consider your role and relationship to others in the conversation.\n`;
         }
         
         if (lastAgentMessage) {
             prompt += `\nThe care agent just said:\n"${lastAgentMessage}"\n`;
             prompt += `\nRespond naturally as your character would. Keep your response brief (1-3 sentences).`;
         } else {
-            prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences).`;
+            if (multiUserContext) {
+                prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences).`;
+            } else {
+                prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences).`;
+            }
         }
 
         return prompt;
@@ -263,19 +286,61 @@ class SimulationDriver {
     /**
      * Simulate agent response (simplified - calls actual system or mocks)
      */
-    async simulateAgentResponse(userId, message) {
+    async simulateAgentResponse(userId, message, multiUserContext = null) {
         // For now, use a simple mock response
         // In a full implementation, this would call the actual handleMessage function
         // but with the simulation database injected
         
-        const mockResponses = [
-            "I understand. How are you feeling today?",
-            "Thank you for sharing that. Can you tell me more?",
-            "That sounds concerning. Have you experienced this before?",
-            "I appreciate you letting me know. Let's monitor this together.",
-            "That's good to hear. Keep up the great work!",
-            "I'm here to support you. Is there anything else I should know?"
-        ];
+        let mockResponses;
+        
+        if (multiUserContext) {
+            // Multi-user specific responses
+            const { activeUser, allUsers } = multiUserContext;
+            
+            if (activeUser.role === 'patient') {
+                mockResponses = [
+                    "I understand your concern. How can I help you today?",
+                    "Thank you for sharing that with me. Let's work together on this.",
+                    "That sounds important. Can you tell me more about what you're experiencing?",
+                    "I'm here to support you. What would be most helpful right now?",
+                    "I appreciate you reaching out. Let's address this step by step."
+                ];
+            } else if (activeUser.role === 'caregiver') {
+                mockResponses = [
+                    "Thank you for the update. How is the patient doing today?",
+                    "I appreciate you keeping me informed. What support do you need?",
+                    "That's helpful information. How can I assist with the care plan?",
+                    "Thank you for your dedication. What challenges are you facing?",
+                    "I understand your concern. Let's work together to support the patient."
+                ];
+            } else if (activeUser.role === 'doctor') {
+                mockResponses = [
+                    "Thank you for the clinical update. What are your recommendations?",
+                    "I appreciate the medical perspective. How can I support the care plan?",
+                    "That's important clinical information. What follow-up is needed?",
+                    "Thank you for the update. How is the patient responding to treatment?",
+                    "I understand the medical situation. What can I help coordinate?"
+                ];
+            } else {
+                mockResponses = [
+                    "Thank you for your input. How can I assist?",
+                    "I appreciate the information. What would be most helpful?",
+                    "Thank you for sharing that. Let's work together on this.",
+                    "I understand. How can I support you?",
+                    "Thank you for the update. What's the next step?"
+                ];
+            }
+        } else {
+            // Single user responses
+            mockResponses = [
+                "I understand. How are you feeling today?",
+                "Thank you for sharing that. Can you tell me more?",
+                "That sounds concerning. Have you experienced this before?",
+                "I appreciate you letting me know. Let's monitor this together.",
+                "That's good to hear. Keep up the great work!",
+                "I'm here to support you. Is there anything else I should know?"
+            ];
+        }
 
         const response = mockResponses[Math.floor(Math.random() * mockResponses.length)];
         
@@ -290,12 +355,12 @@ class SimulationDriver {
     }
 
     /**
-     * Run a simulated conversation
+     * Run a simulated conversation (single user)
      */
-    async runConversation(patientUser, turns = null, emitProgress = null) {
+    async runConversation(user, turns = null, emitProgress = null) {
         const maxTurns = turns || this.maxTurns;
-        console.log(`\n[Simulator] Starting conversation with ${patientUser.userId} (${maxTurns} turns max)`);
-        console.log(`  Persona: ${patientUser.persona.name}`);
+        console.log(`\n[Simulator] Starting conversation with ${user.userId} (${maxTurns} turns max)`);
+        console.log(`  Role: ${user.role}, Persona: ${user.persona.name}`);
         console.log('');
 
         for (let turn = 0; turn < maxTurns; turn++) {
@@ -303,15 +368,15 @@ class SimulationDriver {
 
             // Emit turn progress
             if (emitProgress) {
-                emitProgress(4, `Turn ${turn + 1}/${maxTurns}`, `Generating conversation with ${patientUser.persona.name}`);
+                emitProgress(4, `Turn ${turn + 1}/${maxTurns}`, `Generating conversation with ${user.persona.name}`);
             }
 
             // Generate user message
-            const lastAgentMsg = patientUser.conversationHistory.length > 0
-                ? patientUser.conversationHistory[patientUser.conversationHistory.length - 1].content
+            const lastAgentMsg = user.conversationHistory.length > 0
+                ? user.conversationHistory[user.conversationHistory.length - 1].content
                 : '';
             
-            const userMessage = await patientUser.generateMessage({
+            const userMessage = await user.generateMessage({
                 lastAgentMessage: lastAgentMsg,
                 conversationTurn: turn
             });
@@ -321,25 +386,25 @@ class SimulationDriver {
                 break;
             }
 
-            console.log(`    User: ${userMessage}`);
+            console.log(`    ${user.role.charAt(0).toUpperCase() + user.role.slice(1)}: ${userMessage}`);
 
             // Simulate agent processing
             const startTime = Date.now();
-            const agentResult = await this.simulateAgentResponse(patientUser.userId, userMessage);
+            const agentResult = await this.simulateAgentResponse(user.userId, userMessage);
             const latency = Date.now() - startTime;
 
             console.log(`    Agent: ${agentResult.agent_response}`);
 
             // Record agent response
-            patientUser.recordAgentResponse(agentResult.agent_response);
+            user.recordAgentResponse(agentResult.agent_response);
 
             // Automatic feedback from simulation
             let feedbackData = null;
             if (this.autoFeedback) {
                 const feedback = await this.feedbackCollector.provideFeedback(
-                    `${this.conversationId}_${patientUser.userId}_${turn}`,
-                    patientUser.userId,
-                    patientUser.userId, // circleId = userId for patient's own circle
+                    `${this.conversationId}_${user.userId}_${turn}`,
+                    user.userId,
+                    user.userId, // circleId = userId for patient's own circle
                     null, // messageId - would need to query DB
                     userMessage,
                     agentResult.agent_response,
@@ -374,15 +439,17 @@ class SimulationDriver {
                     userMessage,
                     agentResponse: agentResult.agent_response,
                     action: agentResult.orchestrator_action,
-                    feedback: feedbackData
+                    feedback: feedbackData,
+                    userRole: user.role,
+                    userId: user.userId
                 });
             }
 
             // Log interaction
             if (this.logResults) {
                 await trainingLogger.logInteraction({
-                    conversationId: `${this.conversationId}_${patientUser.userId}`,
-                    userId: patientUser.userId,
+                    conversationId: `${this.conversationId}_${user.userId}`,
+                    userId: user.userId,
                     message: userMessage,
                     agentResponse: agentResult.agent_response,
                     orchestratorAction: agentResult.orchestrator_action,
@@ -390,11 +457,12 @@ class SimulationDriver {
                     promptVersion: 'simulation_v1.0',
                     latencyMs: latency,
                     simulation: true,
-                    persona: patientUser.personaKey
+                    persona: user.personaKey,
+                    role: user.role
                 });
 
                 await metricsCollector.recordMessageLength(
-                    patientUser.userId,
+                    user.userId,
                     userMessage.length,
                     agentResult.agent_response.length
                 );
@@ -404,7 +472,175 @@ class SimulationDriver {
             await new Promise(resolve => setTimeout(resolve, 500));
         }
 
-        console.log(`\n  Conversation complete (${patientUser.conversationHistory.length / 2} exchanges)\n`);
+        console.log(`\n  Conversation complete (${user.conversationHistory.length / 2} exchanges)\n`);
+    }
+
+    /**
+     * Run multi-user conversation simulation
+     */
+    async runMultiUserConversation(users, turns = null, emitProgress = null) {
+        const maxTurns = turns || this.maxTurns;
+        const patientUser = users.find(u => u.role === 'patient');
+        const caregiverUsers = users.filter(u => u.role === 'caregiver');
+        const doctorUsers = users.filter(u => u.role === 'doctor');
+        
+        console.log(`\n[Simulator] Starting multi-user conversation (${maxTurns} turns max)`);
+        console.log(`  Patient: ${patientUser?.persona.name || 'None'}`);
+        console.log(`  Caregivers: ${caregiverUsers.map(u => u.persona.name).join(', ') || 'None'}`);
+        console.log(`  Doctors: ${doctorUsers.map(u => u.persona.name).join(', ') || 'None'}`);
+        console.log('');
+
+        // Create care circle if multiple users
+        if (users.length > 1) {
+            const patientId = patientUser?.userId || users[0].userId;
+            const caregiverIds = caregiverUsers.map(u => u.userId);
+            const doctorIds = doctorUsers.map(u => u.userId);
+            await this.createCareCircle(patientId, [...caregiverIds, ...doctorIds]);
+        }
+
+        for (let turn = 0; turn < maxTurns; turn++) {
+            console.log(`  Turn ${turn + 1}/${maxTurns}:`);
+
+            // Rotate through users or let patient initiate most conversations
+            let activeUser;
+            if (turn === 0 || turn % 3 === 0) {
+                // Patient starts and every 3rd turn
+                activeUser = patientUser || users[0];
+            } else if (turn % 3 === 1 && caregiverUsers.length > 0) {
+                // Caregiver speaks
+                activeUser = caregiverUsers[Math.floor(Math.random() * caregiverUsers.length)];
+            } else if (doctorUsers.length > 0) {
+                // Doctor speaks
+                activeUser = doctorUsers[Math.floor(Math.random() * doctorUsers.length)];
+            } else {
+                // Fallback to any user
+                activeUser = users[Math.floor(Math.random() * users.length)];
+            }
+
+            // Emit turn progress
+            if (emitProgress) {
+                emitProgress(4, `Turn ${turn + 1}/${maxTurns}`, `${activeUser.role} speaking: ${activeUser.persona.name}`);
+            }
+
+            // Generate user message with multi-user context
+            const lastAgentMsg = activeUser.conversationHistory.length > 0
+                ? activeUser.conversationHistory[activeUser.conversationHistory.length - 1].content
+                : '';
+            
+            const userMessage = await activeUser.generateMessage({
+                lastAgentMessage: lastAgentMsg,
+                conversationTurn: turn,
+                multiUserContext: {
+                    otherUsers: users.filter(u => u.userId !== activeUser.userId),
+                    patientUser,
+                    caregiverUsers,
+                    doctorUsers
+                }
+            });
+
+            if (!userMessage) {
+                console.log(`    Failed to generate message from ${activeUser.role}. Ending conversation.`);
+                break;
+            }
+
+            console.log(`    ${activeUser.role.charAt(0).toUpperCase() + activeUser.role.slice(1)} (${activeUser.persona.name}): ${userMessage}`);
+
+            // Simulate agent processing with multi-user context
+            const startTime = Date.now();
+            const agentResult = await this.simulateAgentResponse(activeUser.userId, userMessage, {
+                activeUser,
+                allUsers: users,
+                patientUser,
+                caregiverUsers,
+                doctorUsers
+            });
+            const latency = Date.now() - startTime;
+
+            console.log(`    Agent: ${agentResult.agent_response}`);
+
+            // Record agent response for all users (they all see it)
+            users.forEach(user => user.recordAgentResponse(agentResult.agent_response));
+
+            // Automatic feedback from simulation
+            let feedbackData = null;
+            if (this.autoFeedback) {
+                const feedback = await this.feedbackCollector.provideFeedback(
+                    `${this.conversationId}_${activeUser.userId}_${turn}`,
+                    activeUser.userId,
+                    patientUser?.userId || activeUser.userId, // circleId = patient's ID
+                    null, // messageId - would need to query DB
+                    userMessage,
+                    agentResult.agent_response,
+                    agentResult.orchestrator_action,
+                    userMessage
+                );
+
+                feedbackData = {
+                    issuesFound: feedback.issuesFound,
+                    issues: feedback.issues,
+                    empathyScore: feedback.empathyScore,
+                    escalationScore: feedback.escalationScore,
+                    consentScore: feedback.consentScore,
+                    overallScore: feedback.overallScore,
+                    improvementSuggestions: feedback.improvementSuggestions
+                };
+
+                if (feedback.issuesFound > 0) {
+                    console.log(`    🔍 Auto-detected ${feedback.issuesFound} issue(s):`);
+                    feedback.issues.forEach(issue => {
+                        console.log(`       ${issue.category}: ${issue.description}`);
+                    });
+                }
+            }
+
+            // Emit conversation message with feedback to GUI
+            if (emitProgress) {
+                emitProgress(4, `Turn ${turn + 1}/${maxTurns}`, '', {
+                    type: 'simulation_conversation',
+                    turn: turn + 1,
+                    maxTurns,
+                    userMessage,
+                    agentResponse: agentResult.agent_response,
+                    action: agentResult.orchestrator_action,
+                    feedback: feedbackData,
+                    userRole: activeUser.role,
+                    userId: activeUser.userId,
+                    multiUser: true,
+                    allUsers: users.map(u => ({ role: u.role, persona: u.persona.name }))
+                });
+            }
+
+            // Log interaction
+            if (this.logResults) {
+                await trainingLogger.logInteraction({
+                    conversationId: `${this.conversationId}_multi`,
+                    userId: activeUser.userId,
+                    message: userMessage,
+                    agentResponse: agentResult.agent_response,
+                    orchestratorAction: agentResult.orchestrator_action,
+                    stateVector: agentResult.state_vector,
+                    promptVersion: 'simulation_v1.0',
+                    latencyMs: latency,
+                    simulation: true,
+                    persona: activeUser.personaKey,
+                    role: activeUser.role,
+                    multiUser: true,
+                    allUsers: users.map(u => ({ userId: u.userId, role: u.role, persona: u.personaKey }))
+                });
+
+                await metricsCollector.recordMessageLength(
+                    activeUser.userId,
+                    userMessage.length,
+                    agentResult.agent_response.length
+                );
+            }
+
+            // Small delay between turns
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        const totalExchanges = users.reduce((sum, user) => sum + user.conversationHistory.length, 0) / 2;
+        console.log(`\n  Multi-user conversation complete (${totalExchanges} total exchanges)\n`);
     }
 
     /**
@@ -446,10 +682,13 @@ class SimulationDriver {
 
         // Run conversations
         emitProgress(4, 'Starting conversations...', `Running ${scenarioConfig.turns} conversation turns`);
-        for (const user of this.syntheticUsers) {
-            if (user.role === 'patient') {
-                await this.runConversation(user, scenarioConfig.turns, emitProgress);
-            }
+        
+        if (this.syntheticUsers.length === 1) {
+            // Single user conversation
+            await this.runConversation(this.syntheticUsers[0], scenarioConfig.turns, emitProgress);
+        } else {
+            // Multi-user conversation
+            await this.runMultiUserConversation(this.syntheticUsers, scenarioConfig.turns, emitProgress);
         }
         
         emitProgress(5, 'Simulation complete!', 'Analyzing results and generating feedback', { complete: true });

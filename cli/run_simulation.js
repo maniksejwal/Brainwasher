@@ -1,18 +1,20 @@
 #!/usr/bin/env node
 
 /**
- * Simple CLI Simulation Runner
- * Usage: node run_simulation.js [persona] [turns]
+ * Enhanced CLI Simulation Runner
+ * Usage: node run_simulation.js [scenario] [turns]
  * 
  * Examples:
- *   node run_simulation.js                           # Random persona, 3 turns
- *   node run_simulation.js medication_nonadherent   # Specific persona, 3 turns  
- *   node run_simulation.js verbose_patient 5        # Specific persona, 5 turns
- *   node run_simulation.js --list                   # List available personas
+ *   node run_simulation.js                           # Interactive scenario selection
+ *   node run_simulation.js random_single 5          # Specific scenario, 5 turns
+ *   node run_simulation.js full_care_circle         # Multi-user scenario
+ *   node run_simulation.js --list                   # List available scenarios
+ *   node run_simulation.js --personas               # List available personas
  */
 
-import { SimulationDriver } from '../training/simulation/simulator.js';
+import { SimulationDriver } from '../training/simulation/simulator_clean.js';
 import { PERSONAS } from '../training/simulation/personas.js';
+import { SCENARIOS, getRandomScenario } from '../training/simulation/scenarios.js';
 import { getDb } from '../db/connection.js';
 import fs from 'fs';
 import readline from 'readline';
@@ -23,27 +25,66 @@ const args = process.argv.slice(2);
 // Show help
 if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-🧪 CLI Simulation Runner
+🧪 Enhanced CLI Simulation Runner
 
 Usage:
-  node run_simulation.js [persona] [turns]
+  node run_simulation.js [scenario] [turns]
 
 Examples:
-  node run_simulation.js                           # Random persona, 3 turns
-  node run_simulation.js medication_nonadherent   # Specific persona, 3 turns  
-  node run_simulation.js verbose_patient 5        # Specific persona, 5 turns
-  node run_simulation.js --list                   # List available personas
+  node run_simulation.js                           # Interactive scenario selection
+  node run_simulation.js random_single 5          # Specific scenario, 5 turns
+  node run_simulation.js full_care_circle         # Multi-user scenario
+  node run_simulation.js hiding_symptoms 3        # Privacy/deception scenario
+  node run_simulation.js cancer_treatment         # Multi-session scenario
 
 Options:
-  --list, -l    List all available personas
-  --help, -h    Show this help message
+  --list, -l        List all available scenarios
+  --personas, -p    List all available personas
+  --help, -h        Show this help message
+
+Scenario Types:
+  🎲 Basic: Single user conversations
+  🔺 Complex: Multi-user interactions
+  🚨 Privacy: Consent violations & breaches
+  📉 Longitudinal: Multi-session tracking
+  ⚡ Stress: Edge cases & rapid interactions
 `);
     process.exit(0);
 }
 
-// List personas
+// List scenarios
 if (args.includes('--list') || args.includes('-l')) {
-    console.log('\n📋 Available Personas:\n');
+    console.log('\n📋 Available Scenarios:\n');
+    
+    const categories = {
+        '🎲 Basic Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'basic'),
+        '🔺 Complex Multi-User': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'complex'),
+        '🚨 Privacy & Consent': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'privacy'),
+        '⚠️ Conflict Resolution': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'conflict'),
+        '📉 Longitudinal': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'longitudinal'),
+        '⚡ Stress Testing': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'stress_test'),
+        '🤐 Deception': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'deception'),
+        '🚑 Escalation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation')
+    };
+    
+    for (const [category, scenarios] of Object.entries(categories)) {
+        if (scenarios.length > 0) {
+            console.log(`\n${category}:`);
+            scenarios.forEach(([key, scenario]) => {
+                const complexity = '★'.repeat(scenario.complexity);
+                const multiUser = scenario.users.length > 1 ? '👥' : '👤';
+                const multiSession = scenario.multiSession ? '📅' : '';
+                console.log(`  ${key.padEnd(25)} - ${scenario.name} ${multiUser}${multiSession} ${complexity}`);
+            });
+        }
+    }
+    console.log('');
+    process.exit(0);
+}
+
+// List personas
+if (args.includes('--personas') || args.includes('-p')) {
+    console.log('\n👤 Available Personas:\n');
     
     const categories = {
         'Patient Personas': Object.keys(PERSONAS).filter(k => 
@@ -69,54 +110,83 @@ if (args.includes('--list') || args.includes('-l')) {
     process.exit(0);
 }
 
-// Get persona and turns from arguments
-const personaKey = args[0] || 'random';
-const turns = parseInt(args[1]) || 3;
+// Get scenario and turns from arguments
+const scenarioKey = args[0];
+const turns = parseInt(args[1]) || null; // Will use scenario default if not specified
 
 async function runSimulation() {
-    console.log('🧪 Starting CLI Simulation...\n');
+    console.log('🧪 Starting Enhanced CLI Simulation...\n');
     
-    // Clean up any existing simulation DB
-    const dbPath = './cli_simulation.db';
+    // Set simulation mode for database connection
+    process.env.SIMULATION_MODE = 'true';
+    
+    // Clean up any existing simulation DB (with retry for Windows)
+    const dbPath = './care_circle_simulation.db';
     if (fs.existsSync(dbPath)) {
-        fs.unlinkSync(dbPath);
+        try {
+            fs.unlinkSync(dbPath);
+        } catch (error) {
+            console.warn(`⚠️  Could not delete existing simulation database: ${error.message}`);
+            console.warn(`   Database may be in use by another process. Continuing with existing database.`);
+        }
     }
     
-    const sim = new SimulationDriver(dbPath, true, true); // autoFeedback=true, logResults=true
+    const sim = new SimulationDriver({ autoFeedback: true, logResults: true });
     
-    // Select persona
-    let selectedPersona;
-    if (personaKey === 'random') {
-        const allPersonas = Object.keys(PERSONAS);
-        selectedPersona = allPersonas[Math.floor(Math.random() * allPersonas.length)];
-        console.log(`🎲 Random persona selected: ${selectedPersona}`);
+    // Select scenario
+    let selectedScenario;
+    if (!scenarioKey) {
+        // Interactive scenario selection
+        selectedScenario = await selectScenarioInteractively();
+    } else if (scenarioKey === 'random') {
+        const randomKey = getRandomScenario();
+        selectedScenario = { key: randomKey, ...SCENARIOS[randomKey] };
+        console.log(`🎲 Random scenario selected: ${selectedScenario.name}`);
     } else {
-        if (!PERSONAS[personaKey]) {
-            console.error(`❌ Persona '${personaKey}' not found. Use --list to see available personas.`);
+        if (!SCENARIOS[scenarioKey]) {
+            console.error(`❌ Scenario '${scenarioKey}' not found. Use --list to see available scenarios.`);
             process.exit(1);
         }
-        selectedPersona = personaKey;
+        selectedScenario = { key: scenarioKey, ...SCENARIOS[scenarioKey] };
     }
     
-    const personaInfo = PERSONAS[selectedPersona];
-    console.log(`👤 Persona: ${personaInfo.name}`);
-    console.log(`📝 Description: ${personaInfo.description}`);
-    console.log(`🔄 Turns: ${turns}\n`);
+    console.log(`📋 Scenario: ${selectedScenario.name}`);
+    console.log(`📝 Description: ${selectedScenario.description}`);
+    console.log(`🏷️ Category: ${selectedScenario.category}`);
+    console.log(`⭐ Complexity: ${'★'.repeat(selectedScenario.complexity)}`);
+    console.log(`👥 Users: ${selectedScenario.users.length}`);
     
-    // Determine role from persona key
-    let role = 'patient';
-    if (selectedPersona.includes('caregiver')) role = 'caregiver';
-    if (selectedPersona.includes('doctor')) role = 'doctor';
+    if (selectedScenario.multiSession) {
+        console.log(`📅 Multi-session: ${selectedScenario.sessions} sessions (${selectedScenario.sessionGap} apart)`);
+    }
+    
+    if (selectedScenario.instructions) {
+        console.log(`💡 Instructions: ${selectedScenario.instructions}`);
+    }
+    
+    // Use specified turns or scenario default
+    const finalTurns = turns || (selectedScenario.multiSession ? 3 : 5);
+    console.log(`🔄 Turns: ${finalTurns}\n`);
+    
+    // Build user configurations
+    const userConfigs = selectedScenario.users.map((user, index) => ({
+        userId: `cli_${user.role}_${index + 1}`,
+        role: user.role,
+        personaKey: user.personaKey,
+        relationship: user.relationship,
+        consent: user.consent,
+        specialty: user.specialty
+    }));
     
     const config = {
-        users: [{ 
-            userId: `cli_${role}_1`,
-            role: role,
-            personaKey: selectedPersona
-        }],
-        turns: turns,
-        complexity: 1,
-        instructions: `CLI simulation with ${selectedPersona}`
+        name: selectedScenario.name,
+        users: userConfigs,
+        turns: finalTurns,
+        complexity: selectedScenario.complexity,
+        instructions: selectedScenario.instructions || `CLI simulation: ${selectedScenario.name}`,
+        multiSession: selectedScenario.multiSession,
+        sessions: selectedScenario.sessions,
+        sessionGap: selectedScenario.sessionGap
     };
     
     try {
@@ -127,8 +197,9 @@ async function runSimulation() {
         
         // Show summary
         console.log('\n📊 Summary:');
-        console.log(`   Persona: ${personaInfo.name}`);
-        console.log(`   Turns: ${turns}`);
+        console.log(`   Scenario: ${selectedScenario.name}`);
+        console.log(`   Users: ${userConfigs.length} (${userConfigs.map(u => `${u.role}:${u.personaKey}`).join(', ')})`);
+        console.log(`   Turns: ${finalTurns}`);
         console.log(`   Feedback: Auto-generated (see above)`);
         
         // Offer per-message feedback
@@ -165,8 +236,8 @@ async function runSimulation() {
                         VALUES (?, ?, ?, ?, ?, ?)
                     `, [
                         `cli_sim_${Date.now()}`,
-                        `cli_${role}_1`,
-                        `cli_${role}_1`,
+                        `cli_user_1`,
+                        `cli_circle_1`,
                         feedbackScore,
                         `[Overall] ${comment}`,
                         Date.now()
@@ -176,7 +247,7 @@ async function runSimulation() {
             } else {
                 // Specific turn feedback
                 const turnNum = parseInt(choice);
-                if (!isNaN(turnNum) && turnNum >= 1 && turnNum <= turns) {
+                if (!isNaN(turnNum) && turnNum >= 1 && turnNum <= finalTurns) {
                     console.log(`\n📝 Feedback for Turn ${turnNum}:`);
                     const score = await new Promise(resolve => {
                         rl.question('Quality (-1/0/1): ', resolve);
@@ -192,8 +263,8 @@ async function runSimulation() {
                             VALUES (?, ?, ?, ?, ?, ?)
                         `, [
                             `cli_sim_${Date.now()}_turn${turnNum}`,
-                            `cli_${role}_1`,
-                            `cli_${role}_1`,
+                            `cli_user_1`,
+                            `cli_circle_1`,
                             feedbackScore,
                             `[Turn ${turnNum}] ${comment}`,
                             Date.now()
@@ -213,11 +284,83 @@ async function runSimulation() {
     } finally {
         await sim.cleanup();
         
-        // Clean up CLI simulation DB
+        // Clean up simulation DB (with retry for Windows)
         if (fs.existsSync(dbPath)) {
-            fs.unlinkSync(dbPath);
+            try {
+                fs.unlinkSync(dbPath);
+            } catch (error) {
+                console.warn(`⚠️  Could not delete simulation database: ${error.message}`);
+            }
+        }
+        
+        // Clear simulation mode
+        delete process.env.SIMULATION_MODE;
+    }
+}
+
+/**
+ * Interactive scenario selection
+ */
+async function selectScenarioInteractively() {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    console.log('\n🎯 Interactive Scenario Selection\n');
+    
+    // Group scenarios by category
+    const categories = {
+        '🎲 Basic (Single User)': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'basic'),
+        '🔺 Complex (Multi-User)': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'complex'),
+        '🚨 Privacy & Consent': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'privacy'),
+        '⚠️ Conflict Resolution': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'conflict'),
+        '📉 Longitudinal (Multi-Session)': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'longitudinal'),
+        '⚡ Stress Testing': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'stress_test'),
+        '🤐 Deception': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'deception'),
+        '🚑 Escalation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation')
+    };
+
+    let optionNumber = 1;
+    const options = [];
+
+    for (const [category, scenarios] of Object.entries(categories)) {
+        if (scenarios.length > 0) {
+            console.log(`\n${category}:`);
+            scenarios.forEach(([key, scenario]) => {
+                const complexity = '★'.repeat(scenario.complexity);
+                const multiUser = scenario.users.length > 1 ? '👥' : '👤';
+                const multiSession = scenario.multiSession ? '📅' : '';
+                console.log(`  ${optionNumber.toString().padStart(2)}. ${scenario.name} ${multiUser}${multiSession} ${complexity}`);
+                options.push({ key, scenario });
+                optionNumber++;
+            });
         }
     }
+
+    console.log(`\n  ${optionNumber.toString().padStart(2)}. 🎲 Random scenario`);
+    options.push({ key: 'random', scenario: null });
+
+    const choice = await new Promise(resolve => {
+        rl.question(`\nSelect scenario (1-${optionNumber}): `, resolve);
+    });
+
+    rl.close();
+
+    const choiceNum = parseInt(choice);
+    if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > optionNumber) {
+        console.log('Invalid choice. Using random scenario.');
+        const randomKey = getRandomScenario();
+        return { key: randomKey, ...SCENARIOS[randomKey] };
+    }
+
+    const selected = options[choiceNum - 1];
+    if (selected.key === 'random') {
+        const randomKey = getRandomScenario();
+        return { key: randomKey, ...SCENARIOS[randomKey] };
+    }
+
+    return { key: selected.key, ...selected.scenario };
 }
 
 // Run the simulation

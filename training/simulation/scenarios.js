@@ -12,7 +12,7 @@ export const SCENARIOS = {
         category: 'basic',
         complexity: 1,
         users: [
-            { role: 'patient', personaKey: 'random' }
+            { role: 'patient', personaKey: 'elderly_cognitive' }
         ]
     },
     
