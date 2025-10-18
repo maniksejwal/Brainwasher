@@ -5,6 +5,7 @@
  */
 
 import { SimulationDriver } from './simulator.js';
+import { SCENARIOS } from './scenarios.js';
 import { listPersonas } from './personas.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -185,8 +186,7 @@ class ScenarioRunner {
                 console.log(`\n  Run ${run + 1}/${this.runsPerScenario}:`);
                 
                 const simulator = new SimulationDriver({ 
-                    logResults: true,
-                    maxTurns: config.turns
+                    logResults: true
                 });
 
                 try {

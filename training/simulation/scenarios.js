@@ -110,6 +110,7 @@ export const SCENARIOS = {
         description: 'Patient downplays symptoms while caregiver reports serious concerns',
         category: 'conflict',
         complexity: 4,
+        turns: 8, // More turns for multi-user interaction
         users: [
             { role: 'patient', personaKey: 'denial_prone' },
             { role: 'caregiver', personaKey: 'helicopter_caregiver', relationship: 'spouse', consent: 'full' }
@@ -122,6 +123,7 @@ export const SCENARIOS = {
         description: 'Multiple caregivers have different views on patient\'s needs',
         category: 'conflict',
         complexity: 5,
+        turns: 10, // More turns for complex family dynamics
         users: [
             { role: 'patient', personaKey: 'elderly_cognitive' },
             { role: 'caregiver', personaKey: 'helicopter_caregiver', relationship: 'daughter', consent: 'full' },

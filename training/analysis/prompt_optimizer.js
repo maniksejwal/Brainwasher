@@ -53,36 +53,178 @@ class PromptOptimizer {
     }
 
     /**
-     * Generate optimized prompt using AI
+     * Optimize prompts based on simulation feedback analysis
+     * This is the main integration point with our new feedback system
      */
-    async optimizePrompt(currentPrompt, analysisReport) {
-        const optimizationPrompt = PROMPT_OPTIMIZATION_TEMPLATE(currentPrompt, analysisReport);
-
+    async optimizeFromSimulationFeedback(promptPath, promptVersion = 'simulation_v1.0') {
         try {
-            let optimizedPrompt;
+            console.log(`[PromptOptimizer] Starting optimization for ${promptPath} (${promptVersion})`);
             
-            if (this.useOpenAI) {
-                const response = await this.openai.chat.completions.create({
-                    model: 'gpt-4',
-                    messages: [
-                        { role: 'system', content: OPTIMIZATION_SYSTEM_PROMPT },
-                        { role: 'user', content: optimizationPrompt }
-                    ],
-                    temperature: 0.2,
-                    max_tokens: 2000
-                });
-                optimizedPrompt = response.choices[0].message.content;
-            } else {
-                const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-                const result = await model.generateContent(optimizationPrompt);
-                optimizedPrompt = result.response.text();
+            // 1. Load current prompt
+            const currentPrompt = await this.loadPrompt(promptPath);
+            if (!currentPrompt) {
+                throw new Error('Failed to load current prompt');
             }
-
-            return this._extractPromptContent(optimizedPrompt);
+            
+            // 2. Get feedback analysis
+            const analyzer = new FeedbackAnalyzer();
+            const analysis = await analyzer.calculateRewardBackpropagation();
+            
+            if (!analysis || !analysis.prompt_performance[promptVersion]) {
+                console.log('[PromptOptimizer] No feedback data available for optimization');
+                return null;
+            }
+            
+            // 3. Get failure pattern analysis
+            const { IssueAnalyzer } = await import('./issue_analyzer.js');
+            const issueAnalyzer = new IssueAnalyzer();
+            const failureReport = await issueAnalyzer.generateFailurePatternReport();
+            
+            // 4. Create comprehensive analysis report
+            const analysisReport = this._createAnalysisReport(analysis, failureReport, promptVersion);
+            
+            // 5. Generate optimized prompt
+            const optimizedPrompt = await this.optimizePrompt(currentPrompt, analysisReport);
+            
+            if (!optimizedPrompt) {
+                throw new Error('Failed to generate optimized prompt');
+            }
+            
+            // 6. Save optimized prompt
+            const newVersion = this._incrementVersion(promptVersion);
+            const optimizedPath = await this._saveOptimizedPrompt(promptPath, optimizedPrompt, newVersion);
+            
+            console.log(`[PromptOptimizer] Generated optimized prompt: ${optimizedPath}`);
+            
+            return {
+                originalPath: promptPath,
+                optimizedPath: optimizedPath,
+                originalVersion: promptVersion,
+                newVersion: newVersion,
+                analysisReport: analysisReport,
+                optimizationSummary: this._generateOptimizationSummary(analysisReport)
+            };
+            
         } catch (error) {
-            console.error('[PromptOptimizer] Error generating optimized prompt:', error.message);
+            console.error('[PromptOptimizer] Error optimizing from simulation feedback:', error.message);
             return null;
         }
+    }
+
+    /**
+     * Create comprehensive analysis report for prompt optimization
+     */
+    _createAnalysisReport(rewardAnalysis, failureReport, promptVersion) {
+        const promptPerf = rewardAnalysis.prompt_performance[promptVersion];
+        
+        return {
+            promptVersion: promptVersion,
+            performance: {
+                avgScore: promptPerf.avg_score,
+                rewardSignal: promptPerf.reward_signal,
+                failureRate: promptPerf.failure_rate,
+                totalInteractions: promptPerf.total_interactions,
+                goalScores: {
+                    adherence: promptPerf.avg_adherence,
+                    history: promptPerf.avg_history,
+                    conversation: promptPerf.avg_conversation
+                }
+            },
+            rewardSignals: rewardAnalysis.reward_signals.filter(s => s.prompt_version === promptVersion),
+            optimizationOpportunities: rewardAnalysis.optimization_opportunities,
+            failurePatterns: failureReport?.summary?.patterns || [],
+            criticalFailures: failureReport?.summary?.total_failures || 0,
+            recommendations: failureReport?.recommendations || []
+        };
+    }
+
+    /**
+     * Generate optimization summary
+     */
+    _generateOptimizationSummary(analysisReport) {
+        const summary = {
+            issues: [],
+            improvements: [],
+            priority: 'medium'
+        };
+        
+        // Analyze performance issues
+        if (analysisReport.performance.rewardSignal < -0.3) {
+            summary.issues.push('Poor overall performance');
+            summary.priority = 'high';
+        }
+        
+        if (analysisReport.performance.failureRate > 0.1) {
+            summary.issues.push('High critical failure rate');
+            summary.priority = 'high';
+        }
+        
+        if (analysisReport.performance.goalScores.adherence < 0.6) {
+            summary.issues.push('Poor adherence goal performance');
+        }
+        
+        // Analyze failure patterns
+        analysisReport.failurePatterns.forEach(pattern => {
+            if (pattern.severity === 'high') {
+                summary.issues.push(`Frequent ${pattern.pattern} issues`);
+                summary.priority = 'high';
+            }
+        });
+        
+        // Generate improvement suggestions
+        analysisReport.recommendations.forEach(rec => {
+            if (rec.priority === 'high') {
+                summary.improvements.push(rec.description);
+            }
+        });
+        
+        return summary;
+    }
+
+    /**
+     * Increment prompt version
+     */
+    _incrementVersion(currentVersion) {
+        const versionMatch = currentVersion.match(/v(\d+)\.(\d+)/);
+        if (versionMatch) {
+            const major = parseInt(versionMatch[1]);
+            const minor = parseInt(versionMatch[2]);
+            return `v${major}.${minor + 1}`;
+        }
+        return 'v1.1';
+    }
+
+    /**
+     * Save optimized prompt with new version
+     */
+    async _saveOptimizedPrompt(originalPath, optimizedPrompt, newVersion) {
+        const pathParts = originalPath.split('/');
+        const fileName = pathParts[pathParts.length - 1];
+        const fileNameParts = fileName.split('.');
+        const baseName = fileNameParts[0];
+        const extension = fileNameParts[1] || 'js';
+        
+        const newFileName = `${baseName}_${newVersion}.${extension}`;
+        const newPath = originalPath.replace(fileName, newFileName);
+        
+        // Create the optimized prompt content
+        const promptContent = `/**
+ * @fileoverview Optimized prompt version ${newVersion}
+ * Generated by PromptOptimizer based on simulation feedback analysis
+ * 
+ * Original: ${originalPath}
+ * Generated: ${new Date().toISOString()}
+ */
+
+export const OPTIMIZED_PROMPT = \`${optimizedPrompt}\`;
+
+export const PROMPT_VERSION = '${newVersion}';
+export const GENERATED_AT = '${new Date().toISOString()}';
+export const ORIGINAL_PATH = '${originalPath}';
+`;
+
+        await fs.writeFile(newPath, promptContent, 'utf8');
+        return newPath;
     }
 
     /**

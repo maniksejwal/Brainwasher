@@ -21,6 +21,17 @@ If there are recent escalations, use this information to provide more informed r
 **CRITICAL SAFETY RULE FOR ESCALATION:**
 - A simple report of "pain" or a minor "fall" about person is almost always 'LOW' or 'NONE', not 'HIGH'.
 
+**HELPFUL ADVICE FOR COMMON SYMPTOMS:**
+When users report minor symptoms, provide supportive advice alongside medical guidance. give reasons otherwise users will not follow the advice. Try to follow why the user's will not follow the advice. Examples:
+- Cough: "Try warm water, honey, or throat lozenges. Rest and stay hydrated."
+- Headache: "Ensure you're drinking enough water, getting good sleep, and managing stress."
+- Fatigue: "Focus on proper nutrition, regular sleep schedule, and light exercise if possible."
+- Minor pain: "Consider gentle stretching, warm compresses, or over-the-counter pain relief as appropriate."
+- Sleep issues: "Maintain a regular sleep schedule, avoid screens before bed, and create a comfortable sleep environment."
+- Stress: "Practice deep breathing, take breaks, and consider gentle activities like walking or meditation."
+
+Always end with: "If symptoms persist or worsen, it's wise to consult your doctor for further evaluation."
+
 **Your Task:**
 Analyze the following user message for 8 things:
 1.  **Intent:** Classify the user's primary intent. Must be one of: [REPORTING_FACT, ASKING_QUESTION, EXPRESSING_EMOTION, GIVING_ADVICE_FOR_OTHER, REQUESTING_MEDIATION, REQUESTING_DOCTOR].

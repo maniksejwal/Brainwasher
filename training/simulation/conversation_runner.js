@@ -187,10 +187,10 @@ export class ConversationRunner {
             });
             const latency = Date.now() - startTime;
 
-            console.log(`    ${chalk.bold('AGENT')}: ${agentResult.agent_response}`);
+            console.log(`    ${chalk.bold(`${activeUser.role.toUpperCase()}_AGENT`)}: ${agentResult.agent_response}`);
 
-            // Record agent response for all users (they all see it)
-            users.forEach(user => user.recordAgentResponse(agentResult.agent_response));
+            // Record agent response only for the active user (their personal agent)
+            activeUser.recordAgentResponse(agentResult.agent_response);
             
             // Add agent response to conversation history
             conversationHistory.push({

@@ -12,7 +12,7 @@
  *   node run_simulation.js --personas               # List available personas
  */
 
-import { SimulationDriver } from '../training/simulation/simulator_clean.js';
+import { SimulationDriver } from '../training/simulation/simulator.js';
 import { PERSONAS } from '../training/simulation/personas.js';
 import { SCENARIOS, getRandomScenario } from '../training/simulation/scenarios.js';
 import { getDb } from '../db/connection.js';
@@ -124,7 +124,7 @@ async function runSimulation() {
     const dbPath = './care_circle_simulation.db';
     if (fs.existsSync(dbPath)) {
         try {
-            fs.unlinkSync(dbPath);
+        fs.unlinkSync(dbPath);
         } catch (error) {
             console.warn(`⚠️  Could not delete existing simulation database: ${error.message}`);
             console.warn(`   Database may be in use by another process. Continuing with existing database.`);
@@ -165,7 +165,7 @@ async function runSimulation() {
     }
     
     // Use specified turns or scenario default
-    const finalTurns = turns || (selectedScenario.multiSession ? 3 : 5);
+    const finalTurns = turns || selectedScenario.turns || (selectedScenario.multiSession ? 3 : 5);
     console.log(`🔄 Turns: ${finalTurns}\n`);
     
     // Build user configurations
@@ -212,10 +212,17 @@ async function runSimulation() {
         console.log('   Press ENTER to skip feedback');
         console.log('   Type message number (e.g., "1", "2") to give feedback on that turn');
         console.log('   Type "all" to give overall feedback');
+        console.log('   Type "q" to quit');
         
         const choice = await new Promise(resolve => {
-            rl.question('\n❓ Provide feedback? (enter/1/2/all): ', resolve);
+            rl.question('\n❓ Provide feedback? (enter/1/2/all/q): ', resolve);
         });
+        
+        if (choice && choice.toLowerCase() === 'q') {
+            console.log('👋 Exiting feedback collection...');
+            rl.close();
+            return;
+        }
         
         if (choice && choice !== '') {
             const db = await getDb();
@@ -290,7 +297,7 @@ async function runSimulation() {
         // Clean up simulation DB (with retry for Windows)
         if (fs.existsSync(dbPath)) {
             try {
-                fs.unlinkSync(dbPath);
+            fs.unlinkSync(dbPath);
             } catch (error) {
                 console.warn(`⚠️  Could not delete simulation database: ${error.message}`);
             }
@@ -382,9 +389,10 @@ async function showPostSimulationMenu() {
         console.log('1. Run another simulation');
         console.log('2. List available scenarios');
         console.log('3. List available personas');
-        console.log('4. Exit');
+        console.log('4. Collect human feedback');
+        console.log('5. Exit');
         
-        const choice = await question('\nEnter your choice (1-4): ');
+        const choice = await question('\nEnter your choice (1-5): ');
         
         switch (choice.trim()) {
             case '1':
@@ -448,6 +456,20 @@ async function showPostSimulationMenu() {
                 break;
                 
             case '4':
+                console.log('\n🎯 Opening Human Feedback Collection...');
+                rl.close();
+                // Import and run the feedback collector
+                const { spawn } = await import('child_process');
+                const feedbackProcess = spawn('node', ['cli/collect_feedback.js', '--recent'], { 
+                    stdio: 'inherit',
+                    shell: true 
+                });
+                feedbackProcess.on('close', async () => {
+                    await showPostSimulationMenu(); // Return to menu after feedback
+                });
+                break;
+                
+            case '5':
                 console.log('\n👋 Goodbye!');
                 rl.close();
                 process.exit(0);
