@@ -75,6 +75,25 @@ export class ConversationRunner {
                 user, userMessage, agentResult, turn, emitProgress
             );
 
+            // Check for critical failure and pause if needed
+            if (feedbackData && feedbackData.criticalFailure) {
+                console.log(chalk.red.bold('\n🚨 CRITICAL FAILURE DETECTED - SIMULATION PAUSED'));
+                console.log(chalk.red(`Reason: ${feedbackData.scores.find(s => s.score <= -2)?.reason || 'Unknown'}`));
+                console.log(chalk.yellow('Simulation paused for analysis. Check feedback database for details.'));
+                
+                // Emit critical failure event
+                if (emitProgress) {
+                    emitProgress(4, `CRITICAL FAILURE`, 'Simulation paused due to critical failure', {
+                        type: 'critical_failure',
+                        reason: feedbackData.scores.find(s => s.score <= -2)?.reason,
+                        conversationId: `${this.conversationId}_${user.userId}`,
+                        turn: turn + 1
+                    });
+                }
+                
+                break; // Stop the conversation
+            }
+
             // Log interaction
             if (this.logResults) {
                 await this._logInteraction(user, userMessage, agentResult, latency, turn);

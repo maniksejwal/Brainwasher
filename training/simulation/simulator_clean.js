@@ -141,6 +141,10 @@ export class SimulationDriver {
                 prompt_version TEXT,
                 timestamp INTEGER NOT NULL,
                 source TEXT DEFAULT 'simulation',
+                goal_adherence_score REAL,
+                goal_history_score REAL,
+                goal_conversation_score REAL,
+                critical_failure BOOLEAN DEFAULT 0,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             );
             CREATE TABLE IF NOT EXISTS detailed_feedback (
@@ -152,6 +156,7 @@ export class SimulationDriver {
                 category TEXT NOT NULL,
                 description TEXT,
                 details TEXT NOT NULL,
+                context TEXT,
                 prompt_version TEXT,
                 timestamp INTEGER NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)

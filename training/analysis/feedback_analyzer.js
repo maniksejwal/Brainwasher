@@ -75,6 +75,246 @@ class FeedbackAnalyzer {
     }
 
     /**
+     * Calculate reward backpropagation for prompt optimization
+     * Connects feedback scores with prompt versions to identify optimization opportunities
+     */
+    async calculateRewardBackpropagation() {
+        const db = await getDb();
+        
+        try {
+            // Get feedback with prompt versions and goal assessments
+            const feedbackData = await db.all(`
+                SELECT 
+                    conversation_id,
+                    prompt_version,
+                    score,
+                    goal_adherence_score,
+                    goal_history_score,
+                    goal_conversation_score,
+                    critical_failure,
+                    comment,
+                    timestamp
+                FROM feedback 
+                WHERE source = 'simulation' AND prompt_version IS NOT NULL
+                ORDER BY timestamp DESC
+            `);
+            
+            if (feedbackData.length === 0) {
+                return {
+                    prompt_performance: {},
+                    reward_signals: [],
+                    optimization_opportunities: []
+                };
+            }
+            
+            // Group by prompt version
+            const promptGroups = {};
+            feedbackData.forEach(feedback => {
+                const version = feedback.prompt_version;
+                if (!promptGroups[version]) {
+                    promptGroups[version] = {
+                        interactions: [],
+                        total_score: 0,
+                        total_adherence: 0,
+                        total_history: 0,
+                        total_conversation: 0,
+                        critical_failures: 0,
+                        count: 0
+                    };
+                }
+                
+                promptGroups[version].interactions.push(feedback);
+                promptGroups[version].total_score += feedback.score;
+                promptGroups[version].total_adherence += feedback.goal_adherence_score || 0;
+                promptGroups[version].total_history += feedback.goal_history_score || 0;
+                promptGroups[version].total_conversation += feedback.goal_conversation_score || 0;
+                promptGroups[version].critical_failures += feedback.critical_failure ? 1 : 0;
+                promptGroups[version].count++;
+            });
+            
+            // Calculate performance metrics for each prompt
+            const promptPerformance = {};
+            Object.entries(promptGroups).forEach(([version, data]) => {
+                promptPerformance[version] = {
+                    avg_score: data.total_score / data.count,
+                    avg_adherence: data.total_adherence / data.count,
+                    avg_history: data.total_history / data.count,
+                    avg_conversation: data.total_conversation / data.count,
+                    failure_rate: data.critical_failures / data.count,
+                    total_interactions: data.count,
+                    reward_signal: this.calculateRewardSignal(data)
+                };
+            });
+            
+            // Generate reward signals for optimization
+            const rewardSignals = this.generateRewardSignals(promptPerformance);
+            
+            // Identify optimization opportunities
+            const optimizationOpportunities = this.identifyOptimizationOpportunities(promptPerformance, feedbackData);
+            
+            return {
+                prompt_performance: promptPerformance,
+                reward_signals: rewardSignals,
+                optimization_opportunities: optimizationOpportunities,
+                total_feedback_points: feedbackData.length
+            };
+            
+        } catch (error) {
+            console.error('[FeedbackAnalyzer] Error calculating reward backpropagation:', error.message);
+            return null;
+        }
+    }
+    
+    /**
+     * Calculate reward signal for a prompt version
+     */
+    calculateRewardSignal(data) {
+        // Weighted reward calculation
+        const scoreWeight = 0.4;
+        const adherenceWeight = 0.3;
+        const historyWeight = 0.2;
+        const conversationWeight = 0.1;
+        
+        const avgScore = data.total_score / data.count;
+        const avgAdherence = data.total_adherence / data.count;
+        const avgHistory = data.total_history / data.count;
+        const avgConversation = data.total_conversation / data.count;
+        const failurePenalty = data.critical_failures / data.count;
+        
+        const reward = (
+            avgScore * scoreWeight +
+            avgAdherence * adherenceWeight +
+            avgHistory * historyWeight +
+            avgConversation * conversationWeight
+        ) - (failurePenalty * 0.5); // Penalty for critical failures
+        
+        return Math.max(-1, Math.min(1, reward)); // Clamp between -1 and 1
+    }
+    
+    /**
+     * Generate actionable reward signals
+     */
+    generateRewardSignals(promptPerformance) {
+        const signals = [];
+        
+        Object.entries(promptPerformance).forEach(([version, performance]) => {
+            if (performance.reward_signal < -0.3) {
+                signals.push({
+                    type: 'negative_reward',
+                    prompt_version: version,
+                    severity: 'high',
+                    message: `Prompt ${version} shows poor performance (reward: ${performance.reward_signal.toFixed(2)})`,
+                    recommendations: [
+                        'Review prompt for clarity and specificity',
+                        'Add more context about care circle goals',
+                        'Improve escalation triggers'
+                    ]
+                });
+            } else if (performance.failure_rate > 0.1) {
+                signals.push({
+                    type: 'high_failure_rate',
+                    prompt_version: version,
+                    severity: 'medium',
+                    message: `Prompt ${version} has high critical failure rate (${(performance.failure_rate * 100).toFixed(1)}%)`,
+                    recommendations: [
+                        'Strengthen critical symptom detection',
+                        'Improve escalation logic',
+                        'Add safety checks for denial patterns'
+                    ]
+                });
+            } else if (performance.avg_adherence < 0.6) {
+                signals.push({
+                    type: 'poor_adherence',
+                    prompt_version: version,
+                    severity: 'medium',
+                    message: `Prompt ${version} struggles with adherence goals (${performance.avg_adherence.toFixed(2)})`,
+                    recommendations: [
+                        'Focus on medication management language',
+                        'Add adherence tracking prompts',
+                        'Improve reminder and tracking suggestions'
+                    ]
+                });
+            }
+        });
+        
+        return signals;
+    }
+    
+    /**
+     * Identify specific optimization opportunities
+     */
+    identifyOptimizationOpportunities(promptPerformance, feedbackData) {
+        const opportunities = [];
+        
+        // Find patterns in negative feedback
+        const negativeFeedback = feedbackData.filter(f => f.score < 0);
+        const failurePatterns = {};
+        
+        negativeFeedback.forEach(feedback => {
+            const comment = feedback.comment?.toLowerCase() || '';
+            
+            // Categorize failure types
+            if (comment.includes('escalat')) {
+                failurePatterns.escalation = (failurePatterns.escalation || 0) + 1;
+            }
+            if (comment.includes('empathy') || comment.includes('loop')) {
+                failurePatterns.empathy_loop = (failurePatterns.empathy_loop || 0) + 1;
+            }
+            if (comment.includes('denial') || comment.includes('accept')) {
+                failurePatterns.denial_acceptance = (failurePatterns.denial_acceptance || 0) + 1;
+            }
+            if (comment.includes('generic') || comment.includes('bland')) {
+                failurePatterns.generic_response = (failurePatterns.generic_response || 0) + 1;
+            }
+        });
+        
+        // Create optimization opportunities based on patterns
+        Object.entries(failurePatterns).forEach(([pattern, count]) => {
+            if (count >= 3) { // Threshold for actionable optimization
+                opportunities.push({
+                    pattern: pattern,
+                    frequency: count,
+                    priority: count >= 5 ? 'high' : 'medium',
+                    description: `Frequent ${pattern.replace('_', ' ')} issues detected`,
+                    suggested_prompt_changes: this.getPromptSuggestions(pattern)
+                });
+            }
+        });
+        
+        return opportunities;
+    }
+    
+    /**
+     * Get specific prompt improvement suggestions
+     */
+    getPromptSuggestions(pattern) {
+        const suggestions = {
+            escalation: [
+                'Add explicit escalation triggers for critical symptoms',
+                'Include temporal urgency assessment',
+                'Strengthen emergency response protocols'
+            ],
+            empathy_loop: [
+                'Add variety to empathy expressions',
+                'Include action-oriented responses',
+                'Limit repetitive caring language'
+            ],
+            denial_acceptance: [
+                'Add persistence for critical situations',
+                'Include gentle but firm escalation',
+                'Strengthen safety override mechanisms'
+            ],
+            generic_response: [
+                'Add context-specific response templates',
+                'Include symptom-specific questions',
+                'Improve personalization based on patient history'
+            ]
+        };
+        
+        return suggestions[pattern] || ['Review prompt for clarity and specificity'];
+    }
+
+    /**
      * Calculate basic statistics
      */
     calculateStats(mergedData) {

@@ -14,9 +14,9 @@ class SimulationFeedback {
     }
 
     /**
-     * Automatically score an interaction
+     * Automatically score an interaction with prompt tracking
      */
-    async autoScore(conversationId, userId, circleId, messageId, score, reason) {
+    async autoScore(conversationId, userId, circleId, messageId, score, reason, promptVersion = 'simulation_v1.0', goalAssessment = null) {
         const db = this.dbConnection || await getDb();
         
         await db.run(`
@@ -29,17 +29,32 @@ class SimulationFeedback {
                 score INTEGER,
                 comment TEXT,
                 timestamp INTEGER,
-                source TEXT DEFAULT 'user'
+                source TEXT DEFAULT 'user',
+                prompt_version TEXT,
+                goal_adherence_score REAL,
+                goal_history_score REAL,
+                goal_conversation_score REAL,
+                critical_failure BOOLEAN DEFAULT 0
             )
         `);
 
+        const criticalFailure = score <= -2;
+        const goalAdherence = goalAssessment?.adherence || null;
+        const goalHistory = goalAssessment?.history || null;
+        const goalConversation = goalAssessment?.conversation || null;
+
         await db.run(
-            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation')`,
-            [conversationId, messageId, userId, circleId, score, reason, Date.now()]
+            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source, prompt_version, goal_adherence_score, goal_history_score, goal_conversation_score, critical_failure)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?, ?, ?, ?)`,
+            [conversationId, messageId, userId, circleId, score, reason, Date.now(), promptVersion, goalAdherence, goalHistory, goalConversation, criticalFailure]
         );
 
-        console.log(`[SimulationFeedback] Auto-scored: ${score} - "${reason}"`);
+        console.log(`[SimulationFeedback] Auto-scored: ${score} - "${reason}"${criticalFailure ? ' 🚨 CRITICAL FAILURE' : ''}`);
+        
+        // Flag simulation for pause if critical failure
+        if (criticalFailure) {
+            await this.flagSimulation(conversationId, 'critical_failure', reason);
+        }
     }
 
     /**
@@ -72,6 +87,94 @@ class SimulationFeedback {
         );
 
         console.log(`[SimulationFeedback] Auto-reported [${category}]: "${description}"`);
+    }
+
+    /**
+     * Flag simulation for pause or analysis
+     */
+    async flagSimulation(conversationId, flagType, reason) {
+        const db = this.dbConnection || await getDb();
+        
+        await db.run(`
+            CREATE TABLE IF NOT EXISTS simulation_flags (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT,
+                flag_type TEXT,
+                reason TEXT,
+                timestamp INTEGER,
+                resolved BOOLEAN DEFAULT 0,
+                resolution_notes TEXT
+            )
+        `);
+
+        await db.run(
+            `INSERT INTO simulation_flags (conversation_id, flag_type, reason, timestamp)
+             VALUES (?, ?, ?, ?)`,
+            [conversationId, flagType, reason, Date.now()]
+        );
+
+        console.log(`🚨 SIMULATION FLAGGED: ${flagType} - ${reason}`);
+    }
+
+    /**
+     * Assess care circle goals progress
+     */
+    assessCareCircleGoals(userMessage, agentResponse, conversationHistory = []) {
+        const goals = {
+            adherence: this._assessAdherenceGoal(userMessage, agentResponse),
+            history: this._assessHistoryGoal(userMessage, agentResponse, conversationHistory),
+            conversation: this._assessConversationGoal(userMessage, agentResponse)
+        };
+        
+        return goals;
+    }
+
+    _assessAdherenceGoal(userMessage, agentResponse) {
+        const message = userMessage.toLowerCase();
+        const response = agentResponse.toLowerCase();
+        
+        // Check if patient mentions medication issues
+        const mentionsMedication = message.includes('medication') || message.includes('pills') || message.includes('medicine');
+        const mentionsAdherence = message.includes('forgot') || message.includes('missed') || message.includes('skip');
+        
+        if (mentionsMedication && mentionsAdherence) {
+            // Check if AI addresses adherence specifically
+            const addressesAdherence = response.includes('adherence') || response.includes('schedule') || response.includes('reminder');
+            return addressesAdherence ? 1.0 : 0.3;
+        }
+        
+        return 0.5; // Neutral if no adherence context
+    }
+
+    _assessHistoryGoal(userMessage, agentResponse, conversationHistory) {
+        const response = agentResponse.toLowerCase();
+        
+        // Check if AI asks for specific historical information
+        const asksHistory = response.includes('when did') || response.includes('how long') || response.includes('since when') || response.includes('tell me about');
+        const asksSpecifics = response.includes('describe') || response.includes('explain') || response.includes('what happened');
+        
+        if (asksHistory || asksSpecifics) {
+            return 1.0;
+        }
+        
+        return 0.5; // Neutral if no history gathering
+    }
+
+    _assessConversationGoal(userMessage, agentResponse) {
+        const response = agentResponse.toLowerCase();
+        
+        // Check conversation quality indicators
+        const asksQuestions = response.includes('?');
+        const showsEmpathy = response.includes('understand') || response.includes('sorry') || response.includes('concerned');
+        const providesGuidance = response.includes('suggest') || response.includes('recommend') || response.includes('help');
+        
+        let score = 0.5; // Base score
+        
+        if (asksQuestions) score += 0.2;
+        if (showsEmpathy) score += 0.2;
+        if (providesGuidance) score += 0.1;
+        
+        return Math.min(1.0, score);
     }
 
     /**
@@ -347,8 +450,11 @@ class SimulationFeedback {
     /**
      * Comprehensive feedback for an interaction
      */
-    async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null) {
+    async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null, promptVersion = 'simulation_v1.0', conversationHistory = []) {
         const analysis = this.analyzeResponse(userMessage, agentResponse, orchestratorAction);
+        
+        // Assess care circle goals
+        const goalAssessment = this.assessCareCircleGoals(userMessage, agentResponse, conversationHistory);
 
         // Report all detected issues
         for (const issue of analysis.issues) {
@@ -363,7 +469,7 @@ class SimulationFeedback {
             );
         }
 
-        // Provide scores
+        // Provide scores with goal assessment
         for (const scoreData of analysis.scores) {
             await this.autoScore(
                 conversationId,
@@ -371,7 +477,9 @@ class SimulationFeedback {
                 circleId,
                 messageId,
                 scoreData.score,
-                scoreData.reason
+                scoreData.reason,
+                promptVersion,
+                goalAssessment
             );
         }
 
@@ -382,7 +490,9 @@ class SimulationFeedback {
             issuesFound: analysis.issues.length,
             scores: analysis.scores,
             issues: analysis.issues,
-            actionableFeedback: actionableFeedback
+            actionableFeedback: actionableFeedback,
+            goalAssessment: goalAssessment,
+            criticalFailure: analysis.scores.some(s => s.score <= -2)
         };
     }
 }
