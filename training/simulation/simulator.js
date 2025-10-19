@@ -155,7 +155,7 @@ export class SimulationDriver {
                 category TEXT NOT NULL,
                 source TEXT,
                 description TEXT,
-                details TEXT NOT NULL,
+                details TEXT,
                 context TEXT,
                 prompt_version TEXT,
                 timestamp INTEGER NOT NULL,
@@ -243,13 +243,13 @@ export class SimulationDriver {
         };
 
         try {
-            // Initialize
+        // Initialize
             emitProgress(1, 'Initializing simulation database...', 'Setting up test environment');
-            await this.initializeDatabase();
+        await this.initializeDatabase();
 
-            // Create users
+        // Create users
             emitProgress(2, 'Creating synthetic users...', `Setting up ${scenarioConfig.users.length} test users`);
-            await this.createSyntheticUsers(scenarioConfig.users);
+        await this.createSyntheticUsers(scenarioConfig.users);
 
             // Create care circle for ALL scenarios (single user needs it too)
             emitProgress(3, 'Setting up care circle...', 'Creating patient-caregiver relationships');
@@ -291,9 +291,9 @@ export class SimulationDriver {
             
             emitProgress(5, 'Simulation complete!', 'Analyzing results and generating feedback', { complete: true });
 
-            console.log('='.repeat(80));
-            console.log('SIMULATION COMPLETE');
-            console.log('='.repeat(80) + '\n');
+        console.log('='.repeat(80));
+        console.log('SIMULATION COMPLETE');
+        console.log('='.repeat(80) + '\n');
 
         } catch (error) {
             console.error('[Simulator] Error during simulation:', error.message);

@@ -60,7 +60,7 @@ export class SyntheticUser {
                         { role: 'user', content: prompt }
                     ],
                     temperature: 0.9, // Increased for more variety
-                    max_tokens: 150
+                    max_tokens: 50 // Keep responses brief and conversational
                 });
                 message = response.choices[0].message.content.trim();
             } else {
@@ -137,12 +137,12 @@ export class SyntheticUser {
         
         if (lastAgentMessage) {
             prompt += `\nThe care agent just said:\n"${lastAgentMessage}"\n`;
-            prompt += `\nRespond naturally as your character would. Keep your response brief (1-3 sentences).`;
+            prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues.`;
         } else {
             if (multiUserContext) {
-                prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences).`;
+                prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences max). Avoid monologues.`;
             } else {
-                prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences).`;
+                prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences max). Avoid monologues.`;
             }
         }
 
@@ -161,17 +161,16 @@ export class SyntheticUser {
     }
 
     /**
-     * Move to next goal with context-aware mixing
+     * Move to next goal with simple random mixing
      */
     advanceGoal() {
         if (this.goals.length <= 1) {
             return false; // No other goals to switch to
         }
         
-        // Mix goals instead of sequential advancement
+        // Simple random selection from available goals
         const availableGoals = this.goals.filter((goal, index) => index !== this.currentGoalIndex);
         if (availableGoals.length > 0) {
-            // Randomly select from available goals
             const randomIndex = Math.floor(Math.random() * availableGoals.length);
             this.currentGoalIndex = this.goals.findIndex(goal => goal === availableGoals[randomIndex]);
             return true;

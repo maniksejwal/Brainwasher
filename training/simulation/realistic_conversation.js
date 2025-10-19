@@ -173,22 +173,34 @@ export class RealisticConversationEngine {
             return this._selectDoctor(doctorUsers, 'response');
         }
         
-        // Normal conversation flow - alternate between patient and caregivers
+        // Normal conversation flow - let orchestrator decide
         if (turn === 0) {
             // Patient always starts
             return patientUser;
-        } else if (turn % 2 === 0) {
-            // Even turns - patient speaks
-            return patientUser;
         } else {
-            // Odd turns - caregiver or doctor speaks based on context
-            if (caregiverUsers.length > 0 && Math.random() < 0.7) {
-                return this._selectCaregiver(caregiverUsers);
-            } else if (doctorUsers.length > 0) {
-                return this._selectDoctor(doctorUsers, 'routine');
-            } else {
-                return patientUser; // Fallback
+            // Let orchestrator decide who speaks next based on context
+            // This is more realistic - conversations don't follow rigid patterns
+            const availableUsers = [patientUser, ...caregiverUsers, ...doctorUsers].filter(Boolean);
+            
+            // Simple random selection weighted by role importance
+            const weights = {
+                patient: 0.6,
+                caregiver: 0.3, 
+                doctor: 0.1
+            };
+            
+            const random = Math.random();
+            let cumulativeWeight = 0;
+            
+            for (const user of availableUsers) {
+                cumulativeWeight += weights[user.role] || 0.1;
+                if (random <= cumulativeWeight) {
+                    return user;
+                }
             }
+            
+            // Fallback to patient
+            return patientUser;
         }
     }
 
@@ -262,3 +274,4 @@ export class RealisticConversationEngine {
         };
     }
 }
+

@@ -196,6 +196,67 @@ node training/analysis/feedback_analyzer.js
 node training/analysis/prompt_optimizer.js
 ```
 
+### Simulation Dashboard 🎯
+
+The **Simulation Dashboard** provides a comprehensive, interactive interface for monitoring and managing all simulation operations:
+
+```bash
+# Launch the interactive dashboard
+node cli/simulation_dashboard.js
+
+# Show help and options
+node cli/simulation_dashboard.js --help
+```
+
+#### Features
+
+- **📊 Real-time Monitoring**: Track simulation counts, feedback collection, critical failures, and performance metrics
+- **🚀 Simulation Runner**: Execute individual simulations with interactive scenario selection and custom turn counts
+- **🔍 Detailed Analysis**: View complete conversation logs, feedback scores, and performance data
+- **📈 Performance Trends**: Analyze 7-day trends, identify top-performing scenarios, and detect common issues
+- **🎭 Scenario Management**: Browse all scenarios, view details, and run batch tests
+- **💬 Feedback Analysis**: Review auto-generated and human feedback, analyze critical failures
+- **⚡ Batch Operations**: Run comprehensive analysis, generate reports, and export data
+- **⚙️ System Status**: Monitor database connectivity, system health, and recent activity
+
+#### Dashboard Commands
+
+The dashboard provides an interactive menu system with the following options:
+
+1. **Run New Simulation** - Interactive scenario selection with custom turn counts
+2. **View Simulation Details** - Examine conversation logs, feedback, and detailed analysis
+3. **Analyze Performance** - View trends, top scenarios, and common issues
+4. **Manage Scenarios** - Browse scenarios, view details, run batch tests
+5. **View Feedback** - Review all feedback, human feedback, critical failures, goal performance
+6. **Batch Operations** - Run analysis, generate reports, clean data, export results
+7. **System Status** - Check database connectivity and system health
+8. **Refresh Dashboard** - Update metrics and return to main view
+9. **Exit** - Close the dashboard
+
+#### Integration
+
+The dashboard integrates with all existing simulation tools:
+- **`cli/run_simulation.js`** - Individual simulation execution
+- **`training/simulation/scenario_runner.js`** - Batch testing
+- **`cli/analyze_failures.js`** - Failure analysis
+- **`cli/collect_feedback.js`** - Human feedback collection
+- **`cli/view_feedback.js`** - Feedback review
+
+#### Example Workflow
+
+```bash
+# 1. Launch dashboard
+node cli/simulation_dashboard.js
+
+# 2. Select "Run New Simulation" (option 1)
+# 3. Choose scenario (e.g., "conflicting_reports")
+# 4. Set custom turns (e.g., 8)
+# 5. Monitor real-time execution
+# 6. Review results and feedback
+# 7. Analyze performance trends
+# 8. Run batch operations if needed
+```
+
 ### Documentation
 
 - 🚀 **[Getting Started](documentation/training/GETTING_STARTED.md)** - Quick start guide

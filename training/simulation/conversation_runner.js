@@ -215,6 +215,29 @@ export class ConversationRunner {
 
         const totalExchanges = users.reduce((sum, user) => sum + user.conversationHistory.length, 0) / 2;
         console.log(`\n  Multi-user conversation complete (${totalExchanges} total exchanges)\n`);
+        
+        // Collect all feedback for conversation-level analysis
+        const allFeedback = [];
+        users.forEach(user => {
+            if (user.feedbackHistory) {
+                allFeedback.push(...user.feedbackHistory);
+            }
+        });
+        
+        // Perform conversation-level analysis
+        console.log(`[ConversationRunner] Performing conversation-level analysis...`);
+        const conversationAnalysis = await this.feedbackCollector.provideConversationFeedback(
+            this.conversationId,
+            conversationHistory,
+            allFeedback
+        );
+        
+        return {
+            success: true,
+            totalExchanges,
+            feedback: allFeedback,
+            conversationAnalysis: conversationAnalysis
+        };
     }
 
 

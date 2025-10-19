@@ -69,16 +69,23 @@ export class SimulationScorer {
             scores.push({ score: -2, reason: 'Generic response to critical situation' });
         }
 
-        // Check verbosity
+        // Check verbosity - improved logic
         const verbosityRatio = agentResponse.length / userMessage.length;
-        if (verbosityRatio > 4) {
+        const isEmotionalUser = this._isEmotionalMessage(userMessage);
+        const isFactualUser = this._isFactualMessage(userMessage);
+        
+        // Different thresholds for different user types
+        const maxVerbosityRatio = isEmotionalUser ? 6 : 4; // Emotional users can handle longer responses
+        const minVerbosityRatio = isFactualUser ? 0.3 : 0.5; // Factual users need more concise responses
+        
+        if (verbosityRatio > maxVerbosityRatio) {
             issues.push({
                 category: 'verbosity',
                 description: `Response too verbose (${verbosityRatio.toFixed(1)}x user message length)`,
                 severity: 'medium'
             });
             scores.push({ score: -1, reason: 'Response too verbose' });
-        } else if (verbosityRatio < 0.5) {
+        } else if (verbosityRatio < minVerbosityRatio) {
             issues.push({
                 category: 'brevity',
                 description: `Response too brief (${verbosityRatio.toFixed(1)}x user message length)`,
@@ -322,6 +329,38 @@ export class SimulationScorer {
         
         // High penalty for empathy loops
         return empathyCount >= 2 || repeatedPhrases >= 2;
+    }
+
+    /**
+     * Detect if message is emotional/expressive
+     */
+    _isEmotionalMessage(message) {
+        const emotionalKeywords = [
+            'worried', 'scared', 'afraid', 'anxious', 'frustrated', 'upset', 'concerned',
+            'terrified', 'panic', 'nervous', 'stressed', 'overwhelmed', 'helpless',
+            'desperate', 'frightened', 'alarmed', 'distressed', 'agitated'
+        ];
+        
+        const lowerMessage = message.toLowerCase();
+        return emotionalKeywords.some(keyword => lowerMessage.includes(keyword));
+    }
+
+    /**
+     * Detect if message is factual/clinical
+     */
+    _isFactualMessage(message) {
+        const factualKeywords = [
+            'symptoms', 'pain', 'fever', 'temperature', 'blood pressure', 'heart rate',
+            'medication', 'dosage', 'side effects', 'appointment', 'test results',
+            'diagnosis', 'treatment', 'procedure', 'examination', 'lab work',
+            'routine', 'schedule', 'habit', 'lifestyle', 'daily', 'weekly',
+            'medication', 'adherence', 'compliance', 'reminder', 'tracking',
+            'sleep', 'diet', 'exercise', 'social', 'family', 'relationships',
+            'stress', 'mood', 'energy', 'motivation', 'goals', 'progress'
+        ];
+        
+        const lowerMessage = message.toLowerCase();
+        return factualKeywords.some(keyword => lowerMessage.includes(keyword));
     }
 
     /**

@@ -273,4 +273,73 @@ export class SimulationReporter {
         
         return actions[category] || ['Review prompt for clarity and specificity'];
     }
+
+    /**
+     * Store conversation-level analysis in database
+     */
+    async storeConversationAnalysis(conversationId, analysis) {
+        try {
+            if (!this.dbConnection) {
+                console.warn('[SimulationReporter] No database connection for storing conversation analysis');
+                return false;
+            }
+
+            // Create conversation_analysis table if it doesn't exist
+            await this.dbConnection.run(`
+                CREATE TABLE IF NOT EXISTS conversation_analysis (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    analysis_data TEXT NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    FOREIGN KEY (conversation_id) REFERENCES feedback(conversation_id)
+                )
+            `);
+
+            // Store the analysis
+            await this.dbConnection.run(`
+                INSERT INTO conversation_analysis (conversation_id, analysis_data, timestamp)
+                VALUES (?, ?, ?)
+            `, [conversationId, JSON.stringify(analysis), Date.now()]);
+
+            console.log(`[SimulationReporter] Conversation analysis stored for ${conversationId}`);
+            return true;
+
+        } catch (error) {
+            console.error('[SimulationReporter] Error storing conversation analysis:', error.message);
+            return false;
+        }
+    }
+
+    /**
+     * Retrieve conversation analysis from database
+     */
+    async getConversationAnalysis(conversationId) {
+        try {
+            if (!this.dbConnection) {
+                console.warn('[SimulationReporter] No database connection for retrieving conversation analysis');
+                return null;
+            }
+
+            const result = await this.dbConnection.get(`
+                SELECT analysis_data, timestamp 
+                FROM conversation_analysis 
+                WHERE conversation_id = ? 
+                ORDER BY timestamp DESC 
+                LIMIT 1
+            `, [conversationId]);
+
+            if (result) {
+                return {
+                    analysis: JSON.parse(result.analysis_data),
+                    timestamp: result.timestamp
+                };
+            }
+
+            return null;
+
+        } catch (error) {
+            console.error('[SimulationReporter] Error retrieving conversation analysis:', error.message);
+            return null;
+        }
+    }
 }

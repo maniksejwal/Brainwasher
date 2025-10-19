@@ -165,7 +165,8 @@ async function runSimulation() {
     }
     
     // Use specified turns or scenario default
-    const finalTurns = turns || selectedScenario.turns || (selectedScenario.multiSession ? 3 : 5);
+    const defaultTurns = selectedScenario.multiSession ? selectedScenario.sessions : (selectedScenario.turns || 5);
+    const finalTurns = turns || defaultTurns;
     console.log(`🔄 Turns: ${finalTurns}\n`);
     
     // Build user configurations
