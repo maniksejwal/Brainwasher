@@ -3,9 +3,8 @@
  * Generates realistic user messages based on personas and context
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import OpenAI from 'openai';
 import config from '../../config.js';
+import { makeApiCall } from '../../agents/api_client.js';
 
 export class SyntheticUser {
     constructor(userId, role, personaKey, personaData) {
@@ -16,25 +15,8 @@ export class SyntheticUser {
         this.conversationHistory = [];
         this.goals = [...(personaData.sample_goals || [])];
         this.currentGoalIndex = 0;
-        
-        // Initialize LLM client
-        this._initializeLLM();
     }
 
-    /**
-     * Initialize LLM client (OpenAI or Gemini)
-     */
-    _initializeLLM() {
-        if (config.CHAT_GPT_KEY) {
-            this.openai = new OpenAI({ apiKey: config.CHAT_GPT_KEY });
-            this.useOpenAI = true;
-        } else if (config.API_KEYS && config.API_KEYS.length > 0) {
-            this.genAI = new GoogleGenerativeAI(config.API_KEYS[0]);
-            this.useOpenAI = false;
-        } else {
-            throw new Error('No AI API keys configured for synthetic user generation');
-        }
-    }
 
     /**
      * Generate a realistic message based on persona and context
@@ -50,26 +32,10 @@ export class SyntheticUser {
         const prompt = this._buildMessagePrompt(lastAgentMessage, currentGoal, conversationTurn, multiUserContext);
 
         try {
-            let message;
-            
-            if (this.useOpenAI) {
-                const response = await this.openai.chat.completions.create({
-                    model: 'gpt-4',
-                    messages: [
-                        { role: 'system', content: this.persona.prompt_template },
-                        { role: 'user', content: prompt }
-                    ],
-                    temperature: 0.9, // Increased for more variety
-                    max_tokens: 50 // Keep responses brief and conversational
-                });
-                message = response.choices[0].message.content.trim();
-            } else {
-                const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-                const result = await model.generateContent(
-                    this.persona.prompt_template + '\n\n' + prompt
-                );
-                message = result.response.text().trim();
-            }
+            // Use the same API client as the agent for consistency
+            const fullPrompt = `${this.persona.prompt_template}\n\n${prompt}`;
+            const result = await makeApiCall(fullPrompt, [], false, 0.7, 30); // temperature=0.7, maxTokens=30
+            const message = result.reply.trim();
 
             this.conversationHistory.push({
                 role: 'user',
@@ -137,12 +103,12 @@ export class SyntheticUser {
         
         if (lastAgentMessage) {
             prompt += `\nThe care agent just said:\n"${lastAgentMessage}"\n`;
-            prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues.`;
+            prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
         } else {
             if (multiUserContext) {
-                prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences max). Avoid monologues.`;
+                prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
             } else {
-                prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences max). Avoid monologues.`;
+                prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
             }
         }
 

@@ -477,7 +477,7 @@ async function showPostSimulationMenu() {
                 break;
                 
             default:
-                console.log('\n❌ Invalid choice. Please enter 1-4.');
+                console.log('\n❌ Invalid choice. Please enter 1-5.');
                 rl.close();
                 await showPostSimulationMenu(); // Show menu again
         }

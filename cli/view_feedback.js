@@ -88,6 +88,7 @@ async function showAllFeedback() {
     console.log(`   👤 Real: ${real.length}\n`);
     
     // Display based on filter
+    const filter = '--all'; // Default to showing all feedback
     if (filter === '--all' || filter === '--simulation') {
         if (simulation.length > 0) {
             console.log('🤖 Simulation Feedback:\n');

@@ -6,6 +6,8 @@
 import { spawn } from 'child_process';
 import chalk from 'chalk';
 import { SCENARIOS } from '../../training/simulation/scenarios.js';
+import { FeedbackAnalyzer } from '../../training/analysis/feedback_analyzer.js';
+import { IssueAnalyzer } from '../../training/analysis/issue_analyzer.js';
 
 export class DashboardOperations {
     constructor(core, menu) {
@@ -126,6 +128,51 @@ export class DashboardOperations {
                 console.log(`Adherence: ${simulation.goal_adherence_score || 0}`);
                 console.log(`History: ${simulation.goal_history_score || 0}`);
                 console.log(`Conversation: ${simulation.goal_conversation_score || 0}`);
+            }
+
+            // Extract circle ID from conversation ID
+            // Conversation ID format: sim_1760897668480_cli_patient_1_4
+            // Circle ID format: cli_patient_1
+            const circleIdMatch = conversationId.match(/sim_\d+_(.+)_\d+$/);
+            const circleId = circleIdMatch ? circleIdMatch[1] : conversationId;
+            
+            console.log(chalk.gray(`Debug: Conversation ID: ${conversationId}`));
+            console.log(chalk.gray(`Debug: Extracted Circle ID: ${circleId}`));
+            
+            // Get conversation messages
+            const messages = await this.db.all(`
+                SELECT user_id, message, timestamp 
+                FROM messages 
+                WHERE circle_id = ? 
+                ORDER BY timestamp ASC
+            `, [circleId]);
+            
+            console.log(chalk.gray(`Debug: Found ${messages.length} messages`));
+            
+            // Debug: Show all user IDs found
+            const uniqueUserIds = [...new Set(messages.map(m => m.user_id))];
+            console.log(chalk.gray(`Debug: Unique user IDs: ${uniqueUserIds.join(', ')}`));
+            
+            // Debug: Show sample messages
+            if (messages.length > 0) {
+                console.log(chalk.gray('Debug: Sample messages:'));
+                messages.slice(0, 3).forEach((msg, index) => {
+                    console.log(chalk.gray(`  ${index + 1}. [${msg.user_id}] ${msg.message.substring(0, 50)}...`));
+                });
+            }
+
+            if (messages.length > 0) {
+                console.log(chalk.cyan.bold('\n💬 CONVERSATION'));
+                console.log('-'.repeat(40));
+                messages.forEach((msg, index) => {
+                    const time = new Date(msg.timestamp).toLocaleTimeString();
+                    const speaker = msg.user_id === 'agent' ? 'AGENT' :
+                                  msg.user_id.includes('patient') ? 'PATIENT' : 
+                                  msg.user_id.includes('caregiver') ? 'CAREGIVER' : 
+                                  msg.user_id.includes('doctor') ? 'DOCTOR' : 
+                                  msg.user_id.toUpperCase();
+                    console.log(`${index + 1}. [${time}] ${speaker}: ${msg.message}`);
+                });
             }
 
             // Get detailed feedback
@@ -550,7 +597,48 @@ export class DashboardOperations {
     }
 
     /**
+     * Analyze performance using unified analysis tool
+     */
+    async analyzePerformance() {
+        try {
+            console.log(chalk.cyan.bold('\n📊 ANALYZE PERFORMANCE'));
+            console.log('-'.repeat(40));
+            
+            const analysisType = await this.menu.askQuestion('Analysis type (prompts/rewards/failures/optimize/all): ');
+            
+            if (!['prompts', 'rewards', 'failures', 'optimize', 'all'].includes(analysisType)) {
+                console.log(chalk.red('Invalid analysis type.'));
+                await this.menu.pause();
+                return;
+            }
+            
+            console.log(chalk.yellow(`Running ${analysisType} analysis...`));
+            
+            // Use the unified analyze tool
+            const analyzeProcess = spawn('node', ['cli/analyze.js', analysisType], {
+                stdio: 'inherit',
+                shell: true
+            });
+            
+            analyzeProcess.on('close', async (code) => {
+                if (code === 0) {
+                    console.log(chalk.green('\n✅ Analysis completed successfully!'));
+                } else {
+                    console.log(chalk.red(`\n❌ Analysis failed with code ${code}`));
+                }
+                await this.menu.pause();
+            });
+            
+        } catch (error) {
+            console.error(chalk.red('Error running analysis:'), error.message);
+            await this.menu.pause();
+        }
+    }
+    
+    /**
      * Get recent conversations for selection
+     * @param {number} limit - Number of recent conversations to get
+     * @returns {Array} - Array of recent conversations
      */
     async getRecentConversations(limit = 10) {
         try {

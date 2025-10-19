@@ -51,7 +51,7 @@ function getNextGeminiClient() {
 }
 
 // FIX: Added 'expectJson' parameter to conditionally request JSON from OpenAI
-export async function makeApiCall(prompt, history = [], expectJson = false) {
+export async function makeApiCall(prompt, history = [], expectJson = false, temperature = 0.7, maxTokens = 100) {
     const fullPrompt = `${history.join('\n')}\n\n${prompt}`;
     const maxRetries = 3;
     let lastError = null;
@@ -63,6 +63,8 @@ export async function makeApiCall(prompt, history = [], expectJson = false) {
                 const requestBody = {
                     model: config.OPENAI_MODEL,
                     messages: [{ role: 'user', content: fullPrompt }],
+                    temperature: temperature,
+                    max_tokens: maxTokens
                 };
                 if (expectJson) {
                     requestBody.response_format = { type: "json_object" };
@@ -72,7 +74,14 @@ export async function makeApiCall(prompt, history = [], expectJson = false) {
             } else {
                 const model = getNextGeminiClient();
                 if (!model) throw new Error("No Gemini clients available.");
-                const result = await model.generateContent(fullPrompt);
+                
+                // Gemini doesn't support temperature/maxTokens in the same way, but we can add generation config
+                const generationConfig = {
+                    temperature: temperature,
+                    maxOutputTokens: maxTokens
+                };
+                
+                const result = await model.generateContent(fullPrompt, generationConfig);
                 const response = await result.response;
                 text = response.text();
             }

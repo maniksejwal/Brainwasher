@@ -17,6 +17,9 @@ export class SimulationScorer {
         const urgencyAssessment = this._assessUrgency(userMessage, agentResponse);
         const issues = [];
         const scores = [];
+        
+        // Calculate verbosity ratio early for use throughout the function
+        const verbosityRatio = agentResponse.length / userMessage.length;
 
         // Check for escalation issues based on urgency
         if (urgencyAssessment.level === URGENCY_LEVELS.CRITICAL && !this._hasEscalation(agentResponse)) {
@@ -70,7 +73,6 @@ export class SimulationScorer {
         }
 
         // Check verbosity - improved logic
-        const verbosityRatio = agentResponse.length / userMessage.length;
         const isEmotionalUser = this._isEmotionalMessage(userMessage);
         const isFactualUser = this._isFactualMessage(userMessage);
         
@@ -92,6 +94,14 @@ export class SimulationScorer {
                 severity: 'low'
             });
             scores.push({ score: -1, reason: 'Response too brief' });
+        }
+
+        // Check for good agent behaviors
+        const goodBehaviors = this._assessGoodBehaviors(userMessage, agentResponse);
+        if (goodBehaviors.length > 0) {
+            goodBehaviors.forEach(behavior => {
+                scores.push({ score: behavior.score, reason: behavior.reason });
+            });
         }
 
         // Check for bugs or inappropriate responses
@@ -329,6 +339,114 @@ export class SimulationScorer {
         
         // High penalty for empathy loops
         return empathyCount >= 2 || repeatedPhrases >= 2;
+    }
+
+    /**
+     * Assess good agent behaviors that should be rewarded
+     */
+    _assessGoodBehaviors(userMessage, agentResponse) {
+        const behaviors = [];
+        
+        // 1. Reward concise responses (1-2 sentences)
+        const sentences = agentResponse.split(/[.!?]+/).filter(s => s.trim().length > 0);
+        if (sentences.length <= 2 && sentences.length >= 1) {
+            behaviors.push({ score: 1, reason: 'Concise response (1-2 sentences)' });
+        }
+        
+        // 2. Reward specific questions (not yes/no)
+        const questions = agentResponse.match(/\?/g) || [];
+        if (questions.length > 0) {
+            const hasSpecificQuestion = this._hasSpecificQuestion(agentResponse);
+            if (hasSpecificQuestion) {
+                behaviors.push({ score: 1, reason: 'Asks specific, open-ended question' });
+            }
+        }
+        
+        // 3. Reward conversational language (not clinical)
+        const isConversational = this._isConversationalLanguage(agentResponse);
+        if (isConversational) {
+            behaviors.push({ score: 1, reason: 'Uses conversational, non-clinical language' });
+        }
+        
+        // 4. Reward empathy and acknowledgment
+        const hasEmpathy = this._hasEmpathy(agentResponse);
+        if (hasEmpathy) {
+            behaviors.push({ score: 1, reason: 'Shows empathy and acknowledges feelings' });
+        }
+        
+        // 5. Reward when patient provides detailed information
+        const hasDetailedInfo = this._hasDetailedInformation(userMessage);
+        if (hasDetailedInfo) {
+            behaviors.push({ score: 1, reason: 'Patient provided detailed information' });
+        }
+        
+        return behaviors;
+    }
+
+    /**
+     * Check if user message contains detailed information
+     */
+    _hasDetailedInformation(message) {
+        // Check for detailed descriptions, specific examples, or personal experiences
+        const detailedIndicators = [
+            // Specific details
+            /\d+\s*(days?|weeks?|months?|years?)/i, // Time references
+            /\d+\s*(times?|hours?|minutes?)/i, // Frequency/time
+            /(always|never|sometimes|often|rarely)/i, // Frequency words
+            /(every|each|most|some|few)/i, // Quantifiers
+            
+            // Personal experiences
+            /(I feel|I think|I notice|I experience|I find)/i,
+            /(it makes me|it causes|it leads to)/i,
+            /(when I|if I|because I)/i,
+            
+            // Specific examples
+            /(for example|like when|such as|including)/i,
+            /(especially|particularly|specifically)/i
+        ];
+        
+        return detailedIndicators.some(pattern => pattern.test(message));
+    }
+
+    /**
+     * Check if response contains specific, open-ended questions
+     */
+    _hasSpecificQuestion(response) {
+        const specificQuestionWords = [
+            'what', 'how', 'when', 'where', 'why', 'which', 'who',
+            'tell me about', 'describe', 'explain', 'share'
+        ];
+        
+        const lowerResponse = response.toLowerCase();
+        return specificQuestionWords.some(word => lowerResponse.includes(word));
+    }
+
+    /**
+     * Check if response uses conversational language
+     */
+    _isConversationalLanguage(response) {
+        const conversationalWords = [
+            'I hear you', 'I understand', 'that sounds', 'I can see',
+            'tell me more', 'what\'s it like', 'how does that feel',
+            'I\'m here', 'let\'s talk about', 'sounds like'
+        ];
+        
+        const lowerResponse = response.toLowerCase();
+        return conversationalWords.some(phrase => lowerResponse.includes(phrase));
+    }
+
+    /**
+     * Check if response shows empathy
+     */
+    _hasEmpathy(response) {
+        const empathyWords = [
+            'I understand', 'I hear you', 'that must be', 'I can imagine',
+            'I\'m sorry', 'that sounds difficult', 'I get it',
+            'that\'s frustrating', 'I can see why'
+        ];
+        
+        const lowerResponse = response.toLowerCase();
+        return empathyWords.some(phrase => lowerResponse.includes(phrase));
     }
 
     /**

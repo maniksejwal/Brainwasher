@@ -280,7 +280,7 @@ export const SCENARIOS = {
         category: 'stress_test',
         complexity: 3,
         users: [
-            { role: 'patient', personaKey: 'withdrawn_patient' }
+            { role: 'patient', personaKey: 'minimal_words_patient' }
         ],
         instructions: 'Patient gives only "yes", "no", "fine", "okay". AI must use open-ended questions and build rapport to get meaningful information.'
     },

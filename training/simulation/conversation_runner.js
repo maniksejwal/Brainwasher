@@ -7,6 +7,7 @@ import { logger as trainingLogger, metrics as metricsCollector } from '../core/i
 import { SimulationFeedback } from './simulation_feedback.js';
 import { SimulationAI } from './ai_integration.js';
 import { RealisticConversationEngine } from './realistic_conversation.js';
+import { addMessage } from '../../db/index.js';
 import chalk from 'chalk';
 
 export class ConversationRunner {
@@ -188,6 +189,31 @@ export class ConversationRunner {
             const latency = Date.now() - startTime;
 
             console.log(`    ${chalk.bold(`${activeUser.role.toUpperCase()}_AGENT`)}: ${agentResult.agent_response}`);
+
+            // Store messages in database for dashboard viewing
+            try {
+                // Store user message
+                await addMessage(
+                    activeUser.userId, // circleId = userId for patient's own circle
+                    activeUser.userId,
+                    activeUser.role,
+                    userMessage,
+                    'PRIVATE',
+                    'NONE'
+                );
+                
+                // Store agent response
+                await addMessage(
+                    activeUser.userId, // circleId = userId for patient's own circle
+                    'agent',
+                    'agent',
+                    agentResult.agent_response,
+                    'PRIVATE',
+                    'NONE'
+                );
+            } catch (error) {
+                console.warn(`[ConversationRunner] Failed to store messages: ${error.message}`);
+            }
 
             // Record agent response only for the active user (their personal agent)
             activeUser.recordAgentResponse(agentResult.agent_response);

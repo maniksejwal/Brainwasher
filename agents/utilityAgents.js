@@ -19,7 +19,7 @@ import {
 
 export async function classifyExplicitIntent(message) {
     const prompt = PROMPT_EXPLICIT_INTENT.replace('{{USER_MESSAGE}}', message);
-    return makeApiCall(prompt, [], true);
+    return makeApiCall(prompt, [], true, 0.7, 100); // temperature=0.7, maxTokens=100 for concise responses
 }
 
 export async function classifyUserIntent(message, context) {

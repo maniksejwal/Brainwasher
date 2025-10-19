@@ -16,6 +16,6 @@ export async function matchResponseToAction(userMessage, pendingActions) {
         .replace('{{USER_MESSAGE}}', userMessage);
 
     // FIX: This agent expects a JSON response
-    return makeApiCall(prompt, [], true);
+    return makeApiCall(prompt, [], true, 0.7, 100); // temperature=0.7, maxTokens=100 for concise responses
 }
 

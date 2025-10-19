@@ -13,6 +13,9 @@ export class DashboardCore {
     }
 
     async initialize() {
+        // Set simulation mode for dashboard operations
+        process.env.SIMULATION_MODE = 'true';
+        
         this.db = await getDb();
         this.rl = readline.createInterface({
             input: process.stdin,
