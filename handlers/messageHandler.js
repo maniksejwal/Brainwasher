@@ -9,10 +9,19 @@ import { performAiAnalysis } from './message_logic/aiAnalysisHandler.js';
 import { handleFactProcessing } from './message_logic/conflictHandler.js';
 import { handleSharingAndEscalation } from './message_logic/sharing/index.js';
 import { handlePendingActionResponse } from './message_logic/actionResponseHandler.js';
+import { initializeTopicShiftHandler } from './message_logic/topicShiftHandler.js';
 import { events } from '../orchestrator.js';
 import { logger as trainingLogger, metrics as metricsCollector } from '../training/index.js';
 
+// Lazy initialization of topic shift handler
+let topicShiftHandler = null;
+
 export async function handleMessage(userId, circleId, message) {
+    // Lazy initialize topic shift handler to avoid circular dependency
+    if (!topicShiftHandler) {
+        topicShiftHandler = initializeTopicShiftHandler(events);
+    }
+    
     const startTime = Date.now();
     const memberInfo = await getMemberInfo(userId, circleId);
     if (!memberInfo) {

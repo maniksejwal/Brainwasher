@@ -7,30 +7,32 @@
 
 import chalk from 'chalk';
 import { getDb } from '../db/connection.js';
-import readline from 'readline';
 import { spawn } from 'child_process';
 import { SCENARIOS } from '../training/simulation/scenarios.js';
 
 class SimpleDashboard {
     constructor() {
         this.db = null;
-        this.rl = null;
     }
 
     async initialize() {
         process.env.SIMULATION_MODE = 'true';
         this.db = await getDb();
-        this.rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-            terminal: true,
-            historySize: 0,
-            prompt: ''
-        });
     }
 
     async askQuestion(question) {
-        return new Promise(resolve => this.rl.question(chalk.yellow(question), resolve));
+        const readline = await import('readline');
+        const rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+        });
+        
+        return new Promise(resolve => {
+            rl.question(chalk.yellow(question), (answer) => {
+                rl.close();
+                resolve(answer);
+            });
+        });
     }
 
     async showMainMenu() {
@@ -66,12 +68,6 @@ class SimpleDashboard {
     async runNewSimulation() {
         console.log(chalk.cyan('🎯 Launching simulation...'));
         
-        // Close our readline interface before spawning
-        if (this.rl) {
-            this.rl.close();
-            this.rl = null;
-        }
-        
         const process = spawn('node', ['cli/run_simulation.js'], { 
             stdio: 'inherit', 
             shell: true,
@@ -84,17 +80,6 @@ class SimpleDashboard {
             } else {
                 console.log(chalk.red(`\n❌ Simulation failed with code ${code}`));
             }
-            
-            // Reinitialize readline interface after simulation
-            setTimeout(() => {
-                this.rl = readline.createInterface({
-                    input: process.stdin,
-                    output: process.stdout,
-                    terminal: true,
-                    historySize: 0,
-                    prompt: ''
-                });
-            }, 100); // Small delay to ensure process.stdin is available
         });
     }
 
@@ -214,9 +199,7 @@ class SimpleDashboard {
     }
 
     cleanup() {
-        if (this.rl) {
-            this.rl.close();
-        }
+        // No persistent readline interface to clean up
     }
 }
 

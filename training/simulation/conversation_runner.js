@@ -8,7 +8,7 @@ import { SimulationEventHandler } from './simulation_event_handler.js';
 import { SimulationAI } from './ai_integration.js';
 import { RealisticConversationEngine } from './realistic_conversation.js';
 import { SimulationFeedback } from './simulation_feedback.js';
-import { TopicShiftAgent } from './topic_shift_agent.js';
+import { TopicShiftAgent } from '../../agents/topicShiftAgent.js';
 import { addMessage } from '../../db/index.js';
 import chalk from 'chalk';
 

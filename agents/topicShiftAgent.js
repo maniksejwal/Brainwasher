@@ -1,9 +1,9 @@
 /**
- * @fileoverview Topic Shift Detection Agent
+ * @fileoverview agents/topicShiftAgent.js
  * Uses LLM to detect conversational patterns and topic avoidance
  */
 
-import { makeApiCall } from '../../agents/api_client.js';
+import { makeApiCall } from './api_client.js';
 
 export class TopicShiftAgent {
     constructor() {

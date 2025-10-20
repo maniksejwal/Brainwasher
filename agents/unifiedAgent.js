@@ -9,6 +9,8 @@ import { PROMPT_UNIFIED_AGENT_WITH_STATE as PROMPT_UNIFIED_AGENT } from '../prom
 import { PROMPT_CONTEXT_ENRICHMENT } from '../prompts/enrichment_prompt.js';
 import { getRecentMessages, getUserState, getFactHistory, findUserById, findCircleByPatientId, getUnreadEscalationsForCircle } from '../db/index.js';
 import { STAGES_OF_CHANGE, COPING_STYLES } from '../behavioral_models.js';
+import { TopicShiftAgent } from './topicShiftAgent.js';
+import { events } from '../orchestrator.js';
 
 export async function processUserMessage(userId, role, message, careCircleMembers, circleId) {
     const history = await getRecentMessages(circleId, 5);
@@ -19,6 +21,18 @@ export async function processUserMessage(userId, role, message, careCircleMember
     const speaker = await findUserById(userId);
     const circle = await findCircleByPatientId(circleId);
     const patient = await findUserById(circle.primary_patient_id);
+
+    // Include topic shift analysis in the main prompt
+    const topicShiftAgent = new TopicShiftAgent();
+    const topicShift = await topicShiftAgent.analyzeMessage(message, Date.now());
+    
+    if (topicShift) {
+        events.emit('topic_shift_detected', {
+            userId,
+            shift: topicShift,
+            timestamp: Date.now()
+        });
+    }
 
     const behavioralModels = {
         stages_of_change: STAGES_OF_CHANGE,
@@ -34,7 +48,8 @@ export async function processUserMessage(userId, role, message, careCircleMember
         .replace('{{USER_STATE}}', JSON.stringify(currentState, null, 2))
         .replace('{{FACT_HISTORY}}', JSON.stringify(factHistory, null, 2))
         .replace('{{RECENT_ESCALATIONS}}', JSON.stringify(recentEscalations, null, 2))
-        .replace('{{BEHAVIORAL_MODELS}}', JSON.stringify(behavioralModels, null, 2));
+        .replace('{{BEHAVIORAL_MODELS}}', JSON.stringify(behavioralModels, null, 2))
+        .replace('{{TOPIC_SHIFT_ANALYSIS}}', topicShift ? JSON.stringify(topicShift, null, 2) : 'No topic shift detected');
 
     return makeApiCall(prompt, historyText, true, 0.7, 300); // Increased maxTokens to 300 for complete responses
 }

@@ -10,6 +10,8 @@ export class SimulationEventHandler {
         this.escalations = [];
         this.broadcasts = [];
         this.mediations = [];
+        this.topicShifts = [];
+        this.avoidanceEvents = [];
     }
 
     /**
@@ -43,6 +45,27 @@ export class SimulationEventHandler {
             // Just log, don't store
             console.log(`🔄 [Simulation] Analysis: ${data.description}`);
         });
+
+        // Listen for topic shift events
+        events.on('topic_shift_detected', (data) => {
+            console.log(`🔄 [Simulation] TOPIC SHIFT: ${data.shift.type} - ${data.shift.reason}`);
+            this.topicShifts.push({
+                timestamp: Date.now(),
+                userId: data.userId,
+                shift: data.shift
+            });
+        });
+
+        // Listen for avoidance events
+        events.on('avoidance_detected', (data) => {
+            console.log(`⚠️ [Simulation] AVOIDANCE: ${data.shift.type} (${data.severity})`);
+            this.avoidanceEvents.push({
+                timestamp: Date.now(),
+                userId: data.userId,
+                shift: data.shift,
+                severity: data.severity
+            });
+        });
     }
 
     /**
@@ -64,6 +87,20 @@ export class SimulationEventHandler {
      */
     getMediations() {
         return this.mediations;
+    }
+
+    /**
+     * Get topic shift events
+     */
+    getTopicShifts() {
+        return this.topicShifts;
+    }
+
+    /**
+     * Get avoidance events
+     */
+    getAvoidanceEvents() {
+        return this.avoidanceEvents;
     }
 
     /**
@@ -89,6 +126,8 @@ export class SimulationEventHandler {
         this.escalations = [];
         this.broadcasts = [];
         this.mediations = [];
+        this.topicShifts = [];
+        this.avoidanceEvents = [];
     }
 
     /**
@@ -98,5 +137,7 @@ export class SimulationEventHandler {
         events.removeAllListeners('escalate');
         events.removeAllListeners('broadcast');
         events.removeAllListeners('analysis_progress');
+        events.removeAllListeners('topic_shift_detected');
+        events.removeAllListeners('avoidance_detected');
     }
 }
