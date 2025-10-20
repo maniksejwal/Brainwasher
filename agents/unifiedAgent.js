@@ -36,7 +36,7 @@ export async function processUserMessage(userId, role, message, careCircleMember
         .replace('{{RECENT_ESCALATIONS}}', JSON.stringify(recentEscalations, null, 2))
         .replace('{{BEHAVIORAL_MODELS}}', JSON.stringify(behavioralModels, null, 2));
 
-    return makeApiCall(prompt, historyText, true, 0.7, 200); // Increased maxTokens to 200 for complete JSON responses
+    return makeApiCall(prompt, historyText, true, 0.7, 300); // Increased maxTokens to 300 for complete responses
 }
 
 export async function performContextEnrichment(userMessage, originalAnalysis, entityMentioned, actualUsername, actualRole) {
@@ -47,6 +47,6 @@ export async function performContextEnrichment(userMessage, originalAnalysis, en
         .replace('{{ACTUAL_USERNAME}}', actualUsername)
         .replace('{{ACTUAL_ROLE}}', actualRole);
 
-    return makeApiCall(prompt, [], true, 0.7, 200); // Increased maxTokens to 200 for complete JSON responses
+    return makeApiCall(prompt, [], true, 0.7, 300); // Increased maxTokens to 300 for complete responses
 }
 

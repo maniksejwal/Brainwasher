@@ -4,9 +4,11 @@
  */
 
 import { logger as trainingLogger, metrics as metricsCollector } from '../core/index.js';
-import { SimulationFeedback } from './simulation_feedback.js';
+import { SimulationEventHandler } from './simulation_event_handler.js';
 import { SimulationAI } from './ai_integration.js';
 import { RealisticConversationEngine } from './realistic_conversation.js';
+import { SimulationFeedback } from './simulation_feedback.js';
+import { TopicShiftAgent } from './topic_shift_agent.js';
 import { addMessage } from '../../db/index.js';
 import chalk from 'chalk';
 
@@ -19,6 +21,8 @@ export class ConversationRunner {
         this.feedbackCollector = null;
         this.aiIntegration = new SimulationAI(simulationDb);
         this.conversationEngine = new RealisticConversationEngine();
+        this.eventHandler = new SimulationEventHandler();
+        this.topicShiftAgent = new TopicShiftAgent();
         
         if (autoFeedback) {
             this.feedbackCollector = new SimulationFeedback(conversationId, simulationDb);
@@ -29,6 +33,8 @@ export class ConversationRunner {
      * Run a single-user conversation
      */
     async runSingleUserConversation(user, turns, emitProgress = null) {
+        this.eventHandler.initialize();
+        
         console.log(`\n[ConversationRunner] Starting single-user conversation with ${user.userId} (${turns} turns max)`);
         console.log(`  Role: ${user.role}, Persona: ${user.persona.name}`);
         console.log('');
@@ -167,6 +173,16 @@ export class ConversationRunner {
 
             console.log(`    ${chalk.bold(activeUser.role.toUpperCase())} (${activeUser.persona.name}): ${userMessage}`);
 
+            // Detect topic shifts using LLM agent
+            const topicShift = await this.topicShiftAgent.analyzeMessage(userMessage, turn);
+            if (topicShift) {
+                console.log(`    ${chalk.yellow('🔄 TOPIC SHIFT DETECTED:')} ${topicShift.reason}`);
+                console.log(`    ${chalk.gray('Type:')} ${topicShift.type} ${chalk.gray('| Confidence:')} ${(topicShift.confidence * 100).toFixed(0)}%`);
+                if (topicShift.suggestsAvoidance) {
+                    console.log(`    ${chalk.red('⚠️  AVOIDANCE BEHAVIOR DETECTED')}`);
+                }
+            }
+
             // Add to conversation history
             conversationHistory.push({
                 role: 'user',
@@ -193,9 +209,9 @@ export class ConversationRunner {
             // Store agent response in database (user messages are stored by messageHandler.js)
             try {
                 await addMessage(
-                    activeUser.userId, // circleId = userId for patient's own circle
+                    this.conversationId, // Use conversation ID as circle_id for unified retrieval
                     'agent',
-                    'agent',
+                    `${activeUser.role}_agent`,
                     agentResult.agent_response,
                     'PRIVATE',
                     'NONE'
@@ -246,6 +262,19 @@ export class ConversationRunner {
             conversationHistory,
             allFeedback
         );
+        
+        // Report events that occurred during conversation
+        if (this.eventHandler.hasEscalation()) {
+            console.log(`🚨 [ConversationRunner] ESCALATION DETECTED during conversation`);
+            console.log(`   Escalations: ${this.eventHandler.getEscalations().length}`);
+        }
+        
+        if (this.eventHandler.wasCaregiverNotified()) {
+            console.log(`📢 [ConversationRunner] CAREGIVER NOTIFIED during conversation`);
+        }
+        
+        // Cleanup event handler
+        this.eventHandler.cleanup();
         
         return {
             success: true,

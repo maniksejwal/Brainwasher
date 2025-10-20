@@ -18,6 +18,7 @@ export class SimulationDriver {
         this.db = null;
         this.syntheticUsers = [];
         this.conversationId = `sim_${Date.now()}`;
+        this.scenarioId = null; // Will be set when scenario is selected
         this.logResults = options.logResults !== false;
         this.autoFeedback = options.autoFeedback !== false;
         this.progressCallback = options.progressCallback || null;
@@ -223,11 +224,23 @@ export class SimulationDriver {
     }
 
     /**
+     * Set scenario and update conversation ID
+     */
+    setScenario(scenarioKey) {
+        this.scenarioId = scenarioKey;
+        this.conversationId = `sim_${Date.now()}_${scenarioKey}`;
+    }
+
+    /**
      * Run full simulation scenario
      */
-    async runScenario(scenarioConfig) {
+    async runScenario(scenarioConfig, scenarioKey) {
+        // Set scenario ID and update conversation ID
+        this.setScenario(scenarioKey);
+        
         console.log('\n' + '='.repeat(80));
         console.log(`SIMULATION SCENARIO: ${scenarioConfig.name}`);
+        console.log(`CONVERSATION ID: ${this.conversationId}`);
         console.log('='.repeat(80));
 
         // Emit progress events if callback provided

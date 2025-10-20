@@ -17,6 +17,23 @@ export class SimulationAI {
      * Uses separate simulation database - no production interference
      */
     async getAgentResponse(userId, message, multiUserContext = null) {
+        // Suppress verbose simulation logs
+        const originalConsoleLog = console.log;
+        console.log = (...args) => {
+            const message = args.join(' ');
+            if (message.includes('[AIAnalysisHandler]') || 
+                message.includes('[SimulationAI]') ||
+                message.includes('Step 1:') ||
+                message.includes('Initial analysis complete') ||
+                message.includes('State for') ||
+                message.includes('System responded:') ||
+                message.includes('🔄 [Simulation] Analysis:') ||
+                message.includes('📢 [Simulation] BROADCAST:')) {
+                return; // Suppress these logs
+            }
+            originalConsoleLog(...args);
+        };
+
         try {
             // Determine circle ID from context
             let circleId = userId; // Default to user ID for single-user scenarios
@@ -56,6 +73,8 @@ export class SimulationAI {
             };
             
         } catch (error) {
+            // Restore original console.log
+            console.log = originalConsoleLog;
             console.error(`[SimulationAI] System failed: ${error.message}`);
             
             // If AI fails, this is a SYSTEM FAILURE - not a simulation issue

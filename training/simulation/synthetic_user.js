@@ -34,7 +34,7 @@ export class SyntheticUser {
         try {
             // Use the same API client as the agent for consistency
             const fullPrompt = `${this.persona.prompt_template}\n\n${prompt}`;
-            const result = await makeApiCall(fullPrompt, [], false, 0.7, 30); // temperature=0.7, maxTokens=30
+            const result = await makeApiCall(fullPrompt, [], false, 0.7, 100); // Increased maxTokens to 100 for complete user messages
             const message = result.reply.trim();
 
             this.conversationHistory.push({
