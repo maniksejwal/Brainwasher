@@ -136,8 +136,6 @@ export class DashboardOperations {
             const circleIdMatch = conversationId.match(/sim_\d+_(.+)_\d+$/);
             const circleId = circleIdMatch ? circleIdMatch[1] : conversationId;
             
-            console.log(chalk.gray(`Debug: Conversation ID: ${conversationId}`));
-            console.log(chalk.gray(`Debug: Extracted Circle ID: ${circleId}`));
             
             // Get conversation messages
             const messages = await this.db.all(`
@@ -147,19 +145,6 @@ export class DashboardOperations {
                 ORDER BY timestamp ASC
             `, [circleId]);
             
-            console.log(chalk.gray(`Debug: Found ${messages.length} messages`));
-            
-            // Debug: Show all user IDs found
-            const uniqueUserIds = [...new Set(messages.map(m => m.user_id))];
-            console.log(chalk.gray(`Debug: Unique user IDs: ${uniqueUserIds.join(', ')}`));
-            
-            // Debug: Show sample messages
-            if (messages.length > 0) {
-                console.log(chalk.gray('Debug: Sample messages:'));
-                messages.slice(0, 3).forEach((msg, index) => {
-                    console.log(chalk.gray(`  ${index + 1}. [${msg.user_id}] ${msg.message.substring(0, 50)}...`));
-                });
-            }
 
             if (messages.length > 0) {
                 console.log(chalk.cyan.bold('\n💬 CONVERSATION'));

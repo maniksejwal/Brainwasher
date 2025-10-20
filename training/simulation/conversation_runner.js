@@ -190,19 +190,8 @@ export class ConversationRunner {
 
             console.log(`    ${chalk.bold(`${activeUser.role.toUpperCase()}_AGENT`)}: ${agentResult.agent_response}`);
 
-            // Store messages in database for dashboard viewing
+            // Store agent response in database (user messages are stored by messageHandler.js)
             try {
-                // Store user message
-                await addMessage(
-                    activeUser.userId, // circleId = userId for patient's own circle
-                    activeUser.userId,
-                    activeUser.role,
-                    userMessage,
-                    'PRIVATE',
-                    'NONE'
-                );
-                
-                // Store agent response
                 await addMessage(
                     activeUser.userId, // circleId = userId for patient's own circle
                     'agent',
@@ -212,7 +201,7 @@ export class ConversationRunner {
                     'NONE'
                 );
             } catch (error) {
-                console.warn(`[ConversationRunner] Failed to store messages: ${error.message}`);
+                console.warn(`[ConversationRunner] Failed to store agent response: ${error.message}`);
             }
 
             // Record agent response only for the active user (their personal agent)
@@ -294,6 +283,12 @@ export class ConversationRunner {
                 overallScore: feedback.overallScore,
                 improvementSuggestions: feedback.improvementSuggestions
             };
+            
+            // Store feedback in user's history for conversation analysis
+            if (!user.feedbackHistory) {
+                user.feedbackHistory = [];
+            }
+            user.feedbackHistory.push(feedbackData);
 
             if (feedback.issuesFound > 0) {
                 console.log(`    🔍 Auto-detected ${feedback.issuesFound} issue(s):`);

@@ -204,26 +204,27 @@ async function runSimulation() {
         console.log(`   Feedback: Auto-generated (see above)`);
         
         // Offer per-message feedback
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
-        
-        console.log('\n💬 Feedback Options:');
-        console.log('   Press ENTER to skip feedback');
-        console.log('   Type message number (e.g., "1", "2") to give feedback on that turn');
-        console.log('   Type "all" to give overall feedback');
-        console.log('   Type "q" to quit');
-        
-        const choice = await new Promise(resolve => {
-            rl.question('\n❓ Provide feedback? (enter/1/2/all/q): ', resolve);
-        });
-        
-        if (choice && choice.toLowerCase() === 'q') {
-            console.log('👋 Exiting feedback collection...');
-            rl.close();
-            return;
-        }
+        let rl = null;
+        try {
+            rl = readline.createInterface({
+                input: process.stdin,
+                output: process.stdout
+            });
+            
+            console.log('\n💬 Feedback Options:');
+            console.log('   Press ENTER to skip feedback');
+            console.log('   Type message number (e.g., "1", "2") to give feedback on that turn');
+            console.log('   Type "all" to give overall feedback');
+            console.log('   Type "q" to quit');
+            
+            const choice = await new Promise(resolve => {
+                rl.question('\n❓ Provide feedback? (enter/1/2/all/q): ', resolve);
+            });
+            
+            if (choice && choice.toLowerCase() === 'q') {
+                console.log('👋 Exiting feedback collection...');
+                return;
+            }
         
         if (choice && choice !== '') {
             const db = await getDb();
@@ -239,18 +240,24 @@ async function runSimulation() {
                 
                 const feedbackScore = parseInt(score);
                 if (!isNaN(feedbackScore) && feedbackScore >= -1 && feedbackScore <= 1) {
-                    await db.run(`
-                        INSERT INTO feedback (conversation_id, user_id, circle_id, score, comment, timestamp)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    `, [
-                        `cli_sim_${Date.now()}`,
-                        `cli_user_1`,
-                        `cli_circle_1`,
-                        feedbackScore,
-                        `[Overall] ${comment}`,
-                        Date.now()
-                    ]);
-                    console.log('✅ Overall feedback saved!');
+                    try {
+                        await db.run(`
+                            INSERT INTO feedback (conversation_id, user_id, circle_id, score, comment, timestamp)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        `, [
+                            `cli_sim_${Date.now()}`,
+                            `cli_user_1`,
+                            `cli_circle_1`,
+                            feedbackScore,
+                            `[Overall] ${comment}`,
+                            Date.now()
+                        ]);
+                        console.log('✅ Overall feedback saved!');
+                    } catch (error) {
+                        console.log(`❌ Error saving feedback: ${error.message}`);
+                    }
+                } else {
+                    console.log('❌ Invalid score. Please enter -1, 0, or 1.');
                 }
             } else {
                 // Specific turn feedback
@@ -282,8 +289,14 @@ async function runSimulation() {
                 }
             }
         }
+        } finally {
+            if (rl) {
+                rl.close();
+            }
+        }
         
-        rl.close();
+        // Small delay to ensure readline interface is fully closed
+        await new Promise(resolve => setTimeout(resolve, 100));
         
         // Show post-simulation menu
         await showPostSimulationMenu();
