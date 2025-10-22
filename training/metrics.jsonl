@@ -412,3 +412,9 @@
 {"timestamp":1761129146582,"type":"message_length","user_id":"cli_patient_1","message_length":83,"response_length":97}
 {"timestamp":1761129153524,"type":"message_length","user_id":"cli_patient_1","message_length":97,"response_length":140}
 {"timestamp":1761129162264,"type":"message_length","user_id":"cli_patient_1","message_length":92,"response_length":132}
+{"timestamp":1761131191800,"type":"message_length","user_id":"cli_patient_1","message_length":115,"response_length":117}
+{"timestamp":1761131197900,"type":"message_length","user_id":"cli_patient_1","message_length":73,"response_length":146}
+{"timestamp":1761131208395,"type":"message_length","user_id":"cli_doctor_4","message_length":63,"response_length":133}
+{"timestamp":1761131215058,"type":"message_length","user_id":"cli_caregiver_2","message_length":108,"response_length":130}
+{"timestamp":1761131221286,"type":"message_length","user_id":"cli_doctor_3","message_length":44,"response_length":84}
+{"timestamp":1761131228754,"type":"message_length","user_id":"cli_caregiver_2","message_length":158,"response_length":122}

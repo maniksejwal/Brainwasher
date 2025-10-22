@@ -48,7 +48,143 @@ export const SCENARIOS = {
         ]
     },
     
-    // ========== HIDING INFORMATION / DECEPTION ==========
+    // ========== DOCTOR AVOIDANCE SCENARIOS ==========
+    doctor_avoidance_agent_convince: {
+        name: '🏥 Doctor Avoidance - Agent Convincing',
+        description: 'Patient avoids consulting doctor, agent tries to convince and seeks caregiver help if patient resists',
+        category: 'avoidance',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'denial_prone' },
+            { role: 'caregiver', personaKey: 'engaged_supportive_caregiver' }
+        ],
+        instructions: {
+            patient: 'You are avoiding seeing a doctor despite having concerning symptoms. You make excuses, minimize your condition, and resist suggestions to seek medical help.',
+            caregiver: 'You are concerned about the patient\'s health and want them to see a doctor. You support the agent\'s efforts to convince the patient.',
+            agent: 'Try to convince the patient to see a doctor. If the patient resists, seek help from the caregiver to apply additional pressure.'
+        },
+        turns: 8
+    },
+
+    doctor_avoidance_caregiver_convince: {
+        name: '🏥 Doctor Avoidance - Caregiver Convincing',
+        description: 'Patient avoids consulting doctor, caregiver tries to convince and seeks AI help when patient resists',
+        category: 'avoidance',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'denial_prone' },
+            { role: 'caregiver', personaKey: 'helicopter_caregiver' }
+        ],
+        instructions: {
+            patient: 'You are avoiding seeing a doctor despite having concerning symptoms. You make excuses, minimize your condition, and resist suggestions to seek medical help.',
+            caregiver: 'You are very concerned about the patient\'s health and want them to see a doctor immediately. You try to convince them and seek AI help when they resist.',
+            agent: 'Support the caregiver\'s efforts to convince the patient. Provide additional arguments and strategies when the caregiver asks for help.'
+        },
+        turns: 8
+    },
+
+    doctor_avoidance_minimal_consultation: {
+        name: '🏥 Doctor Avoidance - Minimal Consultation',
+        description: 'Patient avoids doctor visit but agrees to minimal consultation (phone/telehealth)',
+        category: 'avoidance',
+        complexity: 3,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' },
+            { role: 'doctor', personaKey: 'empathetic_doctor' }
+        ],
+        instructions: {
+            patient: 'You are anxious about seeing a doctor in person but might be open to a phone consultation or telehealth visit.',
+            doctor: 'You want to help the patient but understand their anxiety. Offer alternative consultation methods like phone calls or telehealth.',
+            agent: 'Help facilitate a compromise between the patient\'s avoidance and the need for medical consultation.'
+        },
+        turns: 6
+    },
+
+    // ========== CAREGIVER-FOCUSED SCENARIOS ==========
+    caregiver_medication_management: {
+        name: '💊 Caregiver Medication Management',
+        description: 'Caregiver takes charge of patient\'s medication adherence and monitoring',
+        category: 'caregiver',
+        complexity: 3,
+        users: [
+            { role: 'patient', personaKey: 'elderly_cognitive' },
+            { role: 'caregiver', personaKey: 'engaged_supportive_caregiver' }
+        ],
+        instructions: {
+            patient: 'You have trouble remembering medications and sometimes resist taking them. You appreciate help but want to maintain independence.',
+            caregiver: 'You are actively managing the patient\'s medications, tracking adherence, and coordinating with healthcare providers.',
+            agent: 'Support the caregiver\'s medication management efforts while respecting the patient\'s autonomy.'
+        },
+        turns: 8
+    },
+
+    caregiver_crisis_intervention: {
+        name: '🚨 Caregiver Crisis Intervention',
+        description: 'Caregiver detects patient crisis and needs immediate support and guidance',
+        category: 'caregiver',
+        complexity: 5,
+        users: [
+            { role: 'patient', personaKey: 'depressed_patient' },
+            { role: 'caregiver', personaKey: 'helicopter_caregiver' }
+        ],
+        instructions: {
+            patient: 'You are in a mental health crisis - feeling hopeless, not eating, not taking medications. You may resist help.',
+            caregiver: 'You are extremely worried about the patient\'s safety and need immediate guidance on how to help.',
+            agent: 'Provide crisis intervention support, help assess risk level, and guide appropriate responses.'
+        },
+        turns: 10
+    },
+
+    caregiver_burnout_support: {
+        name: '😰 Caregiver Burnout Support',
+        description: 'Caregiver is experiencing burnout and needs emotional support and practical help',
+        category: 'caregiver',
+        complexity: 4,
+        users: [
+            { role: 'caregiver', personaKey: 'burned_out_caregiver' },
+            { role: 'patient', personaKey: 'complex_comorbid' }
+        ],
+        instructions: {
+            caregiver: 'You are exhausted, overwhelmed, and feeling guilty about needing help. You\'re struggling to care for the patient.',
+            patient: 'You have complex needs and may not realize how much stress you\'re causing the caregiver.',
+            agent: 'Provide emotional support to the caregiver, help them access resources, and suggest practical solutions.'
+        },
+        turns: 8
+    },
+
+    caregiver_family_conflict: {
+        name: '👨‍👩‍👦 Caregiver Family Conflict',
+        description: 'Caregiver faces family disagreements about patient care decisions',
+        category: 'caregiver',
+        complexity: 4,
+        users: [
+            { role: 'caregiver', personaKey: 'conflicted_family_member' },
+            { role: 'patient', personaKey: 'elderly_cognitive' }
+        ],
+        instructions: {
+            caregiver: 'You are caught between family members who disagree about the patient\'s care. You need help navigating these conflicts.',
+            patient: 'You may not be aware of family conflicts but you sense tension and stress.',
+            agent: 'Help the caregiver navigate family dynamics, facilitate communication, and find compromise solutions.'
+        },
+        turns: 8
+    },
+
+    caregiver_health_monitoring: {
+        name: '📊 Caregiver Health Monitoring',
+        description: 'Caregiver actively monitors patient\'s health metrics and symptoms',
+        category: 'caregiver',
+        complexity: 3,
+        users: [
+            { role: 'patient', personaKey: 'medication_nonadherent' },
+            { role: 'caregiver', personaKey: 'professional_caregiver' }
+        ],
+        instructions: {
+            patient: 'You have chronic conditions that need monitoring. You sometimes forget to track symptoms or take readings.',
+            caregiver: 'You are systematically tracking the patient\'s health metrics, symptoms, and medication adherence.',
+            agent: 'Support the caregiver\'s monitoring efforts and help interpret patterns in the patient\'s health data.'
+        },
+        turns: 6
+    },
     hiding_symptoms: {
         name: '🤐 Patient Hiding Critical Symptoms',
         description: 'Patient deliberately conceals important health information due to fear or shame',

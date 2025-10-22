@@ -9,6 +9,7 @@ import chalk from 'chalk';
 import { getDb } from '../db/connection.js';
 import { spawn } from 'child_process';
 import { SCENARIOS } from '../training/simulation/scenarios.js';
+import { parseConversationId, extractCareCircleId } from '../utils/conversation_ids.js';
 
 class SimpleDashboard {
     constructor() {
@@ -58,10 +59,20 @@ class SimpleDashboard {
     }
 
     extractScenarioFromConversationId(conversationId) {
-        // Conversation ID format: sim_TIMESTAMP_SCENARIO_KEY or sim_TIMESTAMP_SCENARIO_KEY_...
+        // Try to parse using new conversation ID system
+        const parsed = parseConversationId(conversationId);
+        
+        if (parsed.type === 'conversation' && parsed.scenario) {
+            return parsed.scenario;
+        }
+        
+        if (parsed.type === 'care_circle' && parsed.scenario) {
+            return parsed.scenario;
+        }
+        
+        // Fallback to old format parsing
         const parts = conversationId.split('_');
         if (parts.length >= 3) {
-            // Find the scenario key - it's usually the 3rd part, but might be longer
             // Look for known scenario keys
             const knownScenarios = Object.keys(SCENARIOS);
             for (let i = 2; i < parts.length; i++) {

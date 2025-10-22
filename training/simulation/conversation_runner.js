@@ -171,6 +171,20 @@ export class ConversationRunner {
 
             console.log(`    ${chalk.bold(activeUser.role.toUpperCase())} (${activeUser.persona.name}): ${userMessage}`);
 
+            // Store user message in database
+            try {
+                await addMessage(
+                    this.conversationId, // Use conversation ID as circle_id for unified retrieval
+                    activeUser.userId,
+                    activeUser.role,
+                    userMessage,
+                    'PRIVATE',
+                    'NONE'
+                );
+            } catch (error) {
+                console.warn(`[ConversationRunner] Failed to store user message: ${error.message}`);
+            }
+
             // Add to conversation history
             conversationHistory.push({
                 role: 'user',

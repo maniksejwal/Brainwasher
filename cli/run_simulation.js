@@ -64,7 +64,9 @@ if (args.includes('--list') || args.includes('-l')) {
         '📉 Longitudinal': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'longitudinal'),
         '⚡ Stress Testing': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'stress_test'),
         '🤐 Deception': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'deception'),
-        '🚑 Escalation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation')
+        '🚑 Escalation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation'),
+        '🏥 Doctor Avoidance': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'avoidance'),
+        '👥 Caregiver-Focused': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'caregiver')
     };
     
     for (const [category, scenarios] of Object.entries(categories)) {
@@ -339,7 +341,9 @@ async function selectScenarioInteractively() {
         '📉 Longitudinal (Multi-Session)': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'longitudinal'),
         '⚡ Stress Testing': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'stress_test'),
         '🤐 Deception': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'deception'),
-        '🚑 Escalation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation')
+        '🚑 Escalation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation'),
+        '🏥 Doctor Avoidance': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'avoidance'),
+        '👥 Caregiver-Focused': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'caregiver')
     };
 
     let optionNumber = 1;
@@ -422,7 +426,9 @@ async function showPostSimulationMenu() {
                     '📉 Longitudinal': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'longitudinal'),
                     '⚡ Stress Testing': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'stress_test'),
                     '🤐 Deception': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'deception'),
-                    '🚑 Escalation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation')
+                    '🚑 Escalation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation'),
+                    '🏥 Doctor Avoidance': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'avoidance'),
+        '👥 Caregiver-Focused': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'caregiver')
                 };
                 
                 for (const [category, scenarios] of Object.entries(categories)) {
