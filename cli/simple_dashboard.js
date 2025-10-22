@@ -59,6 +59,11 @@ class SimpleDashboard {
     }
 
     extractScenarioFromConversationId(conversationId) {
+        // Handle human feedback IDs
+        if (conversationId.startsWith('cli_sim_')) {
+            return 'Human Feedback';
+        }
+        
         // Try to parse using new conversation ID system
         const parsed = parseConversationId(conversationId);
         
@@ -111,9 +116,15 @@ class SimpleDashboard {
     async viewRecentConversations() {
         try {
             const conversations = await this.db.all(`
-                SELECT DISTINCT conversation_id, score, timestamp, critical_failure
+                SELECT 
+                    conversation_id,
+                    AVG(score) as avg_score,
+                    MAX(timestamp) as latest_timestamp,
+                    MAX(critical_failure) as has_critical_failure,
+                    COUNT(*) as feedback_count
                 FROM feedback 
-                ORDER BY timestamp DESC 
+                GROUP BY conversation_id
+                ORDER BY latest_timestamp DESC 
                 LIMIT 10
             `);
 
@@ -125,11 +136,14 @@ class SimpleDashboard {
             console.log(chalk.cyan.bold('\n📊 RECENT CONVERSATIONS'));
             console.log('-'.repeat(80));
             conversations.forEach((conv, index) => {
-                const status = conv.critical_failure ? '❌' : '✅';
-                const date = new Date(conv.timestamp).toLocaleString();
+                const status = conv.has_critical_failure ? '❌' : '✅';
+                const date = new Date(conv.latest_timestamp).toLocaleString();
                 const scenario = this.extractScenarioFromConversationId(conv.conversation_id);
                 const scenarioName = this.getScenarioDisplayName(scenario);
-                console.log(`${index + 1}. ${status} ${conv.conversation_id} | Score: ${conv.score} | ${scenarioName} | ${date}`);
+                const scoreDisplay = conv.feedback_count > 1 ? 
+                    `${conv.avg_score.toFixed(1)} (${conv.feedback_count} entries)` : 
+                    conv.avg_score.toString();
+                console.log(`${index + 1}. ${status} ${conv.conversation_id} | Score: ${scoreDisplay} | ${scenarioName} | ${date}`);
             });
 
             const choice = await this.askQuestion('\nSelect conversation (1-10) or press Enter to go back: ');
