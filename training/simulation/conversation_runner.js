@@ -8,7 +8,6 @@ import { SimulationEventHandler } from './simulation_event_handler.js';
 import { SimulationAI } from './ai_integration.js';
 import { RealisticConversationEngine } from './realistic_conversation.js';
 import { SimulationFeedback } from './simulation_feedback.js';
-import { TopicShiftAgent } from '../../agents/topicShiftAgent.js';
 import { addMessage } from '../../db/index.js';
 import chalk from 'chalk';
 
@@ -22,7 +21,6 @@ export class ConversationRunner {
         this.aiIntegration = new SimulationAI(simulationDb);
         this.conversationEngine = new RealisticConversationEngine();
         this.eventHandler = new SimulationEventHandler();
-        this.topicShiftAgent = new TopicShiftAgent();
         
         if (autoFeedback) {
             this.feedbackCollector = new SimulationFeedback(conversationId, simulationDb);
@@ -173,16 +171,6 @@ export class ConversationRunner {
 
             console.log(`    ${chalk.bold(activeUser.role.toUpperCase())} (${activeUser.persona.name}): ${userMessage}`);
 
-            // Detect topic shifts using LLM agent
-            const topicShift = await this.topicShiftAgent.analyzeMessage(userMessage, turn);
-            if (topicShift) {
-                console.log(`    ${chalk.yellow('🔄 TOPIC SHIFT DETECTED:')} ${topicShift.reason}`);
-                console.log(`    ${chalk.gray('Type:')} ${topicShift.type} ${chalk.gray('| Confidence:')} ${(topicShift.confidence * 100).toFixed(0)}%`);
-                if (topicShift.suggestsAvoidance) {
-                    console.log(`    ${chalk.red('⚠️  AVOIDANCE BEHAVIOR DETECTED')}`);
-                }
-            }
-
             // Add to conversation history
             conversationHistory.push({
                 role: 'user',
@@ -293,9 +281,9 @@ export class ConversationRunner {
         
         if (this.autoFeedback && this.feedbackCollector) {
             const feedback = await this.feedbackCollector.provideFeedback(
-                `${this.conversationId}_${user.userId}_${turn}`,
-                user.userId,
-                user.userId, // circleId = userId for patient's own circle
+                this.conversationId, // Same conversation ID for all users
+                user.userId, // Individual user ID for this feedback entry
+                this.conversationId, // Use conversation ID as circle_id for unified retrieval
                 null, // messageId - would need to query DB
                 userMessage,
                 agentResult.agent_response,

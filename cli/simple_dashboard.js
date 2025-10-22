@@ -24,7 +24,8 @@ class SimpleDashboard {
         const readline = await import('readline');
         const rl = readline.createInterface({
             input: process.stdin,
-            output: process.stdout
+            output: process.stdout,
+            terminal: true
         });
         
         return new Promise(resolve => {
@@ -57,10 +58,20 @@ class SimpleDashboard {
     }
 
     extractScenarioFromConversationId(conversationId) {
-        // Conversation ID format: sim_TIMESTAMP_SCENARIO_KEY
+        // Conversation ID format: sim_TIMESTAMP_SCENARIO_KEY or sim_TIMESTAMP_SCENARIO_KEY_...
         const parts = conversationId.split('_');
         if (parts.length >= 3) {
-            return parts[2]; // Return the scenario key
+            // Find the scenario key - it's usually the 3rd part, but might be longer
+            // Look for known scenario keys
+            const knownScenarios = Object.keys(SCENARIOS);
+            for (let i = 2; i < parts.length; i++) {
+                const potentialScenario = parts.slice(2, i + 1).join('_');
+                if (knownScenarios.includes(potentialScenario)) {
+                    return potentialScenario;
+                }
+            }
+            // Fallback to just the 3rd part
+            return parts[2];
         }
         return 'unknown';
     }
@@ -74,12 +85,15 @@ class SimpleDashboard {
             detached: false
         });
         
-        process.on('close', (code) => {
-            if (code === 0) {
-                console.log(chalk.green('\n✅ Simulation completed!'));
-            } else {
-                console.log(chalk.red(`\n❌ Simulation failed with code ${code}`));
-            }
+        return new Promise((resolve) => {
+            process.on('close', (code) => {
+                if (code === 0) {
+                    console.log(chalk.green('\n✅ Simulation completed!'));
+                } else {
+                    console.log(chalk.red(`\n❌ Simulation failed with code ${code}`));
+                }
+                resolve();
+            });
         });
     }
 
@@ -120,6 +134,8 @@ class SimpleDashboard {
 
     async showConversationDetails(conversationId) {
         try {
+            console.log(chalk.gray(`Debug: Looking for messages with circle_id = ${conversationId}`));
+            
             // Use conversation ID directly for unified message retrieval
             const messages = await this.db.all(`
                 SELECT user_id, message, timestamp 
@@ -132,6 +148,19 @@ class SimpleDashboard {
 
             if (messages.length === 0) {
                 console.log(chalk.yellow('No messages found for this conversation.'));
+                console.log(chalk.gray('Debug: Checking if there are any messages in the database...'));
+                
+                // Debug: Show all circle_ids in the database
+                const allCircleIds = await this.db.all(`
+                    SELECT DISTINCT circle_id 
+                    FROM messages 
+                    ORDER BY circle_id DESC 
+                    LIMIT 10
+                `);
+                console.log(chalk.gray('Debug: Recent circle_ids in database:'));
+                allCircleIds.forEach((row, index) => {
+                    console.log(chalk.gray(`  ${index + 1}. ${row.circle_id}`));
+                });
                 return;
             }
 
@@ -155,12 +184,15 @@ class SimpleDashboard {
         console.log(chalk.yellow('Running performance analysis...'));
         const process = spawn('node', ['cli/analyze.js', 'all'], { stdio: 'inherit', shell: true });
         
-        process.on('close', (code) => {
-            if (code === 0) {
-                console.log(chalk.green('\n✅ Analysis completed!'));
-            } else {
-                console.log(chalk.red(`\n❌ Analysis failed with code ${code}`));
-            }
+        return new Promise((resolve) => {
+            process.on('close', (code) => {
+                if (code === 0) {
+                    console.log(chalk.green('\n✅ Analysis completed!'));
+                } else {
+                    console.log(chalk.red(`\n❌ Analysis failed with code ${code}`));
+                }
+                resolve();
+            });
         });
     }
 
