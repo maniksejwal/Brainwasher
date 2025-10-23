@@ -29,28 +29,76 @@ export class SimulationClient {
         });
         
         this.isInitialized = true;
-        console.log(`[SimulationClient] ${this.role} client initialized for user ${this.userId}`);
+        // Suppress initialization logs unless in debug mode
+        if (process.env.SIMULATION_DEBUG === 'true') {
+            console.log(`[SimulationClient] ${this.role} client initialized for user ${this.userId}`);
+        }
     }
 
     /**
      * Handle incoming notifications/broadcasts
      */
     handleNotification(data) {
+        // Only process broadcasts that contain escalation-related content
+        const message = data.message || data.reply || '';
+        const messageLower = message.toLowerCase();
+        
+        // Skip regular conversation - only process escalation notifications
+        if (!messageLower.includes('escalated') && 
+            !messageLower.includes('urgent') && 
+            !messageLower.includes('critical') &&
+            !messageLower.includes('emergency') &&
+            !messageLower.includes('immediate attention') &&
+            !messageLower.includes('clinical summary') &&
+            !messageLower.includes('conflict') &&
+            !messageLower.includes('mediation')) {
+            return; // Skip regular conversation
+        }
+        
         const notification = {
             timestamp: Date.now(),
             from: data.from,
-            message: data.message || data.reply,
+            message: message,
             circleId: data.circleId,
-            type: data.type || 'general'
+            type: this._detectNotificationType(message)
         };
         
         this.notifications.push(notification);
         
-        // Log the notification
-        console.log(`📱 [SimulationClient] ${this.role.toUpperCase()} ${this.userId} received notification: ${notification.message.substring(0, 50)}...`);
+        // Log the notification (suppress patient notifications)
+        if (this.role !== 'patient') {
+            console.log(`📱 [SimulationClient] ${this.role.toUpperCase()} ${this.userId} received notification: ${notification.message}`);
+        }
         
         // For simulations, we could trigger automatic responses here
         // For now, we just log and store the notification
+    }
+
+    /**
+     * Detect notification type based on message content
+     */
+    _detectNotificationType(message) {
+        const messageLower = message.toLowerCase();
+        
+        // Only treat escalation-related messages as notifications
+        if (messageLower.includes('escalated') || 
+            messageLower.includes('urgent') || 
+            messageLower.includes('critical') ||
+            messageLower.includes('emergency') ||
+            messageLower.includes('immediate attention')) {
+            return 'escalation_notification';
+        }
+        
+        if (messageLower.includes('conflict') || messageLower.includes('disagreement')) {
+            return 'conflict_notification';
+        }
+        
+        if (messageLower.includes('mediation') || messageLower.includes('clarification')) {
+            return 'mediation_notification';
+        }
+        
+        // Regular agent responses are NOT notifications
+        return 'conversation';
     }
 
     /**

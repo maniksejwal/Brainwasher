@@ -21,6 +21,7 @@ import readline from 'readline';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
+const skipFeedback = args.includes('--skip-feedback');
 
 // Show help
 if (args.includes('--help') || args.includes('-h')) {
@@ -213,11 +214,16 @@ async function runSimulation() {
             output: process.stdout
         });
         
+        if (skipFeedback) {
+            console.log('\n⏭️ Skipping feedback collection (--skip-feedback flag)');
+            return;
+        }
+        
         console.log('\n💬 Feedback Options:');
         console.log('   Press ENTER to skip feedback');
         console.log('   Type message number (e.g., "1", "2") to give feedback on that turn');
         console.log('   Type "all" to give overall feedback');
-            console.log('   Type "q" to quit');
+        console.log('   Type "q" to quit');
         
         const choice = await new Promise(resolve => {
             rl.question('\n❓ Provide feedback? (enter/1/2/all/q): ', (answer) => {

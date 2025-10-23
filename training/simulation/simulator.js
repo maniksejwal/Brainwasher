@@ -8,6 +8,7 @@ import sqlite3 from 'sqlite3';
 import { getPersona } from './personas.js';
 import { SyntheticUser } from './synthetic_user.js';
 import { simulationClientManager } from './simulation_client.js';
+import { escalationNotificationSystem } from './escalation_notification_system.js';
 import { ConversationRunner } from './conversation_runner.js';
 
 // Safety: Use separate database for simulations
@@ -24,8 +25,8 @@ export class SimulationDriver {
         this.autoFeedback = options.autoFeedback !== false;
         this.progressCallback = options.progressCallback || null;
         
-        // Initialize simulation client manager
-        // This will create clients for all users to receive notifications
+        // Initialize escalation notification system
+        escalationNotificationSystem.initialize();
     }
 
     /**
@@ -43,6 +44,25 @@ export class SimulationDriver {
             filename: this.dbPath,
             driver: sqlite3.Database
         });
+
+        // Clean existing data to prevent contamination between simulations
+        try {
+            await this.db.exec(`
+                DELETE FROM detailed_feedback;
+                DELETE FROM feedback;
+                DELETE FROM escalations;
+                DELETE FROM facts;
+                DELETE FROM fact_history;
+                DELETE FROM messages;
+                DELETE FROM care_circle_members;
+                DELETE FROM care_circles;
+                DELETE FROM users;
+            `);
+            console.log('[Simulator] Cleaned existing simulation data');
+        } catch (error) {
+            // Tables might not exist yet, that's okay
+            console.log('[Simulator] No existing data to clean (tables not created yet)');
+        }
 
         // Use EXACT same schema as real system
         await this.db.exec(`
@@ -328,6 +348,9 @@ export class SimulationDriver {
     async cleanup() {
         // Cleanup simulation clients
         simulationClientManager.cleanup();
+        
+        // Cleanup escalation notification system
+        escalationNotificationSystem.cleanup();
         
         if (this.db) {
             await this.db.close();

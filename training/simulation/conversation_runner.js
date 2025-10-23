@@ -9,6 +9,8 @@ import { SimulationAI } from './ai_integration.js';
 import { RealisticConversationEngine } from './realistic_conversation.js';
 import { SimulationFeedback } from './simulation_feedback.js';
 import { addMessage } from '../../db/index.js';
+import { simulationClientManager } from './simulation_client.js';
+import { makeApiCall } from '../../agents/api_client.js';
 import chalk from 'chalk';
 
 export class ConversationRunner {
@@ -237,14 +239,11 @@ export class ConversationRunner {
                 activeUser, userMessage, agentResult, turn, emitProgress, multiUserContext
             );
 
-            // TODO: Handle escalation/mediation responses from other users
-            // In real conversations, other users only respond when:
-            // 1. They're specifically asked a question
-            // 2. There's a conflict that requires their input
-            // 3. There's an escalation that needs their response
-            // 
-            // The current logic makes all users respond to every message, which is unrealistic.
-            // We need to implement proper turn-based or event-driven responses.
+            // Define other users for notification handling
+            const otherUsers = users.filter(u => u.userId !== activeUser.userId);
+
+        // Handle escalation/mediation responses from other users
+        await this._handleOtherUserResponses(otherUsers, activeUser, userMessage, agentResult, turn, conversationHistory);
 
             // Log interaction
             if (this.logResults) {
@@ -257,22 +256,9 @@ export class ConversationRunner {
 
         const totalExchanges = users.reduce((sum, user) => sum + user.conversationHistory.length, 0) / 2;
         console.log(`\n  Multi-user conversation complete (${totalExchanges} total exchanges)\n`);
-        
-        // Collect all feedback for conversation-level analysis
-        const allFeedback = [];
-        users.forEach(user => {
-            if (user.feedbackHistory) {
-                allFeedback.push(...user.feedbackHistory);
-            }
-        });
-        
-        // Perform conversation-level analysis
-        console.log(`[ConversationRunner] Performing conversation-level analysis...`);
-        const conversationAnalysis = await this.feedbackCollector.provideConversationFeedback(
-            this.conversationId,
-            conversationHistory,
-            allFeedback
-        );
+
+        // Collect conversation-level feedback
+        const conversationAnalysis = await this._collectConversationFeedback(users, this.conversationHistory);
         
         // Report events that occurred during conversation
         if (this.eventHandler.hasEscalation()) {
@@ -290,9 +276,145 @@ export class ConversationRunner {
         return {
             success: true,
             totalExchanges,
-            feedback: allFeedback,
-            conversationAnalysis: conversationAnalysis
+            feedback: conversationAnalysis,
+            escalations: this.eventHandler.getEscalations(),
+            broadcasts: this.eventHandler.getBroadcasts()
         };
+    }
+
+    /**
+     * Handle responses from other users based on notifications they received
+     */
+    async _handleOtherUserResponses(otherUsers, activeUser, userMessage, agentResult, turn, conversationHistory) {
+        for (const user of otherUsers) {
+            // Check if this user received any notifications
+            const client = simulationClientManager.getClient(user.userId);
+            if (!client) continue;
+            
+            const notifications = client.getNotifications();
+            if (notifications.length === 0) continue;
+            
+            // Check if user should respond based on their role and notification type
+            const shouldRespond = this._shouldUserRespond(user, notifications, activeUser, agentResult);
+            if (!shouldRespond) continue;
+            
+            // Generate response based on notification
+            const response = await this._generateNotificationResponse(user, notifications, activeUser, agentResult);
+            if (!response) continue;
+            
+            // Display the response
+            console.log(`    ${chalk.bold(`${user.role.toUpperCase()}`)}: ${response}`);
+            
+            // Store the response in database
+            try {
+                await addMessage(
+                    this.conversationId,
+                    user.userId,
+                    user.role,
+                    response,
+                    'PRIVATE',
+                    'NONE'
+                );
+            } catch (error) {
+                console.warn(`[ConversationRunner] Failed to store ${user.role} response: ${error.message}`);
+            }
+            
+            // Record in user's conversation history
+            user.recordAgentResponse(response);
+            
+            // Add to conversation history
+            conversationHistory.push({
+                role: user.role,
+                content: response,
+                turn: turn
+            });
+            
+            // Clear notifications after responding
+            client.clearNotifications();
+        }
+    }
+
+    /**
+     * Determine if a user should respond based on notifications
+     */
+    _shouldUserRespond(user, notifications, activeUser, agentResult) {
+        // Only respond to actual notifications, not regular conversation
+        const actualNotifications = notifications.filter(n => 
+            n.type === 'escalation_notification' || 
+            n.type === 'conflict_notification' || 
+            n.type === 'mediation_notification'
+        );
+        
+        if (actualNotifications.length === 0) return false;
+        
+        // Caregivers respond to escalation notifications
+        if (user.role === 'caregiver') {
+            return actualNotifications.some(n => n.type === 'escalation_notification');
+        }
+        
+        // Doctors respond to escalation notifications
+        if (user.role === 'doctor') {
+            return actualNotifications.some(n => n.type === 'escalation_notification');
+        }
+        
+        // Patients don't respond to notifications (they're the ones being helped)
+        return false;
+    }
+
+    /**
+     * Generate response based on notifications received
+     */
+    async _generateNotificationResponse(user, notifications, activeUser, agentResult) {
+        const escalationNotifications = notifications.filter(n => 
+            n.type === 'escalation_notification' || 
+            n.message.includes('escalated') ||
+            n.message.includes('urgent')
+        );
+        
+        if (escalationNotifications.length === 0) return null;
+        
+        // Generate context-aware response based on user's persona
+        const persona = user.persona;
+        const notification = escalationNotifications[0]; // Use first escalation notification
+        
+        // Create a prompt for the user to respond to the escalation
+        const responsePrompt = `You are a ${user.role} in a care circle. You just received this notification: "${notification.message}"
+
+Your persona: ${persona.description}
+Your traits: ${JSON.stringify(persona.traits)}
+
+Respond to this escalation notification. Keep your response brief (1-2 sentences). Be appropriate for your role and persona.`;
+
+        try {
+            const result = await makeApiCall(responsePrompt, [], false, 0.7, 100);
+            return result.reply || null;
+        } catch (error) {
+            console.warn(`[ConversationRunner] Failed to generate ${user.role} response: ${error.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * Collect conversation-level feedback
+     */
+    async _collectConversationFeedback(users, conversationHistory) {
+        // Collect all feedback for conversation-level analysis
+        const allFeedback = [];
+        users.forEach(user => {
+            if (user.feedbackHistory) {
+                allFeedback.push(...user.feedbackHistory);
+            }
+        });
+        
+        // Perform conversation-level analysis
+        console.log(`[ConversationRunner] Performing conversation-level analysis...`);
+        const conversationAnalysis = await this.feedbackCollector.provideConversationFeedback(
+            this.conversationId,
+            conversationHistory,
+            allFeedback
+        );
+        
+        return conversationAnalysis;
     }
 
 

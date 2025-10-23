@@ -5,7 +5,7 @@
  * the system's final analysis is safe and context-aware.
  */
 
-import { getCircleMembers, addMessage, updateUserState, findUserById, findCircleByPatientId } from '../../db/index.js';
+import { getCircleMembers, addMessage, updateUserState, findUserById, findCircleByPatientId, addEscalation } from '../../db/index.js';
 import { processUserMessage, performContextEnrichment } from '../../agents/index.js';
 import { events } from '../../orchestrator.js';
 import { getAgentName } from '../utils/agentIdentity.js';
@@ -96,6 +96,20 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         description: 'Preparing response...', 
         details: 'Generating personalized reply'
     });
+    
+    // Check for escalation based on criticality
+    if (analysis.criticality === 'HIGH' || analysis.criticality === 'CRITICAL') {
+        console.log(`🚨 [AIAnalysisHandler] HIGH/CRITICAL escalation detected for user ${userId} in circle ${circleId}`);
+        
+        // Add escalation to database
+        const escalationDetails = `AI Analysis detected ${analysis.criticality} criticality. Message: "${message}"`;
+        await addEscalation(circleId, analysis.criticality, escalationDetails);
+        
+        // Emit escalation event for notification system
+        events.emit('escalate', { circleId });
+        
+        console.log(`📢 [AIAnalysisHandler] Escalation event emitted for circle ${circleId}`);
+    }
     
     // Determine the appropriate agent name based on context
     const agentName = await getAgentName(userId, circleId);

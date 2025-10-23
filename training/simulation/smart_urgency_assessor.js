@@ -90,15 +90,18 @@ export class SmartUrgencyAssessor {
 
             const result = await makeApiCall(prompt, [], true, 0.3, 200);
             
-            if (!result) {
-                console.warn('[SmartUrgencyAssessor] No result from LLM API call');
-                return this._getDefaultAssessment(message);
-            }
-            
-            if (!result.reply) {
+        if (!result) {
+            console.warn('[SmartUrgencyAssessor] No result from LLM API call');
+            return this._getDefaultAssessment(message);
+        }
+        
+        if (!result.reply) {
+            // Suppress debug log - only show in debug mode
+            if (process.env.SIMULATION_DEBUG === 'true') {
                 console.warn('[SmartUrgencyAssessor] No reply field in result:', JSON.stringify(result));
-                return this._getDefaultAssessment(message);
             }
+            return this._getDefaultAssessment(message);
+        }
 
             // Try to parse JSON from the reply
             let assessment;
