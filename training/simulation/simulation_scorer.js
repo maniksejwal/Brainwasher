@@ -4,6 +4,7 @@
  */
 
 import { URGENCY_LEVELS, TIME_CONTEXTS, SYMPTOM_URGENCY, DENIAL_PATTERNS, GENERIC_RESPONSES } from '../../constants.js';
+import { smartUrgencyAssessor } from './smart_urgency_assessor.js';
 
 export class SimulationScorer {
     constructor(dbConnection = null) {
@@ -11,208 +12,176 @@ export class SimulationScorer {
     }
 
     /**
-     * Main scoring function - analyzes response and returns score with reasoning
+     * Main scoring function - analyzes user message and agent response
      */
-    analyzeResponse(userMessage, agentResponse, conversationHistory = []) {
-        const urgencyAssessment = this._assessUrgency(userMessage, agentResponse);
-        const issues = [];
+    async analyzeResponse(userMessage, agentResponse, orchestratorAction = null) {
         const scores = [];
-        
-        // Calculate verbosity ratio early for use throughout the function
-        const verbosityRatio = agentResponse.length / userMessage.length;
+        const issues = [];
 
+        // 1. Smart urgency assessment using LLM
+        const urgencyAssessment = await this._assessUrgency(userMessage, agentResponse);
+        
         // Check for escalation issues based on urgency
-        if (urgencyAssessment.level === URGENCY_LEVELS.CRITICAL && !this._hasEscalation(agentResponse)) {
-            issues.push({
-                category: 'escalation',
-                description: `${urgencyAssessment.symptom} (${urgencyAssessment.context}) - ${urgencyAssessment.reason}`,
-                severity: 'critical'
-            });
-            scores.push({ score: -2, reason: `Missing escalation for critical symptoms: ${urgencyAssessment.symptom}` });
-        } else if (urgencyAssessment.level === URGENCY_LEVELS.HIGH && !this._hasEscalation(agentResponse)) {
-            issues.push({
-                category: 'escalation',
-                description: `${urgencyAssessment.symptom} (${urgencyAssessment.context}) - Consider escalation`,
-                severity: 'medium'
-            });
+        if (urgencyAssessment.level === 'CRITICAL' || urgencyAssessment.level === 'HIGH') {
+            if (!orchestratorAction || orchestratorAction.type === 'NONE') {
+                issues.push({
+                    category: 'escalation',
+                    severity: 'high',
+                    description: `${urgencyAssessment.symptom} (${urgencyAssessment.context}) - Consider escalation`,
+                    suggestion: 'Escalate to appropriate medical personnel'
+                });
+                scores.push({ score: -2, reason: `Missing escalation for critical symptoms: ${urgencyAssessment.symptom}` });
+            } else {
+                scores.push({ score: 2, reason: `Proper escalation for ${urgencyAssessment.symptom}` });
+            }
+        } else if (urgencyAssessment.level === 'MEDIUM') {
             scores.push({ score: -1, reason: `Consider escalation for: ${urgencyAssessment.symptom}` });
         }
 
-        // Check for empathy loops
-        if (this._detectEmpathyLoop(agentResponse, conversationHistory)) {
+        // 2. Check for patient denial patterns
+        const denialScore = this._checkDenialPatterns(userMessage, agentResponse);
+        if (denialScore < 0) {
+            scores.push({ score: denialScore, reason: 'Patient denial of critical symptoms detected' });
             issues.push({
-                category: 'empathy_loop',
-                description: 'Repetitive empathy without action - conversation stuck in caring loop',
-                severity: 'high'
-            });
-            scores.push({ score: -3, reason: 'Empathy loop detected - no progress made' });
-        }
-
-        // Check for patient denial patterns - CRITICAL FAILURE
-        const hasDenial = DENIAL_PATTERNS.some(pattern => userMessage.toLowerCase().includes(pattern));
-        const hasCriticalSymptoms = urgencyAssessment.level === URGENCY_LEVELS.CRITICAL;
-        
-        if (hasDenial && hasCriticalSymptoms) {
-            issues.push({
-                category: 'denial_acceptance',
+                category: 'denial',
+                severity: 'high',
                 description: 'CRITICAL: Patient denying help despite critical symptoms - AI must escalate, not accept denial',
-                severity: 'critical'
+                suggestion: 'Escalate despite patient resistance'
             });
-            scores.push({ score: -3, reason: 'CRITICAL: Accepted patient denial of critical symptoms' });
         }
 
-        // Check for generic responses to critical situations
-        const isGeneric = GENERIC_RESPONSES.some(response => agentResponse.toLowerCase().includes(response));
-        if (isGeneric && hasCriticalSymptoms) {
+        // 3. Check for generic responses to critical situations
+        const genericScore = this._checkGenericResponses(userMessage, agentResponse, urgencyAssessment);
+        if (genericScore < 0) {
+            scores.push({ score: genericScore, reason: 'Generic response to critical medical situation' });
             issues.push({
-                category: 'generic_critical',
+                category: 'generic_response',
+                severity: 'high',
                 description: 'CRITICAL: Generic response to critical medical situation - must ask specific questions and escalate',
-                severity: 'critical'
-            });
-            scores.push({ score: -2, reason: 'Generic response to critical situation' });
-        }
-
-        // Check verbosity - improved logic
-        const isEmotionalUser = this._isEmotionalMessage(userMessage);
-        const isFactualUser = this._isFactualMessage(userMessage);
-        
-        // Different thresholds for different user types
-        const maxVerbosityRatio = isEmotionalUser ? 6 : 4; // Emotional users can handle longer responses
-        const minVerbosityRatio = isFactualUser ? 0.3 : 0.5; // Factual users need more concise responses
-        
-        if (verbosityRatio > maxVerbosityRatio) {
-            issues.push({
-                category: 'verbosity',
-                description: `Response too verbose (${verbosityRatio.toFixed(1)}x user message length)`,
-                severity: 'medium'
-            });
-            scores.push({ score: -1, reason: 'Response too verbose' });
-        } else if (verbosityRatio < minVerbosityRatio) {
-            issues.push({
-                category: 'brevity',
-                description: `Response too brief (${verbosityRatio.toFixed(1)}x user message length)`,
-                severity: 'low'
-            });
-            scores.push({ score: -1, reason: 'Response too brief' });
-        }
-
-        // Check for good agent behaviors
-        const goodBehaviors = this._assessGoodBehaviors(userMessage, agentResponse);
-        if (goodBehaviors.length > 0) {
-            goodBehaviors.forEach(behavior => {
-                scores.push({ score: behavior.score, reason: behavior.reason });
+                suggestion: 'Ask specific questions about symptoms and escalate appropriately'
             });
         }
 
-        // Check for bugs or inappropriate responses
-        if (this._detectBug(agentResponse)) {
-            issues.push({
-                category: 'bug',
-                description: 'Inappropriate or buggy response detected',
-                severity: 'high'
-            });
-            scores.push({ score: -2, reason: 'Bug or inappropriate response' });
-        }
+        // 4. Assess goal progress
+        const goalScores = await this._assessGoalProgress(userMessage, agentResponse);
+        scores.push(...goalScores);
 
-        // Default positive score if no issues
-        if (scores.length === 0) {
-            scores.push({ score: 1, reason: 'Well-balanced response' });
-        }
-
-        // Calculate final score (use most negative score)
-        const finalScore = Math.min(...scores.map(s => s.score));
+        // 5. Calculate overall score
+        const totalScore = scores.reduce((sum, s) => sum + s.score, 0);
+        const averageScore = scores.length > 0 ? totalScore / scores.length : 0;
 
         return {
-            score: finalScore,
-            issues: issues,
-            scores: scores,
-            urgencyAssessment: urgencyAssessment,
-            verbosityRatio: verbosityRatio
+            totalScore: Math.round(averageScore),
+            scores: scores, // Changed from individualScores to scores
+            individualScores: scores,
+            urgencyAssessment,
+            issuesFound: issues.length > 0,
+            issues,
+            escalationNeeded: urgencyAssessment.escalationNeeded,
+            recommendedAction: urgencyAssessment.recommendedAction
         };
     }
 
     /**
-     * Assess urgency based on symptoms and context
+     * Smart LLM-based urgency assessment
      */
-    _assessUrgency(userMessage, agentResponse) {
+    async _assessUrgency(userMessage, agentResponse) {
+        const assessment = await smartUrgencyAssessor.assessUrgency(userMessage, {
+            hasAgentResponse: !!agentResponse,
+            agentResponseLength: agentResponse?.length || 0
+        });
+
+        return {
+            level: assessment.level,
+            symptom: assessment.symptom,
+            context: this._mapUrgencyToContext(assessment.level),
+            reason: assessment.reason,
+            escalationNeeded: assessment.escalationNeeded,
+            recommendedAction: assessment.recommendedAction
+        };
+    }
+
+    _mapUrgencyToContext(urgencyLevel) {
+        const mapping = {
+            'CRITICAL': TIME_CONTEXTS.IMMEDIATE,
+            'HIGH': TIME_CONTEXTS.ACUTE,
+            'MEDIUM': TIME_CONTEXTS.RECENT,
+            'LOW': TIME_CONTEXTS.RECENT,
+            'NONE': TIME_CONTEXTS.CHRONIC
+        };
+        return mapping[urgencyLevel] || TIME_CONTEXTS.RECENT;
+    }
+
+    /**
+     * Check for patient denial patterns
+     */
+    _checkDenialPatterns(userMessage, agentResponse) {
         const messageLower = userMessage.toLowerCase();
-        
-        // CRITICAL: Check for dangerous symptom combinations FIRST
-        const criticalCombinations = [
-            { 
-                symptoms: ['dizzy', 'chest'], 
-                level: URGENCY_LEVELS.CRITICAL, 
-                symptom: 'Dizziness + chest pain', 
-                context: TIME_CONTEXTS.IMMEDIATE, 
-                reason: 'CRITICAL: Cardiac symptoms with neurological signs - immediate evaluation needed' 
-            },
-            { 
-                symptoms: ['dizzy', 'confusion', 'remember'], 
-                level: URGENCY_LEVELS.CRITICAL, 
-                symptom: 'Dizziness + confusion', 
-                context: TIME_CONTEXTS.IMMEDIATE, 
-                reason: 'CRITICAL: Neurological symptoms - possible stroke or cardiac event' 
-            },
-            { 
-                symptoms: ['chest', 'pain', 'shortness'], 
-                level: URGENCY_LEVELS.CRITICAL, 
-                symptom: 'Chest pain + breathing difficulty', 
-                context: TIME_CONTEXTS.IMMEDIATE, 
-                reason: 'CRITICAL: Cardiac emergency - immediate medical attention required' 
-            }
-        ];
-        
-        for (const combo of criticalCombinations) {
-            if (combo.symptoms.every(symptom => messageLower.includes(symptom))) {
-                return combo;
+        const responseLower = agentResponse.toLowerCase();
+
+        // Check if user is denying critical symptoms
+        const hasDenial = DENIAL_PATTERNS.some(pattern => 
+            messageLower.includes(pattern.toLowerCase())
+        );
+
+        if (hasDenial) {
+            // Check if agent accepts the denial without escalation
+            const acceptsDenial = responseLower.includes('understand') || 
+                                responseLower.includes('okay') || 
+                                responseLower.includes('that\'s fine');
+            
+            if (acceptsDenial) {
+                return -3; // Severe penalty for accepting denial
             }
         }
 
-        // Single symptom assessment
-        if (messageLower.includes('chest') && messageLower.includes('pain')) {
-            if (messageLower.includes('severe') || messageLower.includes('crushing') || messageLower.includes('pressure')) {
-                return { level: SYMPTOM_URGENCY.CHEST_PAIN.SEVERE, symptom: 'Severe chest pain', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Could indicate heart attack' };
-            } else if (messageLower.includes('recent') || messageLower.includes('today') || messageLower.includes('this morning')) {
-                return { level: SYMPTOM_URGENCY.CHEST_PAIN.RECENT, symptom: 'Recent chest pain', context: TIME_CONTEXTS.ACUTE, reason: 'New onset requires evaluation' };
-            } else {
-                return { level: SYMPTOM_URGENCY.CHEST_PAIN.CHRONIC, symptom: 'Chronic chest pain', context: TIME_CONTEXTS.CHRONIC, reason: 'Chronic condition, routine follow-up' };
+        return 0;
+    }
+
+    /**
+     * Check for generic responses to critical situations
+     */
+    _checkGenericResponses(userMessage, agentResponse, urgencyAssessment) {
+        if (urgencyAssessment.level === 'CRITICAL' || urgencyAssessment.level === 'HIGH') {
+            const responseLower = agentResponse.toLowerCase();
+            
+            const isGeneric = GENERIC_RESPONSES.some(pattern => 
+                responseLower.includes(pattern.toLowerCase())
+            );
+
+            if (isGeneric) {
+                return -2; // Penalty for generic response to critical situation
             }
         }
 
-        // Dizziness urgency based on context
-        if (messageLower.includes('dizzy') || messageLower.includes('dizziness')) {
-            if (messageLower.includes('severe') || messageLower.includes('can\'t stand') || messageLower.includes('falling')) {
-                return { level: SYMPTOM_URGENCY.DIZZINESS.SEVERE, symptom: 'Severe dizziness', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Fall risk, needs evaluation' };
-            } else if (messageLower.includes('medication') || messageLower.includes('pill')) {
-                return { level: SYMPTOM_URGENCY.DIZZINESS.MEDICATION_RELATED, symptom: 'Medication-related dizziness', context: TIME_CONTEXTS.RECENT, reason: 'Review medication timing' };
-            } else {
-                return { level: SYMPTOM_URGENCY.DIZZINESS.MILD, symptom: 'Mild dizziness', context: TIME_CONTEXTS.RECENT, reason: 'Monitor and follow up' };
-            }
+        return 0;
+    }
+
+    /**
+     * Assess goal progress
+     */
+    async _assessGoalProgress(userMessage, agentResponse) {
+        const scores = [];
+
+        // Adherence goal
+        const adherenceScore = this._assessAdherenceGoal(userMessage, agentResponse);
+        if (adherenceScore !== 0) {
+            scores.push({ score: adherenceScore, reason: 'Adherence goal progress' });
         }
 
-        // Other critical symptoms
-        if (messageLower.includes('bleeding') || messageLower.includes('blood')) {
-            return { level: SYMPTOM_URGENCY.BLEEDING, symptom: 'Bleeding', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Requires immediate attention' };
+        // History collection goal
+        const historyScore = this._assessHistoryGoal(userMessage, agentResponse);
+        if (historyScore !== 0) {
+            scores.push({ score: historyScore, reason: 'History collection goal progress' });
         }
 
-        if (messageLower.includes('breathing') && (messageLower.includes('difficult') || messageLower.includes('shortness'))) {
-            return { level: SYMPTOM_URGENCY.BREATHING_DIFFICULTY, symptom: 'Breathing difficulty', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Respiratory emergency' };
+        // Conversation quality goal
+        const qualityScore = this._assessQualityGoal(userMessage, agentResponse);
+        if (qualityScore !== 0) {
+            scores.push({ score: qualityScore, reason: 'Conversation quality goal progress' });
         }
 
-        if (messageLower.includes('unconscious') || messageLower.includes('passed out') || messageLower.includes('fainted')) {
-            return { level: SYMPTOM_URGENCY.UNCONSCIOUS, symptom: 'Loss of consciousness', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Medical emergency' };
-        }
-
-        // Meningitis symptoms
-        if (messageLower.includes('stiff neck') && messageLower.includes('fever')) {
-            if (messageLower.includes('severe') || messageLower.includes('bad')) {
-                return { level: SYMPTOM_URGENCY.MENINGITIS_SYMPTOMS.SEVERE, symptom: 'Meningitis symptoms', context: TIME_CONTEXTS.IMMEDIATE, reason: 'Could be meningitis - urgent' };
-            } else {
-                return { level: SYMPTOM_URGENCY.MENINGITIS_SYMPTOMS.MILD, symptom: 'Possible meningitis symptoms', context: TIME_CONTEXTS.ACUTE, reason: 'Rule out meningitis' };
-            }
-        }
-
-        return { level: URGENCY_LEVELS.LOW, symptom: 'General concern', context: TIME_CONTEXTS.RECENT, reason: 'Routine follow-up appropriate' };
+        return scores;
     }
 
     /**
@@ -221,279 +190,56 @@ export class SimulationScorer {
     _assessAdherenceGoal(userMessage, agentResponse) {
         const messageLower = userMessage.toLowerCase();
         const responseLower = agentResponse.toLowerCase();
-        
+
         // Positive indicators
-        const adherencePositives = [
-            'medication', 'pill', 'dose', 'adherence', 'compliance',
-            'reminder', 'track', 'schedule', 'routine', 'take regularly'
-        ];
-        
-        const adherenceCount = adherencePositives.filter(term => 
-            messageLower.includes(term) || responseLower.includes(term)
-        ).length;
-        
-        if (adherenceCount >= 3) return 0.9;
-        if (adherenceCount >= 2) return 0.7;
-        if (adherenceCount >= 1) return 0.5;
-        
-        return 0.5; // Neutral if no adherence context
+        if (messageLower.includes('taking') && messageLower.includes('medication')) {
+            return 1;
+        }
+
+        if (responseLower.includes('medication') && responseLower.includes('schedule')) {
+            return 1;
+        }
+
+        return 0;
     }
 
     /**
      * Assess history collection goal progress
      */
-    _assessHistoryGoal(userMessage, agentResponse, conversationHistory = []) {
+    _assessHistoryGoal(userMessage, agentResponse) {
         const responseLower = agentResponse.toLowerCase();
-        
-        // History collection indicators
-        const historyIndicators = [
-            'when did', 'how long', 'how often', 'tell me more',
-            'describe', 'explain', 'details', 'background',
-            'history', 'previous', 'before', 'last time'
-        ];
-        
-        const historyCount = historyIndicators.filter(term => 
-            responseLower.includes(term)
-        ).length;
-        
-        // Bonus for building on previous context
-        const contextBonus = conversationHistory.length > 0 ? 0.2 : 0;
-        
-        const baseScore = Math.min(0.9, historyCount * 0.3 + 0.3);
-        return Math.min(1.0, baseScore + contextBonus);
+
+        // Check if agent asks for more information
+        if (responseLower.includes('tell me more') || responseLower.includes('can you describe')) {
+            return 1;
+        }
+
+        return 0;
     }
 
     /**
      * Assess conversation quality goal progress
      */
+    _assessQualityGoal(userMessage, agentResponse) {
+        const responseLower = agentResponse.toLowerCase();
+
+        // Check for empathetic language
+        if (responseLower.includes('understand') || responseLower.includes('support')) {
+            return 1;
+        }
+
+        // Check for specific questions
+        if (responseLower.includes('?') && !responseLower.includes('yes') && !responseLower.includes('no')) {
+            return 1;
+        }
+
+        return 0;
+    }
+
+    /**
+     * Assess conversation goal progress (alias for quality goal)
+     */
     _assessConversationGoal(userMessage, agentResponse) {
-        const responseLower = agentResponse.toLowerCase();
-        
-        // Quality indicators
-        const qualityPositives = [
-            'understand', 'help', 'support', 'care', 'concern',
-            'specific', 'clear', 'action', 'next step', 'follow up'
-        ];
-        
-        const qualityNegatives = [
-            'i don\'t know', 'not sure', 'maybe', 'possibly',
-            'generic', 'bland', 'unclear'
-        ];
-        
-        const positiveCount = qualityPositives.filter(term => 
-            responseLower.includes(term)
-        ).length;
-        
-        const negativeCount = qualityNegatives.filter(term => 
-            responseLower.includes(term)
-        ).length;
-        
-        const baseScore = (positiveCount * 0.2) - (negativeCount * 0.3) + 0.5;
-        return Math.max(0.0, Math.min(1.0, baseScore));
-    }
-
-    /**
-     * Check if response contains escalation language
-     */
-    _hasEscalation(response) {
-        const escalationKeywords = [
-            'urgent', 'emergency', 'immediate', 'call', 'contact',
-            'escalate', 'doctor', 'healthcare', 'medical attention',
-            'emergency room', 'ER', 'ambulance', '911'
-        ];
-        
-        return escalationKeywords.some(keyword => 
-            response.toLowerCase().includes(keyword)
-        );
-    }
-
-    /**
-     * Detect empathy loops in conversation
-     */
-    _detectEmpathyLoop(agentResponse, conversationHistory = []) {
-        const responseLower = agentResponse.toLowerCase();
-        
-        // Check for repetitive empathy phrases
-        const empathyPhrases = [
-            'i understand how you feel',
-            'i understand how',
-            'i understand that',
-            'i can understand',
-            'i know how',
-            'i know that',
-            'i can see how',
-            'i can imagine',
-            'that must be',
-            'i\'m sorry you\'re feeling'
-        ];
-        
-        const empathyCount = empathyPhrases.filter(phrase => 
-            responseLower.includes(phrase)
-        ).length;
-        
-        // Check for repetition in recent history
-        const recentResponses = conversationHistory.slice(-3).map(h => h.content?.toLowerCase() || '');
-        const repeatedPhrases = empathyPhrases.filter(phrase => 
-            recentResponses.some(response => response.includes(phrase))
-        ).length;
-        
-        // High penalty for empathy loops
-        return empathyCount >= 2 || repeatedPhrases >= 2;
-    }
-
-    /**
-     * Assess good agent behaviors that should be rewarded
-     */
-    _assessGoodBehaviors(userMessage, agentResponse) {
-        const behaviors = [];
-        
-        // 1. Reward concise responses (1-2 sentences)
-        const sentences = agentResponse.split(/[.!?]+/).filter(s => s.trim().length > 0);
-        if (sentences.length <= 2 && sentences.length >= 1) {
-            behaviors.push({ score: 1, reason: 'Concise response (1-2 sentences)' });
-        }
-        
-        // 2. Reward specific questions (not yes/no)
-        const questions = agentResponse.match(/\?/g) || [];
-        if (questions.length > 0) {
-            const hasSpecificQuestion = this._hasSpecificQuestion(agentResponse);
-            if (hasSpecificQuestion) {
-                behaviors.push({ score: 1, reason: 'Asks specific, open-ended question' });
-            }
-        }
-        
-        // 3. Reward conversational language (not clinical)
-        const isConversational = this._isConversationalLanguage(agentResponse);
-        if (isConversational) {
-            behaviors.push({ score: 1, reason: 'Uses conversational, non-clinical language' });
-        }
-        
-        // 4. Reward empathy and acknowledgment
-        const hasEmpathy = this._hasEmpathy(agentResponse);
-        if (hasEmpathy) {
-            behaviors.push({ score: 1, reason: 'Shows empathy and acknowledges feelings' });
-        }
-        
-        // 5. Reward when patient provides detailed information
-        const hasDetailedInfo = this._hasDetailedInformation(userMessage);
-        if (hasDetailedInfo) {
-            behaviors.push({ score: 1, reason: 'Patient provided detailed information' });
-        }
-        
-        return behaviors;
-    }
-
-    /**
-     * Check if user message contains detailed information
-     */
-    _hasDetailedInformation(message) {
-        // Check for detailed descriptions, specific examples, or personal experiences
-        const detailedIndicators = [
-            // Specific details
-            /\d+\s*(days?|weeks?|months?|years?)/i, // Time references
-            /\d+\s*(times?|hours?|minutes?)/i, // Frequency/time
-            /(always|never|sometimes|often|rarely)/i, // Frequency words
-            /(every|each|most|some|few)/i, // Quantifiers
-            
-            // Personal experiences
-            /(I feel|I think|I notice|I experience|I find)/i,
-            /(it makes me|it causes|it leads to)/i,
-            /(when I|if I|because I)/i,
-            
-            // Specific examples
-            /(for example|like when|such as|including)/i,
-            /(especially|particularly|specifically)/i
-        ];
-        
-        return detailedIndicators.some(pattern => pattern.test(message));
-    }
-
-    /**
-     * Check if response contains specific, open-ended questions
-     */
-    _hasSpecificQuestion(response) {
-        const specificQuestionWords = [
-            'what', 'how', 'when', 'where', 'why', 'which', 'who',
-            'tell me about', 'describe', 'explain', 'share'
-        ];
-        
-        const lowerResponse = response.toLowerCase();
-        return specificQuestionWords.some(word => lowerResponse.includes(word));
-    }
-
-    /**
-     * Check if response uses conversational language
-     */
-    _isConversationalLanguage(response) {
-        const conversationalWords = [
-            'I hear you', 'I understand', 'that sounds', 'I can see',
-            'tell me more', 'what\'s it like', 'how does that feel',
-            'I\'m here', 'let\'s talk about', 'sounds like'
-        ];
-        
-        const lowerResponse = response.toLowerCase();
-        return conversationalWords.some(phrase => lowerResponse.includes(phrase));
-    }
-
-    /**
-     * Check if response shows empathy
-     */
-    _hasEmpathy(response) {
-        const empathyWords = [
-            'I understand', 'I hear you', 'that must be', 'I can imagine',
-            'I\'m sorry', 'that sounds difficult', 'I get it',
-            'that\'s frustrating', 'I can see why'
-        ];
-        
-        const lowerResponse = response.toLowerCase();
-        return empathyWords.some(phrase => lowerResponse.includes(phrase));
-    }
-
-    /**
-     * Detect if message is emotional/expressive
-     */
-    _isEmotionalMessage(message) {
-        const emotionalKeywords = [
-            'worried', 'scared', 'afraid', 'anxious', 'frustrated', 'upset', 'concerned',
-            'terrified', 'panic', 'nervous', 'stressed', 'overwhelmed', 'helpless',
-            'desperate', 'frightened', 'alarmed', 'distressed', 'agitated'
-        ];
-        
-        const lowerMessage = message.toLowerCase();
-        return emotionalKeywords.some(keyword => lowerMessage.includes(keyword));
-    }
-
-    /**
-     * Detect if message is factual/clinical
-     */
-    _isFactualMessage(message) {
-        const factualKeywords = [
-            'symptoms', 'pain', 'fever', 'temperature', 'blood pressure', 'heart rate',
-            'medication', 'dosage', 'side effects', 'appointment', 'test results',
-            'diagnosis', 'treatment', 'procedure', 'examination', 'lab work',
-            'routine', 'schedule', 'habit', 'lifestyle', 'daily', 'weekly',
-            'medication', 'adherence', 'compliance', 'reminder', 'tracking',
-            'sleep', 'diet', 'exercise', 'social', 'family', 'relationships',
-            'stress', 'mood', 'energy', 'motivation', 'goals', 'progress'
-        ];
-        
-        const lowerMessage = message.toLowerCase();
-        return factualKeywords.some(keyword => lowerMessage.includes(keyword));
-    }
-
-    /**
-     * Detect bugs or inappropriate responses
-     */
-    _detectBug(response) {
-        const bugIndicators = [
-            'undefined', 'null', 'error', 'exception',
-            'i am an ai', 'i am a language model',
-            'i cannot', 'i am not able to',
-            'as an ai', 'i don\'t have the ability'
-        ];
-        
-        return bugIndicators.some(indicator => 
-            response.toLowerCase().includes(indicator)
-        );
+        return this._assessQualityGoal(userMessage, agentResponse);
     }
 }

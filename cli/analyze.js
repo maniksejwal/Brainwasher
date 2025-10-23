@@ -104,12 +104,12 @@ async function analyzeRewards(db) {
     const feedbackAnalyzer = new FeedbackAnalyzer(db);
     const rewardAnalysis = await feedbackAnalyzer.calculateRewardBackpropagation();
     
-    if (!rewardAnalysis || rewardAnalysis.length === 0) {
+    if (!rewardAnalysis || !rewardAnalysis.reward_signals || rewardAnalysis.reward_signals.length === 0) {
         console.log(chalk.yellow('No reward data found.'));
         return;
     }
     
-    rewardAnalysis.forEach((reward, index) => {
+    rewardAnalysis.reward_signals.forEach((reward, index) => {
         console.log(`\n${index + 1}. ${chalk.bold(reward.prompt_version)}`);
         console.log(`   Conversations: ${reward.conversationCount}`);
         console.log(`   Avg Score: ${reward.averageScore?.toFixed(2) || 'N/A'}`);

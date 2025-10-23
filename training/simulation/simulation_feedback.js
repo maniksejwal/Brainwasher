@@ -28,15 +28,16 @@ export class SimulationFeedback {
     async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null, promptVersion = 'simulation_v1.0', conversationHistory = []) {
         try {
             // 1. Score the response
-            const analysis = this.scorer.analyzeResponse(userMessage, agentResponse, conversationHistory);
+            const analysis = await this.scorer.analyzeResponse(userMessage, agentResponse, conversationHistory);
             
             // 2. Assess care circle goals
             const goalAssessment = this.reporter.assessCareCircleGoals(userMessage, agentResponse, conversationHistory);
             
             // 3. Store feedback in database
+            if (process.env.SIMULATION_DEBUG === 'true') console.log('[SimulationFeedback] Debug - analysis:', JSON.stringify(analysis, null, 2));
             await this.reporter.autoScore(
                 conversationId, userId, circleId, messageId, 
-                analysis.score, analysis.scores[0].reason, 
+                analysis.totalScore, analysis.scores?.[0]?.reason || 'No reason provided', 
                 promptVersion, goalAssessment
             );
             

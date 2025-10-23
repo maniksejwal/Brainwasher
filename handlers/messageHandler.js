@@ -84,5 +84,8 @@ export async function handleMessage(userId, circleId, message) {
     
     metricsCollector.recordResponseTime('full_analysis', latencyMs, true);
     metricsCollector.recordMessageLength(userId, message.length, analysis?.agent_response?.length || 0);
+    
+    // Return the analysis for simulations to use
+    return analysis;
 }
 

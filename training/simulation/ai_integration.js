@@ -52,8 +52,12 @@ export class SimulationAI {
                 throw new Error(`User ${userId} is not a member of circle ${circleId}`);
             }
             
-            // Get the actual AI analysis and response
-            const analysis = await performAiAnalysis(userId, memberInfo.role, message, circleId);
+            // Use the REAL system flow - call handleMessage which does everything:
+            // 1. AI Analysis (performAiAnalysis)
+            // 2. Escalation/Mediation (handleSharingAndEscalation) 
+            // 3. Fact Processing (handleFactProcessing)
+            // 4. All orchestrator events and cross-messaging
+            const analysis = await handleMessage(userId, circleId, message);
             
             if (!analysis || !analysis.reply) {
                 throw new Error("AI analysis failed to generate response");

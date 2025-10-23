@@ -194,7 +194,7 @@ export class ConversationRunner {
                 timestamp: Date.now()
             });
 
-            // Get AI response with multi-user context
+            // Get AI response for the active user
             const startTime = Date.now();
             const agentResult = await this.aiIntegration.getAgentResponse(activeUser.userId, userMessage, {
                 activeUser,
@@ -208,10 +208,10 @@ export class ConversationRunner {
 
             console.log(`    ${chalk.bold(`${activeUser.role.toUpperCase()}_AGENT`)}: ${agentResult.agent_response}`);
 
-            // Store agent response in database (user messages are stored by messageHandler.js)
+            // Store agent response in database
             try {
                 await addMessage(
-                    this.conversationId, // Use conversation ID as circle_id for unified retrieval
+                    this.conversationId,
                     'agent',
                     `${activeUser.role}_agent`,
                     agentResult.agent_response,
@@ -222,7 +222,7 @@ export class ConversationRunner {
                 console.warn(`[ConversationRunner] Failed to store agent response: ${error.message}`);
             }
 
-            // Record agent response only for the active user (their personal agent)
+            // Record agent response for the active user
             activeUser.recordAgentResponse(agentResult.agent_response);
             
             // Add agent response to conversation history
@@ -232,10 +232,19 @@ export class ConversationRunner {
                 timestamp: Date.now()
             });
 
-            // Generate feedback
+            // Generate feedback for the active user
             const feedbackData = await this._generateFeedback(
                 activeUser, userMessage, agentResult, turn, emitProgress, multiUserContext
             );
+
+            // TODO: Handle escalation/mediation responses from other users
+            // In real conversations, other users only respond when:
+            // 1. They're specifically asked a question
+            // 2. There's a conflict that requires their input
+            // 3. There's an escalation that needs their response
+            // 
+            // The current logic makes all users respond to every message, which is unrealistic.
+            // We need to implement proper turn-based or event-driven responses.
 
             // Log interaction
             if (this.logResults) {

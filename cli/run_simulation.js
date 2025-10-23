@@ -220,7 +220,10 @@ async function runSimulation() {
             console.log('   Type "q" to quit');
         
         const choice = await new Promise(resolve => {
-                rl.question('\n❓ Provide feedback? (enter/1/2/all/q): ', resolve);
+            rl.question('\n❓ Provide feedback? (enter/1/2/all/q): ', (answer) => {
+                rl.close(); // Close readline immediately after getting input
+                resolve(answer);
+            });
         });
             
             if (choice && choice.toLowerCase() === 'q') {

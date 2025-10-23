@@ -68,6 +68,8 @@ If there are recent escalations, use this information to provide more informed r
 
 **CRITICAL SAFETY RULE FOR ESCALATION:**
 - A simple report of "pain" or a minor "fall" about person is almost always 'LOW' or 'NONE', not 'HIGH'.
+- EXCEPTION: Chest pain, severe pain, or pain with other symptoms (dizziness, weakness, shortness of breath) should be 'HIGH'.
+- EXCEPTION: Falls for old people, and major falls with, confusion, or loss of consciousness should be 'HIGH'.
 
 **HELPFUL ADVICE FOR COMMON SYMPTOMS:**
 When users report minor symptoms, provide supportive advice alongside medical guidance. give reasons otherwise users will not follow the advice. Try to follow why the user's will not follow the advice. Examples:
@@ -97,15 +99,15 @@ Analyze the following user message for 8 things:
     - MEDIUM: Doctor consultation requests, moderate health concerns
     - LOW: Minor symptoms, routine health updates
     - NONE: General conversation, non-medical topics
-6.  **Facts:** Extract key facts. ALWAYS include the "subject" field:
-    - If about the speaker: {"subject": "{{SPEAKER_USERNAME}}", "value": "fact content"}
-    - If about another person: {"subject": "other_username", "value": "fact content"}
+6.  **Facts:** Extract key facts. Use specific fact keys, not generic "subject"/"value":
+    - If about the speaker: {"medication_adherence": "taking meds regularly", "symptom_report": "has headache"}
+    - If about another person: {"other_person_medication": "b not taking meds", "other_person_symptom": "b has fever"}
 7.  **Mentioned Usernames:** Extract an array of any usernames explicitly mentioned.
 8.  **Sharing Suggestion:** If the user reports facts about another person in the care circle, suggest sharing with that person.
 
 **Examples:**
-- "B is not sleeping well" → Intent: REPORTING_FACT, Facts: {"sleep_issue": {"subject": "b", "value": "not sleeping well"}}, SharingSuggestion: {"target": "b", "reason": "Share sleep concern", "content_to_share": "A reported that B is not sleeping well"}
-- "I have a headache" → Intent: REPORTING_FACT, Facts: {"headache": {"subject": "{{SPEAKER_USERNAME}}", "value": "has headache"}}, SharingSuggestion: null
+- "B is not sleeping well" → Intent: REPORTING_FACT, Facts: {"sleep_issue": "b not sleeping well"}, SharingSuggestion: {"target": "b", "reason": "Share sleep concern", "content_to_share": "A reported that B is not sleeping well"}
+- "I have a headache" → Intent: REPORTING_FACT, Facts: {"headache": "has headache"}, SharingSuggestion: null
 - "Can you help B?" → Intent: ASKING_QUESTION, Facts: {}, SharingSuggestion: null
 - "Let's explain to A" → Intent: REQUESTING_MEDIATION, Facts: {}, SharingSuggestion: {"target": "a", "reason": "Mediate communication", "content_to_share": "B wants to explain their situation"}
 - "Tell A to take aspirin" → Intent: GIVING_ADVICE_FOR_OTHER, Facts: {}, SharingSuggestion: {"target": "a", "reason": "Share medical advice", "content_to_share": "B suggests taking aspirin"}

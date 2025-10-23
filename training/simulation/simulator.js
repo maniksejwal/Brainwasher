@@ -7,6 +7,7 @@ import { open } from 'sqlite';
 import sqlite3 from 'sqlite3';
 import { getPersona } from './personas.js';
 import { SyntheticUser } from './synthetic_user.js';
+import { simulationClientManager } from './simulation_client.js';
 import { ConversationRunner } from './conversation_runner.js';
 
 // Safety: Use separate database for simulations
@@ -22,6 +23,9 @@ export class SimulationDriver {
         this.logResults = options.logResults !== false;
         this.autoFeedback = options.autoFeedback !== false;
         this.progressCallback = options.progressCallback || null;
+        
+        // Initialize simulation client manager
+        // This will create clients for all users to receive notifications
     }
 
     /**
@@ -158,6 +162,7 @@ export class SimulationDriver {
                 description TEXT,
                 details TEXT,
                 context TEXT,
+                severity TEXT,
                 prompt_version TEXT,
                 timestamp INTEGER NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -179,6 +184,9 @@ export class SimulationDriver {
             
             const syntheticUser = new SyntheticUser(userId, role, personaKey, personaData);
             this.syntheticUsers.push(syntheticUser);
+
+            // Create simulation client for this user to receive notifications
+            simulationClientManager.createClient(userId, role);
 
             // Create user in database (matching real schema)
             await this.db.run(
@@ -318,6 +326,9 @@ export class SimulationDriver {
      * Clean up simulation database
      */
     async cleanup() {
+        // Cleanup simulation clients
+        simulationClientManager.cleanup();
+        
         if (this.db) {
             await this.db.close();
         }
