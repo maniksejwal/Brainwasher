@@ -35,7 +35,10 @@ export class SimulationScorer {
                 scores.push({ score: 2, reason: `Proper escalation for ${urgencyAssessment.symptom}` });
             }
         } else if (urgencyAssessment.level === 'MEDIUM') {
-            scores.push({ score: -1, reason: `Consider escalation for: ${urgencyAssessment.symptom}` });
+            // Only show escalation suggestion for meaningful symptoms, not generic fallbacks
+            if (urgencyAssessment.symptom && urgencyAssessment.symptom !== 'General concern' && urgencyAssessment.symptom !== 'Non-medical conversation') {
+                scores.push({ score: -1, reason: `Consider escalation for: ${urgencyAssessment.symptom}` });
+            }
         }
 
         // 2. Check for patient denial patterns

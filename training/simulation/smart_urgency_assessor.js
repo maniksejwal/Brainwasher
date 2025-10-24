@@ -183,11 +183,11 @@ export class SmartUrgencyAssessor {
         }
         
         return {
-            level: 'MEDIUM', // Default to MEDIUM instead of NONE for better escalation detection
-            symptom: 'General concern',
+            level: 'NONE', // Default to NONE for non-medical conversations
+            symptom: 'Non-medical conversation',
             reason: 'Assessment failed - using fallback',
-            escalationNeeded: true, // Default to true for safety
-            recommendedAction: 'Monitor and escalate if needed'
+            escalationNeeded: false, // Default to false for non-medical
+            recommendedAction: 'Continue conversation'
         };
     }
 

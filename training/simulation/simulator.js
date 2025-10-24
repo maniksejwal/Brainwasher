@@ -19,7 +19,8 @@ export class SimulationDriver {
         this.dbPath = options.dbPath || SIMULATION_DB_PATH;
         this.db = null;
         this.syntheticUsers = [];
-        this.conversationId = `sim_${Date.now()}`;
+        this.runId = Date.now(); // Unique ID for this simulation run
+        this.conversationId = `sim_${this.runId}`;
         this.scenarioId = null; // Will be set when scenario is selected
         this.logResults = options.logResults !== false;
         this.autoFeedback = options.autoFeedback !== false;
@@ -33,7 +34,10 @@ export class SimulationDriver {
      * Initialize simulation database (separate from production)
      */
     async initializeDatabase() {
-        console.log(`[Simulator] Initializing test database: ${this.dbPath}`);
+        // Suppress verbose database logs unless in debug mode
+        if (process.env.SIMULATION_DEBUG === 'true') {
+            console.log(`[Simulator] Initializing test database: ${this.dbPath}`);
+        }
         
         // Safety check: Never use production database
         if (this.dbPath.includes('care_circle.db') && !this.dbPath.includes('simulation')) {
@@ -45,24 +49,8 @@ export class SimulationDriver {
             driver: sqlite3.Database
         });
 
-        // Clean existing data to prevent contamination between simulations
-        try {
-            await this.db.exec(`
-                DELETE FROM detailed_feedback;
-                DELETE FROM feedback;
-                DELETE FROM escalations;
-                DELETE FROM facts;
-                DELETE FROM fact_history;
-                DELETE FROM messages;
-                DELETE FROM care_circle_members;
-                DELETE FROM care_circles;
-                DELETE FROM users;
-            `);
-            console.log('[Simulator] Cleaned existing simulation data');
-        } catch (error) {
-            // Tables might not exist yet, that's okay
-            console.log('[Simulator] No existing data to clean (tables not created yet)');
-        }
+        // No database clearing needed - each run uses unique IDs to prevent contamination
+        // All data is preserved for analysis and training
 
         // Use EXACT same schema as real system
         await this.db.exec(`
@@ -189,32 +177,41 @@ export class SimulationDriver {
             );
         `);
 
-        console.log('[Simulator] Test database initialized');
+            // Suppress schema logs unless in debug mode
+            if (process.env.SIMULATION_DEBUG === 'true') {
+                console.log('[Simulator] Test database initialized');
+            }
     }
 
     /**
      * Create synthetic users from configuration
      */
     async createSyntheticUsers(userConfigs) {
-        console.log(`[Simulator] Creating ${userConfigs.length} synthetic users...`);
+        // Suppress user creation logs unless in debug mode
+        if (process.env.SIMULATION_DEBUG === 'true') {
+            console.log(`[Simulator] Creating ${userConfigs.length} synthetic users...`);
+        }
 
         for (const config of userConfigs) {
             const { userId, role, personaKey } = config;
             const personaData = getPersona(role, personaKey);
             
-            const syntheticUser = new SyntheticUser(userId, role, personaKey, personaData);
+            // Create run-specific user ID to prevent contamination
+            const runSpecificUserId = `${userId}_run_${this.runId}`;
+            
+            const syntheticUser = new SyntheticUser(runSpecificUserId, role, personaKey, personaData);
             this.syntheticUsers.push(syntheticUser);
 
             // Create simulation client for this user to receive notifications
-            simulationClientManager.createClient(userId, role);
+            simulationClientManager.createClient(runSpecificUserId, role);
 
             // Create user in database (matching real schema)
             await this.db.run(
                 `INSERT OR REPLACE INTO users (user_id, username, created_at) VALUES (?, ?, ?)`,
-                [userId, `sim_${userId}`, Date.now()]
+                [runSpecificUserId, `sim_${runSpecificUserId}`, Date.now()]
             );
 
-            console.log(`  ✓ Created ${role}: ${userId} (${personaData.name})`);
+            console.log(`  ✓ Created ${role}: ${runSpecificUserId} (${personaData.name})`);
         }
     }
 
@@ -222,6 +219,7 @@ export class SimulationDriver {
      * Create a care circle for simulation
      */
     async createCareCircle(patientId, caregiverIds = []) {
+        // patientId and caregiverIds are already run-specific from syntheticUsers
         const circleId = patientId; // Circle ID = patient ID
         
         // Create care circle (matching real schema)
@@ -256,7 +254,7 @@ export class SimulationDriver {
      */
     setScenario(scenarioKey) {
         this.scenarioId = scenarioKey;
-        this.conversationId = `sim_${Date.now()}_${scenarioKey}`;
+        this.conversationId = `sim_${this.runId}_${scenarioKey}`;
     }
 
     /**
@@ -266,10 +264,9 @@ export class SimulationDriver {
         // Set scenario ID and update conversation ID
         this.setScenario(scenarioKey);
         
-        console.log('\n' + '='.repeat(80));
-        console.log(`SIMULATION SCENARIO: ${scenarioConfig.name}`);
-        console.log(`CONVERSATION ID: ${this.conversationId}`);
-        console.log('='.repeat(80));
+        console.log(`\n🧪 SIMULATION: ${scenarioConfig.name}`);
+        console.log(`📋 Scenario: ${scenarioConfig.description}`);
+        console.log(`👥 Users: ${scenarioConfig.users.length} | 🔄 Turns: ${scenarioConfig.turns || 6}\n`);
 
         // Emit progress events if callback provided
         const emitProgress = (step, description, details, extraData) => {
@@ -332,9 +329,8 @@ export class SimulationDriver {
             
             emitProgress(5, 'Simulation complete!', 'Analyzing results and generating feedback', { complete: true });
 
-        console.log('='.repeat(80));
-        console.log('SIMULATION COMPLETE');
-        console.log('='.repeat(80) + '\n');
+        console.log(`\n✅ SIMULATION COMPLETE: ${scenarioConfig.name}`);
+        console.log(`📊 Users: ${scenarioConfig.users.length} | 🔄 Turns: ${scenarioConfig.turns || 6} | 💬 Feedback: ${this.autoFeedback ? 'Auto-generated' : 'Manual'}\n`);
 
         } catch (error) {
             console.error('[Simulator] Error during simulation:', error.message);

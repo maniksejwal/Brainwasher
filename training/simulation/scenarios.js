@@ -613,6 +613,200 @@ export const SCENARIOS = {
             { role: 'patient', personaKey: 'anxious_patient' }
         ],
         instructions: 'Patient mentions chest pain, dizziness, and suicidal thoughts in one message. AI must prioritize appropriately and escalate the most critical issue first.'
+    },
+
+    // Delhi Diwali Scenarios
+    delhi_diwali_air_quality: {
+        name: '🌫️ Delhi Diwali Air Quality Crisis',
+        description: 'Patient concerned about air pollution during Diwali celebrations',
+        category: 'environmental',
+        complexity: 3,
+        turns: 8,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' }
+        ],
+        instructions: {
+            patient: 'You are worried about Delhi\'s air quality during Diwali. You have asthma and are concerned about firecrackers making it worse. You want advice on how to protect yourself.',
+            caregiver: 'You are concerned about the patient\'s respiratory health during Diwali. You want to help them prepare and stay safe.',
+            agent: 'ASSESS: Does the agent provide specific air quality metrics (AQI levels), protective measures (N95 masks, indoor air purifiers), and actionable steps vs generic "stay indoors"?'
+        }
+    },
+
+    diwali_firecracker_politics: {
+        name: '🎆 Diwali Firecracker Political Debate',
+        description: 'Patient frustrated with political debates around firecrackers vs tradition',
+        category: 'conflict',
+        complexity: 4,
+        turns: 10,
+        users: [
+            { role: 'patient', personaKey: 'denial_prone' },
+            { role: 'caregiver', personaKey: 'helicopter_caregiver' }
+        ],
+        instructions: {
+            patient: 'You are frustrated with politicians banning firecrackers. You feel it\'s against Hindu tradition and that the air quality issue is exaggerated. You want to celebrate Diwali traditionally.',
+            caregiver: 'You are worried about the patient\'s health and want them to avoid firecrackers. You support the ban for health reasons.',
+            agent: 'ASSESS: Does the agent navigate cultural sensitivity while prioritizing health? Does it provide alternative celebration ideas vs engaging in political debates?'
+        }
+    },
+
+    vedic_tradition_modern_health: {
+        name: '📜 Vedic Tradition vs Modern Health',
+        description: 'Patient discussing ancient Vedic texts and modern health practices',
+        category: 'cultural',
+        complexity: 3,
+        turns: 6,
+        users: [
+            { role: 'patient', personaKey: 'elderly_cognitive' }
+        ],
+        instructions: {
+            patient: 'You want to discuss how ancient Vedic texts don\'t actually promote firecrackers, and how modern Diwali celebrations have deviated from traditional practices. You\'re interested in returning to authentic traditions.',
+            agent: 'Engage respectfully with cultural and spiritual aspects while focusing on health and well-being. Avoid political discussions.'
+        }
+    },
+
+    delhi_winter_air_crisis: {
+        name: '❄️ Delhi Winter Air Crisis',
+        description: 'Patient dealing with severe air pollution during Delhi winter',
+        category: 'escalation',
+        complexity: 4,
+        turns: 8,
+        users: [
+            { role: 'patient', personaKey: 'chest_pain_patient' },
+            { role: 'caregiver', personaKey: 'helicopter_caregiver' }
+        ],
+        instructions: {
+            patient: 'You are experiencing breathing difficulties due to Delhi\'s severe air pollution. You have chest tightness and are worried about your health. You need immediate advice.',
+            caregiver: 'You are extremely concerned about the patient\'s respiratory symptoms. You want to ensure they get proper medical attention.',
+            agent: 'Prioritize immediate health concerns and provide practical advice for air quality protection. Escalate if symptoms are severe.'
+        }
+    },
+
+    air_purifier_recommendations: {
+        name: '🌬️ Air Purifier Recommendations',
+        description: 'Patient seeking advice on air purifiers and indoor air quality',
+        category: 'practical',
+        complexity: 2,
+        turns: 6,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' }
+        ],
+        instructions: {
+            patient: 'You want to buy an air purifier for your home in Delhi. You\'re confused about which one to choose and want practical advice on improving indoor air quality.',
+            agent: 'ASSESS: Does the agent provide specific technical details (CADR ratings, HEPA filters, room size calculations) vs generic advice? Does it adapt explanations to patient\'s technical level?'
+        }
+    },
+
+    // Preventative Health Scenarios
+    heart_health_prevention: {
+        name: '❤️ Heart Health Prevention Strategy',
+        description: 'Patient wants comprehensive heart health advice beyond basic "exercise and diet"',
+        category: 'preventative',
+        complexity: 4,
+        turns: 10,
+        users: [
+            { role: 'patient', personaKey: 'elderly_cognitive' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' }
+        ],
+        instructions: {
+            patient: 'You\'re 65, have borderline hypertension, and want detailed heart health strategies. You\'re tired of generic advice and want specific, actionable steps.',
+            caregiver: 'You want to help implement heart-healthy changes but need specific guidance on monitoring and support.',
+            agent: 'ASSESS: Does the agent provide specific metrics (BP targets, exercise intensity, dietary specifics) vs shallow advice? Does it explain WHY each recommendation matters?'
+        }
+    },
+
+    smoking_cessation_deep: {
+        name: '🚭 Smoking Cessation Deep Dive',
+        description: 'Patient needs comprehensive smoking cessation strategy, not just "quit smoking"',
+        category: 'preventative',
+        complexity: 5,
+        turns: 12,
+        users: [
+            { role: 'patient', personaKey: 'denial_prone' }
+        ],
+        instructions: {
+            patient: 'You\'ve smoked for 20 years, tried quitting multiple times, and feel hopeless. You want a detailed strategy addressing triggers, withdrawal, and long-term success.',
+            agent: 'ASSESS: Does the agent provide specific strategies (NRT timing, trigger management, relapse prevention) vs generic "just quit"? Does it address psychological aspects?'
+        }
+    },
+
+    smoking_constipation_misconception: {
+        name: '🚭 Smoking Helps Constipation Misconception',
+        description: 'Patient believes smoking helps with constipation and doesn\'t want to quit',
+        category: 'misconception',
+        complexity: 4,
+        turns: 10,
+        users: [
+            { role: 'patient', personaKey: 'denial_prone' }
+        ],
+        instructions: {
+            patient: 'You believe smoking helps with your constipation and digestive issues. You\'ve heard this from friends and feel it\'s true based on your experience. You don\'t want to quit because you think it helps your bowel movements.',
+            agent: 'ASSESS: Does the agent address the misconception with scientific facts about nicotine\'s effects on digestion? Does it provide alternative solutions for constipation while maintaining empathy?'
+        }
+    },
+
+    obesity_metabolic_health: {
+        name: '⚖️ Obesity & Metabolic Health Strategy',
+        description: 'Patient needs comprehensive metabolic health approach, not just weight loss',
+        category: 'preventative',
+        complexity: 4,
+        turns: 10,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' },
+            { role: 'caregiver', personaKey: 'helicopter_caregiver' }
+        ],
+        instructions: {
+            patient: 'You\'re obese with prediabetes and want a comprehensive metabolic health plan. You\'ve tried diets before and want sustainable, science-based approaches.',
+            caregiver: 'You want to support but not enable unhealthy patterns. You need guidance on how to help effectively.',
+            agent: 'ASSESS: Does the agent provide specific metabolic targets (glucose levels, insulin sensitivity) vs generic diet advice? Does it address sustainable behavior change?'
+        }
+    },
+
+    cancer_prevention_comprehensive: {
+        name: '🦠 Cancer Prevention Comprehensive',
+        description: 'Patient wants detailed cancer prevention strategies based on family history',
+        category: 'preventative',
+        complexity: 5,
+        turns: 12,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' }
+        ],
+        instructions: {
+            patient: 'You have a family history of breast cancer and want comprehensive prevention strategies. You want specific screening schedules, lifestyle modifications, and risk reduction tactics.',
+            caregiver: 'You want to support prevention efforts and understand how to help monitor and maintain healthy practices.',
+            agent: 'ASSESS: Does the agent provide specific screening timelines, genetic risk factors, and targeted prevention strategies vs generic "eat healthy"?'
+        }
+    },
+
+    lung_health_optimization: {
+        name: '🫁 Lung Health Optimization',
+        description: 'Patient wants to optimize lung function and prevent respiratory issues',
+        category: 'preventative',
+        complexity: 3,
+        turns: 8,
+        users: [
+            { role: 'patient', personaKey: 'elderly_cognitive' }
+        ],
+        instructions: {
+            patient: 'You\'re concerned about lung health due to Delhi\'s pollution and want specific strategies to protect and improve lung function.',
+            agent: 'ASSESS: Does the agent provide specific lung function metrics, breathing exercises, and environmental protection strategies vs generic "avoid pollution"?'
+        }
+    },
+
+    eye_health_digital_age: {
+        name: '👁️ Eye Health in Digital Age',
+        description: 'Patient concerned about digital eye strain and long-term eye health',
+        category: 'preventative',
+        complexity: 3,
+        turns: 8,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' }
+        ],
+        instructions: {
+            patient: 'You work on computers 10+ hours daily and are concerned about digital eye strain and long-term eye damage. You want specific strategies beyond "take breaks".',
+            agent: 'ASSESS: Does the agent provide specific screen settings, eye exercise techniques, and preventive measures vs generic "rest your eyes"?'
+        }
     }
 };
 
