@@ -16,19 +16,20 @@ import { syntheticUserFeedback } from './synthetic_user_feedback.js';
 import chalk from 'chalk';
 
 export class ConversationRunner {
-    constructor(simulationDb, conversationId, autoFeedback = true, logResults = true, scenarioContext = null) {
+    constructor(simulationDb, conversationId, autoFeedback = true, logResults = true, scenarioContext = null, promptVersion = 'simulation_v1.0') {
         this.simulationDb = simulationDb;
         this.conversationId = conversationId;
         this.autoFeedback = autoFeedback;
         this.logResults = logResults;
         this.scenarioContext = scenarioContext; // Store scenario context for evaluation
+        this.promptVersion = promptVersion; // Store dynamic prompt version
         this.feedbackCollector = null;
         this.aiIntegration = new SimulationAI(simulationDb);
         this.conversationEngine = new RealisticConversationEngine();
         this.eventHandler = new SimulationEventHandler();
         
         if (autoFeedback) {
-            this.feedbackCollector = new SimulationFeedback(conversationId, simulationDb, scenarioContext);
+            this.feedbackCollector = new SimulationFeedback(conversationId, simulationDb, scenarioContext, promptVersion);
         }
     }
 

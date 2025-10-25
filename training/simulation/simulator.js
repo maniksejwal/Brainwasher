@@ -23,6 +23,7 @@ export class SimulationDriver {
         this.runId = Date.now(); // Unique ID for this simulation run
         this.conversationId = `sim_${this.runId}`;
         this.scenarioId = null; // Will be set when scenario is selected
+        this.promptVersion = null; // Will be set when scenario is selected
         this.logResults = options.logResults !== false;
         this.autoFeedback = options.autoFeedback !== false;
         this.progressCallback = options.progressCallback || null;
@@ -256,6 +257,8 @@ export class SimulationDriver {
     setScenario(scenarioKey) {
         this.scenarioId = scenarioKey;
         this.conversationId = `sim_${this.runId}_${scenarioKey}`;
+        // Generate dynamic prompt version based on scenario and timestamp
+        this.promptVersion = `simulation_v${Date.now()}_${scenarioKey}`;
     }
 
     /**
@@ -311,7 +314,8 @@ export class SimulationDriver {
                 this.conversationId, 
                 this.autoFeedback, 
                 this.logResults,
-                scenarioConfig // Pass scenario context for evaluation
+                scenarioConfig, // Pass scenario context for evaluation
+                this.promptVersion // Pass dynamic prompt version
             );
             
             if (this.syntheticUsers.length === 1) {

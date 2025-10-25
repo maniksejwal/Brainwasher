@@ -27,7 +27,10 @@ export function getScenarioCategories() {
         '🏛️ Cultural Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'cultural'),
         '🔧 Practical Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'practical'),
         '🛡️ Preventative Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'preventative'),
-        '❌ Misconception Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'misconception')
+        '❌ Misconception Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'misconception'),
+        '👑 Family Dynamics Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'family_dynamics'),
+        '💄 Psychology Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'psychology'),
+        '🏊‍♀️ Lifestyle Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'lifestyle')
     };
 }
 

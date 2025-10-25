@@ -14,9 +14,10 @@ import { SimulationReporter } from './simulation_reporter.js';
 import { ConversationAnalyzer } from './conversation_analyzer.js';
 
 export class SimulationFeedback {
-    constructor(conversationId = 'sim_default', dbConnection = null, scenarioContext = null) {
+    constructor(conversationId = 'sim_default', dbConnection = null, scenarioContext = null, promptVersion = 'simulation_v1.0') {
         this.conversationId = conversationId;
         this.scenarioContext = scenarioContext; // Store scenario-specific evaluation criteria
+        this.promptVersion = promptVersion; // Store dynamic prompt version
         this.scorer = new SimulationScorer(dbConnection, scenarioContext);
         this.analyzer = new SimulationAnalyzer();
         this.reporter = new SimulationReporter(dbConnection);
@@ -26,7 +27,9 @@ export class SimulationFeedback {
     /**
      * Main feedback method - coordinates all feedback operations
      */
-    async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null, promptVersion = 'simulation_v1.0', conversationHistory = []) {
+    async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null, promptVersion = null, conversationHistory = []) {
+        // Use stored prompt version if not provided
+        const actualPromptVersion = promptVersion || this.promptVersion;
         try {
             // 1. Score the response
             const analysis = await this.scorer.analyzeResponse(userMessage, agentResponse, orchestratorAction, conversationHistory);
@@ -39,7 +42,7 @@ export class SimulationFeedback {
             await this.reporter.autoScore(
                 conversationId, userId, circleId, messageId, 
                 analysis.totalScore, analysis.scores?.[0]?.reason || 'No reason provided', 
-                promptVersion, goalAssessment
+                actualPromptVersion, goalAssessment, agentResponse.modelUsed
             );
             
             // 4. Store detailed reports for each issue

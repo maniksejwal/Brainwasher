@@ -177,7 +177,11 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
                 return createFallbackResponse(text);
             }
             
-            return { reply: text };
+            return { 
+                reply: text, 
+                modelUsed: provider.type === 'openai' ? config.OPENAI_MODEL : config.GEMINI_MODEL,
+                modelProvider: provider.type
+            };
 
         } catch (error) {
             lastError = error;

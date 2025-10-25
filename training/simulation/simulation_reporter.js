@@ -15,7 +15,7 @@ export class SimulationReporter {
     /**
      * Auto-score feedback and store in database
      */
-    async autoScore(conversationId, userId, circleId, messageId, score, reason, promptVersion = 'simulation_v1.0', goalAssessment = null) {
+    async autoScore(conversationId, userId, circleId, messageId, score, reason, promptVersion = 'simulation_v1.0', goalAssessment = null, modelUsed = null) {
         const db = this.dbConnection || await getDb();
         
         await db.run(`
@@ -43,17 +43,31 @@ export class SimulationReporter {
         const goalConversation = goalAssessment?.conversation || null;
 
         await db.run(
-            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source, prompt_version, goal_adherence_score, goal_history_score, goal_conversation_score, critical_failure)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?, ?, ?, ?)`,
-            [conversationId, messageId, userId, circleId, score, reason, Date.now(), promptVersion, goalAdherence, goalHistory, goalConversation, criticalFailure]
+            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source, prompt_version, goal_adherence_score, goal_history_score, goal_conversation_score, critical_failure, model_used, model_version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?, ?, ?, ?, ?, ?)`,
+            [conversationId, messageId, userId, circleId, score, reason, Date.now(), promptVersion, goalAdherence, goalHistory, goalConversation, criticalFailure, modelUsed, modelUsed]
         );
 
         console.log(`[SimulationReporter] Auto-scored: ${score} - "${reason}"${criticalFailure ? ' 🚨 CRITICAL FAILURE' : ''}`);
         
-        // Flag simulation for pause if critical failure
+        // Store advice/recommendations if critical failure
         if (criticalFailure) {
+            await this.storeAdvice(conversationId, userId, 'improvement', reason, 'high');
             await this.flagSimulation(conversationId, 'critical_failure', reason);
         }
+    }
+
+    /**
+     * Store advice/recommendations
+     */
+    async storeAdvice(conversationId, userId, adviceType, adviceText, priority = 'medium') {
+        const db = this.dbConnection || await getDb();
+        
+        await db.run(
+            `INSERT INTO advice (conversation_id, user_id, advice_type, advice_text, priority, timestamp)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [conversationId, userId, adviceType, adviceText, priority, Date.now()]
+        );
     }
 
     /**
