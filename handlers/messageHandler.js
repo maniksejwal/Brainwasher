@@ -48,7 +48,15 @@ export async function handleMessage(userId, circleId, message) {
         
         // Training log (fire-and-forget, non-blocking)
         metricsCollector.recordMessageLength(userId, message.length, message.length);
-        return;
+        
+        // Return a proper response object for doctor messages
+        return {
+            reply: `Doctor message broadcasted: "${message}"`,
+            intent: 'DOCTOR_BROADCAST',
+            criticality: 'NONE',
+            privacyLevel: 'PRIVATE',
+            facts: {}
+        };
     }
     
     // For patients and caregivers, follow the full "chain of thought".
@@ -57,7 +65,13 @@ export async function handleMessage(userId, circleId, message) {
     const wasActionHandled = await handlePendingActionResponse(userId, circleId, message);
     if (wasActionHandled) { 
         metricsCollector.recordResponseTime('action_response', Date.now() - startTime, true);
-        return; 
+        return {
+            reply: "Action handled successfully",
+            intent: 'ACTION_RESPONSE',
+            criticality: 'NONE',
+            privacyLevel: 'PRIVATE',
+            facts: {}
+        }; 
     }
 
     // Step 2: Perform the full AI analysis, including entity resolution.

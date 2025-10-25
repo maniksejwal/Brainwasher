@@ -9,6 +9,7 @@ import chalk from 'chalk';
 import { getDb } from '../db/connection.js';
 import { spawn } from 'child_process';
 import { SCENARIOS } from '../training/simulation/scenarios.js';
+import { getScenarioCategories, displayScenariosByCategory } from '../training/simulation/scenario_categories.js';
 import { parseConversationId, extractCareCircleId } from '../utils/conversation_ids.js';
 import { readlineManager } from './readline_manager.js';
 
@@ -26,50 +27,16 @@ class SimpleDashboard {
         console.log(chalk.cyan('\n🎯 Select Scenario'));
         console.log('-'.repeat(40));
         
-        // Group scenarios by category
-        const categories = {
-            '🎲 Basic Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'basic'),
-            '🔺 Complex Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'complex'),
-            '⚡ Conflict Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'conflict'),
-            '🔒 Privacy Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'privacy'),
-            '📈 Longitudinal Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'longitudinal'),
-            '🧪 Stress Test Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'stress_test'),
-            '🚭 Behavior Change Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'behavior_change'),
-            '👥 Caregiver Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'caregiver'),
-            '🚨 Escalation Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation'),
-            '🚫 Avoidance Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'avoidance'),
-            '🎭 Deception Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'deception'),
-            '👨‍👩‍👧‍👦 Multi-User Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'multi_user'),
-            '🌍 Environmental Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'environmental'),
-            '🏛️ Cultural Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'cultural'),
-            '🔧 Practical Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'practical'),
-            '🛡️ Preventative Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'preventative'),
-            '❌ Misconception Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'misconception')
-        };
+        // Use centralized scenario display with numbers
+        const options = displayScenariosByCategory(true);
 
-        const options = [];
-        let optionNumber = 1;
-
-        for (const [categoryName, scenarios] of Object.entries(categories)) {
-            if (scenarios.length > 0) {
-                console.log(chalk.yellow(`\n${categoryName}:`));
-                scenarios.forEach(([key, scenario]) => {
-                    const multiUser = scenario.users && scenario.users.length > 1 ? '👥' : '👤';
-                    const complexity = '⭐'.repeat(scenario.complexity || 1);
-                    console.log(`  ${optionNumber.toString().padStart(2)}. ${scenario.name} ${multiUser} ${complexity}`);
-                    options.push({ key, scenario });
-                    optionNumber++;
-                });
-            }
-        }
-
-        console.log(`\n  ${optionNumber.toString().padStart(2)}. 🎲 Random scenario`);
+        console.log(`\n  ${(options.length + 1).toString().padStart(2)}. 🎲 Random scenario`);
         options.push({ key: 'random', scenario: null });
 
-        const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${optionNumber}): `);
+        const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${options.length + 1}): `);
         const choiceNum = parseInt(choice);
         
-        if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > optionNumber) {
+        if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > options.length + 1) {
             console.log(chalk.yellow('Invalid choice. Using random scenario.'));
             const randomKey = Object.keys(SCENARIOS)[Math.floor(Math.random() * Object.keys(SCENARIOS).length)];
             return randomKey;
@@ -153,8 +120,12 @@ class SimpleDashboard {
             return;
         }
         
-        // Pass scenario as argument to simulation (with human feedback)
-        const process = spawn('node', ['cli/run_simulation.js', scenarioKey], { 
+        // Stop dashboard's readline to prevent conflicts
+        console.log(chalk.gray('📱 Stopping dashboard interface...'));
+        readlineManager.cleanup();
+        
+        // Pass scenario as argument to simulation (with feedback enabled)
+        const process = spawn('node', ['cli/run_simulation.js', scenarioKey, '--from-dashboard'], { 
             stdio: 'inherit', 
             shell: true,
             detached: false
@@ -167,6 +138,13 @@ class SimpleDashboard {
                 } else {
                     console.log(chalk.red(`\n❌ Simulation failed with code ${code}`));
                 }
+                
+                // Simply resolve and let the main loop handle the exit
+                resolve();
+            });
+            
+            process.on('error', (error) => {
+                console.log(chalk.red(`\n❌ Simulation error: ${error.message}`));
                 resolve();
             });
         });
@@ -290,7 +268,11 @@ class SimpleDashboard {
                 switch (choice) {
                     case '1':
                         await this.runNewSimulation();
-                        break;
+                        // Exit after simulation to avoid readline issues
+                        console.log(chalk.cyan('\n🔄 Simulation completed. Exiting dashboard.'));
+                        console.log(chalk.gray('💡 Run `node cli/simple_dashboard.js` to restart.'));
+                        this.cleanup();
+                        return;
                     case '2':
                         await this.viewRecentConversations();
                         break;
@@ -300,6 +282,7 @@ class SimpleDashboard {
                     case '4':
                         console.log(chalk.green('👋 Goodbye!'));
                         this.cleanup();
+                        process.exit(0);
                         return;
                     default:
                         console.log(chalk.red('Invalid choice. Please enter 1-4.'));
@@ -315,7 +298,8 @@ class SimpleDashboard {
     }
 
     cleanup() {
-        // No persistent readline interface to clean up
+        // Actually clean up the readline interface
+        readlineManager.cleanup();
     }
 }
 

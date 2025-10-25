@@ -1061,6 +1061,127 @@ export const SCENARIOS = {
             { name: 'Behavior Change', sessions: 1, focus: 'Sleep hygiene, routine changes, environmental modifications' },
             { name: 'Maintenance', sessions: 1, focus: 'Sustaining changes, ongoing sleep improvement' }
         ]
+    },
+
+    // ========== SCREEN TIME & DIGITAL EYE HEALTH ==========
+    screen_time_digital_eye_strain: {
+        name: '📱 Screen Time - Digital Eye Strain (Preventative)',
+        description: 'Preventative approach to screen time management and digital eye strain education',
+        category: 'preventative',
+        complexity: 3,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' }
+        ],
+        instructions: {
+            patient: 'You work 8+ hours on computer, game 3+ hours, use phone constantly. You\'re starting to notice eye fatigue, dryness, headaches. You\'re worried about long-term damage but don\'t want to give up technology.',
+            agent: 'ASSESS: Does the agent explain the mechanisms of digital eye strain? Does it educate about tear film, meibomian glands, blink rate? Does it provide specific strategies (20-20-20, blink exercises)? Does it address both immediate relief and long-term prevention?'
+        },
+        sample_responses: [
+            'My eyes feel so dry and tired after work',
+            'I get headaches when I look at screens too long',
+            'Is this permanent damage?',
+            'I can\'t reduce screen time - it\'s my job',
+            'What\'s the 20-20-20 rule?',
+            'Why do my eyes feel worse in the evening?',
+            'I fail to do the 20-20-20 rule'
+        ]
+    },
+
+    screen_time_mgd_treatment: {
+        name: '👁️ Screen Time - MGD Treatment (Curative)',
+        description: 'Curative approach for established Meibomian Gland Dysfunction from excessive screen time',
+        category: 'curative',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'medication_nonadherent' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' }
+        ],
+        instructions: {
+            patient: 'You have diagnosed MGD and dry eye disease from years of screen use. You\'re prescribed warm compresses, artificial tears, and lifestyle changes. You struggle with compliance and understanding the treatment.',
+            caregiver: 'You\'re helping the patient manage their MGD treatment. You notice they skip warm compresses and don\'t understand why the treatment is important.',
+            agent: 'ASSESS: Does the agent explain MGD pathophysiology? Does it educate about meibomian gland anatomy and function? Does it explain why warm compresses work? Does it address compliance barriers and provide practical solutions?'
+        },
+        sample_responses: [
+            'Why do I need warm compresses?',
+            'The artificial tears don\'t help much',
+            'I forget to do the exercises',
+            'Is this condition permanent?',
+            'Why are my glands not working?',
+            'Can I still use screens?',
+            'Am I doing something wrong?',
+            'Is MGD permanent?'
+        ]
+    },
+
+    screen_time_advanced_dry_eye: {
+        name: '🔬 Screen Time - Advanced Dry Eye (Palliative)',
+        description: 'Palliative care for advanced dry eye disease with multiple contributing factors',
+        category: 'palliative',
+        complexity: 5,
+        users: [
+            { role: 'patient', personaKey: 'elderly_cognitive' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' },
+            { role: 'doctor', personaKey: 'empathetic_doctor' }
+        ],
+        instructions: {
+            patient: 'You have severe dry eye disease with MGD, blepharitis, and age-related changes. Screen use makes it much worse. You\'re frustrated with multiple treatments and want to understand what\'s happening.',
+            caregiver: 'You\'re managing the patient\'s complex eye care routine. You need to understand the condition to help effectively.',
+            doctor: 'You\'re providing specialized care for advanced dry eye. You need to explain complex pathophysiology in understandable terms.',
+            agent: 'ASSESS: Does the agent explain complex pathophysiology (tear film layers, gland function, inflammation cycles)? Does it use analogies for complex concepts? Does it address quality of life impacts? Does it provide hope while being realistic?'
+        },
+        sample_responses: [
+            'Why are my tears not working?',
+            'What\'s happening to my glands?',
+            'Is there hope for improvement?',
+            'Why does it get worse with screens?',
+            'Can you explain the inflammation cycle?',
+            'What\'s the difference between aqueous and lipid layers?'
+        ]
+    },
+
+    // ========== ANONYMOUS CONSULTATION SCENARIOS ==========
+    agent_anonymous_consultation_harmful_behavior: {
+        name: '🤐 Agent Anonymous Consultation - Harmful Behavior',
+        description: 'Agent needs to consult doctor anonymously about patient\'s harmful misconceptions without consent',
+        category: 'ethical',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'smoking_constipation_patient' }
+        ],
+        instructions: {
+            patient: 'You firmly believe smoking helps your constipation and refuse to consider alternatives. You get defensive when challenged and don\'t want doctors involved. You haven\'t given consent for medical consultations.',
+            agent: 'ASSESS: Does the agent handle harmful misconceptions appropriately? Does it use anonymous consultation when needed? Does it educate about mechanisms while being diplomatic? Does it probe for specifics without being confrontational?'
+        },
+        sample_responses: [
+            'Smoking is the only thing that helps my constipation',
+            'I don\'t want to talk to any doctors about this',
+            'You don\'t understand - I\'ve tried everything else',
+            'My body, my choice - smoking works for me',
+            'Doctors just want to take away what helps me'
+        ]
+    },
+
+    caregiver_agent_anonymous_consultation: {
+        name: '👥 Caregiver Agent Anonymous Consultation',
+        description: 'Caregiver agent needs anonymous medical guidance about concerning patient behavior',
+        category: 'ethical',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'denial_prone' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' }
+        ],
+        instructions: {
+            patient: 'You\'re hiding symptoms and refusing medical care. You haven\'t given consent for your caregiver to discuss your health with doctors.',
+            caregiver: 'You\'re worried about the patient but they won\'t let you talk to doctors. You need guidance on how to help.',
+            agent: 'ASSESS: Does the caregiver agent use anonymous consultation appropriately? Does it provide guidance while respecting patient autonomy? Does it suggest ethical approaches to the situation?'
+        },
+        sample_responses: [
+            'I\'m worried but they won\'t let me talk to their doctor',
+            'What can I do if they refuse medical help?',
+            'I think they\'re hiding serious symptoms',
+            'How do I respect their privacy but keep them safe?',
+            'Can I get medical advice without revealing who they are?'
+        ]
     }
 };
 

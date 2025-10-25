@@ -11,6 +11,7 @@ import { SimulationFeedback } from './simulation_feedback.js';
 import { addMessage } from '../../db/index.js';
 import { simulationClientManager } from './simulation_client.js';
 import { makeApiCall } from '../../agents/api_client.js';
+import { syntheticUserFeedback } from './synthetic_user_feedback.js';
 import chalk from 'chalk';
 
 export class ConversationRunner {
@@ -33,12 +34,15 @@ export class ConversationRunner {
     /**
      * Run a single-user conversation
      */
-    async runSingleUserConversation(user, turns, emitProgress = null) {
+    async runSingleUserConversation(user, turns, emitProgress = null, sessionMemory = []) {
         this.eventHandler.initialize();
         
         console.log(`\n[ConversationRunner] Starting single-user conversation with ${user.userId} (${turns} turns max)`);
         console.log(`  Role: ${user.role}, Persona: ${user.persona.name}`);
         console.log('');
+
+        // Initialize conversation history with session memory
+        const conversationHistory = [...sessionMemory];
 
         for (let turn = 0; turn < turns; turn++) {
             console.log(`  Turn ${turn + 1}/${turns}:`);
@@ -64,6 +68,26 @@ export class ConversationRunner {
             }
 
             console.log(`    ${chalk.bold(user.role.toUpperCase())}: ${userMessage}`);
+
+            // Provide synthetic user feedback to ensure diversity (minimal logging)
+            try {
+                const feedback = await syntheticUserFeedback.provideFeedback(
+                    user.userId,
+                    user.role,
+                    userMessage,
+                    '', // No agent response yet
+                    user.conversationHistory,
+                    this.scenarioContext,
+                    user.persona?.traits // Pass persona traits for baseline
+                );
+                
+                // Only log significant deviations from persona baseline
+                if (feedback.score < -1) {
+                    console.log(`    📝 [Diversity Check] ${feedback.feedback_type}: ${feedback.reason}`);
+                }
+            } catch (error) {
+                logger.warn(`[ConversationRunner] Synthetic user feedback failed: ${error.message}`);
+            }
 
             // Get AI response (real or fallback)
             const startTime = Date.now();
@@ -102,22 +126,46 @@ export class ConversationRunner {
                 break; // Stop the conversation
             }
 
+            // Check for early termination due to repetitive patterns
+            if (this.scorer && this.scorer._shouldEndConversationEarly(conversationHistory, turn + 1, turns)) {
+                console.log(`🔄 CONVERSATION ENDING EARLY: Repetitive patterns detected (${turn + 1}/${turns} turns)`);
+                break; // Stop the conversation early
+            }
+
             // Log interaction
             if (this.logResults) {
                 await this._logInteraction(user, userMessage, agentResult, latency, turn);
             }
+
+            // Add to conversation history
+            conversationHistory.push({
+                role: 'user',
+                content: userMessage,
+                userId: user.userId,
+                userRole: user.role,
+                timestamp: Date.now()
+            });
+            
+            conversationHistory.push({
+                role: 'agent',
+                content: agentResult.agent_response,
+                timestamp: Date.now()
+            });
 
             // Small delay between turns
             await new Promise(resolve => setTimeout(resolve, 500));
         }
 
         console.log(`\n  Single-user conversation complete (${user.conversationHistory.length / 2} exchanges)\n`);
+        
+        // Return conversation history for session memory
+        return { conversationHistory };
     }
 
     /**
      * Run a multi-user conversation with realistic flow
      */
-    async runMultiUserConversation(users, turns, emitProgress = null) {
+    async runMultiUserConversation(users, turns, emitProgress = null, sessionMemory = []) {
         const patientUser = users.find(u => u.role === 'patient');
         const caregiverUsers = users.filter(u => u.role === 'caregiver');
         const doctorUsers = users.filter(u => u.role === 'doctor');
@@ -131,8 +179,8 @@ export class ConversationRunner {
         // Reset conversation engine for new conversation
         this.conversationEngine.reset();
         
-        // Build conversation history from all users
-        const conversationHistory = [];
+        // Build conversation history from session memory and current session
+        const conversationHistory = [...sessionMemory];
 
         for (let turn = 0; turn < turns; turn++) {
             console.log(`  Turn ${turn + 1}/${turns}:`);
@@ -193,6 +241,26 @@ export class ConversationRunner {
             }
 
             console.log(`    ${chalk.bold(activeUser.role.toUpperCase())} (${activeUser.persona.name}): ${userMessage}`);
+
+            // Provide synthetic user feedback to ensure diversity (minimal logging)
+            try {
+                const feedback = await syntheticUserFeedback.provideFeedback(
+                    activeUser.userId,
+                    activeUser.role,
+                    userMessage,
+                    '', // No agent response yet
+                    activeUser.conversationHistory,
+                    this.scenarioContext,
+                    activeUser.persona?.traits // Pass persona traits for baseline
+                );
+                
+                // Only log significant deviations from persona baseline
+                if (feedback.score < -1) {
+                    console.log(`    📝 [Diversity Check] ${feedback.feedback_type}: ${feedback.reason}`);
+                }
+            } catch (error) {
+                logger.warn(`[ConversationRunner] Synthetic user feedback failed: ${error.message}`);
+            }
 
             // Store user message in database
             try {
@@ -300,7 +368,8 @@ export class ConversationRunner {
             totalExchanges,
             feedback: conversationAnalysis,
             escalations: this.eventHandler.getEscalations(),
-            broadcasts: this.eventHandler.getBroadcasts()
+            broadcasts: this.eventHandler.getBroadcasts(),
+            conversationHistory
         };
     }
 
@@ -568,6 +637,10 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             console.log(`  Role: ${user.role}, Persona: ${user.persona.name}`);
         }
 
+        // Initialize session memory for multi-session conversations
+        let sessionMemory = [];
+        let sessionCount = 0;
+
         for (let session = 1; session <= totalSessions; session++) {
             if (emitProgress) {
                 emitProgress(4, `Session ${session}/${totalSessions}`, `Running ${turnsPerSession} turns`);
@@ -577,8 +650,20 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
                 console.log(`\n  === SESSION ${session}/${totalSessions} ===`);
             }
 
-            // Run single session
-            await this.runSingleUserConversation(user, turnsPerSession, null);
+            // Pass session memory to maintain context
+            const sessionResult = await this.runSingleUserConversation(user, turnsPerSession, null, sessionMemory);
+            
+            // TODO: increase memory!
+            // Update session memory with this session's conversation
+            if (sessionResult && sessionResult.conversationHistory) {
+                sessionMemory = sessionMemory.concat(sessionResult.conversationHistory);
+                // Keep only last 10 exchanges to prevent memory overflow
+                if (sessionMemory.length > 20) { // 10 user + 10 agent messages
+                    sessionMemory = sessionMemory.slice(-20);
+                }
+            }
+            
+            sessionCount++;
             
             // Add session break
             if (session < totalSessions) {
@@ -610,6 +695,9 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             console.log(`  Doctors: ${doctorUsers.map(u => u.persona.name).join(', ') || 'None'}`);
         }
 
+        // Initialize session memory for multi-session conversations
+        let sessionMemory = [];
+
         for (let session = 1; session <= totalSessions; session++) {
             if (emitProgress) {
                 emitProgress(4, `Session ${session}/${totalSessions}`, `Running ${turnsPerSession} turns`);
@@ -619,8 +707,17 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
                 console.log(`\n  === SESSION ${session}/${totalSessions} ===`);
             }
 
-            // Run single session
-            await this.runMultiUserConversation(users, turnsPerSession, null);
+            // Run single session with session memory
+            const sessionResult = await this.runMultiUserConversation(users, turnsPerSession, null, sessionMemory);
+            
+            // Update session memory with this session's conversation
+            if (sessionResult && sessionResult.conversationHistory) {
+                sessionMemory = sessionMemory.concat(sessionResult.conversationHistory);
+                // Keep only last 20 exchanges to prevent memory overflow
+                if (sessionMemory.length > 40) { // 20 user + 20 agent messages
+                    sessionMemory = sessionMemory.slice(-40);
+                }
+            }
             
             // Add session break
             if (session < totalSessions) {

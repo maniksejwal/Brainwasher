@@ -50,7 +50,7 @@ if (geminiClients.length === 0 && !openAIClient) {
 }
 
 // Get next available provider (round-robin between Gemini and OpenAI, or OpenAI only)
-function getNextProvider() {
+function getNextProvider(useCase = 'basic_responses') {
     // If useOnlyOpenAI flag is set, return OpenAI only
     if (useOnlyOpenAI) {
         if (openAIClient && !failedKeys.has(config.CHAT_GPT_KEY)) {
@@ -83,11 +83,36 @@ function getNextProvider() {
     return provider;
 }
 
+// Select appropriate model based on use case
+function selectModelForUseCase(useCase, expectJson, promptLength) {
+    const isComplexPrompt = promptLength > 2000 || expectJson;
+    const isCriticalUseCase = ['escalation', 'critical_analysis', 'complex_reasoning', 'conversational_agent'].includes(useCase);
+    
+    // Use GPT-4 for complex prompts or critical use cases
+    if (isComplexPrompt || isCriticalUseCase) {
+        return {
+            preferredModel: config.OPENAI_MODEL_GPT4,
+            fallbackModel: config.OPENAI_MODEL_GPT4_TURBO,
+            reason: 'Complex prompt or critical use case'
+        };
+    }
+    
+    // Use GPT-3.5 for simple responses
+    return {
+        preferredModel: config.OPENAI_MODEL,
+        fallbackModel: config.OPENAI_MODEL_GPT4,
+        reason: 'Simple response'
+    };
+}
+
 // Enhanced API call with load balancing and failover
-export async function makeApiCall(prompt, history = [], expectJson = false, temperature = 0.7, maxTokens = 100) {
+export async function makeApiCall(prompt, history = [], expectJson = false, temperature = 0.7, maxTokens = 100, useCase = 'basic_responses') {
     const fullPrompt = `${history.join('\n')}\n\n${prompt}`;
     const maxRetries = 3;
     let lastError = null;
+
+    // Select appropriate model based on use case
+    const modelSelection = selectModelForUseCase(useCase, expectJson, prompt.length);
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         const provider = getNextProvider();

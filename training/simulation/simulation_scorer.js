@@ -5,11 +5,13 @@
 
 import { URGENCY_LEVELS, TIME_CONTEXTS, SYMPTOM_URGENCY, DENIAL_PATTERNS, GENERIC_RESPONSES } from '../../constants.js';
 import { smartUrgencyAssessor } from './smart_urgency_assessor.js';
+import { ConversationQualityAssessor } from './llm_scorer.js';
 
 export class SimulationScorer {
     constructor(dbConnection = null, scenarioContext = null) {
         this.dbConnection = dbConnection;
         this.scenarioContext = scenarioContext; // Store scenario-specific evaluation criteria
+        this.conversationAssessor = new ConversationQualityAssessor(scenarioContext);
     }
 
     /**
@@ -78,7 +80,17 @@ export class SimulationScorer {
             }
         }
 
-        // 6. Calculate overall score
+        // 6. LLM-based conversation quality assessment
+        try {
+            const qualityScore = await this.conversationAssessor.scoreResponse(userMessage, agentResponse, 0, []);
+            if (qualityScore.score !== 0) {
+                scores.push({ score: qualityScore.score, reason: qualityScore.reason });
+            }
+        } catch (error) {
+            console.warn(`[SimulationScorer] Conversation assessment failed: ${error.message}`);
+        }
+
+        // 7. Calculate overall score
         const totalScore = scores.reduce((sum, s) => sum + s.score, 0);
         const averageScore = scores.length > 0 ? totalScore / scores.length : 0;
 
@@ -188,9 +200,9 @@ export class SimulationScorer {
         }
 
         // Conversation quality goal
-        const qualityScore = this._assessQualityGoal(userMessage, agentResponse);
-        if (qualityScore !== 0) {
-            scores.push({ score: qualityScore, reason: 'Conversation quality goal progress' });
+        const qualityResult = this._assessQualityGoal(userMessage, agentResponse);
+        if (qualityResult.score !== 0) {
+            scores.push({ score: qualityResult.score, reason: qualityResult.reason });
         }
 
         return scores;
@@ -237,20 +249,20 @@ export class SimulationScorer {
 
         // Check for repetitive responses (penalty)
         if (this._isRepetitiveResponse(agentResponse)) {
-            return -2; // Strong penalty for repetitive responses
+            return { score: -2, reason: 'Repetitive/pestering response' };
         }
 
         // Check for empathetic language
         if (responseLower.includes('understand') || responseLower.includes('support')) {
-            return 1;
+            return { score: 0, reason: 'Shows empathy and support' };
         }
 
         // Check for specific questions
         if (responseLower.includes('?') && !responseLower.includes('yes') && !responseLower.includes('no')) {
-            return 1;
+            return { score: 1, reason: 'Asks specific questions' };
         }
 
-        return 0;
+        return { score: 0, reason: 'No specific quality indicators' };
     }
 
     /**
@@ -295,6 +307,44 @@ export class SimulationScorer {
         ];
 
         return commonResponses.some(response => responseLower.includes(response.toLowerCase()));
+    }
+
+    /**
+     * Check if conversation should end early due to repetitive patterns
+     */
+    _shouldEndConversationEarly(conversationHistory, currentTurn, maxTurns) {
+        if (currentTurn < 3) return false; // Don't end too early
+        
+        const recentTurns = conversationHistory.slice(-6); // Last 3 exchanges
+        if (recentTurns.length < 6) return false;
+        
+        // Check for repetitive user responses
+        const userMessages = recentTurns.filter(turn => turn.role === 'user').map(turn => turn.content.toLowerCase());
+        const agentMessages = recentTurns.filter(turn => turn.role === 'agent').map(turn => turn.content.toLowerCase());
+        
+        // Count repetitive user responses
+        const repetitiveUserPhrases = ['thanks', 'thank you', 'i appreciate', 'you too', 'have a great day'];
+        const repetitiveUserCount = userMessages.filter(msg => 
+            repetitiveUserPhrases.some(phrase => msg.includes(phrase))
+        ).length;
+        
+        // Count repetitive agent responses
+        const repetitiveAgentPhrases = ['you\'re welcome', 'i\'m here to support', 'have a great day', 'take care'];
+        const repetitiveAgentCount = agentMessages.filter(msg => 
+            repetitiveAgentPhrases.some(phrase => msg.includes(phrase))
+        ).length;
+        
+        // If both user and agent are being repetitive, end conversation
+        if (repetitiveUserCount >= 2 && repetitiveAgentCount >= 2) {
+            return true;
+        }
+        
+        // If conversation has been going in circles for too long
+        if (currentTurn >= maxTurns * 0.6 && repetitiveUserCount >= 3) {
+            return true;
+        }
+        
+        return false;
     }
 
     /**

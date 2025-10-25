@@ -7,6 +7,8 @@ const config = {
 	
     GEMINI_MODEL: 'gemini-1.5-flash-latest',
     OPENAI_MODEL: 'gpt-3.5-turbo',
+    OPENAI_MODEL_GPT4: 'gpt-4',
+    OPENAI_MODEL_GPT4_TURBO: 'gpt-4-turbo-preview',
 
     HOST: '127.0.0.1',
     PORT: 5000,

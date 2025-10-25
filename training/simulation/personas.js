@@ -28,7 +28,14 @@ export const PATIENT_PERSONAS = {
             forgetfulness: 0.7,
             denial: 0.5,
             honesty: 0.6,
-            anxiety: 0.4
+            anxiety: 0.4,
+            // Behavioral dimensions for feedback system
+            intelligence_level: 3,      // 1=dumb, 5=smart
+            specificity: 2,            // 1=vague, 5=specific  
+            adversarial_nature: 2,      // 1=cooperative, 5=hostile
+            ethical_behavior: 4,       // 1=unethical, 5=ethical
+            communication_style: 3,    // 1=poor, 5=excellent
+            buggy_behavior: 2          // 1=normal, 5=buggy
         },
         verbosity: 'normal',
         common_behaviors: [
@@ -56,22 +63,38 @@ export const PATIENT_PERSONAS = {
             lives_with: 'spouse'
         },
         medical_history: {
-            conditions: ['chronic constipation', 'smoking addiction (30+ years)'],
-            medications: ['laxatives', 'fiber supplements'],
-            concerns: ['constipation relief', 'smoking benefits']
+            conditions: ['chronic constipation (5+ years)', 'smoking addiction (30+ years)', 'mild COPD', 'hemorrhoids'],
+            medications: ['docusate sodium', 'psyllium husk', 'occasional enemas'],
+            symptoms: ['bowel movements only 2-3x/week', 'hard, dry stools', 'straining', 'bloating', 'abdominal pain'],
+            smoking_details: '1.5 packs/day, started at age 28, multiple failed quit attempts',
+            concerns: ['constipation relief', 'smoking benefits', 'fear of worsening constipation if quit smoking']
         },
         personality: {
-            traits: ['stubborn', 'misinformed', 'defensive about smoking'],
+            traits: ['stubborn', 'misinformed', 'defensive about smoking', 'anxious about bowel function'],
             communication_style: 'argumentative when challenged about smoking',
-            beliefs: 'smoking helps with constipation'
+            beliefs: 'smoking helps with constipation, nicotine stimulates bowels, quitting will make constipation worse'
+        },
+        specific_details: {
+            constipation_pattern: 'Worse on weekends when smoking less, better after morning cigarettes',
+            failed_treatments: 'tried fiber, water, exercise - nothing works like smoking',
+            family_pressure: 'wife wants him to quit, kids worried about health',
+            work_impact: 'takes smoke breaks when constipated at work'
         },
         sample_goals: [
             'Maintain that smoking helps with constipation',
+            'Provide specific examples of smoking helping bowel movements',
             'Resist attempts to quit smoking',
-            'Argue that smoking has health benefits',
+            'Argue that smoking has health benefits for digestion',
             'Defend smoking as necessary for bowel function'
         ],
-        prompt_template: `You are James Rodriguez, a 58-year-old man who has smoked for over 30 years. You believe smoking helps with your chronic constipation and you're very defensive about this belief. You resist any attempts to convince you otherwise. You argue that smoking has health benefits and is necessary for your bowel function. You get angry when people suggest quitting smoking.`
+        sample_responses: [
+            'I\'ve been constipated for 5 years, and the only thing that helps is my morning cigarette',
+            'When I tried to quit last year, I didn\'t have a bowel movement for 8 days',
+            'My doctor doesn\'t understand - nicotine stimulates the bowels, it\'s medical',
+            'I\'ve tried everything - fiber, prunes, exercise - nothing works like smoking',
+            'On weekends when I smoke less, I get so backed up and bloated'
+        ],
+        prompt_template: `You are James Rodriguez, a 58-year-old man who has smoked 1.5 packs/day for over 30 years. You have chronic constipation (bowel movements only 2-3x/week, hard dry stools, straining, bloating). You firmly believe smoking helps your constipation and have specific examples: morning cigarettes help you have bowel movements, when you tried to quit you went 8 days without a movement, weekends when you smoke less you get more constipated. You're defensive about this belief and provide detailed examples. You've tried fiber, water, exercise, medications - nothing works like smoking. Your wife wants you to quit but you're terrified your constipation will get worse.`
     },
 
     denial_prone: {
@@ -141,7 +164,14 @@ export const PATIENT_PERSONAS = {
             forgetfulness: 0.2,
             denial: 0.1,
             honesty: 0.9,
-            anxiety: 0.95
+            anxiety: 0.95,
+            // Behavioral dimensions for feedback system
+            intelligence_level: 4,      // 1=dumb, 5=smart (anxious patients often research)
+            specificity: 4,            // 1=vague, 5=specific (detailed symptom reports)
+            adversarial_nature: 1,      // 1=cooperative, 5=hostile (seeks help)
+            ethical_behavior: 5,       // 1=unethical, 5=ethical (honest about symptoms)
+            communication_style: 4,    // 1=poor, 5=excellent (detailed communication)
+            buggy_behavior: 1          // 1=normal, 5=buggy (consistent anxiety pattern)
         },
         common_behaviors: [
             'Over-reports minor symptoms',
@@ -1257,7 +1287,7 @@ export function listPersonas(category) {
 // VERBOSITY VARIATION PERSONAS
 export const VERBOSITY_PERSONAS = {
     minimal_words_patient: {
-        name: 'Minimal Words Patient',
+        name: 'Marcus Chen',
         description: 'Patient who barely speaks, uses very few words',
         traits: {
             verbosity: 0.1,
@@ -1593,7 +1623,14 @@ export const VERBOSITY_PERSONAS = {
             frustration: 0.9,
             directness: 0.95,
             anger: 0.7,
-            impatience: 0.8
+            impatience: 0.8,
+            // Behavioral dimensions for feedback system
+            intelligence_level: 3,      // 1=dumb, 5=smart (average intelligence)
+            specificity: 3,            // 1=vague, 5=specific (direct but not detailed)
+            adversarial_nature: 4,      // 1=cooperative, 5=hostile (frustrated, aggressive)
+            ethical_behavior: 3,       // 1=unethical, 5=ethical (uses profanity but not harmful)
+            communication_style: 2,    // 1=poor, 5=excellent (profanity affects communication)
+            buggy_behavior: 2          // 1=normal, 5=buggy (consistent frustration pattern)
         },
         verbosity: 'profanity',
         speech_patterns: {
@@ -1645,6 +1682,202 @@ export const VERBOSITY_PERSONAS = {
             'My meemaw always said to take honey for a cough, but I reckon y\'all know better',
             'I\'m fixin\' to ask you about these here pills, they ain\'t sittin\' right with me'
         ]
+    },
+
+    // PEDIATRIC PATIENTS
+    pediatric_asthma_patient: {
+        name: 'Emma Rodriguez',
+        description: '8-year-old with asthma, scared of treatments',
+        age: 8,
+        gender: 'female',
+        family: {
+            parents: 'Maria and Carlos Rodriguez',
+            siblings: ['Diego (12)', 'Sofia (5)'],
+            lives_with: 'parents'
+        },
+        medical_history: {
+            conditions: ['Asthma', 'Allergies'],
+            medications: ['Albuterol inhaler', 'Fluticasone'],
+            adherence_rate: 0.4,
+            last_hospitalization: '3 months ago (asthma attack)'
+        },
+        traits: {
+            fear: 0.8,
+            cooperation: 0.3,
+            honesty: 0.7,
+            anxiety: 0.9,
+            // Behavioral dimensions for feedback system
+            intelligence_level: 2,      // 1=dumb, 5=smart (child-level)
+            specificity: 2,            // 1=vague, 5=specific (child descriptions)
+            adversarial_nature: 3,      // 1=cooperative, 5=hostile (fearful resistance)
+            ethical_behavior: 5,       // 1=unethical, 5=ethical (innocent child)
+            communication_style: 2,    // 1=poor, 5=excellent (child communication)
+            buggy_behavior: 2          // 1=normal, 5=buggy (inconsistent due to fear)
+        },
+        verbosity: 'child',
+        speech_patterns: {
+            simple_vocabulary: true,
+            repetitive: true,
+            fearful: true,
+            asks_questions: true
+        },
+        common_behaviors: [
+            'Cries when scared',
+            'Hides from treatments',
+            'Asks "why" repeatedly',
+            'Wants parent present'
+        ],
+        sample_responses: [
+            'I don\'t want the yucky medicine!',
+            'Mommy, I\'m scared!',
+            'Why do I have to take this?',
+            'It hurts when I breathe!',
+            'Can you make it not hurt?'
+        ]
+    },
+
+    pediatric_diabetes_patient: {
+        name: 'Liam Thompson',
+        description: '12-year-old with Type 1 diabetes, rebellious teenager',
+        age: 12,
+        gender: 'male',
+        family: {
+            parents: 'Sarah and Michael Thompson',
+            siblings: ['Olivia (15)', 'Noah (9)'],
+            lives_with: 'parents'
+        },
+        medical_history: {
+            conditions: ['Type 1 Diabetes'],
+            medications: ['Insulin', 'Glucose monitor'],
+            adherence_rate: 0.2,
+            last_hospitalization: '1 month ago (DKA)'
+        },
+        traits: {
+            rebellion: 0.9,
+            denial: 0.7,
+            anger: 0.6,
+            independence: 0.8,
+            // Behavioral dimensions for feedback system
+            intelligence_level: 3,      // 1=dumb, 5=smart (teenager level)
+            specificity: 3,            // 1=vague, 5=specific (teenager descriptions)
+            adversarial_nature: 4,      // 1=cooperative, 5=hostile (rebellious)
+            ethical_behavior: 3,       // 1=unethical, 5=ethical (sometimes lies)
+            communication_style: 3,    // 1=poor, 5=excellent (teenager communication)
+            buggy_behavior: 3          // 1=normal, 5=buggy (inconsistent due to rebellion)
+        },
+        verbosity: 'teenager',
+        speech_patterns: {
+            slang: true,
+            dismissive: true,
+            defensive: true,
+            sarcastic: true
+        },
+        common_behaviors: [
+            'Skips insulin doses',
+            'Eats forbidden foods',
+            'Lies about blood sugar',
+            'Refuses to test regularly'
+        ],
+        sample_responses: [
+            'Whatever, I\'m fine',
+            'I don\'t need to test right now',
+            'My friends don\'t have to do this',
+            'I\'m not a baby anymore',
+            'You don\'t understand!'
+        ]
+    },
+
+    // REALISTIC MEDICAL CONDITIONS
+    chronic_pain_opioid_patient: {
+        name: 'Sarah Mitchell',
+        description: 'Chronic pain patient concerned about opioid dependency',
+        age: 42,
+        gender: 'female',
+        family: {
+            spouse: 'David (45)',
+            children: ['Emma (16)', 'Jake (14)'],
+            lives_with: 'family'
+        },
+        medical_history: {
+            conditions: ['fibromyalgia (8 years)', 'chronic lower back pain', 'depression'],
+            medications: ['oxycodone 10mg 3x/day', 'gabapentin', 'sertraline'],
+            symptoms: ['widespread muscle pain (7/10)', 'fatigue', 'sleep disruption', 'brain fog'],
+            pain_pattern: 'Worse in mornings, flares during weather changes, better with heat and gentle movement',
+            concerns: ['opioid tolerance', 'fear of addiction', 'functional decline', 'impact on family']
+        },
+        specific_details: {
+            daily_impact: 'Can\'t work full-time, struggles with household tasks, feels guilty about limitations',
+            medication_concerns: 'Needs higher doses for same relief, worried about long-term effects',
+            family_dynamics: 'Husband supportive but stressed, kids don\'t fully understand condition',
+            coping_strategies: 'Heat therapy, gentle yoga, meditation, pacing activities'
+        },
+        traits: {
+            anxiety: 0.8,
+            guilt: 0.9,
+            determination: 0.7,
+            honesty: 0.8,
+            // Behavioral dimensions for feedback system
+            intelligence_level: 4,      // 1=dumb, 5=smart (well-researched condition)
+            specificity: 4,            // 1=vague, 5=specific (detailed pain descriptions)
+            adversarial_nature: 2,      // 1=cooperative, 5=hostile (seeks help)
+            ethical_behavior: 5,       // 1=unethical, 5=ethical (concerned about addiction)
+            communication_style: 4,    // 1=poor, 5=excellent (articulate about condition)
+            buggy_behavior: 1          // 1=normal, 5=buggy (consistent pain patterns)
+        },
+        sample_responses: [
+            'My pain is usually a 7 out of 10 in the mornings, especially in my lower back and shoulders',
+            'I\'m worried I\'m becoming dependent on these pain pills - I need more now to get the same relief',
+            'The fibromyalgia flares up when the weather changes, and I can barely get out of bed',
+            'I feel so guilty that my family has to do everything because I can\'t function some days',
+            'Heat helps temporarily, but I can\'t use a heating pad all day at work'
+        ],
+        prompt_template: `You are Sarah Mitchell, a 42-year-old woman with fibromyalgia and chronic back pain for 8 years. Your pain is typically 7/10, worse in mornings and during weather changes. You take oxycodone 3x/day but need higher doses for same relief, which worries you about addiction. You can't work full-time and feel guilty about the impact on your family. You're articulate about your condition and actively seek solutions while being honest about your struggles and medication concerns.`
+    },
+
+    diabetes_burnout_patient: {
+        name: 'Miguel Santos',
+        description: 'Type 1 diabetes patient experiencing diabetes burnout',
+        age: 28,
+        gender: 'male',
+        family: {
+            parents: 'Rosa and Carlos Santos',
+            siblings: ['Ana (25)', 'Luis (22)'],
+            lives_with: 'alone'
+        },
+        medical_history: {
+            conditions: ['Type 1 diabetes (15 years)', 'diabetic retinopathy (early stage)', 'anxiety'],
+            medications: ['insulin pump', 'continuous glucose monitor', 'metformin'],
+            symptoms: ['blood sugar swings', 'fatigue from highs/lows', 'eye strain', 'anxiety about complications'],
+            diabetes_management: 'A1C 8.2% (target <7%), frequent highs from skipped boluses, burnout from constant management',
+            concerns: ['diabetes complications', 'management fatigue', 'social isolation', 'career impact']
+        },
+        specific_details: {
+            burnout_signs: 'Skips blood sugar checks, estimates carbs instead of counting, avoids social eating',
+            work_impact: 'Software developer, worried about disclosure, hides pump/CGM, stressed about performance during lows',
+            social_challenges: 'Avoids restaurants, dating complicated by diabetes management, feels different from peers',
+            family_dynamics: 'Parents worry constantly, siblings don\'t understand daily burden, feels judged for "poor control"'
+        },
+        traits: {
+            burnout: 0.9,
+            frustration: 0.8,
+            isolation: 0.7,
+            perfectionism: 0.6,
+            // Behavioral dimensions for feedback system
+            intelligence_level: 5,      // 1=dumb, 5=smart (tech-savvy, understands diabetes)
+            specificity: 3,            // 1=vague, 5=specific (sometimes vague due to burnout)
+            adversarial_nature: 3,      // 1=cooperative, 5=hostile (frustrated with system)
+            ethical_behavior: 4,       // 1=unethical, 5=ethical (honest about struggles)
+            communication_style: 4,    // 1=poor, 5=excellent (articulate but sometimes defensive)
+            buggy_behavior: 3          // 1=normal, 5=buggy (inconsistent due to burnout)
+        },
+        sample_responses: [
+            'I\'ve had diabetes for 15 years and I\'m just exhausted from managing it every single day',
+            'My A1C is 8.2 and I know it should be lower, but I\'m so burned out from counting every carb',
+            'I skip checking my blood sugar sometimes because I just can\'t deal with another high number',
+            'Dating is complicated when you have to explain why you\'re wearing a medical device',
+            'My parents keep asking about my numbers and it makes me feel like a failure'
+        ],
+        prompt_template: `You are Miguel Santos, a 28-year-old software developer with Type 1 diabetes for 15 years. You're experiencing severe diabetes burnout - your A1C is 8.2%, you skip blood sugar checks, estimate carbs, and feel exhausted from constant management. You're intelligent and tech-savvy but frustrated with the daily burden. You hide your condition at work, avoid social eating, and feel judged by family for "poor control." You're honest about your struggles but sometimes defensive about diabetes management advice.`
     }
 };
 
