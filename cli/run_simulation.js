@@ -98,19 +98,9 @@ async function runSimulation() {
     // Set simulation mode for database connection
     process.env.SIMULATION_MODE = 'true';
     
-    // Clean up any existing simulation DB (with retry for Windows)
+    // Keep simulation database for training pipeline analysis
     const dbPath = './care_circle_simulation.db';
-    if (fs.existsSync(dbPath)) {
-        try {
-        fs.unlinkSync(dbPath);
-        } catch (error) {
-            // Suppress database deletion warnings unless in debug mode
-            if (process.env.SIMULATION_DEBUG === 'true') {
-                console.warn(`⚠️  Could not delete existing simulation database: ${error.message}`);
-                console.warn(`   Database may be in use by another process. Continuing with existing database.`);
-            }
-        }
-    }
+    console.log(`📊 Using simulation database: ${dbPath}`);
     
     const sim = new SimulationDriver({ autoFeedback: true, logResults: true });
     
@@ -300,17 +290,8 @@ async function runSimulation() {
     } finally {
         await sim.cleanup();
         
-        // Clean up simulation DB (with retry for Windows)
-        if (fs.existsSync(dbPath)) {
-            try {
-            fs.unlinkSync(dbPath);
-        } catch (error) {
-            // Suppress database deletion warnings unless in debug mode
-            if (process.env.SIMULATION_DEBUG === 'true') {
-                console.warn(`⚠️  Could not delete simulation database: ${error.message}`);
-            }
-        }
-        }
+        // Keep simulation database for training pipeline analysis
+        console.log(`📊 Simulation database preserved for training analysis`);
         
         // Clear simulation mode
         delete process.env.SIMULATION_MODE;

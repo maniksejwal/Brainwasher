@@ -9,6 +9,7 @@ import { getPersona } from './personas.js';
 import { SyntheticUser } from './synthetic_user.js';
 import { simulationClientManager } from './simulation_client.js';
 import { escalationNotificationSystem } from './escalation_notification_system.js';
+import { syntheticUserFeedback } from './synthetic_user_feedback.js';
 import { ConversationRunner } from './conversation_runner.js';
 
 // Safety: Use separate database for simulations
@@ -371,6 +372,9 @@ export class SimulationDriver {
         
         // Cleanup escalation notification system
         escalationNotificationSystem.cleanup();
+        
+        // Cleanup synthetic user feedback system to prevent data leakage
+        syntheticUserFeedback.cleanup();
         
         if (this.db) {
             await this.db.close();

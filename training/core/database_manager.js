@@ -56,7 +56,7 @@ export class TrainingDatabaseManager {
         const result = await db.get(`
             SELECT COUNT(DISTINCT conversation_id) as count 
             FROM feedback 
-            WHERE timestamp > datetime('now', '-${days} days')
+            WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
         `);
         return result?.count || 0;
     }
@@ -81,7 +81,7 @@ export class TrainingDatabaseManager {
                     AVG(goal_conversation_score) as conversationScore,
                     AVG(CASE WHEN critical_failure = 1 THEN 1 ELSE 0 END) as failureRate
                 FROM feedback 
-                WHERE timestamp > datetime('now', '-${days} days')
+                WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
             `;
         } else {
             query = `
@@ -92,7 +92,7 @@ export class TrainingDatabaseManager {
                     0 as conversationScore,
                     AVG(CASE WHEN critical_failure = 1 THEN 1 ELSE 0 END) as failureRate
                 FROM feedback 
-                WHERE timestamp > datetime('now', '-${days} days')
+                WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
             `;
         }
         

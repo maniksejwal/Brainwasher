@@ -317,8 +317,8 @@ async function main() {
 }
 
 // Run if called directly
-if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}` || 
-    process.argv[1].includes('annotator')) {
+if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}` ||
+    process.argv[1]?.includes('annotator')) {
     main().catch(error => {
         console.error('Error:', error);
         process.exit(1);

@@ -588,6 +588,20 @@ Provide feedback in JSON format:
             learning_objective: 'Overall performance improvement'
         };
     }
+
+    /**
+     * Clean up all state to prevent data leakage between simulation runs
+     */
+    cleanup() {
+        this.feedbackHistory.clear();
+        this.behaviorPatterns.clear();
+        this.ethicalViolations.clear();
+        this.adversarialLevels.clear();
+        
+        if (process.env.SIMULATION_DEBUG === 'true') {
+            console.log('[SyntheticUserFeedbackSystem] State cleared to prevent data leakage');
+        }
+    }
 }
 
 // Export singleton instance

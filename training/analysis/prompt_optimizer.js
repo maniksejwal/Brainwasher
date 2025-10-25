@@ -459,8 +459,8 @@ async function main() {
 }
 
 // Run if called directly
-if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}` || 
-    process.argv[1].includes('prompt_optimizer')) {
+if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}` ||
+    process.argv[1]?.includes('prompt_optimizer')) {
     main().catch(error => {
         console.error('Error:', error);
         process.exit(1);
