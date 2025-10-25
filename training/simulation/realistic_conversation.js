@@ -183,9 +183,10 @@ export class RealisticConversationEngine {
             const availableUsers = [patientUser, ...caregiverUsers, ...doctorUsers].filter(Boolean);
             
             // Simple random selection weighted by role importance
+            // Reduced caregiver frequency to make them less intrusive
             const weights = {
-                patient: 0.6,
-                caregiver: 0.3, 
+                patient: 0.7,
+                caregiver: 0.2, 
                 doctor: 0.1
             };
             

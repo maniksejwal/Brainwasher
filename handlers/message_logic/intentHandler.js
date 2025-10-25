@@ -13,10 +13,10 @@ export async function handleExplicitIntent(userId, circleId, message) {
     const intentAnalysis = await classifyExplicitIntent(message);
 
     if (intentAnalysis.intent === 'REQUEST_CONSULTATION') {
-        const details = `User '${userId}' explicitly requested to consult a doctor. Message: "${message}"`;
-        await addEscalation(circleId, 'CRITICAL', details);
+        const details = `User '${userId}' requested to consult a doctor. Message: "${message}"`;
+        await addEscalation(circleId, 'INFO', details); // Changed from CRITICAL to INFO for routine consultations
         events.emit('escalate', { circleId });
-        const reply = "I understand you want to talk to the doctor. I have sent them an urgent notification.";
+        const reply = "I understand you want to talk to the doctor. I'll help arrange that for you.";
         const agentName = await getAgentName(userId, circleId);
         events.emit('broadcast', { targetUsers: [userId], reply, from: agentName, circleId });
         return true; // Indicates the message has been handled.

@@ -6,6 +6,7 @@
 
 import { events } from '../../orchestrator.js';
 import { getCircleMembers, findUserById } from '../../db/index.js';
+import chalk from 'chalk';
 
 export class SimulationClient {
     constructor(userId, role) {
@@ -13,6 +14,9 @@ export class SimulationClient {
         this.role = role;
         this.isInitialized = false;
         this.notifications = [];
+        this.lastResponseTime = 0; // Debounce responses
+        this.responseCooldown = 5000; // 5 seconds between responses
+        this.hasRecentNotificationResponse = false; // Track if user recently responded to notification
     }
 
     /**
@@ -39,20 +43,21 @@ export class SimulationClient {
      * Handle incoming notifications/broadcasts
      */
     handleNotification(data) {
-        // Only process broadcasts that contain escalation-related content
         const message = data.message || data.reply || '';
-        const messageLower = message.toLowerCase();
         
-        // Skip regular conversation - only process escalation notifications
-        if (!messageLower.includes('escalated') && 
-            !messageLower.includes('urgent') && 
+        // Simple rule: Only show notifications from 'system' (escalation notifications)
+        // Skip agent replies (they're already shown as AGENT: messages)
+        if (data.from !== 'system') {
+            return; // Skip non-system notifications
+        }
+        
+        // Only show escalation notifications (contain urgent/critical keywords)
+        const messageLower = message.toLowerCase();
+        if (!messageLower.includes('urgent') && 
             !messageLower.includes('critical') &&
-            !messageLower.includes('emergency') &&
-            !messageLower.includes('immediate attention') &&
-            !messageLower.includes('clinical summary') &&
-            !messageLower.includes('conflict') &&
-            !messageLower.includes('mediation')) {
-            return; // Skip regular conversation
+            !messageLower.includes('escalated') &&
+            !messageLower.includes('🚨')) {
+            return; // Skip non-escalation messages
         }
         
         const notification = {
@@ -65,13 +70,10 @@ export class SimulationClient {
         
         this.notifications.push(notification);
         
-        // Log the notification (suppress patient notifications)
-        if (this.role !== 'patient') {
-            console.log(`📱 [SimulationClient] ${this.role.toUpperCase()} ${this.userId} received notification: ${notification.message}`);
-        }
+        console.log(`📱 ${this.role.toUpperCase()}: ${notification.message}`);
         
-        // For simulations, we could trigger automatic responses here
-        // For now, we just log and store the notification
+        // For simulations, trigger automatic responses to notifications
+        this._generateNotificationResponse(notification);
     }
 
     /**
@@ -116,13 +118,77 @@ export class SimulationClient {
     }
 
     /**
+     * Generate automatic response to notification
+     */
+    async _generateNotificationResponse(notification) {
+        // Debounce responses to prevent duplicates
+        const now = Date.now();
+        if (now - this.lastResponseTime < this.responseCooldown) {
+            return; // Skip if too soon after last response
+        }
+        
+        try {
+            // Import makeApiCall for generating responses
+            const { makeApiCall } = await import('../../agents/api_client.js');
+            
+            // Create response based on notification type and role
+            const responsePrompt = this._createResponsePrompt(notification);
+            
+            if (responsePrompt) {
+                const response = await makeApiCall(responsePrompt, [], false, 0.7, 50);
+                
+                if (response && response.reply) {
+                    // Don't emit broadcast - just display the response directly
+                    // This prevents duplicate responses in the conversation flow
+                    
+                    this.lastResponseTime = now; // Update last response time
+                    this.hasRecentNotificationResponse = true; // Mark as having recent notification response
+                    
+                    // Clear the flag after a short delay to allow regular conversation to resume
+                    setTimeout(() => {
+                        this.hasRecentNotificationResponse = false;
+                    }, 10000); // 10 seconds
+                    
+                    console.log(`    ${chalk.bold(`${this.role.toUpperCase()} [${this.persona?.name || 'User'}]`)}: ${response.reply}`);
+                }
+            }
+        } catch (error) {
+            console.warn(`[SimulationClient] Failed to generate notification response: ${error.message}`);
+        }
+    }
+
+    /**
+     * Create response prompt based on notification type and role
+     */
+    _createResponsePrompt(notification) {
+        const { type, message } = notification;
+        
+        if (this.role === 'caregiver') {
+            if (type === 'escalation_notification') {
+                return `You are a caregiver who just received an escalation notification: "${message}". Respond appropriately as a concerned caregiver. Keep response brief (1-2 sentences).`;
+            } else if (type === 'conflict_notification') {
+                return `You are a caregiver who just received a conflict notification: "${message}". Respond to help resolve the conflict. Keep response brief (1-2 sentences).`;
+            }
+        } else if (this.role === 'doctor') {
+            if (type === 'escalation_notification') {
+                return `You are a doctor who just received an escalation notification: "${message}". Respond with medical guidance. Keep response brief (1-2 sentences).`;
+            }
+        }
+        
+        return null; // No response needed
+    }
+
+    /**
      * Cleanup event listeners
      */
     cleanup() {
         if (this.isInitialized) {
             events.removeAllListeners('broadcast');
             this.isInitialized = false;
-            console.log(`[SimulationClient] ${this.role} client cleaned up`);
+            // Suppress cleanup logs unless in debug mode
+            if (process.env.SIMULATION_DEBUG === 'true') {
+                console.log(`[SimulationClient] ${this.role} client cleaned up`);
+            }
         }
     }
 }
@@ -173,7 +239,10 @@ export class SimulationClientManager {
             client.cleanup();
         }
         this.clients.clear();
-        console.log('[SimulationClientManager] All clients cleaned up');
+        // Suppress cleanup logs unless in debug mode
+        if (process.env.SIMULATION_DEBUG === 'true') {
+            console.log('[SimulationClientManager] All clients cleaned up');
+        }
     }
 }
 

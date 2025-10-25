@@ -17,11 +17,12 @@ import { PERSONAS } from '../training/simulation/personas.js';
 import { SCENARIOS, getRandomScenario } from '../training/simulation/scenarios.js';
 import { getDb } from '../db/connection.js';
 import fs from 'fs';
-import readline from 'readline';
+import { readlineManager } from './readline_manager.js';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
 const skipFeedback = args.includes('--skip-feedback');
+const scenarioArg = args.find(arg => !arg.startsWith('--')); // First non-flag argument
 
 // Show help
 if (args.includes('--help') || args.includes('-h')) {
@@ -129,8 +130,11 @@ async function runSimulation() {
         try {
         fs.unlinkSync(dbPath);
         } catch (error) {
-            console.warn(`⚠️  Could not delete existing simulation database: ${error.message}`);
-            console.warn(`   Database may be in use by another process. Continuing with existing database.`);
+            // Suppress database deletion warnings unless in debug mode
+            if (process.env.SIMULATION_DEBUG === 'true') {
+                console.warn(`⚠️  Could not delete existing simulation database: ${error.message}`);
+                console.warn(`   Database may be in use by another process. Continuing with existing database.`);
+            }
         }
     }
     
@@ -138,7 +142,11 @@ async function runSimulation() {
     
     // Select scenario
     let selectedScenario;
-    if (!scenarioKey) {
+    if (scenarioArg && SCENARIOS[scenarioArg]) {
+        // Use scenario passed as argument from dashboard
+        selectedScenario = { key: scenarioArg, ...SCENARIOS[scenarioArg] };
+        console.log(`🎯 Scenario from dashboard: ${selectedScenario.name}`);
+    } else if (!scenarioKey) {
         // Interactive scenario selection
         selectedScenario = await selectScenarioInteractively();
     } else if (scenarioKey === 'random') {
@@ -207,12 +215,8 @@ async function runSimulation() {
         console.log(`   Feedback: Auto-generated (see above)`);
         
         // Offer per-message feedback
-        let rl = null;
         try {
-            rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-        });
+            readlineManager.initialize();
         
         if (skipFeedback) {
             console.log('\n⏭️ Skipping feedback collection (--skip-feedback flag)');
@@ -225,12 +229,7 @@ async function runSimulation() {
         console.log('   Type "all" to give overall feedback');
         console.log('   Type "q" to quit');
         
-        const choice = await new Promise(resolve => {
-            rl.question('\n❓ Provide feedback? (enter/1/2/all/q): ', (answer) => {
-                rl.close(); // Close readline immediately after getting input
-                resolve(answer);
-            });
-        });
+        const choice = await readlineManager.askQuestion('\n❓ Provide feedback? (enter/1/2/all/q): ');
             
             if (choice && choice.toLowerCase() === 'q') {
                 console.log('👋 Exiting feedback collection...');
@@ -242,12 +241,8 @@ async function runSimulation() {
             
             if (choice.toLowerCase() === 'all') {
                 // Overall feedback
-                const score = await new Promise(resolve => {
-                    rl.question('Overall quality (-1/0/1): ', resolve);
-                });
-                const comment = await new Promise(resolve => {
-                    rl.question('What should improve? ', resolve);
-                });
+                const score = await readlineManager.askQuestion('Overall quality (-1/0/1): ');
+                const comment = await readlineManager.askQuestion('What should improve? ');
                 
                 const feedbackScore = parseInt(score);
                 if (!isNaN(feedbackScore) && feedbackScore >= -1 && feedbackScore <= 1) {
@@ -301,9 +296,7 @@ async function runSimulation() {
             }
         }
         } finally {
-            if (rl) {
-                rl.close();
-            }
+            // No need to cleanup readline - managed by readlineManager
         }
         
         // Show post-simulation menu
@@ -320,9 +313,12 @@ async function runSimulation() {
         if (fs.existsSync(dbPath)) {
             try {
             fs.unlinkSync(dbPath);
-            } catch (error) {
+        } catch (error) {
+            // Suppress database deletion warnings unless in debug mode
+            if (process.env.SIMULATION_DEBUG === 'true') {
                 console.warn(`⚠️  Could not delete simulation database: ${error.message}`);
             }
+        }
         }
         
         // Clear simulation mode
@@ -334,10 +330,7 @@ async function runSimulation() {
  * Interactive scenario selection
  */
 async function selectScenarioInteractively() {
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
+    readlineManager.initialize();
 
     console.log('\n🎯 Interactive Scenario Selection\n');
     
@@ -375,11 +368,7 @@ async function selectScenarioInteractively() {
     console.log(`\n  ${optionNumber.toString().padStart(2)}. 🎲 Random scenario`);
     options.push({ key: 'random', scenario: null });
 
-    const choice = await new Promise(resolve => {
-        rl.question(`\nSelect scenario (1-${optionNumber}): `, resolve);
-    });
-
-    rl.close();
+    const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${optionNumber}): `);
 
     const choiceNum = parseInt(choice);
     if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > optionNumber) {
@@ -401,12 +390,9 @@ async function selectScenarioInteractively() {
  * Interactive menu after simulation completion
  */
 async function showPostSimulationMenu() {
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
+    readlineManager.initialize();
 
-    const question = (prompt) => new Promise(resolve => rl.question(prompt, resolve));
+    const question = (prompt) => readlineManager.askQuestion(prompt);
 
     try {
         console.log('\n🎯 Simulation Complete! What would you like to do next?');
@@ -421,7 +407,6 @@ async function showPostSimulationMenu() {
         switch (choice.trim()) {
             case '1':
                 console.log('\n🔄 Starting new simulation...\n');
-                rl.close();
                 await runSimulation(); // Recursive call
                 break;
                 
@@ -451,7 +436,6 @@ async function showPostSimulationMenu() {
                         });
                     }
                 }
-                rl.close();
                 await showPostSimulationMenu(); // Show menu again
                 break;
                 
@@ -477,13 +461,11 @@ async function showPostSimulationMenu() {
                         });
                     }
                 }
-                rl.close();
                 await showPostSimulationMenu(); // Show menu again
                 break;
                 
             case '4':
                 console.log('\n🎯 Opening Human Feedback Collection...');
-                rl.close();
                 // Import and run the feedback collector
                 const { spawn } = await import('child_process');
                 const feedbackProcess = spawn('node', ['cli/collect_feedback.js', '--recent'], { 
@@ -497,18 +479,15 @@ async function showPostSimulationMenu() {
                 
             case '5':
                 console.log('\n👋 Goodbye!');
-                rl.close();
                 process.exit(0);
                 break;
                 
             default:
                 console.log('\n❌ Invalid choice. Please enter 1-5.');
-                rl.close();
                 await showPostSimulationMenu(); // Show menu again
         }
     } catch (error) {
         console.error(`❌ Menu error: ${error.message}`);
-        rl.close();
         process.exit(1);
     }
 }

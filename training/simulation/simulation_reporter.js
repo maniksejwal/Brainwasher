@@ -290,8 +290,7 @@ export class SimulationReporter {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     conversation_id TEXT NOT NULL,
                     analysis_data TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL,
-                    FOREIGN KEY (conversation_id) REFERENCES feedback(conversation_id)
+                    timestamp INTEGER NOT NULL
                 )
             `);
 

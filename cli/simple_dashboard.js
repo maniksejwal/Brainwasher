@@ -10,6 +10,7 @@ import { getDb } from '../db/connection.js';
 import { spawn } from 'child_process';
 import { SCENARIOS } from '../training/simulation/scenarios.js';
 import { parseConversationId, extractCareCircleId } from '../utils/conversation_ids.js';
+import { readlineManager } from './readline_manager.js';
 
 class SimpleDashboard {
     constructor() {
@@ -21,20 +22,70 @@ class SimpleDashboard {
         this.db = await getDb();
     }
 
-    async askQuestion(question) {
-        const readline = await import('readline');
-        const rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout,
-            terminal: true
-        });
+    async selectScenario() {
+        console.log(chalk.cyan('\n🎯 Select Scenario'));
+        console.log('-'.repeat(40));
         
-        return new Promise(resolve => {
-            rl.question(chalk.yellow(question), (answer) => {
-                rl.close();
-                resolve(answer);
-            });
-        });
+        // Group scenarios by category
+        const categories = {
+            '🎲 Basic Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'basic'),
+            '🔺 Complex Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'complex'),
+            '⚡ Conflict Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'conflict'),
+            '🔒 Privacy Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'privacy'),
+            '📈 Longitudinal Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'longitudinal'),
+            '🧪 Stress Test Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'stress_test'),
+            '🚭 Behavior Change Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'behavior_change'),
+            '👥 Caregiver Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'caregiver'),
+            '🚨 Escalation Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'escalation'),
+            '🚫 Avoidance Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'avoidance'),
+            '🎭 Deception Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'deception'),
+            '👨‍👩‍👧‍👦 Multi-User Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'multi_user'),
+            '🌍 Environmental Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'environmental'),
+            '🏛️ Cultural Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'cultural'),
+            '🔧 Practical Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'practical'),
+            '🛡️ Preventative Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'preventative'),
+            '❌ Misconception Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'misconception')
+        };
+
+        const options = [];
+        let optionNumber = 1;
+
+        for (const [categoryName, scenarios] of Object.entries(categories)) {
+            if (scenarios.length > 0) {
+                console.log(chalk.yellow(`\n${categoryName}:`));
+                scenarios.forEach(([key, scenario]) => {
+                    const multiUser = scenario.users && scenario.users.length > 1 ? '👥' : '👤';
+                    const complexity = '⭐'.repeat(scenario.complexity || 1);
+                    console.log(`  ${optionNumber.toString().padStart(2)}. ${scenario.name} ${multiUser} ${complexity}`);
+                    options.push({ key, scenario });
+                    optionNumber++;
+                });
+            }
+        }
+
+        console.log(`\n  ${optionNumber.toString().padStart(2)}. 🎲 Random scenario`);
+        options.push({ key: 'random', scenario: null });
+
+        const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${optionNumber}): `);
+        const choiceNum = parseInt(choice);
+        
+        if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > optionNumber) {
+            console.log(chalk.yellow('Invalid choice. Using random scenario.'));
+            const randomKey = Object.keys(SCENARIOS)[Math.floor(Math.random() * Object.keys(SCENARIOS).length)];
+            return randomKey;
+        }
+
+        const selected = options[choiceNum - 1];
+        if (selected.key === 'random') {
+            const randomKey = Object.keys(SCENARIOS)[Math.floor(Math.random() * Object.keys(SCENARIOS).length)];
+            return randomKey;
+        }
+
+        return selected.key;
+    }
+
+    async askQuestion(question) {
+        return await readlineManager.askQuestion(question);
     }
 
     async showMainMenu() {
@@ -95,7 +146,15 @@ class SimpleDashboard {
     async runNewSimulation() {
         console.log(chalk.cyan('🎯 Launching simulation...'));
         
-        const process = spawn('node', ['cli/run_simulation.js'], { 
+        // Get scenario selection from user first
+        const scenarioKey = await this.selectScenario();
+        if (!scenarioKey) {
+            console.log(chalk.yellow('❌ No scenario selected. Returning to menu.'));
+            return;
+        }
+        
+        // Pass scenario as argument to simulation (with human feedback)
+        const process = spawn('node', ['cli/run_simulation.js', scenarioKey], { 
             stdio: 'inherit', 
             shell: true,
             detached: false

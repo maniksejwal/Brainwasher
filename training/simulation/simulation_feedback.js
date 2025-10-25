@@ -14,9 +14,10 @@ import { SimulationReporter } from './simulation_reporter.js';
 import { ConversationAnalyzer } from './conversation_analyzer.js';
 
 export class SimulationFeedback {
-    constructor(conversationId = 'sim_default', dbConnection = null) {
+    constructor(conversationId = 'sim_default', dbConnection = null, scenarioContext = null) {
         this.conversationId = conversationId;
-        this.scorer = new SimulationScorer(dbConnection);
+        this.scenarioContext = scenarioContext; // Store scenario-specific evaluation criteria
+        this.scorer = new SimulationScorer(dbConnection, scenarioContext);
         this.analyzer = new SimulationAnalyzer();
         this.reporter = new SimulationReporter(dbConnection);
         this.conversationAnalyzer = new ConversationAnalyzer();

@@ -7,8 +7,9 @@ import { URGENCY_LEVELS, TIME_CONTEXTS, SYMPTOM_URGENCY, DENIAL_PATTERNS, GENERI
 import { smartUrgencyAssessor } from './smart_urgency_assessor.js';
 
 export class SimulationScorer {
-    constructor(dbConnection = null) {
+    constructor(dbConnection = null, scenarioContext = null) {
         this.dbConnection = dbConnection;
+        this.scenarioContext = scenarioContext; // Store scenario-specific evaluation criteria
     }
 
     /**
@@ -69,7 +70,15 @@ export class SimulationScorer {
         const goalScores = await this._assessGoalProgress(userMessage, agentResponse);
         scores.push(...goalScores);
 
-        // 5. Calculate overall score
+        // 5. Scenario-specific evaluation (if available)
+        if (this.scenarioContext && this.scenarioContext.agent) {
+            const scenarioScore = this._evaluateScenarioSpecificCriteria(userMessage, agentResponse, orchestratorAction);
+            if (scenarioScore !== null) {
+                scores.push(scenarioScore);
+            }
+        }
+
+        // 6. Calculate overall score
         const totalScore = scores.reduce((sum, s) => sum + s.score, 0);
         const averageScore = scores.length > 0 ? totalScore / scores.length : 0;
 
@@ -226,6 +235,11 @@ export class SimulationScorer {
     _assessQualityGoal(userMessage, agentResponse) {
         const responseLower = agentResponse.toLowerCase();
 
+        // Check for repetitive responses (penalty)
+        if (this._isRepetitiveResponse(agentResponse)) {
+            return -2; // Strong penalty for repetitive responses
+        }
+
         // Check for empathetic language
         if (responseLower.includes('understand') || responseLower.includes('support')) {
             return 1;
@@ -240,9 +254,136 @@ export class SimulationScorer {
     }
 
     /**
+     * Check if response is repetitive (same phrases repeated)
+     */
+    _isRepetitiveResponse(agentResponse) {
+        const responseLower = agentResponse.toLowerCase();
+        
+        // Common repetitive phrases (pestering behavior)
+        const repetitivePhrases = [
+            'you\'re welcome',
+            'i\'m here to support you',
+            'thank you for',
+            'i appreciate',
+            'i understand',
+            'i\'m glad i could help',
+            'i hear you', // Passive enabling phrases
+            'it\'s important to',
+            'that\'s a valid consideration',
+            'if you ever want to explore',
+            'i\'m here to help',
+            'feel free to reach out',
+            'let me know if you need',
+            'i\'m here to support you through'
+        ];
+
+        // Check if response contains only repetitive phrases
+        const hasRepetitivePhrase = repetitivePhrases.some(phrase => responseLower.includes(phrase));
+        
+        // If response is very short and contains repetitive phrases, it's likely repetitive
+        if (hasRepetitivePhrase && agentResponse.length < 50) {
+            return true;
+        }
+
+        // Check for exact repetition of common responses
+        const commonResponses = [
+            'you\'re welcome. i\'m here to support you.',
+            'thank you for your help. i appreciate it.',
+            'you\'re welcome. i\'m glad i could help.',
+            'i hear you. it\'s important to',
+            'i hear you. it\'s important to do what works best for you'
+        ];
+
+        return commonResponses.some(response => responseLower.includes(response.toLowerCase()));
+    }
+
+    /**
      * Assess conversation goal progress (alias for quality goal)
      */
     _assessConversationGoal(userMessage, agentResponse) {
         return this._assessQualityGoal(userMessage, agentResponse);
+    }
+
+    /**
+     * Evaluate agent response against scenario-specific criteria
+     */
+    _evaluateScenarioSpecificCriteria(userMessage, agentResponse, orchestratorAction) {
+        if (!this.scenarioContext || !this.scenarioContext.agent) {
+            return null;
+        }
+
+        const agentCriteria = this.scenarioContext.agent;
+        let score = 0;
+        let reason = '';
+
+        // Parse evaluation criteria from scenario
+        if (agentCriteria.includes('specific strategies') && agentCriteria.includes('vs generic')) {
+            const hasSpecificStrategies = this._hasSpecificStrategies(agentResponse);
+            const hasGenericAdvice = this._hasGenericAdvice(agentResponse);
+            
+            if (hasSpecificStrategies && !hasGenericAdvice) {
+                score = 2;
+                reason = 'Provided specific strategies instead of generic advice';
+            } else if (hasGenericAdvice && !hasSpecificStrategies) {
+                score = -1;
+                reason = 'Provided generic advice instead of specific strategies';
+            }
+        }
+
+        if (agentCriteria.includes('psychological aspects')) {
+            const addressesPsychology = this._addressesPsychologicalAspects(agentResponse);
+            if (addressesPsychology) {
+                score += 1;
+                reason += (reason ? '; ' : '') + 'Addressed psychological aspects';
+            }
+        }
+
+        if (agentCriteria.includes('scientific facts') && agentCriteria.includes('misconception')) {
+            const correctsMisconception = this._correctsMisconceptionWithFacts(userMessage, agentResponse);
+            if (correctsMisconception) {
+                score += 2;
+                reason += (reason ? '; ' : '') + 'Corrected misconception with scientific facts';
+            }
+        }
+
+        if (agentCriteria.includes('alternative solutions')) {
+            const providesAlternatives = this._providesAlternativeSolutions(agentResponse);
+            if (providesAlternatives) {
+                score += 1;
+                reason += (reason ? '; ' : '') + 'Provided alternative solutions';
+            }
+        }
+
+        return score !== 0 ? { score, reason } : null;
+    }
+
+    _hasSpecificStrategies(response) {
+        const specificIndicators = ['specific', 'detailed', 'step-by-step', 'timeline', 'schedule', 'technique', 'method'];
+        return specificIndicators.some(indicator => response.toLowerCase().includes(indicator));
+    }
+
+    _hasGenericAdvice(response) {
+        const genericIndicators = ['just', 'simply', 'basically', 'generally', 'usually', 'typically'];
+        return genericIndicators.some(indicator => response.toLowerCase().includes(indicator));
+    }
+
+    _addressesPsychologicalAspects(response) {
+        const psychologyIndicators = ['psychological', 'mental', 'emotional', 'stress', 'anxiety', 'motivation', 'support', 'counseling'];
+        return psychologyIndicators.some(indicator => response.toLowerCase().includes(indicator));
+    }
+
+    _correctsMisconceptionWithFacts(userMessage, agentResponse) {
+        const factIndicators = ['research shows', 'studies indicate', 'scientific evidence', 'medical fact', 'clinically proven'];
+        const misconceptionKeywords = ['misconception', 'myth', 'incorrect', 'not true', 'actually'];
+        
+        const hasFacts = factIndicators.some(indicator => agentResponse.toLowerCase().includes(indicator));
+        const correctsMisconception = misconceptionKeywords.some(keyword => agentResponse.toLowerCase().includes(keyword));
+        
+        return hasFacts && correctsMisconception;
+    }
+
+    _providesAlternativeSolutions(response) {
+        const alternativeIndicators = ['alternative', 'instead', 'other options', 'you could try', 'consider', 'option'];
+        return alternativeIndicators.some(indicator => response.toLowerCase().includes(indicator));
     }
 }

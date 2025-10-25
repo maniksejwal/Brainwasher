@@ -36,7 +36,7 @@ export class SimulationDriver {
     async initializeDatabase() {
         // Suppress verbose database logs unless in debug mode
         if (process.env.SIMULATION_DEBUG === 'true') {
-            console.log(`[Simulator] Initializing test database: ${this.dbPath}`);
+        console.log(`[Simulator] Initializing test database: ${this.dbPath}`);
         }
         
         // Safety check: Never use production database
@@ -179,7 +179,7 @@ export class SimulationDriver {
 
             // Suppress schema logs unless in debug mode
             if (process.env.SIMULATION_DEBUG === 'true') {
-                console.log('[Simulator] Test database initialized');
+        console.log('[Simulator] Test database initialized');
             }
     }
 
@@ -189,7 +189,7 @@ export class SimulationDriver {
     async createSyntheticUsers(userConfigs) {
         // Suppress user creation logs unless in debug mode
         if (process.env.SIMULATION_DEBUG === 'true') {
-            console.log(`[Simulator] Creating ${userConfigs.length} synthetic users...`);
+        console.log(`[Simulator] Creating ${userConfigs.length} synthetic users...`);
         }
 
         for (const config of userConfigs) {
@@ -302,29 +302,53 @@ export class SimulationDriver {
             await this.createCareCircle(patientId, [...caregiverIds, ...doctorIds]);
 
             // Run conversations
-            emitProgress(4, 'Starting conversations...', `Running ${scenarioConfig.turns} conversation turns`);
+            const totalTurns = scenarioConfig.sessions ? scenarioConfig.sessions * scenarioConfig.turns : scenarioConfig.turns;
+            emitProgress(4, 'Starting conversations...', `Running ${totalTurns} conversation turns across ${scenarioConfig.sessions || 1} sessions`);
             
             const conversationRunner = new ConversationRunner(
                 this.db, 
                 this.conversationId, 
                 this.autoFeedback, 
-                this.logResults
+                this.logResults,
+                scenarioConfig // Pass scenario context for evaluation
             );
             
             if (this.syntheticUsers.length === 1) {
                 // Single user conversation
-                await conversationRunner.runSingleUserConversation(
-                    this.syntheticUsers[0], 
-                    scenarioConfig.turns, 
-                    emitProgress
-                );
+                if (scenarioConfig.sessions) {
+                    // Multi-session scenario
+                    await conversationRunner.runMultiSessionConversation(
+                        this.syntheticUsers[0], 
+                        scenarioConfig.sessions,
+                        scenarioConfig.turns, 
+                        emitProgress
+                    );
+                } else {
+                    // Single session scenario
+                    await conversationRunner.runSingleUserConversation(
+                        this.syntheticUsers[0], 
+                        scenarioConfig.turns, 
+                        emitProgress
+                    );
+                }
             } else {
                 // Multi-user conversation
-                await conversationRunner.runMultiUserConversation(
-                    this.syntheticUsers, 
-                    scenarioConfig.turns, 
-                    emitProgress
-                );
+                if (scenarioConfig.sessions) {
+                    // Multi-session scenario
+                    await conversationRunner.runMultiSessionMultiUserConversation(
+                        this.syntheticUsers, 
+                        scenarioConfig.sessions,
+                        scenarioConfig.turns, 
+                        emitProgress
+                    );
+                } else {
+                    // Single session scenario
+                    await conversationRunner.runMultiUserConversation(
+                        this.syntheticUsers, 
+                        scenarioConfig.turns, 
+                        emitProgress
+                    );
+                }
             }
             
             emitProgress(5, 'Simulation complete!', 'Analyzing results and generating feedback', { complete: true });
@@ -351,7 +375,10 @@ export class SimulationDriver {
         if (this.db) {
             await this.db.close();
         }
+        // Suppress cleanup logs unless in debug mode
+        if (process.env.SIMULATION_DEBUG === 'true') {
         console.log('[Simulator] Cleanup complete (database preserved for analysis)');
     }
+}
 }
 

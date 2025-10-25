@@ -14,18 +14,19 @@ import { makeApiCall } from '../../agents/api_client.js';
 import chalk from 'chalk';
 
 export class ConversationRunner {
-    constructor(simulationDb, conversationId, autoFeedback = true, logResults = true) {
+    constructor(simulationDb, conversationId, autoFeedback = true, logResults = true, scenarioContext = null) {
         this.simulationDb = simulationDb;
         this.conversationId = conversationId;
         this.autoFeedback = autoFeedback;
         this.logResults = logResults;
+        this.scenarioContext = scenarioContext; // Store scenario context for evaluation
         this.feedbackCollector = null;
         this.aiIntegration = new SimulationAI(simulationDb);
         this.conversationEngine = new RealisticConversationEngine();
         this.eventHandler = new SimulationEventHandler();
         
         if (autoFeedback) {
-            this.feedbackCollector = new SimulationFeedback(conversationId, simulationDb);
+            this.feedbackCollector = new SimulationFeedback(conversationId, simulationDb, scenarioContext);
         }
     }
 
@@ -137,7 +138,27 @@ export class ConversationRunner {
             console.log(`  Turn ${turn + 1}/${turns}:`);
 
             // Select active user based on realistic conversation dynamics
-            const activeUser = this.conversationEngine.selectNextSpeaker(turn, users, conversationHistory);
+            let activeUser = this.conversationEngine.selectNextSpeaker(turn, users, conversationHistory);
+            
+            // Skip users who have recently responded to notifications to avoid duplication
+            const client = simulationClientManager.getClient(activeUser.userId);
+            if (client && client.hasRecentNotificationResponse) {
+                // Find an alternative user who hasn't recently responded to notifications
+                const alternativeUsers = users.filter(user => {
+                    const userClient = simulationClientManager.getClient(user.userId);
+                    return !userClient || !userClient.hasRecentNotificationResponse;
+                });
+                
+                if (alternativeUsers.length > 0) {
+                    // Select patient as priority, otherwise first available
+                    activeUser = alternativeUsers.find(u => u.role === 'patient') || alternativeUsers[0];
+                }
+                // If no alternative users, skip this turn
+                else {
+                    console.log(`    Skipping turn - all users have recently responded to notifications`);
+                    continue;
+                }
+            }
 
             // Emit turn progress
             if (emitProgress) {
@@ -243,7 +264,8 @@ export class ConversationRunner {
             const otherUsers = users.filter(u => u.userId !== activeUser.userId);
 
         // Handle escalation/mediation responses from other users
-        await this._handleOtherUserResponses(otherUsers, activeUser, userMessage, agentResult, turn, conversationHistory);
+        // Note: This is now handled by simulation_client.js via event system
+        // await this._handleOtherUserResponses(otherUsers, activeUser, userMessage, agentResult, turn, conversationHistory);
 
             // Log interaction
             if (this.logResults) {
@@ -535,5 +557,83 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             userMessage.length,
             agentResult.agent_response.length
         );
+    }
+
+    /**
+     * Run multi-session single-user conversation
+     */
+    async runMultiSessionConversation(user, totalSessions, turnsPerSession, emitProgress = null) {
+        if (this.logResults) {
+            console.log(`\n[ConversationRunner] Starting multi-session conversation with ${user.userId} (${totalSessions} sessions, ${turnsPerSession} turns per session)`);
+            console.log(`  Role: ${user.role}, Persona: ${user.persona.name}`);
+        }
+
+        for (let session = 1; session <= totalSessions; session++) {
+            if (emitProgress) {
+                emitProgress(4, `Session ${session}/${totalSessions}`, `Running ${turnsPerSession} turns`);
+            }
+            
+            if (this.logResults) {
+                console.log(`\n  === SESSION ${session}/${totalSessions} ===`);
+            }
+
+            // Run single session
+            await this.runSingleUserConversation(user, turnsPerSession, null);
+            
+            // Add session break
+            if (session < totalSessions) {
+                if (this.logResults) {
+                    console.log(`\n  [Session ${session} complete - continuing to next session...]`);
+                }
+                // Simulate time passing between sessions (weeks/months)
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+
+        if (this.logResults) {
+            console.log(`\n  Multi-session conversation complete (${totalSessions} sessions)`);
+        }
+    }
+
+    /**
+     * Run multi-session multi-user conversation
+     */
+    async runMultiSessionMultiUserConversation(users, totalSessions, turnsPerSession, emitProgress = null) {
+        if (this.logResults) {
+            console.log(`\n[ConversationRunner] Starting multi-session multi-user conversation (${totalSessions} sessions, ${turnsPerSession} turns per session)`);
+            const patientUser = users.find(u => u.role === 'patient');
+            const caregiverUsers = users.filter(u => u.role === 'caregiver');
+            const doctorUsers = users.filter(u => u.role === 'doctor');
+            
+            console.log(`  Patient: ${patientUser?.persona.name || 'Unknown'}`);
+            console.log(`  Caregivers: ${caregiverUsers.map(u => u.persona.name).join(', ') || 'None'}`);
+            console.log(`  Doctors: ${doctorUsers.map(u => u.persona.name).join(', ') || 'None'}`);
+        }
+
+        for (let session = 1; session <= totalSessions; session++) {
+            if (emitProgress) {
+                emitProgress(4, `Session ${session}/${totalSessions}`, `Running ${turnsPerSession} turns`);
+            }
+            
+            if (this.logResults) {
+                console.log(`\n  === SESSION ${session}/${totalSessions} ===`);
+            }
+
+            // Run single session
+            await this.runMultiUserConversation(users, turnsPerSession, null);
+            
+            // Add session break
+            if (session < totalSessions) {
+                if (this.logResults) {
+                    console.log(`\n  [Session ${session} complete - continuing to next session...]`);
+                }
+                // Simulate time passing between sessions (weeks/months)
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
+
+        if (this.logResults) {
+            console.log(`\n  Multi-session conversation complete (${totalSessions} sessions)`);
+        }
     }
 }
