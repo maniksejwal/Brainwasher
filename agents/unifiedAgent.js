@@ -5,11 +5,12 @@
  */
 
 import { makeApiCall } from './api_client.js';
-import { PROMPT_UNIFIED_AGENT_WITH_STATE as PROMPT_UNIFIED_AGENT } from '../prompts/unified_prompt.js';
+import { getPromptForModel } from '../prompts/model_specific_prompts.js';
 import { PROMPT_CONTEXT_ENRICHMENT } from '../prompts/enrichment_prompt.js';
 import { getRecentMessages, getUserState, getFactHistory, findUserById, findCircleByPatientId, getUnreadEscalationsForCircle } from '../db/index.js';
 import { STAGES_OF_CHANGE, COPING_STYLES } from '../behavioral_models.js';
 import { events } from '../orchestrator.js';
+import config from '../config.js';
 
 export async function processUserMessage(userId, role, message, careCircleMembers, circleId) {
     const history = await getRecentMessages(circleId, 5);
@@ -26,7 +27,7 @@ export async function processUserMessage(userId, role, message, careCircleMember
         coping_styles: COPING_STYLES
     };
 
-    const prompt = PROMPT_UNIFIED_AGENT
+    const prompt = getPromptForModel(config.OPENAI_MODEL_GPT4)
         .replace('{{SPEAKER_USERNAME}}', speaker.username)
         .replace('{{SPEAKER_ROLE}}', role)
         .replace('{{PATIENT_USERNAME}}', patient.username)

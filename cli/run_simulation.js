@@ -24,7 +24,25 @@ import { readlineManager } from './readline_manager.js';
 const args = process.argv.slice(2);
 const skipFeedback = args.includes('--skip-feedback');
 const fromDashboard = args.includes('--from-dashboard');
-const scenarioArg = args.find(arg => !arg.startsWith('--')); // First non-flag argument
+
+// Parse flags
+let scenarioKey = null;
+let turns = null;
+
+for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--scenario' && i + 1 < args.length) {
+        scenarioKey = args[i + 1];
+        i++; // Skip next argument
+    } else if (arg === '--turns' && i + 1 < args.length) {
+        turns = parseInt(args[i + 1]);
+        i++; // Skip next argument
+    } else if (!arg.startsWith('--')) {
+        // Positional arguments (backward compatibility)
+        if (!scenarioKey) scenarioKey = arg;
+        else if (!turns) turns = parseInt(arg);
+    }
+}
 
 // Show help
 if (args.includes('--help') || args.includes('-h')) {
@@ -72,9 +90,7 @@ if (args.includes('--personas') || args.includes('-p')) {
     process.exit(0);
 }
 
-// Get scenario and turns from arguments
-const scenarioKey = args[0];
-const turns = parseInt(args[1]) || null; // Will use scenario default if not specified
+// Get scenario and turns from parsed arguments
 
 async function runSimulation() {
     console.log('🧪 Starting Enhanced CLI Simulation...\n');
@@ -100,9 +116,9 @@ async function runSimulation() {
     
     // Select scenario
     let selectedScenario;
-    if (scenarioArg && SCENARIOS[scenarioArg]) {
+    if (scenarioKey && SCENARIOS[scenarioKey]) {
         // Use scenario passed as argument from dashboard
-        selectedScenario = { key: scenarioArg, ...SCENARIOS[scenarioArg] };
+        selectedScenario = { key: scenarioKey, ...SCENARIOS[scenarioKey] };
         console.log(`🎯 Scenario from dashboard: ${selectedScenario.name}`);
     } else if (!scenarioKey) {
         // Interactive scenario selection

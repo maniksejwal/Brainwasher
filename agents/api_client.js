@@ -83,25 +83,32 @@ function getNextProvider(useCase = 'basic_responses') {
     return provider;
 }
 
-// Select appropriate model based on use case
+// Select appropriate model based on use case - SIMPLIFIED
 function selectModelForUseCase(useCase, expectJson, promptLength) {
-    const isComplexPrompt = promptLength > 2000 || expectJson;
-    const isCriticalUseCase = ['escalation', 'critical_analysis', 'complex_reasoning', 'conversational_agent'].includes(useCase);
-    
-    // Use GPT-4 for complex prompts or critical use cases
-    if (isComplexPrompt || isCriticalUseCase) {
+    // If free tier only, use default model
+    if (config.USE_FREE_TIER_ONLY) {
         return {
-            preferredModel: config.OPENAI_MODEL_GPT4,
-            fallbackModel: config.OPENAI_MODEL_GPT4_TURBO,
-            reason: 'Complex prompt or critical use case'
+            preferredModel: config.DEFAULT_MODEL,
+            fallbackModel: config.FALLBACK_MODEL,
+            reason: 'Free tier only mode'
         };
     }
     
-    // Use GPT-3.5 for simple responses
+    // Simple use case mapping
+    const useCaseModels = {
+        'basic_responses': config.BASIC_RESPONSES_MODEL,
+        'conversational_agent': config.CONVERSATIONAL_AGENT_MODEL,
+        'escalation': config.ESCALATION_MODEL,
+        'critical_analysis': config.CRITICAL_ANALYSIS_MODEL,
+        'synthetic_user': config.SYNTHETIC_USER_MODEL
+    };
+    
+    const selectedModel = useCaseModels[useCase] || config.DEFAULT_MODEL;
+    
     return {
-        preferredModel: config.OPENAI_MODEL,
-        fallbackModel: config.OPENAI_MODEL_GPT4,
-        reason: 'Simple response'
+        preferredModel: selectedModel,
+        fallbackModel: config.FALLBACK_MODEL,
+        reason: `Use case: ${useCase}`
     };
 }
 

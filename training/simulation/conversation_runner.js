@@ -11,6 +11,7 @@ import { SimulationFeedback } from './simulation_feedback.js';
 import { addMessage } from '../../db/index.js';
 import { simulationClientManager } from './simulation_client.js';
 import { makeApiCall } from '../../agents/api_client.js';
+import config from '../../config.js';
 import { syntheticUserFeedback } from './synthetic_user_feedback.js';
 import chalk from 'chalk';
 
@@ -322,6 +323,12 @@ export class ConversationRunner {
                 content: agentResult.agent_response,
                 timestamp: Date.now()
             });
+
+            // Check for early termination due to repetitive patterns
+            if (this.scorer && this.scorer._shouldEndConversationEarly(conversationHistory, turn + 1, turns)) {
+                console.log(`🔄 CONVERSATION ENDING EARLY: Repetitive patterns detected (${turn + 1}/${turns} turns)`);
+                break; // Stop the conversation early
+            }
 
             // Generate feedback for the active user
             const feedbackData = await this._generateFeedback(
@@ -657,9 +664,9 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             // Update session memory with this session's conversation
             if (sessionResult && sessionResult.conversationHistory) {
                 sessionMemory = sessionMemory.concat(sessionResult.conversationHistory);
-                // Keep only last 10 exchanges to prevent memory overflow
-                if (sessionMemory.length > 20) { // 10 user + 10 agent messages
-                    sessionMemory = sessionMemory.slice(-20);
+                // Keep only last exchanges to prevent memory overflow
+                if (sessionMemory.length > config.MAX_SESSION_MEMORY) {
+                    sessionMemory = sessionMemory.slice(-config.MAX_SESSION_MEMORY);
                 }
             }
             

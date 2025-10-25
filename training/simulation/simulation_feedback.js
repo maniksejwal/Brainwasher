@@ -29,7 +29,7 @@ export class SimulationFeedback {
     async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null, promptVersion = 'simulation_v1.0', conversationHistory = []) {
         try {
             // 1. Score the response
-            const analysis = await this.scorer.analyzeResponse(userMessage, agentResponse, conversationHistory);
+            const analysis = await this.scorer.analyzeResponse(userMessage, agentResponse, orchestratorAction, conversationHistory);
             
             // 2. Assess care circle goals
             const goalAssessment = this.reporter.assessCareCircleGoals(userMessage, agentResponse, conversationHistory);
