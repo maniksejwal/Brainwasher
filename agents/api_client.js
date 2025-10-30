@@ -131,11 +131,12 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
         try {
             let text;
             let apiKey;
+            let modelToUse = modelSelection.preferredModel;
             
             if (provider.type === 'openai') {
-                // Use model from config
+                // Use model from model selection
                 const requestBody = {
-                    model: config.OPENAI_MODEL, // Use config value
+                    model: modelToUse,
                     messages: [{ role: 'user', content: fullPrompt }],
                     temperature: temperature,
                     max_tokens: maxTokens
@@ -179,7 +180,7 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
             
             return { 
                 reply: text, 
-                modelUsed: provider.type === 'openai' ? config.OPENAI_MODEL : config.GEMINI_MODEL,
+                modelUsed: modelToUse,
                 modelProvider: provider.type
             };
 

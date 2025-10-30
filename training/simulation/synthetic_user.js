@@ -65,6 +65,16 @@ export class SyntheticUser {
             prompt += `Your current goal: ${goal}\n`;
         }
 
+        // Add recent conversation history (last 2 exchanges) for context
+        const recentHistory = this.conversationHistory.slice(-4); // Last 2 exchanges (user + agent)
+        if (recentHistory.length > 0) {
+            prompt += `\nRecent conversation:\n`;
+            recentHistory.forEach(msg => {
+                const speaker = msg.role === 'agent' ? 'Agent' : 'You';
+                prompt += `- ${speaker}: ${msg.content.substring(0, 100)}${msg.content.length > 100 ? '...' : ''}\n`;
+            });
+        }
+
         // Add multi-user context if available
         if (multiUserContext) {
             const { otherUsers, patientUser, caregiverUsers, doctorUsers, conversationContext } = multiUserContext;
@@ -103,7 +113,20 @@ export class SyntheticUser {
         
         if (lastAgentMessage) {
             prompt += `\nThe care agent just said:\n"${lastAgentMessage}"\n`;
-            prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
+            
+            // Add instruction to change topic if stuck repeating
+            if (turn >= 2) {
+                const recentUserMessages = this.conversationHistory.filter(m => m.role === 'user').slice(-2).map(m => m.content.toLowerCase());
+                const isRepeating = recentUserMessages.length > 1 && recentUserMessages[recentUserMessages.length - 1].includes(recentUserMessages[recentUserMessages.length - 2].substring(0, 20));
+                
+                if (isRepeating) {
+                    prompt += `\n⚠️ The conversation has been repeating. Change the topic to something new related to your health needs.`;
+                } else {
+                    prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
+                }
+            } else {
+                prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
+            }
         } else {
             if (multiUserContext) {
                 prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;

@@ -4,6 +4,7 @@
  */
 
 import { handleMessage } from '../../handlers/messageHandler.js';
+import { handleCommand } from '../../handlers/commandHandler.js';
 import { performAiAnalysis } from '../../handlers/message_logic/aiAnalysisHandler.js';
 import { ORCHESTRATOR_ACTIONS } from '../../constants.js';
 
@@ -44,6 +45,30 @@ export class SimulationAI {
             }
             
             console.log(`[SimulationAI] Calling system: ${userId} -> ${circleId}`);
+            
+            // Check if this is a command - handle separately for simulations
+            if (message.startsWith('/')) {
+                const { getMemberInfo } = await import('../../db/index.js');
+                const memberInfo = await getMemberInfo(userId, circleId);
+                if (!memberInfo) {
+                    throw new Error(`User ${userId} is not a member of circle ${circleId}`);
+                }
+                
+                // Handle command in simulations
+                await handleCommand(userId, circleId, message);
+                
+                // Return command response
+                return {
+                    agent_response: `Command processed: "${message}"`,
+                    orchestrator_action: { type: ORCHESTRATOR_ACTIONS.NONE },
+                    state_vector: {
+                        intent: 'COMMAND',
+                        criticality: 'NONE',
+                        privacyLevel: 'PRIVATE',
+                        facts: {}
+                    }
+                };
+            }
             
             // Get user role from database
             const { getMemberInfo } = await import('../../db/index.js');

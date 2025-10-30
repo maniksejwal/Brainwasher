@@ -40,7 +40,7 @@ export async function handleAgentDelegateCommand(userId, circleId, message) {
         return;
     }
 
-    const probeMessage = await generateDelegatedProbe(doctor.username, patient.username, targetMember.username, topic);
+    const probeMessage = await generateDelegatedProbe(targetMember.username, topic);
 
     // Create a pending action so the system knows the doctor is waiting for this user's reply.
     // This is a direct database action.

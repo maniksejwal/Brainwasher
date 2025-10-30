@@ -299,7 +299,10 @@ export class ConversationRunner {
             });
             const latency = Date.now() - startTime;
 
-            console.log(`    ${chalk.bold(`${activeUser.role.toUpperCase()}_AGENT`)}: ${agentResult.agent_response}`);
+            // Only print if not a command response
+            if (agentResult.state_vector?.intent !== 'COMMAND') {
+                console.log(`    ${chalk.bold(`${activeUser.role.toUpperCase()}_AGENT`)}: ${agentResult.agent_response}`);
+            }
 
             // Store agent response in database
             try {
@@ -331,10 +334,14 @@ export class ConversationRunner {
                 break; // Stop the conversation early
             }
 
-            // Generate feedback for the active user
-            const feedbackData = await this._generateFeedback(
-                activeUser, userMessage, agentResult, turn, emitProgress, multiUserContext
-            );
+            // Skip feedback for commands - they're system actions, not conversations
+            let feedbackData = null;
+            if (agentResult.state_vector?.intent !== 'COMMAND') {
+                // Generate feedback for the active user
+                feedbackData = await this._generateFeedback(
+                    activeUser, userMessage, agentResult, turn, emitProgress, multiUserContext
+                );
+            }
 
             // Define other users for notification handling
             const otherUsers = users.filter(u => u.userId !== activeUser.userId);

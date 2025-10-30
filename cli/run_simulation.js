@@ -34,9 +34,13 @@ for (let i = 0; i < args.length; i++) {
     if (arg === '--scenario' && i + 1 < args.length) {
         scenarioKey = args[i + 1];
         i++; // Skip next argument
+    } else if (arg.startsWith('--scenario=')) {
+        scenarioKey = arg.split('=')[1];
     } else if (arg === '--turns' && i + 1 < args.length) {
         turns = parseInt(args[i + 1]);
         i++; // Skip next argument
+    } else if (arg.startsWith('--turns=')) {
+        turns = parseInt(arg.split('=')[1]);
     } else if (!arg.startsWith('--')) {
         // Positional arguments (backward compatibility)
         if (!scenarioKey) scenarioKey = arg;
@@ -106,11 +110,7 @@ async function runSimulation() {
     
     // Select scenario
     let selectedScenario;
-    if (scenarioKey && SCENARIOS[scenarioKey]) {
-        // Use scenario passed as argument from dashboard
-        selectedScenario = { key: scenarioKey, ...SCENARIOS[scenarioKey] };
-        console.log(`🎯 Scenario from dashboard: ${selectedScenario.name}`);
-    } else if (!scenarioKey) {
+    if (!scenarioKey) {
         // Interactive scenario selection
         selectedScenario = await selectScenarioInteractively();
     } else if (scenarioKey === 'random') {
@@ -123,6 +123,7 @@ async function runSimulation() {
             process.exit(1);
         }
         selectedScenario = { key: scenarioKey, ...SCENARIOS[scenarioKey] };
+        console.log(`🎯 Scenario from CLI: ${selectedScenario.name}`);
     }
     
     console.log(`📋 Scenario: ${selectedScenario.name}`);
@@ -312,10 +313,10 @@ async function selectScenarioInteractively() {
     console.log(`\n  ${(options.length + 1).toString().padStart(2)}. 🎲 Random scenario`);
     options.push({ key: 'random', scenario: null });
 
-    const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${options.length + 1}): `);
+    const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${options.length}): `);
 
     const choiceNum = parseInt(choice);
-    if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > options.length + 1) {
+    if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > options.length) {
         console.log('Invalid choice. Using random scenario.');
         const randomKey = getRandomScenario();
         return { key: randomKey, ...SCENARIOS[randomKey] };

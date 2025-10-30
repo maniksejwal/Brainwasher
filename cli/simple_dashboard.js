@@ -173,14 +173,15 @@ class SimpleDashboard {
             console.log(chalk.cyan.bold('\n📊 RECENT CONVERSATIONS'));
             console.log('-'.repeat(80));
             conversations.forEach((conv, index) => {
-                const status = conv.has_critical_failure ? '❌' : '✅';
+                const status = conv.critical_failures > 0 ? '⚠️' : '✅';
+                const criticalText = conv.critical_failures > 0 ? ` (${conv.critical_failures} critical)` : '';
                 const date = new Date(conv.latest_timestamp).toLocaleString();
                 const scenario = this.extractScenarioFromConversationId(conv.conversation_id);
                 const scenarioName = this.getScenarioDisplayName(scenario);
                 const scoreDisplay = conv.feedback_count > 1 ? 
                     `${conv.avg_score.toFixed(1)} (${conv.feedback_count} entries)` : 
                     conv.avg_score.toString();
-                console.log(`${index + 1}. ${status} ${conv.conversation_id} | Score: ${scoreDisplay} | ${scenarioName} | ${date}`);
+                console.log(`${index + 1}. ${status} ${conv.conversation_id} | Score: ${scoreDisplay}${criticalText} | ${scenarioName} | ${date}`);
             });
 
             const choice = await this.askQuestion('\nSelect conversation (1-10) or press Enter to go back: ');
@@ -196,9 +197,9 @@ class SimpleDashboard {
 
     async showConversationDetails(conversationId) {
         try {
-            console.log(chalk.gray(`Debug: Looking for messages with circle_id = ${conversationId}`));
+            console.log(chalk.gray(`Debug: Looking for messages with conversation_id = ${conversationId}`));
             
-            // Use conversation ID directly for unified message retrieval
+            // Use conversation ID to match either conversation_id or circle_id fields
             const messages = await this.db.all(`
                 SELECT user_id, message, timestamp 
                 FROM messages 
@@ -209,20 +210,35 @@ class SimpleDashboard {
             console.log(chalk.gray(`Debug: Found ${messages.length} messages for conversation ${conversationId}`));
 
             if (messages.length === 0) {
-                console.log(chalk.yellow('No messages found for this conversation.'));
-                console.log(chalk.gray('Debug: Checking if there are any messages in the database...'));
+                // Try alternative: look for any messages with similar timestamp pattern
+                const timestampMatch = conversationId.match(/(\d+)$/);
+                if (timestampMatch) {
+                    const timestamp = timestampMatch[1];
+                    const nearbyMessages = await this.db.all(`
+                        SELECT user_id, message, timestamp, circle_id
+                        FROM messages 
+                        WHERE circle_id LIKE ? OR circle_id LIKE ?
+                        ORDER BY timestamp DESC
+                        LIMIT 20
+                    `, [`%${timestamp}%`, `sim_${timestamp}%`]);
+                    
+                    if (nearbyMessages.length > 0) {
+                        console.log(chalk.yellow(`\n⚠️  No exact match found. Showing nearby conversation (${nearbyMessages.length} messages):`));
+                        nearbyMessages.forEach((msg, index) => {
+                            const time = new Date(msg.timestamp).toLocaleTimeString();
+                            const speaker = msg.user_id === 'agent' ? 'AGENT' :
+                                          msg.user_id.includes('patient') ? 'PATIENT' : 
+                                          msg.user_id.includes('caregiver') ? 'CAREGIVER' : 
+                                          msg.user_id.includes('doctor') ? 'DOCTOR' : 
+                                          msg.user_id.toUpperCase();
+                            console.log(`${index + 1}. [${time}] ${speaker}: ${msg.message.substring(0, 100)}${msg.message.length > 100 ? '...' : ''}`);
+                        });
+                        return;
+                    }
+                }
                 
-                // Debug: Show all circle_ids in the database
-                const allCircleIds = await this.db.all(`
-                    SELECT DISTINCT circle_id 
-                    FROM messages 
-                    ORDER BY circle_id DESC 
-                    LIMIT 10
-                `);
-                console.log(chalk.gray('Debug: Recent circle_ids in database:'));
-                allCircleIds.forEach((row, index) => {
-                    console.log(chalk.gray(`  ${index + 1}. ${row.circle_id}`));
-                });
+                console.log(chalk.yellow('No messages found for this conversation.'));
+                console.log(chalk.gray('This may be old feedback from before message storage was implemented.'));
                 return;
             }
 
