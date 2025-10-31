@@ -93,10 +93,11 @@ export class ConversationAnalyzer {
             }
         }
         
+        const maxPossible = Math.max(conversationHistory.length - 1, 1);
         return {
             score: contextScore,
-            maxPossible: conversationHistory.length - 1,
-            continuityRate: contextScore / (conversationHistory.length - 1),
+            maxPossible: maxPossible,
+            continuityRate: maxPossible > 0 ? contextScore / maxPossible : 0,
             issues: continuityIssues
         };
     }
@@ -381,7 +382,7 @@ export class ConversationAnalyzer {
             }
         });
         
-        const totalMessages = conversationHistory.length;
+        const totalMessages = Math.max(conversationHistory.length, 1);
         return {
             overallScore: Object.values(engagementFactors).reduce((sum, val) => sum + val, 0) / (totalMessages * 4),
             factors: Object.fromEntries(

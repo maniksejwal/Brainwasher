@@ -57,6 +57,9 @@ export class SimulationAI {
                 // Handle command in simulations
                 await handleCommand(userId, circleId, message);
                 
+                // Small delay after command handling
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
                 // Return command response
                 return {
                     agent_response: `Command processed: "${message}"`,
@@ -69,6 +72,9 @@ export class SimulationAI {
                     }
                 };
             }
+            
+            // Small delay between API calls to avoid rate limits
+            await new Promise(resolve => setTimeout(resolve, 100));
             
             // Get user role from database
             const { getMemberInfo } = await import('../../db/index.js');

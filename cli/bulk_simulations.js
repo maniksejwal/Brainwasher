@@ -16,23 +16,33 @@ class BulkSimulationRunner {
         this.runsPerScenario = options.runsPerScenario || 1; // Reduced from 5 for testing
         this.scenarioFilter = options.scenarioFilter || null; // e.g., 'basic', 'complex', 'escalation'
         this.maxConcurrent = options.maxConcurrent || 1; // Run one at a time to avoid API limits
+        this.maxSimulations = options.maxSimulations || 10; // Limit total simulations
         this.results = [];
         this.startTime = Date.now();
     }
 
     /**
-     * Get scenarios to run based on filter
+     * Get scenarios to run based on filter and max limit
      */
     getScenariosToRun() {
         const allScenarios = Object.entries(SCENARIOS);
         
+        let filtered;
         if (this.scenarioFilter) {
-            return allScenarios.filter(([key, scenario]) => 
+            filtered = allScenarios.filter(([key, scenario]) => 
                 scenario.category === this.scenarioFilter
             );
+        } else {
+            filtered = allScenarios;
         }
         
-        return allScenarios;
+        // Randomly select up to maxSimulations scenarios for diversity
+        if (filtered.length > this.maxSimulations) {
+            const shuffled = [...filtered].sort(() => 0.5 - Math.random());
+            return shuffled.slice(0, this.maxSimulations);
+        }
+        
+        return filtered;
     }
 
     /**
@@ -176,7 +186,7 @@ async function main() {
     // Parse arguments
     const runsPerScenario = (() => {
         const idx = args.indexOf('--runs');
-        return idx !== -1 && args[idx + 1] ? parseInt(args[idx + 1]) : 5;
+        return idx !== -1 && args[idx + 1] ? parseInt(args[idx + 1]) : 1;
     })();
     
     const scenarioFilter = (() => {
@@ -186,13 +196,19 @@ async function main() {
     
     const help = args.includes('--help') || args.includes('-h');
     
+    const maxSimulations = (() => {
+        const idx = args.indexOf('--max');
+        return idx !== -1 && args[idx + 1] ? parseInt(args[idx + 1]) : 10;
+    })();
+    
     if (help) {
         console.log(chalk.blue.bold('\n🚀 Bulk Simulation Runner'));
         console.log(chalk.blue('Runs multiple simulations automatically without human intervention\n'));
         console.log(chalk.yellow('Usage:'));
         console.log('  node cli/bulk_simulations.js [options]\n');
         console.log(chalk.yellow('Options:'));
-        console.log('  --runs <number>     Number of runs per scenario (default: 5)');
+        console.log('  --runs <number>     Number of runs per scenario (default: 1)');
+        console.log('  --max <number>      Max scenarios to run (default: 10)');
         console.log('  --filter <category> Filter scenarios by category');
         console.log('  --help, -h         Show this help message\n');
         console.log(chalk.yellow('Available categories:'));
@@ -201,15 +217,16 @@ async function main() {
             console.log(`  ${category}`);
         });
         console.log(chalk.yellow('\nExamples:'));
-        console.log('  node cli/bulk_simulations.js --runs 10 --filter basic');
-        console.log('  node cli/bulk_simulations.js --runs 3 --filter escalation');
-        console.log('  node cli/bulk_simulations.js --runs 20');
+        console.log('  node cli/bulk_simulations.js                    # Run 10 random scenarios');
+        console.log('  node cli/bulk_simulations.js --max 5            # Run 5 random scenarios');
+        console.log('  node cli/bulk_simulations.js --filter basic     # Run 10 basic scenarios');
         return;
     }
     
     const runner = new BulkSimulationRunner({
         runsPerScenario,
-        scenarioFilter
+        scenarioFilter,
+        maxSimulations
     });
     
     try {

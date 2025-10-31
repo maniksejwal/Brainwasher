@@ -27,7 +27,6 @@ export class TrainingPipeline {
         
         this.feedbackAnalyzer = new FeedbackAnalyzer();
         this.promptOptimizer = new PromptOptimizer();
-        this.abTest = new ABTest();
         
         this.db = null;
     }
@@ -38,6 +37,7 @@ export class TrainingPipeline {
     async initialize() {
         // Use simulation database for training pipeline
         await trainingDb.initialize(true);
+        this.db = trainingDb.getDb();
         console.log('[TrainingPipeline] Initialized with centralized database manager');
     }
 
@@ -179,19 +179,35 @@ export class TrainingPipeline {
     async generateOptimizedPrompts(opportunities) {
         const optimizedPrompts = [];
 
+        // Load current unified prompt
+        const promptsDir = path.join(__dirname, '../../../prompts');
+        const unifiedPromptPath = path.join(promptsDir, 'unified_prompt.js');
+        
+        let currentPrompt;
+        try {
+            currentPrompt = await this.promptOptimizer.loadPrompt(unifiedPromptPath);
+        } catch (error) {
+            console.warn('[TrainingPipeline] Could not load current prompt:', error.message);
+            return [];
+        }
+
+        // Get analysis report
+        const analysisReport = await this.feedbackAnalyzer.generateReport();
+
         for (const opportunity of opportunities) {
             try {
-                const optimizedPrompt = await this.promptOptimizer.optimizePrompt({
-                    focusArea: opportunity.type,
-                    targetMetric: opportunity.targetMetric,
-                    priority: opportunity.priority
-                });
+                // Build focused analysis for this opportunity
+                const focusedAnalysis = `Opportunity: ${opportunity.type}\nPriority: ${opportunity.priority}\nDescription: ${opportunity.description}\nTarget Metric: ${opportunity.targetMetric}\n\n${typeof analysisReport === 'string' ? analysisReport : analysisReport.aiAnalysis || JSON.stringify(analysisReport)}`;
+                
+                const optimizedPrompt = await this.promptOptimizer.optimizePrompt(currentPrompt, focusedAnalysis);
 
-                optimizedPrompts.push({
-                    ...opportunity,
-                    optimizedPrompt,
-                    version: `v${Date.now()}`
-                });
+                if (optimizedPrompt && optimizedPrompt.length > 100) {
+                    optimizedPrompts.push({
+                        ...opportunity,
+                        optimizedPrompt,
+                        version: `v${Date.now()}`
+                    });
+                }
             } catch (error) {
                 console.warn(`[TrainingPipeline] Failed to optimize for ${opportunity.type}:`, error.message);
             }
@@ -204,6 +220,11 @@ export class TrainingPipeline {
      * Run A/B tests on optimized prompts
      */
     async runABTests(optimizedPrompts) {
+        if (optimizedPrompts.length === 0) {
+            console.log('[TrainingPipeline] No optimized prompts to test');
+            return { tests: [], winner: null };
+        }
+
         const results = {
             tests: [],
             winner: null
@@ -211,12 +232,14 @@ export class TrainingPipeline {
 
         for (const promptData of optimizedPrompts) {
             try {
-                const testResult = await this.abTest.runTest({
+                const abTest = new ABTest({
                     baseline: 'current',
                     challenger: promptData.version,
                     runs: 5,
                     scenarios: ['chest_pain_emergency', 'caregiver_crisis_intervention']
                 });
+                
+                const testResult = await abTest.runTest(`Optimization: ${promptData.type}`);
 
                 results.tests.push({
                     ...promptData,
@@ -240,8 +263,8 @@ export class TrainingPipeline {
      */
     async deployPromptVersion(promptData) {
         // Save the new prompt version
-        const promptPath = path.join(__dirname, '../prompts/unified_prompt.js');
-        const backupPath = path.join(__dirname, '../prompts/unified_prompt.js.backup');
+        const promptPath = path.join(__dirname, '../../../prompts/unified_prompt.js');
+        const backupPath = path.join(__dirname, '../../../prompts/unified_prompt.js.backup');
         
         // Backup current prompt
         await fs.copyFile(promptPath, backupPath);
@@ -249,7 +272,7 @@ export class TrainingPipeline {
         // Write new prompt
         await fs.writeFile(promptPath, promptData.optimizedPrompt);
         
-        console.log(`[TrainingPipeline] Deployed prompt version: ${promptData.version}`);
+        console.log(`[TrainingPipeline] ✓ Deployed ${promptData.version} (score: ${promptData.testResult?.challengerScore?.toFixed(2) || 'N/A'}, baseline: ${promptData.testResult?.baselineScore?.toFixed(2) || 'N/A'})`);
         
         // Update database with new version
         await this.db.run(`

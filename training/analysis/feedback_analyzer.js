@@ -315,6 +315,58 @@ class FeedbackAnalyzer {
     }
 
     /**
+     * Analyze performance for training pipeline
+     */
+    async analyzePerformance() {
+        const db = await getDb();
+        
+        try {
+            // Get recent feedback data
+            const feedbackData = await db.all(`
+                SELECT 
+                    AVG(score) as averageScore,
+                    COUNT(*) as totalFeedback,
+                    SUM(CASE WHEN critical_failure = 1 THEN 1 ELSE 0 END) as criticalFailures,
+                    AVG(goal_adherence_score) as avgAdherence,
+                    AVG(goal_history_score) as avgHistory,
+                    AVG(goal_conversation_score) as avgConversation
+                FROM feedback 
+                WHERE source = 'simulation'
+                AND timestamp > datetime('now', '-7 days')
+            `);
+            
+            const metrics = feedbackData[0] || {};
+            
+            // Calculate derived metrics
+            const total = metrics.totalFeedback || 0;
+            const failureRate = total > 0 ? (metrics.criticalFailures / total) : 0;
+            const escalationEffectiveness = 1 - Math.min(failureRate, 1); // Inverse of critical failures
+            const conversationQuality = (metrics.avgConversation || 0) / 5; // Normalize to 0-1
+            
+            return {
+                averageScore: metrics.averageScore || 0,
+                escalationEffectiveness: escalationEffectiveness,
+                conversationQuality: conversationQuality,
+                adherenceScore: metrics.avgAdherence || 0,
+                historyScore: metrics.avgHistory || 0,
+                totalFeedback: total,
+                criticalFailures: metrics.criticalFailures || 0
+            };
+        } catch (error) {
+            console.error('[FeedbackAnalyzer] Error analyzing performance:', error.message);
+            return {
+                averageScore: 0,
+                escalationEffectiveness: 0,
+                conversationQuality: 0,
+                adherenceScore: 0,
+                historyScore: 0,
+                totalFeedback: 0,
+                criticalFailures: 0
+            };
+        }
+    }
+
+    /**
      * Calculate basic statistics
      */
     calculateStats(mergedData) {

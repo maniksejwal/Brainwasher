@@ -6,6 +6,7 @@
 
 import { SimulationDriver } from '../simulation/simulator.js';
 import { FeedbackAnalyzer } from './feedback_analyzer.js';
+import { SCENARIOS } from '../simulation/scenarios.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -68,11 +69,25 @@ class ABTest {
             failureCount: 0
         };
 
+        // Map scenario names (strings) to actual scenario objects
+        const scenarioObjects = [];
+        for (let i = 0; i < this.scenarios.length; i++) {
+            const scenarioName = this.scenarios[i];
+            const scenarioObj = SCENARIOS[scenarioName];
+            if (scenarioObj) {
+                scenarioObjects.push(scenarioObj);
+            } else {
+                console.warn(`Warning: Scenario "${scenarioName}" not found in SCENARIOS`);
+            }
+        }
+
         for (let i = 0; i < this.runsPerVersion; i++) {
             console.log(`  [${i + 1}/${this.runsPerVersion}] Running simulation...`);
             
             // Create a test scenario
-            const scenario = this.scenarios[i % this.scenarios.length] || this._getDefaultScenario(i);
+            const scenario = scenarioObjects.length > 0 
+                ? scenarioObjects[i % scenarioObjects.length]
+                : this._getDefaultScenario(i);
             
             const simulator = new SimulationDriver({ 
                 logResults: true,
@@ -82,8 +97,9 @@ class ABTest {
             try {
                 const startTime = Date.now();
                 
-                // Run simulation
-                await simulator.runScenario(scenario);
+                // Run simulation - need scenario key for runScenario
+                const scenarioKey = this.scenarios[i % this.scenarios.length] || `test_${i}`;
+                await simulator.runScenario(scenario, scenarioKey);
                 
                 const duration = Date.now() - startTime;
                 results.totalDuration += duration;
@@ -103,7 +119,7 @@ class ABTest {
                 results.failureCount++;
                 results.runs.push({
                     runId: i + 1,
-                    scenario: scenario.name,
+                    scenario: scenario?.name || 'unknown',
                     success: false,
                     error: error.message,
                     timestamp: Date.now()
@@ -172,6 +188,12 @@ class ABTest {
         // Determine overall winner (simple heuristic - can be made more sophisticated)
         const challengerWins = Object.values(comparison.metrics).filter(m => m.winner === 'challenger').length;
         const baselineWins = Object.values(comparison.metrics).filter(m => m.winner === 'baseline').length;
+        
+        // Calculate overall scores for winner determination (weighted average)
+        // Formula: successRate_weight=0.6, duration_penalty_weight=0.4, duration_normalization=10000ms
+        // NOTE: This is a heuristic for A/B testing, NOT full RL regret minimization
+        comparison.baselineScore = baselineSuccessRate * 0.6 - (baseline.averageDuration / 10000) * 0.4;
+        comparison.challengerScore = challengerSuccessRate * 0.6 - (challenger.averageDuration / 10000) * 0.4;
         
         if (challengerWins > baselineWins) {
             comparison.winner = 'challenger';

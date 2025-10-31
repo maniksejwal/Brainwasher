@@ -249,6 +249,50 @@ export const ORIGINAL_PATH = '${originalPath}';
     }
 
     /**
+     * Core optimization method: Use AI to improve a prompt based on analysis
+     */
+    async optimizePrompt(currentPrompt, analysis) {
+        try {
+            // Build optimization prompt
+            const optimizationPrompt = PROMPT_OPTIMIZATION_TEMPLATE(currentPrompt, analysis);
+            
+            // Call AI API
+            let response;
+            if (this.useOpenAI) {
+                const completion = await this.openai.chat.completions.create({
+                    model: 'gpt-4o-mini',
+                    messages: [
+                        { role: 'system', content: OPTIMIZATION_SYSTEM_PROMPT },
+                        { role: 'user', content: optimizationPrompt }
+                    ],
+                    temperature: 0.3
+                });
+                response = completion.choices[0].message.content;
+            } else {
+                const model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+                const result = await model.generateContent([
+                    OPTIMIZATION_SYSTEM_PROMPT,
+                    optimizationPrompt
+                ]);
+                response = result.response.text();
+            }
+            
+            // Extract optimized prompt from response
+            const optimizedPrompt = this._extractPromptContent(response);
+            
+            if (!optimizedPrompt || optimizedPrompt.length < 100) {
+                console.warn('[PromptOptimizer] Generated prompt seems too short, using original');
+                return currentPrompt;
+            }
+            
+            return optimizedPrompt;
+        } catch (error) {
+            console.error('[PromptOptimizer] Error generating optimized prompt:', error.message);
+            return null;
+        }
+    }
+
+    /**
      * Save optimized prompt to new version file
      */
     async saveOptimizedPrompt(promptPath, optimizedContent, analysis) {
