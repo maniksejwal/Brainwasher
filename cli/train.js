@@ -13,6 +13,7 @@ const COMMANDS = {
     'run': 'Run a complete training cycle',
     'status': 'Show training pipeline status',
     'force': 'Force optimization regardless of thresholds',
+    'analyze-only': 'Run analysis on existing data without running simulations',
     'help': 'Show this help message'
 };
 
@@ -40,6 +41,9 @@ async function main() {
                 break;
             case 'force':
                 await forceOptimization();
+                break;
+            case 'analyze-only':
+                await runAnalysisOnly();
                 break;
             case 'help':
                 showUsage();
@@ -87,6 +91,9 @@ async function showStatus() {
     } else {
         console.log(chalk.yellow('⏳ Not ready for optimization yet'));
     }
+    
+    // Exit after showing status
+    process.exit(0);
 }
 
 async function forceOptimization() {
@@ -103,16 +110,30 @@ async function forceOptimization() {
     console.log(chalk.green('✅ Forced optimization completed!'));
 }
 
+async function runAnalysisOnly() {
+    console.log(chalk.cyan('🔍 Running analysis on existing data (no new simulations)...'));
+    console.log('');
+    
+    // Enable skip simulations mode
+    trainingPipeline.skipSimulations = true;
+    
+    await trainingPipeline.runTrainingCycle();
+    
+    console.log('');
+    console.log(chalk.green('✅ Analysis completed using existing conversation data!'));
+}
+
 function showUsage() {
     console.log(chalk.cyan('🧠 RL Training Pipeline CLI'));
     console.log('');
     console.log('Usage: node cli/train.js <command>');
     console.log('');
     console.log('Commands:');
-    console.log('  node cli/train.js run      # Run a complete training cycle');
-    console.log('  node cli/train.js status   # Show training pipeline status');
-    console.log('  node cli/train.js force    # Force optimization regardless of thresholds');
-    console.log('  node cli/train.js help     # Show this help message');
+    console.log('  node cli/train.js run          # Run a complete training cycle');
+    console.log('  node cli/train.js status       # Show training pipeline status');
+    console.log('  node cli/train.js force        # Force optimization regardless of thresholds');
+    console.log('  node cli/train.js analyze-only # Analyze existing data without running simulations');
+    console.log('  node cli/train.js help         # Show this help message');
     console.log('');
     console.log('Examples:');
     console.log('  node cli/train.js status   # Check if ready for optimization');

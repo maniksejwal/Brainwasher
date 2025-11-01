@@ -85,7 +85,8 @@ export class ConversationRunner {
                 
                 // Only log significant deviations from persona baseline
                 if (feedback.score < -1) {
-                    console.log(`    📝 [Diversity Check] ${feedback.feedback_type}: ${feedback.reason}`);
+                    const example = feedback.example_responses?.[0] ? ` | Example: "${feedback.example_responses[0]}"` : '';
+                    console.log(`    📝 [Diversity] ${feedback.feedback_type}: ${feedback.reason}${example}`);
                 }
             } catch (error) {
                 logger.warn(`[ConversationRunner] Synthetic user feedback failed: ${error.message}`);
@@ -111,9 +112,11 @@ export class ConversationRunner {
 
             // Check for critical failure and pause if needed
             if (feedbackData && feedbackData.criticalFailure) {
-                console.log(chalk.red.bold('\n🚨 CRITICAL FAILURE DETECTED - SIMULATION PAUSED'));
-                console.log(chalk.red(`Reason: ${feedbackData.scores.find(s => s.score <= -2)?.reason || 'Unknown'}`));
-                console.log(chalk.yellow('Simulation paused for analysis. Check feedback database for details.'));
+                const failureReason = feedbackData.scores.find(s => s.score <= -2)?.reason || 'Unknown';
+                console.log(chalk.red.bold('🚨 [CRITICAL FAILURE]') + 
+                           chalk.yellow(` ${failureReason}`) + 
+                           chalk.white(` | ${this.conversationId} | Turn ${turn + 1}`) +
+                           chalk.gray(' | Paused for analysis'));
                 
                 // Emit critical failure event
                 if (emitProgress) {
@@ -258,7 +261,8 @@ export class ConversationRunner {
                 
                 // Only log significant deviations from persona baseline
                 if (feedback.score < -1) {
-                    console.log(`    📝 [Diversity Check] ${feedback.feedback_type}: ${feedback.reason}`);
+                    const example = feedback.example_responses?.[0] ? ` | Example: "${feedback.example_responses[0]}"` : '';
+                    console.log(`    📝 [Diversity] ${feedback.feedback_type}: ${feedback.reason}${example}`);
                 }
             } catch (error) {
                 logger.warn(`[ConversationRunner] Synthetic user feedback failed: ${error.message}`);
@@ -598,6 +602,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
         await trainingLogger.logInteraction({
             conversationId: `${this.conversationId}_${user.userId}`,
             userId: user.userId,
+            turn: turn, // Include turn number for precise feedback mapping
             message: userMessage,
             agentResponse: agentResult.agent_response,
             orchestratorAction: agentResult.orchestrator_action,

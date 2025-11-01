@@ -27,7 +27,12 @@ export async function processUserMessage(userId, role, message, careCircleMember
         coping_styles: COPING_STYLES
     };
 
-    const prompt = getPromptForModel(config.OPENAI_MODEL_GPT4)
+    // Use the same model for prompt selection as for API call
+    const modelForPrompt = config.USE_FREE_TIER_ONLY 
+        ? config.DEFAULT_MODEL 
+        : config.CONVERSATIONAL_AGENT_MODEL;
+    
+    const prompt = getPromptForModel(modelForPrompt)
         .replace('{{SPEAKER_USERNAME}}', speaker.username)
         .replace('{{SPEAKER_ROLE}}', role)
         .replace('{{PATIENT_USERNAME}}', patient.username)

@@ -33,10 +33,10 @@ class SimpleDashboard {
         console.log(`\n  ${(options.length + 1).toString().padStart(2)}. 🎲 Random scenario`);
         options.push({ key: 'random', scenario: null });
 
-        const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${options.length + 1}): `);
+        const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${options.length}): `);
         const choiceNum = parseInt(choice);
         
-        if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > options.length + 1) {
+        if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > options.length) {
             console.log(chalk.yellow('Invalid choice. Using random scenario.'));
             const randomKey = Object.keys(SCENARIOS)[Math.floor(Math.random() * Object.keys(SCENARIOS).length)];
             return randomKey;
@@ -124,8 +124,9 @@ class SimpleDashboard {
         console.log(chalk.gray('📱 Stopping dashboard interface...'));
         readlineManager.cleanup();
         
-        // Pass scenario as argument to simulation (with feedback enabled)
-        const process = spawn('node', ['cli/run_simulation.js', scenarioKey, '--from-dashboard'], { 
+        // Pass scenario as argument to simulation (with feedback enabled by default)
+        // Note: Feedback is enabled by default unless --skip-feedback is explicitly passed
+        const process = spawn('node', ['cli/run_simulation.js', `--scenario=${scenarioKey}`, '--from-dashboard'], { 
             stdio: 'inherit', 
             shell: true,
             detached: false

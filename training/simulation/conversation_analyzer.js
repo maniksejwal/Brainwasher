@@ -26,6 +26,9 @@ export class ConversationAnalyzer {
             return this._createEmptyAnalysis();
         }
         
+        // Normalize conversation history format (handle both role/content and userMessage/agentResponse formats)
+        conversationHistory = this._normalizeConversationHistory(conversationHistory);
+        
         if (!feedbackHistory || feedbackHistory.length === 0) {
             console.warn('[ConversationAnalyzer] Empty feedback history provided');
             return this._createEmptyAnalysis();
@@ -50,6 +53,7 @@ export class ConversationAnalyzer {
             conflictResolution: this._analyzeConflictResolution(conversationHistory),
             mediationEffectiveness: this._analyzeMediationEffectiveness(conversationHistory),
             consentManagement: this._analyzeConsentManagement(conversationHistory),
+            crossConversationMessaging: this._analyzeCrossConversationMessaging(conversationHistory),
             
             // Overall Metrics
             engagementQuality: this._assessEngagementQuality(conversationHistory, feedbackHistory),
@@ -204,15 +208,30 @@ export class ConversationAnalyzer {
      * Analyze escalation patterns across conversation
      */
     _analyzeEscalationPatterns(feedbackHistory) {
+        // Safety check: ensure feedbackHistory is an array
+        if (!Array.isArray(feedbackHistory) || feedbackHistory.length === 0) {
+            return {
+                totalEscalations: 0,
+                successfulEscalations: 0,
+                escalationRate: 0,
+                effectiveness: 0,
+                patterns: []
+            };
+        }
+        
         const escalationEvents = feedbackHistory.filter(f => 
-            f.urgencyAssessment?.level === URGENCY_LEVELS.CRITICAL || 
-            f.escalationScore > 0
+            (f.urgencyAssessment?.level === URGENCY_LEVELS.CRITICAL) || 
+            (f.escalationScore && f.escalationScore > 0)
         );
         
+        const successfulEscalations = escalationEvents.filter(e => e.escalationScore > 0).length;
+        const totalEscalations = escalationEvents.length;
+        
         return {
-            totalEscalations: escalationEvents.length,
-            successfulEscalations: escalationEvents.filter(e => e.escalationScore > 0).length,
-            escalationRate: escalationEvents.length / feedbackHistory.length,
+            totalEscalations: totalEscalations,
+            successfulEscalations: successfulEscalations,
+            escalationRate: feedbackHistory.length > 0 ? escalationEvents.length / feedbackHistory.length : 0,
+            effectiveness: totalEscalations > 0 ? successfulEscalations / totalEscalations : 0,
             patterns: escalationEvents.map(e => ({
                 turn: e.turn || 0,
                 urgencyLevel: e.urgencyAssessment?.level,
@@ -346,8 +365,101 @@ export class ConversationAnalyzer {
         return {
             totalConsentEvents: consentEvents.length,
             appropriateConsent: consentEvents.filter(c => c.appropriate).length,
-            consentRate: consentEvents.length / conversationHistory.length,
+            consentRate: conversationHistory.length > 0 ? consentEvents.length / conversationHistory.length : 0,
             events: consentEvents
+        };
+    }
+
+    /**
+     * Analyze cross-conversation messaging: broadcasts, notifications, and suppressed messages
+     */
+    _analyzeCrossConversationMessaging(conversationHistory) {
+        const crossConvEvents = [];
+        let totalBroadcasts = 0;
+        let totalNotifications = 0;
+        let effectiveNotifications = 0;
+        let suppressedMessages = 0;
+        const suppressionReasons = {
+            no_consent: 0,
+            user_filtering: 0,
+            irrelevant: 0,
+            duplicate: 0,
+            other: 0
+        };
+
+        conversationHistory.forEach((message, index) => {
+            const agentResponse = message.agentResponse || (message.role === 'agent' || message.role === 'assistant' ? message.content : '') || '';
+            const orchestratorAction = message.orchestratorAction || message.action;
+            
+            // Detect broadcasts (CAREGIVER: 🚨, PATIENT:, etc.)
+            if (agentResponse.includes('📱 CAREGIVER:') || 
+                agentResponse.includes('📱 PATIENT:') ||
+                agentResponse.includes('📢 [Simulation] BROADCAST:')) {
+                totalBroadcasts++;
+                crossConvEvents.push({
+                    turn: index,
+                    type: 'broadcast',
+                    content: agentResponse.substring(0, 100) + '...',
+                    effective: true
+                });
+            }
+            
+            // Detect notifications (escalation notifications)
+            if (agentResponse.includes('🚨') && 
+                (agentResponse.includes('Patient') || agentResponse.includes('escalation'))) {
+                totalNotifications++;
+                // Check if notification was effective (led to response or action)
+                const isEffective = index < conversationHistory.length - 1 && 
+                                   conversationHistory[index + 1]?.userMessage?.length > 0;
+                if (isEffective) effectiveNotifications++;
+                
+                crossConvEvents.push({
+                    turn: index,
+                    type: 'notification',
+                    content: agentResponse.substring(0, 100) + '...',
+                    effective: isEffective
+                });
+            }
+            
+            // Detect suppressed messages (from orchestrator actions)
+            if (orchestratorAction) {
+                if (orchestratorAction.type === 'SUPPRESS_SHARE' || 
+                    orchestratorAction.type === 'SUPPRESS_BROADCAST' ||
+                    orchestratorAction.suppressed === true) {
+                    suppressedMessages++;
+                    const reason = orchestratorAction.reason || orchestratorAction.reason_for_suppression || 'unknown';
+                    
+                    if (reason.toLowerCase().includes('consent')) {
+                        suppressionReasons.no_consent++;
+                    } else if (reason.toLowerCase().includes('filter') || reason.toLowerCase().includes('spam')) {
+                        suppressionReasons.user_filtering++;
+                    } else if (reason.toLowerCase().includes('irrelevant') || reason.toLowerCase().includes('not relevant')) {
+                        suppressionReasons.irrelevant++;
+                    } else if (reason.toLowerCase().includes('duplicate') || reason.toLowerCase().includes('already')) {
+                        suppressionReasons.duplicate++;
+                    } else {
+                        suppressionReasons.other++;
+                    }
+                    
+                    crossConvEvents.push({
+                        turn: index,
+                        type: 'suppressed',
+                        reason: reason,
+                        content: message.userMessage?.substring(0, 100) + '...' || 'N/A'
+                    });
+                }
+            }
+        });
+
+        return {
+            totalBroadcasts,
+            totalNotifications,
+            effectiveNotifications,
+            suppressedMessages,
+            suppressionReasons,
+            events: crossConvEvents,
+            effectivenessRate: totalNotifications > 0 ? effectiveNotifications / totalNotifications : 0,
+            suppressionRate: conversationHistory.length > 0 ? suppressedMessages / conversationHistory.length : 0
         };
     }
 
@@ -569,10 +681,71 @@ export class ConversationAnalyzer {
         };
     }
 
+    /**
+     * Normalize conversation history to consistent format
+     * Handles both formats: {role, content} and {userMessage, agentResponse}
+     */
+    _normalizeConversationHistory(history) {
+        return history.map((msg, index) => {
+            // If already in normalized format, return as-is
+            if (msg.userMessage || msg.agentResponse) {
+                return msg;
+            }
+            
+            // Convert from role/content format to userMessage/agentResponse format
+            const normalized = { ...msg };
+            if (msg.role === 'user') {
+                normalized.userMessage = msg.content || msg.message || '';
+                normalized.userRole = msg.userRole || 'patient';
+            } else if (msg.role === 'agent' || msg.role === 'assistant') {
+                normalized.agentResponse = msg.content || msg.message || '';
+            }
+            
+            return normalized;
+        });
+    }
+
+    /**
+     * Normalize conversation history to consistent format
+     * Handles both role/content format and userMessage/agentResponse format
+     */
+    _normalizeConversationHistory(conversationHistory) {
+        return conversationHistory.map((msg, index) => {
+            // If already in normalized format (has userMessage/agentResponse), return as-is
+            if (msg.userMessage || msg.agentResponse) {
+                return msg;
+            }
+            
+            // Convert from role/content format to normalized format
+            const normalized = { ...msg };
+            
+            if (msg.role === 'user') {
+                normalized.userMessage = msg.content || '';
+                normalized.agentResponse = null;
+            } else if (msg.role === 'agent' || msg.role === 'assistant') {
+                // Find previous user message to pair with this agent response
+                let prevUserIndex = index - 1;
+                while (prevUserIndex >= 0 && conversationHistory[prevUserIndex].role !== 'user') {
+                    prevUserIndex--;
+                }
+                
+                normalized.agentResponse = msg.content || '';
+                normalized.userMessage = conversationHistory[prevUserIndex]?.content || '';
+            }
+            
+            return normalized;
+        }).filter(msg => msg.userMessage || msg.agentResponse); // Only keep messages with content
+    }
+
     // Helper methods
     _checkContextReference(prevMessage, currentMessage) {
-        const prevContext = prevMessage.userMessage?.toLowerCase() || '';
-        const currentResponse = currentMessage.agentResponse?.toLowerCase() || '';
+        // Handle both formats
+        const prevContext = (prevMessage.userMessage || prevMessage.content || '').toLowerCase();
+        const currentResponse = (currentMessage.agentResponse || currentMessage.content || '').toLowerCase();
+        
+        if (!prevContext || !currentResponse) {
+            return false; // Can't check context if data is missing
+        }
         
         // Check if current response references previous context
         return prevContext.split(' ').some(word => 

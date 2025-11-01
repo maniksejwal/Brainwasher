@@ -29,13 +29,21 @@ class ABTest {
      * Run A/B test comparing two prompt versions
      */
     async runTest(testName) {
+        // Get descriptive names for prompt versions
+        const baselineName = this._getPromptVersionName(this.baselineVersion);
+        const challengerName = this._getPromptVersionName(this.challengerVersion);
+        
         console.log('\n' + '█'.repeat(80));
         console.log(`  A/B TEST: ${testName}`);
         console.log('█'.repeat(80));
-        console.log(`\nBaseline:   ${this.baselineVersion}`);
-        console.log(`Challenger: ${this.challengerVersion}`);
-        console.log(`Runs per version: ${this.runsPerVersion}`);
-        console.log(`Scenarios: ${this.scenarios.length}`);
+        console.log(`\nBaseline Prompt:`);
+        console.log(`  Name: ${baselineName}`);
+        console.log(`  Version: ${this.baselineVersion}`);
+        console.log(`\nChallenger Prompt:`);
+        console.log(`  Name: ${challengerName}`);
+        console.log(`  Version: ${this.challengerVersion}`);
+        console.log(`Runs: ${this.runsPerVersion} simulations per prompt version`);
+        console.log(`Scenarios: ${this.scenarios.length > 0 ? this.scenarios.join(', ') : 'Random selection'}`);
         console.log('\n' + '─'.repeat(80) + '\n');
 
         // Run baseline
@@ -48,7 +56,7 @@ class ABTest {
 
         // Compare results
         console.log('\n' + '─'.repeat(80));
-        const comparison = this._compareResults(baselineResults, challengerResults);
+        const comparison = await this._compareResults(baselineResults, challengerResults);
         
         // Generate report
         await this._generateReport(testName, baselineResults, challengerResults, comparison);
@@ -84,10 +92,35 @@ class ABTest {
         for (let i = 0; i < this.runsPerVersion; i++) {
             console.log(`  [${i + 1}/${this.runsPerVersion}] Running simulation...`);
             
-            // Create a test scenario
-            const scenario = scenarioObjects.length > 0 
-                ? scenarioObjects[i % scenarioObjects.length]
-                : this._getDefaultScenario(i);
+            // Select scenario: random from SCENARIOS if none provided, otherwise use provided scenarios
+            let scenario, scenarioKey;
+            if (scenarioObjects.length > 0) {
+                scenario = scenarioObjects[i % scenarioObjects.length];
+                scenarioKey = this.scenarios[i % this.scenarios.length];
+            } else {
+                // Pick scenario from provided list (ensuring diversity across runs)
+                // If scenarios array was provided, cycle through them for diversity
+                if (this.scenarios && this.scenarios.length > 0) {
+                    // Cycle through scenarios to maximize diversity
+                    const scenarioIndex = i % this.scenarios.length;
+                    scenarioKey = this.scenarios[scenarioIndex];
+                    scenario = SCENARIOS[scenarioKey];
+                    
+                    if (!scenario) {
+                        // Fallback to random if scenario not found
+                        const allScenarioKeys = Object.keys(SCENARIOS);
+                        const randomKey = allScenarioKeys[Math.floor(Math.random() * allScenarioKeys.length)];
+                        scenario = SCENARIOS[randomKey];
+                        scenarioKey = randomKey;
+                    }
+                } else {
+                    // No scenarios specified - pick random for diversity
+                    const allScenarioKeys = Object.keys(SCENARIOS);
+                    const randomKey = allScenarioKeys[Math.floor(Math.random() * allScenarioKeys.length)];
+                    scenario = SCENARIOS[randomKey];
+                    scenarioKey = randomKey;
+                }
+            }
             
             const simulator = new SimulationDriver({ 
                 logResults: true,
@@ -97,8 +130,6 @@ class ABTest {
             try {
                 const startTime = Date.now();
                 
-                // Run simulation - need scenario key for runScenario
-                const scenarioKey = this.scenarios[i % this.scenarios.length] || `test_${i}`;
                 await simulator.runScenario(scenario, scenarioKey);
                 
                 const duration = Date.now() - startTime;
@@ -156,57 +187,166 @@ class ABTest {
 
     /**
      * Compare results between baseline and challenger
+     * Includes quality metrics from feedback analysis
      */
-    _compareResults(baseline, challenger) {
+    async _compareResults(baseline, challenger) {
         const comparison = {
             winner: null,
             confidence: 0,
-            metrics: {}
+            metrics: {},
+            qualityMetrics: {}
         };
 
-        // Success rate
+        // Get quality metrics from feedback database
+        const { FeedbackAnalyzer } = await import('./feedback_analyzer.js');
+        const feedbackAnalyzer = new FeedbackAnalyzer();
+        
+        // Get feedback scores for each version
+        const baselineQuality = await this._getQualityMetrics(baseline.promptVersion);
+        const challengerQuality = await this._getQualityMetrics(challenger.promptVersion);
+
+        // Success rate (simulation completion)
         const baselineSuccessRate = baseline.successCount / this.runsPerVersion;
         const challengerSuccessRate = challenger.successCount / this.runsPerVersion;
         
         comparison.metrics.successRate = {
             baseline: baselineSuccessRate,
             challenger: challengerSuccessRate,
-            improvement: ((challengerSuccessRate - baselineSuccessRate) / baselineSuccessRate * 100).toFixed(1) + '%',
+            improvement: baselineSuccessRate > 0 ? 
+                (((challengerSuccessRate - baselineSuccessRate) / baselineSuccessRate * 100).toFixed(1) + '%') : 
+                'N/A',
             winner: challengerSuccessRate > baselineSuccessRate ? 'challenger' : 
-                    challengerSuccessRate < baselineSuccessRate ? 'baseline' : 'tie'
+                    challengerSuccessRate < baselineSuccessRate ? 'baseline' : 'tie',
+            description: 'Percentage of simulations that completed successfully without errors'
         };
 
         // Average duration
         comparison.metrics.avgDuration = {
             baseline: baseline.averageDuration,
             challenger: challenger.averageDuration,
-            improvement: ((baseline.averageDuration - challenger.averageDuration) / baseline.averageDuration * 100).toFixed(1) + '%',
+            improvement: baseline.averageDuration > 0 ? 
+                (((baseline.averageDuration - challenger.averageDuration) / baseline.averageDuration * 100).toFixed(1) + '%') : 
+                'N/A',
             winner: challenger.averageDuration < baseline.averageDuration ? 'challenger' : 
-                    challenger.averageDuration > baseline.averageDuration ? 'baseline' : 'tie'
+                    challenger.averageDuration > baseline.averageDuration ? 'baseline' : 'tie',
+            description: 'Average time per simulation (lower is better for latency)'
         };
 
-        // Determine overall winner (simple heuristic - can be made more sophisticated)
-        const challengerWins = Object.values(comparison.metrics).filter(m => m.winner === 'challenger').length;
-        const baselineWins = Object.values(comparison.metrics).filter(m => m.winner === 'baseline').length;
+        // Quality metrics from feedback
+        comparison.qualityMetrics = {
+            averageScore: {
+                baseline: baselineQuality.avgScore || 0,
+                challenger: challengerQuality.avgScore || 0,
+                improvement: baselineQuality.avgScore !== 0 ? 
+                    (((challengerQuality.avgScore - baselineQuality.avgScore) / Math.abs(baselineQuality.avgScore) * 100).toFixed(1) + '%') : 
+                    'N/A',
+                winner: challengerQuality.avgScore > baselineQuality.avgScore ? 'challenger' : 
+                        challengerQuality.avgScore < baselineQuality.avgScore ? 'baseline' : 'tie',
+                description: 'Average feedback score from simulation scoring (-2 to +2)'
+            },
+            criticalFailures: {
+                baseline: baselineQuality.criticalFailures || 0,
+                challenger: challengerQuality.criticalFailures || 0,
+                improvement: `${challengerQuality.criticalFailures - baselineQuality.criticalFailures}`,
+                winner: challengerQuality.criticalFailures < baselineQuality.criticalFailures ? 'challenger' : 
+                        challengerQuality.criticalFailures > baselineQuality.criticalFailures ? 'baseline' : 'tie',
+                description: 'Number of critical failures detected (lower is better)'
+            },
+            feedbackCount: {
+                baseline: baselineQuality.count || 0,
+                challenger: challengerQuality.count || 0,
+                description: 'Number of feedback entries analyzed'
+            }
+        };
+
+        // Determine overall winner using quality-weighted scoring
+        // Quality metrics are more important than duration
+        const qualityWeight = 0.7;
+        const durationWeight = 0.1;
+        const successWeight = 0.2;
         
-        // Calculate overall scores for winner determination (weighted average)
-        // Formula: successRate_weight=0.6, duration_penalty_weight=0.4, duration_normalization=10000ms
-        // NOTE: This is a heuristic for A/B testing, NOT full RL regret minimization
-        comparison.baselineScore = baselineSuccessRate * 0.6 - (baseline.averageDuration / 10000) * 0.4;
-        comparison.challengerScore = challengerSuccessRate * 0.6 - (challenger.averageDuration / 10000) * 0.4;
+        const baselineQualityScore = (baselineQuality.avgScore || 0) * qualityWeight;
+        const challengerQualityScore = (challengerQuality.avgScore || 0) * qualityWeight;
         
-        if (challengerWins > baselineWins) {
+        const baselineDurationPenalty = (baseline.averageDuration / 10000) * durationWeight;
+        const challengerDurationPenalty = (challenger.averageDuration / 10000) * durationWeight;
+        
+        const baselineSuccessScore = baselineSuccessRate * successWeight;
+        const challengerSuccessScore = challengerSuccessRate * successWeight;
+        
+        comparison.baselineScore = baselineQualityScore + baselineSuccessScore - baselineDurationPenalty;
+        comparison.challengerScore = challengerQualityScore + challengerSuccessScore - challengerDurationPenalty;
+        
+        // Count metric wins
+        const challengerWins = [
+            comparison.metrics.successRate.winner === 'challenger',
+            comparison.metrics.avgDuration.winner === 'challenger',
+            comparison.qualityMetrics.averageScore.winner === 'challenger',
+            comparison.qualityMetrics.criticalFailures.winner === 'challenger'
+        ].filter(Boolean).length;
+        
+        const baselineWins = [
+            comparison.metrics.successRate.winner === 'baseline',
+            comparison.metrics.avgDuration.winner === 'baseline',
+            comparison.qualityMetrics.averageScore.winner === 'baseline',
+            comparison.qualityMetrics.criticalFailures.winner === 'baseline'
+        ].filter(Boolean).length;
+        
+        // Determine winner based on quality score (primary) and metric wins (secondary)
+        if (Math.abs(comparison.challengerScore - comparison.baselineScore) < 0.01) {
+            // Scores are very close, use metric wins
+            if (challengerWins > baselineWins) {
+                comparison.winner = 'challenger';
+                comparison.confidence = challengerWins / (challengerWins + baselineWins + 0.001);
+            } else if (baselineWins > challengerWins) {
+                comparison.winner = 'baseline';
+                comparison.confidence = baselineWins / (challengerWins + baselineWins + 0.001);
+            } else {
+                comparison.winner = 'tie';
+                comparison.confidence = 0.5;
+            }
+        } else if (comparison.challengerScore > comparison.baselineScore) {
             comparison.winner = 'challenger';
-            comparison.confidence = challengerWins / (challengerWins + baselineWins);
-        } else if (baselineWins > challengerWins) {
-            comparison.winner = 'baseline';
-            comparison.confidence = baselineWins / (challengerWins + baselineWins);
+            const scoreDiff = comparison.challengerScore - comparison.baselineScore;
+            comparison.confidence = Math.min(0.5 + (scoreDiff * 10), 1.0); // Scale to 0.5-1.0
         } else {
-            comparison.winner = 'tie';
-            comparison.confidence = 0.5;
+            comparison.winner = 'baseline';
+            const scoreDiff = comparison.baselineScore - comparison.challengerScore;
+            comparison.confidence = Math.min(0.5 + (scoreDiff * 10), 1.0); // Scale to 0.5-1.0
         }
 
         return comparison;
+    }
+
+    /**
+     * Get quality metrics for a prompt version from feedback database
+     */
+    async _getQualityMetrics(promptVersion) {
+        try {
+            const { getDb } = await import('../../db/connection.js');
+            const db = await getDb();
+            
+            // Query feedback for this prompt version
+            const result = await db.get(`
+                SELECT 
+                    AVG(score) as avg_score,
+                    COUNT(*) as count,
+                    SUM(CASE WHEN critical_failure = 1 THEN 1 ELSE 0 END) as critical_failures
+                FROM feedback 
+                WHERE prompt_version = ? 
+                AND source = 'simulation'
+                AND timestamp > datetime('now', '-1 day')
+            `, [promptVersion]);
+            
+            return {
+                avgScore: result?.avg_score || 0,
+                count: result?.count || 0,
+                criticalFailures: result?.critical_failures || 0
+            };
+        } catch (error) {
+            console.warn(`[ABTest] Failed to get quality metrics for ${promptVersion}:`, error.message);
+            return { avgScore: 0, count: 0, criticalFailures: 0 };
+        }
     }
 
     /**
@@ -235,27 +375,64 @@ Generated: ${timestamp}
 ### Winner: ${comparison.winner.toUpperCase()} 🏆
 **Confidence**: ${(comparison.confidence * 100).toFixed(1)}%
 
+**Baseline**: ${this._getPromptVersionName(baseline.promptVersion)} (${baseline.promptVersion})
+**Challenger**: ${this._getPromptVersionName(challenger.promptVersion)} (${challenger.promptVersion})
+
 ---
 
-## Performance Metrics
+## Quality Metrics (Primary)
+
+### Average Score
+
+| Version | Avg Score | Improvement | Description |
+|---------|-----------|-------------|-------------|
+| Baseline | ${comparison.qualityMetrics.averageScore.baseline.toFixed(2)} | - | ${comparison.qualityMetrics.averageScore.description} |
+| Challenger | ${comparison.qualityMetrics.averageScore.challenger.toFixed(2)} | ${comparison.qualityMetrics.averageScore.improvement} | ${comparison.qualityMetrics.averageScore.description} |
+
+**Winner**: ${comparison.qualityMetrics.averageScore.winner === 'challenger' ? '🟢 Challenger' : comparison.qualityMetrics.averageScore.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}
+
+### Critical Failures
+
+| Version | Critical Failures | Improvement | Description |
+|---------|-------------------|-------------|-------------|
+| Baseline | ${comparison.qualityMetrics.criticalFailures.baseline} | - | ${comparison.qualityMetrics.criticalFailures.description} |
+| Challenger | ${comparison.qualityMetrics.criticalFailures.challenger} | ${comparison.qualityMetrics.criticalFailures.improvement} | ${comparison.qualityMetrics.criticalFailures.description} |
+
+**Winner**: ${comparison.qualityMetrics.criticalFailures.winner === 'challenger' ? '🟢 Challenger' : comparison.qualityMetrics.criticalFailures.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}
+
+**Feedback Entries Analyzed**: Baseline: ${comparison.qualityMetrics.feedbackCount.baseline}, Challenger: ${comparison.qualityMetrics.feedbackCount.challenger}
+
+---
+
+## Operational Metrics (Secondary)
 
 ### Success Rate
 
-| Version | Success Rate | Improvement |
-|---------|-------------|-------------|
-| Baseline | ${(comparison.metrics.successRate.baseline * 100).toFixed(1)}% | - |
-| Challenger | ${(comparison.metrics.successRate.challenger * 100).toFixed(1)}% | ${comparison.metrics.successRate.improvement} |
+| Version | Success Rate | Improvement | Description |
+|---------|-------------|-------------|-------------|
+| Baseline | ${(comparison.metrics.successRate.baseline * 100).toFixed(1)}% | - | ${comparison.metrics.successRate.description} |
+| Challenger | ${(comparison.metrics.successRate.challenger * 100).toFixed(1)}% | ${comparison.metrics.successRate.improvement} | ${comparison.metrics.successRate.description} |
 
 **Winner**: ${comparison.metrics.successRate.winner === 'challenger' ? '🟢 Challenger' : comparison.metrics.successRate.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}
 
 ### Average Duration
 
-| Version | Avg Duration | Improvement |
-|---------|-------------|-------------|
-| Baseline | ${(baseline.averageDuration / 1000).toFixed(2)}s | - |
-| Challenger | ${(challenger.averageDuration / 1000).toFixed(2)}s | ${comparison.metrics.avgDuration.improvement} |
+| Version | Avg Duration | Improvement | Description |
+|---------|-------------|-------------|-------------|
+| Baseline | ${(baseline.averageDuration / 1000).toFixed(2)}s | - | ${comparison.metrics.avgDuration.description} |
+| Challenger | ${(challenger.averageDuration / 1000).toFixed(2)}s | ${comparison.metrics.avgDuration.improvement} | ${comparison.metrics.avgDuration.description} |
 
 **Winner**: ${comparison.metrics.avgDuration.winner === 'challenger' ? '🟢 Challenger' : comparison.metrics.avgDuration.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}
+
+---
+
+## Confidence Calculation
+
+**Quality Score (70% weight)**:
+- Baseline: ${comparison.baselineScore.toFixed(3)}
+- Challenger: ${comparison.challengerScore.toFixed(3)}
+
+**Final Confidence**: ${(comparison.confidence * 100).toFixed(1)}% based on quality-weighted scoring
 
 ---
 
@@ -298,20 +475,95 @@ ${this._generateRecommendation(comparison)}
         const reportPath = path.join(__dirname, `../ab_test_${testName.replace(/\s+/g, '_')}_${Date.now()}.md`);
         await fs.writeFile(reportPath, report, 'utf8');
         
+        // Get descriptive names
+        const baselineName = this._getPromptVersionName(baseline.promptVersion);
+        const challengerName = this._getPromptVersionName(challenger.promptVersion);
+        
         console.log('\n📊 RESULTS\n');
         console.log('─'.repeat(80));
         console.log(`Winner: ${comparison.winner.toUpperCase()} (${(comparison.confidence * 100).toFixed(1)}% confidence)`);
         console.log('─'.repeat(80));
-        console.log('\nSuccess Rate:');
-        console.log(`  Baseline:   ${(comparison.metrics.successRate.baseline * 100).toFixed(1)}%`);
-        console.log(`  Challenger: ${(comparison.metrics.successRate.challenger * 100).toFixed(1)}%`);
-        console.log(`  Change:     ${comparison.metrics.successRate.improvement}`);
-        console.log('\nAvg Duration:');
-        console.log(`  Baseline:   ${(baseline.averageDuration / 1000).toFixed(2)}s`);
-        console.log(`  Challenger: ${(challenger.averageDuration / 1000).toFixed(2)}s`);
-        console.log(`  Change:     ${comparison.metrics.avgDuration.improvement}`);
+        console.log(`\n📋 BASELINE: ${baselineName}`);
+        console.log(`   Version: ${baseline.promptVersion}`);
+        console.log(`\n🆕 CHALLENGER: ${challengerName}`);
+        console.log(`   Version: ${challenger.promptVersion}`);
+        console.log('\n─'.repeat(80));
+        console.log('\n📈 QUALITY METRICS (from feedback analysis):');
+        console.log(`  Average Score:`);
+        console.log(`    Baseline:   ${comparison.qualityMetrics.averageScore.baseline.toFixed(2)}`);
+        console.log(`    Challenger: ${comparison.qualityMetrics.averageScore.challenger.toFixed(2)}`);
+        console.log(`    Change:     ${comparison.qualityMetrics.averageScore.improvement} (${comparison.qualityMetrics.averageScore.description})`);
+        console.log(`    Winner:     ${comparison.qualityMetrics.averageScore.winner === 'challenger' ? '🟢 Challenger' : comparison.qualityMetrics.averageScore.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}`);
+        console.log(`\n  Critical Failures:`);
+        console.log(`    Baseline:   ${comparison.qualityMetrics.criticalFailures.baseline}`);
+        console.log(`    Challenger: ${comparison.qualityMetrics.criticalFailures.challenger}`);
+        console.log(`    Change:     ${comparison.qualityMetrics.criticalFailures.improvement} (${comparison.qualityMetrics.criticalFailures.description})`);
+        console.log(`    Winner:     ${comparison.qualityMetrics.criticalFailures.winner === 'challenger' ? '🟢 Challenger' : comparison.qualityMetrics.criticalFailures.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}`);
+        console.log(`\n  Feedback Entries Analyzed:`);
+        console.log(`    Baseline:   ${comparison.qualityMetrics.feedbackCount.baseline}`);
+        console.log(`    Challenger: ${comparison.qualityMetrics.feedbackCount.challenger}`);
+        console.log('\n─'.repeat(80));
+        console.log('\n⚙️  OPERATIONAL METRICS:');
+        console.log(`\n  Success Rate (${comparison.metrics.successRate.description}):`);
+        console.log(`    Baseline:   ${(comparison.metrics.successRate.baseline * 100).toFixed(1)}%`);
+        console.log(`    Challenger: ${(comparison.metrics.successRate.challenger * 100).toFixed(1)}%`);
+        console.log(`    Change:     ${comparison.metrics.successRate.improvement} ${comparison.metrics.successRate.improvement !== 'N/A' && parseFloat(comparison.metrics.successRate.improvement) > 0 ? '⬆️' : parseFloat(comparison.metrics.successRate.improvement) < 0 ? '⬇️' : ''}`);
+        console.log(`    Winner:     ${comparison.metrics.successRate.winner === 'challenger' ? '🟢 Challenger' : comparison.metrics.successRate.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}`);
+        console.log(`\n  Avg Duration (${comparison.metrics.avgDuration.description}):`);
+        console.log(`    Baseline:   ${(baseline.averageDuration / 1000).toFixed(2)}s`);
+        console.log(`    Challenger: ${(challenger.averageDuration / 1000).toFixed(2)}s`);
+        console.log(`    Change:     ${comparison.metrics.avgDuration.improvement} ${comparison.metrics.avgDuration.improvement !== 'N/A' && parseFloat(comparison.metrics.avgDuration.improvement) > 0 ? '⬆️' : parseFloat(comparison.metrics.avgDuration.improvement) < 0 ? '⬇️' : ''}`);
+        console.log(`    Winner:     ${comparison.metrics.avgDuration.winner === 'challenger' ? '🟢 Challenger' : comparison.metrics.avgDuration.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}`);
+        // Calculate metric wins for display
+        const challengerWins = [
+            comparison.metrics.successRate.winner === 'challenger',
+            comparison.metrics.avgDuration.winner === 'challenger',
+            comparison.qualityMetrics.averageScore.winner === 'challenger',
+            comparison.qualityMetrics.criticalFailures.winner === 'challenger'
+        ].filter(Boolean).length;
+        
+        const baselineWins = [
+            comparison.metrics.successRate.winner === 'baseline',
+            comparison.metrics.avgDuration.winner === 'baseline',
+            comparison.qualityMetrics.averageScore.winner === 'baseline',
+            comparison.qualityMetrics.criticalFailures.winner === 'baseline'
+        ].filter(Boolean).length;
+        
+        console.log('\n─'.repeat(80));
+        console.log(`\n📊 CONFIDENCE CALCULATION:`);
+        console.log(`   Quality Score (70% weight): Baseline ${comparison.baselineScore.toFixed(3)}, Challenger ${comparison.challengerScore.toFixed(3)}`);
+        console.log(`   Metric Wins: Baseline ${baselineWins}, Challenger ${challengerWins}`);
+        console.log(`   Final Confidence: ${(comparison.confidence * 100).toFixed(1)}% based on quality-weighted scoring`);
         console.log('─'.repeat(80));
         console.log(`\n✓ Full report saved to: ${reportPath}\n`);
+    }
+
+    /**
+     * Get descriptive name for prompt version
+     * Returns both version code and human-readable name
+     */
+    _getPromptVersionName(version) {
+        let name, description;
+        
+        if (version === 'current' || !version) {
+            name = 'Current Production Prompt';
+            description = 'unified_prompt.js (active)';
+        } else if (/^\d+$/.test(version)) {
+            // Timestamp-based version
+            name = `Optimized Version v${version.substring(0, 10)}...`;
+            description = `Version code: ${version}`;
+        } else if (version.startsWith('v')) {
+            name = `Optimized Version ${version}`;
+            description = `Prompt version identifier`;
+        } else if (version.includes('unified_prompt') || version.includes('v')) {
+            name = version;
+            description = 'Custom prompt version';
+        } else {
+            name = version;
+            description = 'Prompt version';
+        }
+        
+        return `${name} [${description}]`;
     }
 
     /**

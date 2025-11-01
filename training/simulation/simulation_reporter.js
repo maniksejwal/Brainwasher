@@ -5,6 +5,7 @@
 
 import { getDb } from '../../db/connection.js';
 import { SimulationScorer } from './simulation_scorer.js';
+import chalk from 'chalk';
 
 export class SimulationReporter {
     constructor(dbConnection = null) {
@@ -48,7 +49,12 @@ export class SimulationReporter {
             [conversationId, messageId, userId, circleId, score, reason, Date.now(), promptVersion, goalAdherence, goalHistory, goalConversation, criticalFailure, modelUsed, modelUsed]
         );
 
-        console.log(`[SimulationReporter] Auto-scored: ${score} - "${reason}"${criticalFailure ? ' 🚨 CRITICAL FAILURE' : ''}`);
+        const autoScoredMsg = `[SimulationReporter][Auto-Scored]: Score ${score} - "${reason}"`;
+        if (criticalFailure) {
+            console.log(chalk.yellowBright(autoScoredMsg) + chalk.red.bold('  🚨 [Critical Failure]'));
+        } else {
+            console.log(chalk.yellowBright(autoScoredMsg));
+        }
         
         // Store advice/recommendations if critical failure
         if (criticalFailure) {
@@ -99,7 +105,7 @@ export class SimulationReporter {
             [conversationId, messageId, userId, circleId, category, description, context, Date.now()]
         );
 
-        console.log(`[SimulationReporter] Detailed report: ${category} - ${description}`);
+        console.log(chalk.blue(`[SimulationReporter][Message Flagged]`) + chalk.white(` ${category}: ${description}`));
     }
 
     /**
@@ -126,7 +132,10 @@ export class SimulationReporter {
             [conversationId, flagType, reason, Date.now()]
         );
 
-        console.log(`🚨 SIMULATION FLAGGED: ${flagType} - ${reason}`);
+        // Compact but visible flag message
+        console.log(chalk.red.bold('🚨 [SIMULATION FLAGGED]') + 
+                   chalk.yellow(` ${flagType}`) + 
+                   chalk.white(` | ${reason} | ${conversationId}`));
     }
 
     /**

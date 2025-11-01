@@ -257,6 +257,7 @@ export class SimulationScorer {
 
     /**
      * Assess conversation quality goal progress
+     * PRIMARY FOCUS: Probing questions are highest value
      */
     _assessQualityGoal(userMessage, agentResponse) {
         const responseLower = agentResponse.toLowerCase();
@@ -266,17 +267,22 @@ export class SimulationScorer {
             return { score: -2, reason: 'Repetitive/pestering response' };
         }
 
-        // Check for empathetic language
-        if (responseLower.includes('understand') || responseLower.includes('support')) {
-            return { score: 0, reason: 'Shows empathy and support' };
+        // PRIMARY: Check for specific questions (HIGH VALUE +2, or NO_QUESTION penalty -2)
+        const hasQuestion = responseLower.includes('?') && !responseLower.includes('yes') && !responseLower.includes('no');
+        const hasEmphaticQuestion = responseLower.includes('?') && (
+            responseLower.includes('how') || responseLower.includes('what') || 
+            responseLower.includes('when') || responseLower.includes('where') ||
+            responseLower.includes('why') || responseLower.includes('can you')
+        );
+        
+        if (hasEmphaticQuestion) {
+            return { score: 2, reason: 'Asks probing question' };  // HIGH VALUE
+        } else if (hasQuestion) {
+            return { score: 1, reason: 'Asks question' };
+        } else {
+            // No question = PENALTY (conversations should elicit information)
+            return { score: -2, reason: 'No probing question asked' };
         }
-
-        // Check for specific questions
-        if (responseLower.includes('?') && !responseLower.includes('yes') && !responseLower.includes('no')) {
-            return { score: 1, reason: 'Asks specific questions' };
-        }
-
-        return { score: 0, reason: 'No specific quality indicators' };
     }
 
     /**

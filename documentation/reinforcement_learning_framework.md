@@ -42,8 +42,26 @@ L_Agent = w₁L_Actionability + w₂L_Adherence + w₃L_Conciseness + w₄L_Elic
 - **L_Actionability** (High Weight): Measures if replies provide clear, actionable next steps
 - **L_Adherence** (High Weight): Delayed reward when users follow agent advice
 - **L_Conciseness** (Medium-High Weight): Penalizes verbosity, rewards style matching
-- **L_Elicitation** (Medium Weight): Measures successful information gathering
-- **L_Empathy** (Low Weight): Tone appropriateness without overriding clarity
+- **L_Elicitation** (CRITICAL Weight): Measures successful information gathering via probing questions
+- **L_Empathy** (Zero Weight): Tone appropriateness - users know they're talking to AI, empathy is low value
+
+**Weight Values (from `scoring_constants.js`):**
+- **Penalties**: Missing escalation (-2), Empathy loop (-3), Denial acceptance (-3), Generic response (-2), No probing question (-2), Verbosity (-1)
+- **Rewards**: Well-balanced (+1), Concise response (+1), **Probing questions (+2)**, Detailed info (+1), Empathy shown (0, neutral)
+
+**Character-Level Verbosity Penalties:**
+- **Emotional users**: Max ratio 6.0x (response/input length). Beyond → -1 penalty
+- **Factual users**: Max ratio 4.0x. Beyond → -1 penalty
+- **Minimum ratios**: Emotional 0.5x, Factual 0.3x (below → briefness issue -1)
+
+**Per-Information Rewards:**
+- Critical symptom discovery: +2 (proper escalation)
+- **Probing questions**: +2 (how/what/when/where/why/can you) - HIGHEST VALUE
+- Regular questions: +1
+- No question: -2 (conversations should elicit information)
+- Goal adherence tracking: +0.9 (high), +0.7 (medium), +0.5 (low)
+- History collection: +1.0 max (progressive bonus based on depth)
+- Conversation quality: +1.0 max (based on engagement and tone)
 
 ### 2.2 Orchestrator Reward Function (R(t))
 

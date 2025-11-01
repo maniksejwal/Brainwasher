@@ -44,13 +44,14 @@ export const SCORING_WEIGHTS = {
     VERBOSITY_ISSUE: -1,
     BRIEFNESS_ISSUE: -1,
     BUG_RESPONSE: -2,
+    NO_PROBING_QUESTION: -2,  // Penalty for not asking specific questions (HIGH PRIORITY)
     WELL_BALANCED: 1,
     
     // Good behavior rewards
     CONCISE_RESPONSE: 1,
-    SPECIFIC_QUESTION: 1,
+    SPECIFIC_QUESTION: 2,  // Increased from 1 - probing questions are HIGH VALUE
     CONVERSATIONAL_LANGUAGE: 1,
-    EMPATHY_SHOWN: 1,
+    EMPATHY_SHOWN: 0,  // Demoted to neutral - AI empathy awareness is low value
     DETAILED_INFO_PROVIDED: 1
 };
 

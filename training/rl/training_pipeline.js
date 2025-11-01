@@ -24,6 +24,7 @@ export class TrainingPipeline {
         this.minScoreThreshold = options.minScoreThreshold || 0.5;
         this.optimizationInterval = options.optimizationInterval || 24 * 60 * 60 * 1000; // 24 hours
         this.lastOptimization = null;
+        this.skipSimulations = options.skipSimulations || false; // Skip AB test simulations
         
         this.feedbackAnalyzer = new FeedbackAnalyzer();
         this.promptOptimizer = new PromptOptimizer();
@@ -99,8 +100,12 @@ export class TrainingPipeline {
             const optimizedPrompts = await this.generateOptimizedPrompts(optimizationOpportunities);
 
             // Step 5: A/B test new prompts
-            console.log('[TrainingPipeline] Running A/B tests...');
-            const abTestResults = await this.runABTests(optimizedPrompts);
+            if (this.skipSimulations) {
+                console.log('[TrainingPipeline] Analyzing existing data for A/B tests (skipping simulations)...');
+            } else {
+                console.log('[TrainingPipeline] Running A/B tests...');
+            }
+            const abTestResults = await this.runABTests(optimizedPrompts, this.skipSimulations);
 
             // Step 6: Deploy best performing prompt
             if (abTestResults.winner) {
@@ -218,8 +223,9 @@ export class TrainingPipeline {
 
     /**
      * Run A/B tests on optimized prompts
+     * @param {boolean} skipSimulations - If true, analyze existing data instead of running new simulations
      */
-    async runABTests(optimizedPrompts) {
+    async runABTests(optimizedPrompts, skipSimulations = false) {
         if (optimizedPrompts.length === 0) {
             console.log('[TrainingPipeline] No optimized prompts to test');
             return { tests: [], winner: null };
@@ -230,32 +236,112 @@ export class TrainingPipeline {
             winner: null
         };
 
-        for (const promptData of optimizedPrompts) {
-            try {
-                const abTest = new ABTest({
-                    baseline: 'current',
-                    challenger: promptData.version,
-                    runs: 5,
-                    scenarios: ['chest_pain_emergency', 'caregiver_crisis_intervention']
-                });
-                
-                const testResult = await abTest.runTest(`Optimization: ${promptData.type}`);
+        if (skipSimulations) {
+            // Analyze existing feedback data instead of running simulations
+            console.log('[TrainingPipeline] Skipping simulations - analyzing existing feedback data');
+            for (const promptData of optimizedPrompts) {
+                try {
+                    const testResult = await this._analyzeExistingDataForABTest('current', promptData.version);
+                    
+                    results.tests.push({
+                        ...promptData,
+                        testResult
+                    });
 
-                results.tests.push({
-                    ...promptData,
-                    testResult
-                });
-
-                // Determine winner based on performance
-                if (testResult.challengerScore > testResult.baselineScore) {
-                    results.winner = promptData;
+                    if (testResult.challengerScore > testResult.baselineScore) {
+                        results.winner = promptData;
+                    }
+                } catch (error) {
+                    console.warn(`[TrainingPipeline] Analysis failed for ${promptData.type}:`, error.message);
                 }
-            } catch (error) {
-                console.warn(`[TrainingPipeline] A/B test failed for ${promptData.type}:`, error.message);
+            }
+        } else {
+            // Run new simulations with scenario diversity (not repetition)
+            // Get all available scenarios for diversity
+            const { SCENARIOS } = await import('../simulation/scenarios.js');
+            const allScenarios = Object.keys(SCENARIOS);
+            
+            for (const promptData of optimizedPrompts) {
+                try {
+                    // Select diverse scenarios - each run gets a different random scenario
+                    // This ensures we test the prompt across various contexts, not just repeated scenarios
+                    const diverseScenarios = [];
+                    const runsPerVersion = 5;
+                    
+                    // Ensure we have enough unique scenarios
+                    if (allScenarios.length >= runsPerVersion) {
+                        // Pick unique random scenarios (no repetition)
+                        const shuffled = [...allScenarios].sort(() => Math.random() - 0.5);
+                        diverseScenarios.push(...shuffled.slice(0, runsPerVersion));
+                    } else {
+                        // If we have fewer scenarios than runs, use all but minimize repetition
+                        const scenarioCounts = {};
+                        for (let i = 0; i < runsPerVersion; i++) {
+                            // Prefer less-used scenarios
+                            const available = allScenarios.filter(s => !scenarioCounts[s] || scenarioCounts[s] < 2);
+                            const selected = available.length > 0 ? 
+                                available[Math.floor(Math.random() * available.length)] :
+                                allScenarios[Math.floor(Math.random() * allScenarios.length)];
+                            diverseScenarios.push(selected);
+                            scenarioCounts[selected] = (scenarioCounts[selected] || 0) + 1;
+                        }
+                    }
+                    
+                    const abTest = new ABTest({
+                        baseline: 'current',
+                        challenger: promptData.version,
+                        runs: runsPerVersion,
+                        scenarios: diverseScenarios // Diverse scenarios instead of repeated ones
+                    });
+                    
+                    const testResult = await abTest.runTest(`Optimization: ${promptData.type}`);
+
+                    results.tests.push({
+                        ...promptData,
+                        testResult
+                    });
+
+                    if (testResult.challengerScore > testResult.baselineScore) {
+                        results.winner = promptData;
+                    }
+                } catch (error) {
+                    console.warn(`[TrainingPipeline] A/B test failed for ${promptData.type}:`, error.message);
+                }
             }
         }
 
         return results;
+    }
+
+    /**
+     * Analyze existing feedback data for A/B test comparison
+     * Reuses FeedbackAnalyzer to avoid code duplication
+     */
+    async _analyzeExistingDataForABTest(baselineVersion, challengerVersion) {
+        // Reuse FeedbackAnalyzer's reward backpropagation method
+        const rewardAnalysis = await this.feedbackAnalyzer.calculateRewardBackpropagation();
+        
+        // Extract baseline performance
+        const baselinePerf = rewardAnalysis.prompt_performance[baselineVersion] || 
+                           rewardAnalysis.prompt_performance['current'] ||
+                           Object.values(rewardAnalysis.prompt_performance)[0]; // First available
+        
+        // Extract challenger performance
+        const challengerPerf = rewardAnalysis.prompt_performance[challengerVersion];
+        
+        const baselineScore = baselinePerf?.reward_signal || baselinePerf?.avg_score || 0;
+        const challengerScore = challengerPerf?.reward_signal || challengerPerf?.avg_score || 0;
+        const baselineCount = baselinePerf?.total_interactions || 0;
+        const challengerCount = challengerPerf?.total_interactions || 0;
+
+        return {
+            baselineScore,
+            challengerScore,
+            baselineCount,
+            challengerCount,
+            winner: challengerScore > baselineScore ? 'challenger' : 'baseline',
+            rewardAnalysis // Include full analysis for context
+        };
     }
 
     /**

@@ -195,7 +195,9 @@ export class SimulationDriver {
         }
 
         for (const config of userConfigs) {
-            const { userId, role, personaKey } = config;
+            // userId may be missing in scenario configs - generate fallback
+            const userId = config.userId || `sim_${config.role}_${Date.now()}`;
+            const { role, personaKey } = config;
             const personaData = getPersona(role, personaKey);
             
             // Create run-specific user ID to prevent contamination

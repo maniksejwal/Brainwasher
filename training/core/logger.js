@@ -27,6 +27,7 @@ class TrainingLogger {
         timestamp: Date.now(),
         conversation_id: data.conversationId,
         user_id: data.userId,
+        turn: data.turn || null, // Add turn number for precise mapping
         message: data.message,
         agent_response: data.agentResponse,
         orchestrator_action: data.orchestratorAction,

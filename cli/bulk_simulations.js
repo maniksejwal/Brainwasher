@@ -60,7 +60,7 @@ class BulkSimulationRunner {
             // Set simulation mode
             process.env.SIMULATION_MODE = 'true';
             
-            await simulator.runScenario(scenarioConfig);
+            await simulator.runScenario(scenarioConfig, scenarioKey);
             
             const duration = Date.now() - startTime;
             

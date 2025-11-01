@@ -62,16 +62,76 @@ class FeedbackAnalyzer {
     /**
      * Merge training logs with feedback
      */
+    /**
+     * Merge training logs with feedback entries
+     * Uses precise matching based on conversation_id + turn number (or message_id)
+     * No timestamp proximity needed - we have proper identifiers
+     */
     mergeLogsWithFeedback(logs, feedback) {
+        // Create feedback map by conversation_id + turn (or message_id for precise matching)
         const feedbackMap = new Map();
+        
         feedback.forEach(f => {
-            feedbackMap.set(f.conversation_id, f);
+            // Primary key: conversation_id + turn number (most precise)
+            // Fallback: conversation_id + message_id
+            // Last resort: conversation_id only
+            let key;
+            if (f.conversation_id && f.message_id !== null && f.message_id !== undefined) {
+                // Use message_id if available (most precise)
+                key = `${f.conversation_id}_msg_${f.message_id}`;
+            } else if (f.conversation_id) {
+                // Conversation-only key (less precise, but works)
+                key = f.conversation_id;
+            } else {
+                return; // Skip feedback without conversation_id
+            }
+            
+            if (!feedbackMap.has(key)) {
+                feedbackMap.set(key, []);
+            }
+            feedbackMap.get(key).push(f);
         });
 
-        return logs.map(log => ({
-            ...log,
-            feedback: feedbackMap.get(log.conversation_id) || null
-        }));
+        return logs.map(log => {
+            let matchedFeedback = null;
+            
+            // Try to match by conversation_id + turn number (if log has turn)
+            if (log.conversation_id && log.turn !== null && log.turn !== undefined) {
+                // Look for feedback with matching conversation_id
+                // Since feedback doesn't store turn, we match by conversation_id and pick the closest message_id
+                // We'll use conversation_id matching and rely on order
+                const convFeedback = feedback.filter(f => f.conversation_id === log.conversation_id);
+                if (convFeedback.length > 0) {
+                    // Sort by message_id (assuming it corresponds to turn order) or timestamp
+                    const sorted = convFeedback.sort((a, b) => 
+                        (a.message_id || 0) - (b.message_id || 0) || 
+                        (a.timestamp || 0) - (b.timestamp || 0)
+                    );
+                    // Match by position (turn 0 = first feedback, turn 1 = second, etc.)
+                    matchedFeedback = sorted[log.turn] || sorted[0];
+                }
+            } else if (log.conversation_id) {
+                // Fallback: conversation_id only (less precise)
+                const key = log.conversation_id;
+                const feedbacks = feedbackMap.get(key);
+                if (feedbacks && feedbacks.length > 0) {
+                    // If multiple, prefer one matching user_id
+                    matchedFeedback = feedbacks.find(f => f.user_id === log.user_id) || feedbacks[0];
+                }
+            }
+
+            return {
+                ...log,
+                feedback: matchedFeedback,
+                // Add mapping metadata
+                _mapping: {
+                    matched: !!matchedFeedback,
+                    method: matchedFeedback ? 
+                        (log.turn !== null && log.turn !== undefined ? 'conversation_id+turn' : 'conversation_id') : 
+                        'none'
+                }
+            };
+        });
     }
 
     /**
@@ -384,16 +444,16 @@ class FeedbackAnalyzer {
             average_score: withFeedback.reduce((sum, d) => sum + d.feedback.score, 0) / withFeedback.length || 0,
             
             // Response metrics
-            average_latency: mergedData.reduce((sum, d) => sum + (d.latency_ms || 0), 0) / mergedData.length,
-            average_response_length: mergedData.reduce((sum, d) => sum + (d.response_length || 0), 0) / mergedData.length,
-            average_message_length: mergedData.reduce((sum, d) => sum + (d.message_length || 0), 0) / mergedData.length,
+            average_latency: mergedData.length > 0 ? mergedData.reduce((sum, d) => sum + (d.latency_ms || 0), 0) / mergedData.length : 0,
+            average_response_length: mergedData.length > 0 ? mergedData.reduce((sum, d) => sum + (d.response_length || 0), 0) / mergedData.length : 0,
+            average_message_length: mergedData.length > 0 ? mergedData.reduce((sum, d) => sum + (d.message_length || 0), 0) / mergedData.length : 0,
             
             // Actions
             escalations: mergedData.filter(d => d.escalated).length,
             shares: mergedData.filter(d => d.shared).length
         };
 
-        stats.verbosity_ratio = stats.average_response_length / stats.average_message_length;
+        stats.verbosity_ratio = stats.average_message_length > 0 ? stats.average_response_length / stats.average_message_length : 0;
 
         return stats;
     }
@@ -450,10 +510,10 @@ class FeedbackAnalyzer {
         const positive = mergedData.filter(d => d.feedback && d.feedback.score === 1);
         
         const characteristics = {
-            average_response_length: positive.reduce((sum, d) => sum + (d.response_length || 0), 0) / positive.length || 0,
-            average_latency: positive.reduce((sum, d) => sum + (d.latency_ms || 0), 0) / positive.length || 0,
-            escalation_rate: positive.filter(d => d.escalated).length / positive.length,
-            share_rate: positive.filter(d => d.shared).length / positive.length,
+            average_response_length: positive.length > 0 ? positive.reduce((sum, d) => sum + (d.response_length || 0), 0) / positive.length : 0,
+            average_latency: positive.length > 0 ? positive.reduce((sum, d) => sum + (d.latency_ms || 0), 0) / positive.length : 0,
+            escalation_rate: positive.length > 0 ? positive.filter(d => d.escalated).length / positive.length : 0,
+            share_rate: positive.length > 0 ? positive.filter(d => d.shared).length / positive.length : 0,
             sample_interactions: positive.slice(0, 5)
         };
 
@@ -553,9 +613,9 @@ Generated: ${timestamp}
 ## Detailed Statistics
 
 ### Feedback Distribution
-- ✅ Positive (+1): ${stats.positive_feedback} (${(stats.positive_feedback / stats.with_feedback * 100).toFixed(1)}%)
-- 🤷 Neutral (0): ${stats.neutral_feedback} (${(stats.neutral_feedback / stats.with_feedback * 100).toFixed(1)}%)
-- ❌ Negative (-1): ${stats.negative_feedback} (${(stats.negative_feedback / stats.with_feedback * 100).toFixed(1)}%)
+- ✅ Positive (+1): ${stats.positive_feedback} (${stats.with_feedback > 0 ? (stats.positive_feedback / stats.with_feedback * 100).toFixed(1) : '0'}%)
+- 🤷 Neutral (0): ${stats.neutral_feedback} (${stats.with_feedback > 0 ? (stats.neutral_feedback / stats.with_feedback * 100).toFixed(1) : '0'}%)
+- ❌ Negative (-1): ${stats.negative_feedback} (${stats.with_feedback > 0 ? (stats.negative_feedback / stats.with_feedback * 100).toFixed(1) : '0'}%)
 
 ### Response Metrics
 - Average Latency: ${stats.average_latency.toFixed(0)}ms
@@ -564,8 +624,8 @@ Generated: ${timestamp}
 - Verbosity Ratio: ${stats.verbosity_ratio.toFixed(2)}x
 
 ### Agent Actions
-- Escalations: ${stats.escalations} (${(stats.escalations / stats.total_interactions * 100).toFixed(1)}%)
-- Information Shares: ${stats.shares} (${(stats.shares / stats.total_interactions * 100).toFixed(1)}%)
+- Escalations: ${stats.escalations} (${stats.total_interactions > 0 ? (stats.escalations / stats.total_interactions * 100).toFixed(1) : '0'}%)
+- Information Shares: ${stats.shares} (${stats.total_interactions > 0 ? (stats.shares / stats.total_interactions * 100).toFixed(1) : '0'}%)
 
 ---
 

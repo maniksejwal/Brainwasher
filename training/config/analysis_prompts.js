@@ -21,7 +21,7 @@ Analyze the following training data for a healthcare AI agent system:
 - Average response length: ${stats.average_response_length.toFixed(0)} chars
 - Average user message length: ${stats.average_message_length.toFixed(0)} chars
 - Verbosity ratio: ${stats.verbosity_ratio.toFixed(2)}x
-- Escalations: ${stats.escalations} (${(stats.escalations / stats.total_interactions * 100).toFixed(1)}%)
+- Escalations: ${stats.escalations}${stats.total_interactions > 0 ? ` (${(stats.escalations / stats.total_interactions * 100).toFixed(1)}%)` : ''}
 
 ## Problem Patterns (Negative Feedback)
 - Verbosity issues: ${negativePatterns.verbosity.length} cases
@@ -31,7 +31,7 @@ Analyze the following training data for a healthcare AI agent system:
 
 ## High-Performing Characteristics (Positive Feedback)
 - Average response length: ${positiveChars.average_response_length.toFixed(0)} chars
-- Escalation rate: ${(positiveChars.escalation_rate * 100).toFixed(1)}%
+- Escalation rate: ${positiveChars.average_response_length > 0 ? `${(positiveChars.escalation_rate * 100).toFixed(1)}%` : 'N/A'}
 
 Provide a structured analysis including:
 1. **Key Issues**: What are the main problems?

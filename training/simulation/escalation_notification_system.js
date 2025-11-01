@@ -35,9 +35,13 @@ export class EscalationNotificationSystem {
      */
     async handleEscalation(circleId) {
         try {
-            // Prevent duplicate notifications for the same circle
+            // Prevent duplicate notifications for the same circle within a conversation
+            // Use longer cooldown (30 seconds) to prevent spam during multi-turn conversations
             const notificationKey = `escalation_${circleId}`;
             if (this.recentNotifications && this.recentNotifications.has(notificationKey)) {
+                if (process.env.SIMULATION_DEBUG === 'true') {
+                    console.log(`[EscalationNotificationSystem] Skipping duplicate notification for ${circleId} (already notified recently)`);
+                }
                 return; // Skip if we already notified for this circle recently
             }
             
@@ -49,10 +53,10 @@ export class EscalationNotificationSystem {
             // Mark this circle as notified
             this.recentNotifications.add(notificationKey);
             
-            // Clear the notification after 5 seconds to allow future notifications
+            // Clear the notification after 30 seconds to prevent spam but allow future escalations
             setTimeout(() => {
                 this.recentNotifications.delete(notificationKey);
-            }, 5000);
+            }, 30000); // Increased from 5 to 30 seconds
 
             const members = await getCircleMembers(circleId);
             if (!members || members.length === 0) {

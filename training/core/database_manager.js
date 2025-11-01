@@ -27,8 +27,39 @@ export class TrainingDatabaseManager {
         
         this.db = await getDb();
         
+        // Initialize training tables
+        await this._initializeTrainingTables();
+        
         console.log(`[TrainingDatabaseManager] Initialized in ${simulationMode ? 'simulation' : 'production'} mode`);
         return this.db;
+    }
+
+    /**
+     * Initialize training-specific database tables
+     */
+    async _initializeTrainingTables() {
+        const db = this.getDb();
+        
+        // Create prompt_versions table
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS prompt_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version TEXT NOT NULL,
+                content TEXT NOT NULL,
+                deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                performance_score REAL,
+                is_active BOOLEAN DEFAULT 0
+            );
+        `);
+        
+        // Create training_metadata table
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS training_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
     }
 
     /**
