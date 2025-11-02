@@ -59,6 +59,9 @@ export async function handleCommand(userId, circleId, message) {
             break;
         case '/consent':
             await handleConsentCommand(userId, circleId, parts);
+            // Reschedule future plans that depend on consent
+            const { rescheduleAffectedPlans } = await import('./message_logic/rescheduleHandler.js');
+            await rescheduleAffectedPlans(userId, circleId, 'consent_changed');
             break;
         case '/log':
         case '/order':
@@ -92,6 +95,9 @@ export async function handleCommand(userId, circleId, message) {
             await handleSetSpecialtyCommand(userId, circleId, parts);
             break;
         case '/clear':
+            // Reschedule/cancel future plans before clearing
+            const { rescheduleAffectedPlans: rescheduleClear } = await import('./message_logic/rescheduleHandler.js');
+            await rescheduleAffectedPlans(userId, circleId, 'clear_command');
             events.emit('clear_db');
             break;
         case '/score':

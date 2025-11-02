@@ -25,6 +25,7 @@ async function main() {
     
     if (!command || !Object.keys(COMMANDS).includes(command)) {
         showUsage();
+        process.exit(0);
         return;
     }
 
@@ -47,6 +48,7 @@ async function main() {
                 break;
             case 'help':
                 showUsage();
+                process.exit(0);
                 break;
         }
     } catch (error) {
@@ -59,10 +61,40 @@ async function runTrainingCycle() {
     console.log(chalk.cyan('🚀 Starting RL Training Cycle...'));
     console.log('');
     
+    // Parse options
+    const args = process.argv.slice(3);
+    
+    // Parse scenario filtering
+    const scenarioFilterIndex = args.indexOf('--scenarios');
+    const maxScenarios = scenarioFilterIndex !== -1 && args[scenarioFilterIndex + 1] ? 
+        parseInt(args[scenarioFilterIndex + 1]) : null;
+    
+    if (maxScenarios) {
+        trainingPipeline.maxScenariosPerTest = maxScenarios;
+        console.log(chalk.yellow(`📊 Limiting A/B tests to ${maxScenarios} scenarios`));
+    }
+    
+    // Parse prompt types to optimize
+    const promptsIndex = args.indexOf('--prompts');
+    const promptsValue = promptsIndex !== -1 && args[promptsIndex + 1] ? 
+        args[promptsIndex + 1] : 'all';
+    
+    if (promptsValue === 'all') {
+        trainingPipeline.optimizePrompts = 'all';
+        console.log(chalk.yellow('📝 Optimizing all prompt types (unified, doctor, enrichment, etc.)'));
+    } else if (promptsValue.includes(',')) {
+        trainingPipeline.optimizePrompts = promptsValue.split(',').map(p => p.trim());
+        console.log(chalk.yellow(`📝 Optimizing prompts: ${trainingPipeline.optimizePrompts.join(', ')}`));
+    } else {
+        trainingPipeline.optimizePrompts = promptsValue;
+        console.log(chalk.yellow(`📝 Optimizing: ${promptsValue} prompt only`));
+    }
+    
     await trainingPipeline.runTrainingCycle();
     
     console.log('');
     console.log(chalk.green('✅ Training cycle completed!'));
+    process.exit(0);
 }
 
 async function showStatus() {
@@ -108,6 +140,7 @@ async function forceOptimization() {
     
     console.log('');
     console.log(chalk.green('✅ Forced optimization completed!'));
+    process.exit(0);
 }
 
 async function runAnalysisOnly() {
@@ -121,12 +154,13 @@ async function runAnalysisOnly() {
     
     console.log('');
     console.log(chalk.green('✅ Analysis completed using existing conversation data!'));
+    process.exit(0);
 }
 
 function showUsage() {
     console.log(chalk.cyan('🧠 RL Training Pipeline CLI'));
     console.log('');
-    console.log('Usage: node cli/train.js <command>');
+    console.log('Usage: node cli/train.js <command> [options]');
     console.log('');
     console.log('Commands:');
     console.log('  node cli/train.js run          # Run a complete training cycle');
@@ -135,10 +169,30 @@ function showUsage() {
     console.log('  node cli/train.js analyze-only # Analyze existing data without running simulations');
     console.log('  node cli/train.js help         # Show this help message');
     console.log('');
+    console.log('Options:');
+    console.log('  --scenarios <number>     Limit number of scenarios used in A/B testing');
+    console.log('                          (default: all scenarios, uses maxRunsPerTest for diversity)');
+    console.log('  --prompts <types>        Which prompts to optimize (default: all)');
+    console.log('                          Options: unified, all, or comma-separated list');
+    console.log('                          Examples: --prompts unified, --prompts all, --prompts unified,doctor_summary');
+    console.log('');
     console.log('Examples:');
-    console.log('  node cli/train.js status   # Check if ready for optimization');
-    console.log('  node cli/train.js run       # Run optimization if conditions are met');
-    console.log('  node cli/train.js force     # Force optimization for testing');
+    console.log('  node cli/train.js status                              # Check if ready for optimization');
+    console.log('  node cli/train.js run                                  # Optimize all prompts (default)');
+    console.log('  node cli/train.js run --prompts unified               # Optimize unified prompt only');
+    console.log('  node cli/train.js run --prompts unified,doctor_summary # Optimize specific prompts');
+    console.log('  node cli/train.js run --scenarios 5                    # Limit A/B tests to 5 scenarios');
+    console.log('  node cli/train.js force                                # Force optimization for testing');
+    console.log('');
+    console.log('Note: maxRunsPerTest controls how many runs per version (default: 5)');
+    console.log('      This means 5 baseline + 5 challenger = 10 conversations per A/B test');
+    console.log('');
+    console.log('Prompt Types:');
+    console.log('  - unified: Main conversational agent (default, tested in A/B tests)');
+    console.log('  - doctor_summary: Clinical summary generation');
+    console.log('  - doctor_probe: Question generation from doctor requests');
+    console.log('  - enrichment: Context re-evaluation after entity resolution');
+    console.log('  - intent: Intent classification');
 }
 
 // Run the CLI

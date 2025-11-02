@@ -319,6 +319,28 @@ class ABTest {
     }
 
     /**
+     * Normalize prompt version for querying feedback
+     * Handles mismatches: "current" vs timestamp versions, simulation versions
+     */
+    _normalizePromptVersion(promptVersion) {
+        if (!promptVersion) return null;
+        
+        // If "current", look for production version or any recent version
+        if (promptVersion === 'current') {
+            return '%'; // Use LIKE pattern to match any version
+        }
+        
+        // If timestamp version like "v1762012142761", also match simulation versions
+        // that contain this timestamp: "simulation_v1762012142761_scenario"
+        if (promptVersion.startsWith('v')) {
+            const timestamp = promptVersion.substring(1);
+            return `%${timestamp}%`; // Match any version containing this timestamp
+        }
+        
+        return promptVersion;
+    }
+
+    /**
      * Get quality metrics for a prompt version from feedback database
      */
     async _getQualityMetrics(promptVersion) {
@@ -326,17 +348,26 @@ class ABTest {
             const { getDb } = await import('../../db/connection.js');
             const db = await getDb();
             
-            // Query feedback for this prompt version
+            // Normalize version for matching
+            const normalizedVersion = this._normalizePromptVersion(promptVersion);
+            
+            // Use LIKE for flexible matching instead of exact match
+            // Remove date restriction to get all feedback for this version
             const result = await db.get(`
                 SELECT 
                     AVG(score) as avg_score,
                     COUNT(*) as count,
                     SUM(CASE WHEN critical_failure = 1 THEN 1 ELSE 0 END) as critical_failures
                 FROM feedback 
-                WHERE prompt_version = ? 
-                AND source = 'simulation'
-                AND timestamp > datetime('now', '-1 day')
-            `, [promptVersion]);
+                WHERE prompt_version LIKE ? 
+                AND (source = 'simulation' OR source IS NULL)
+            `, [normalizedVersion]);
+            
+            if (result && result.count > 0) {
+                console.log(`[ABTest] Found ${result.count} feedback entries for version ${promptVersion} (matched: ${normalizedVersion})`);
+            } else {
+                console.warn(`[ABTest] No feedback found for version ${promptVersion} (tried: ${normalizedVersion})`);
+            }
             
             return {
                 avgScore: result?.avg_score || 0,
@@ -366,7 +397,9 @@ Generated: ${timestamp}
 - **Baseline Version**: ${baseline.promptVersion}
 - **Challenger Version**: ${challenger.promptVersion}
 - **Runs Per Version**: ${this.runsPerVersion}
-- **Total Simulations**: ${this.runsPerVersion * 2}
+- **Total Conversations**: ${this.runsPerVersion * 2} (${this.runsPerVersion} baseline + ${this.runsPerVersion} challenger)
+- **Scenarios Used**: ${this.scenarios.length > 0 ? this.scenarios.join(', ') : 'All available scenarios (diverse selection)'}
+- **Total Scenarios**: ${this.scenarios.length}
 
 ---
 
@@ -383,20 +416,23 @@ Generated: ${timestamp}
 ## Quality Metrics (Primary)
 
 ### Average Score
+**Measures**: Average feedback score per conversation.
+**Scale**: -2 (poor) to +2 (excellent). Higher is better. 0.00 likely means no data found.
 
 | Version | Avg Score | Improvement | Description |
 |---------|-----------|-------------|-------------|
-| Baseline | ${comparison.qualityMetrics.averageScore.baseline.toFixed(2)} | - | ${comparison.qualityMetrics.averageScore.description} |
-| Challenger | ${comparison.qualityMetrics.averageScore.challenger.toFixed(2)} | ${comparison.qualityMetrics.averageScore.improvement} | ${comparison.qualityMetrics.averageScore.description} |
+| Baseline | ${comparison.qualityMetrics.averageScore.baseline.toFixed(2)} | - | Average feedback score from all interactions |
+| Challenger | ${comparison.qualityMetrics.averageScore.challenger.toFixed(2)} | ${comparison.qualityMetrics.averageScore.improvement} | Average feedback score from all interactions |
 
 **Winner**: ${comparison.qualityMetrics.averageScore.winner === 'challenger' ? '🟢 Challenger' : comparison.qualityMetrics.averageScore.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}
 
 ### Critical Failures
+**Measures**: Number of severe agent mistakes (e.g., memory leaks, missed escalations, dangerous advice). Lower is better; zero is ideal.
 
 | Version | Critical Failures | Improvement | Description |
 |---------|-------------------|-------------|-------------|
-| Baseline | ${comparison.qualityMetrics.criticalFailures.baseline} | - | ${comparison.qualityMetrics.criticalFailures.description} |
-| Challenger | ${comparison.qualityMetrics.criticalFailures.challenger} | ${comparison.qualityMetrics.criticalFailures.improvement} | ${comparison.qualityMetrics.criticalFailures.description} |
+| Baseline | ${comparison.qualityMetrics.criticalFailures.baseline} | - | Number of critical failure incidents detected |
+| Challenger | ${comparison.qualityMetrics.criticalFailures.challenger} | ${comparison.qualityMetrics.criticalFailures.improvement} | Number of critical failure incidents detected |
 
 **Winner**: ${comparison.qualityMetrics.criticalFailures.winner === 'challenger' ? '🟢 Challenger' : comparison.qualityMetrics.criticalFailures.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}
 
@@ -407,20 +443,22 @@ Generated: ${timestamp}
 ## Operational Metrics (Secondary)
 
 ### Success Rate
+**What it means**: % of runs finished without technical errors (higher is better).
 
 | Version | Success Rate | Improvement | Description |
 |---------|-------------|-------------|-------------|
-| Baseline | ${(comparison.metrics.successRate.baseline * 100).toFixed(1)}% | - | ${comparison.metrics.successRate.description} |
-| Challenger | ${(comparison.metrics.successRate.challenger * 100).toFixed(1)}% | ${comparison.metrics.successRate.improvement} | ${comparison.metrics.successRate.description} |
+| Baseline | ${(comparison.metrics.successRate.baseline * 100).toFixed(1)}% | - | Percentage of runs that completed successfully |
+| Challenger | ${(comparison.metrics.successRate.challenger * 100).toFixed(1)}% | ${comparison.metrics.successRate.improvement} | Percentage of runs that completed successfully |
 
 **Winner**: ${comparison.metrics.successRate.winner === 'challenger' ? '🟢 Challenger' : comparison.metrics.successRate.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}
 
 ### Average Duration
+**Measures**: Average simulation runtime. Lower is faster, but prioritize quality over speed.
 
 | Version | Avg Duration | Improvement | Description |
 |---------|-------------|-------------|-------------|
-| Baseline | ${(baseline.averageDuration / 1000).toFixed(2)}s | - | ${comparison.metrics.avgDuration.description} |
-| Challenger | ${(challenger.averageDuration / 1000).toFixed(2)}s | ${comparison.metrics.avgDuration.improvement} | ${comparison.metrics.avgDuration.description} |
+| Baseline | ${(baseline.averageDuration / 1000).toFixed(2)}s | - | Average time per simulation run |
+| Challenger | ${(challenger.averageDuration / 1000).toFixed(2)}s | ${comparison.metrics.avgDuration.improvement} | Average time per simulation run |
 
 **Winner**: ${comparison.metrics.avgDuration.winner === 'challenger' ? '🟢 Challenger' : comparison.metrics.avgDuration.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}
 
@@ -480,14 +518,15 @@ ${this._generateRecommendation(comparison)}
         const challengerName = this._getPromptVersionName(challenger.promptVersion);
         
         console.log('\n📊 RESULTS\n');
-        console.log('─'.repeat(80));
         console.log(`Winner: ${comparison.winner.toUpperCase()} (${(comparison.confidence * 100).toFixed(1)}% confidence)`);
-        console.log('─'.repeat(80));
         console.log(`\n📋 BASELINE: ${baselineName}`);
         console.log(`   Version: ${baseline.promptVersion}`);
         console.log(`\n🆕 CHALLENGER: ${challengerName}`);
         console.log(`   Version: ${challenger.promptVersion}`);
-        console.log('\n─'.repeat(80));
+        console.log(`\n📊 TEST CONFIGURATION:`);
+        console.log(`   Runs per version: ${this.runsPerVersion}`);
+        console.log(`   Scenarios used: ${this.scenarios.length > 0 ? this.scenarios.join(', ') : 'All available (diverse selection)'}`);
+        console.log(`   Total conversations: ${this.runsPerVersion * 2} (${this.runsPerVersion} baseline + ${this.runsPerVersion} challenger)`);
         console.log('\n📈 QUALITY METRICS (from feedback analysis):');
         console.log(`  Average Score:`);
         console.log(`    Baseline:   ${comparison.qualityMetrics.averageScore.baseline.toFixed(2)}`);
@@ -502,7 +541,6 @@ ${this._generateRecommendation(comparison)}
         console.log(`\n  Feedback Entries Analyzed:`);
         console.log(`    Baseline:   ${comparison.qualityMetrics.feedbackCount.baseline}`);
         console.log(`    Challenger: ${comparison.qualityMetrics.feedbackCount.challenger}`);
-        console.log('\n─'.repeat(80));
         console.log('\n⚙️  OPERATIONAL METRICS:');
         console.log(`\n  Success Rate (${comparison.metrics.successRate.description}):`);
         console.log(`    Baseline:   ${(comparison.metrics.successRate.baseline * 100).toFixed(1)}%`);
@@ -529,13 +567,15 @@ ${this._generateRecommendation(comparison)}
             comparison.qualityMetrics.criticalFailures.winner === 'baseline'
         ].filter(Boolean).length;
         
-        console.log('\n─'.repeat(80));
         console.log(`\n📊 CONFIDENCE CALCULATION:`);
         console.log(`   Quality Score (70% weight): Baseline ${comparison.baselineScore.toFixed(3)}, Challenger ${comparison.challengerScore.toFixed(3)}`);
         console.log(`   Metric Wins: Baseline ${baselineWins}, Challenger ${challengerWins}`);
         console.log(`   Final Confidence: ${(comparison.confidence * 100).toFixed(1)}% based on quality-weighted scoring`);
         console.log('─'.repeat(80));
         console.log(`\n✓ Full report saved to: ${reportPath}\n`);
+        
+        // Exit after completion
+        process.exit(0);
     }
 
     /**

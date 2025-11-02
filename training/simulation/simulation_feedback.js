@@ -104,10 +104,13 @@ export class SimulationFeedback {
             const conversationRecommendations = this._generateConversationRecommendations(conversationAnalysis);
             
             console.log(`[SimulationFeedback] Conversation analysis complete:`);
-            console.log(`  📊 Context Continuity: ${(conversationAnalysis.contextContinuity.continuityRate * 100).toFixed(1)}%`);
-            console.log(`  🔄 Repetitive Patterns: ${conversationAnalysis.repetitivePatterns.severity}`);
-            console.log(`  ⚡ Escalation Effectiveness: ${(conversationAnalysis.escalationPatterns.effectiveness * 100).toFixed(1)}%`);
-            console.log(`  🎯 Engagement Quality: ${(conversationAnalysis.engagementQuality.overallScore * 100).toFixed(1)}%`);
+            console.log(`  📊 Context Continuity: ${((conversationAnalysis.contextContinuity?.continuityRate || 0) * 100).toFixed(1)}%`);
+            console.log(`  🔄 Repetitive Patterns: ${conversationAnalysis.repetitivePatterns?.severity || 'low'}`);
+            console.log(`  ⚡ Escalation Effectiveness: ${((conversationAnalysis.escalationPatterns?.effectiveness || 0) * 100).toFixed(1)}%`);
+            console.log(`  🎯 Engagement Quality: ${((conversationAnalysis.engagementQuality?.overallScore || 0) * 100).toFixed(1)}%`);
+            if (conversationAnalysis.futurePlanning) {
+                console.log(`  🔮 Future Planning: ${conversationAnalysis.futurePlanning.totalPlans || 0} plans, ${((conversationAnalysis.futurePlanning.executionRate || 0) * 100).toFixed(1)}% executed`);
+            }
             console.log(`  💡 Recommendations: ${conversationRecommendations.length} generated`);
             
             return {

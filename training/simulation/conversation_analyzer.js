@@ -54,6 +54,7 @@ export class ConversationAnalyzer {
             mediationEffectiveness: this._analyzeMediationEffectiveness(conversationHistory),
             consentManagement: this._analyzeConsentManagement(conversationHistory),
             crossConversationMessaging: this._analyzeCrossConversationMessaging(conversationHistory),
+            futurePlanning: this._analyzeFuturePlanning(conversationHistory),
             
             // Overall Metrics
             engagementQuality: this._assessEngagementQuality(conversationHistory, feedbackHistory),
@@ -460,6 +461,65 @@ export class ConversationAnalyzer {
             events: crossConvEvents,
             effectivenessRate: totalNotifications > 0 ? effectiveNotifications / totalNotifications : 0,
             suppressionRate: conversationHistory.length > 0 ? suppressedMessages / conversationHistory.length : 0
+        };
+    }
+
+    /**
+     * Analyze future planning effectiveness
+     */
+    _analyzeFuturePlanning(conversationHistory) {
+        const planningMetrics = {
+            totalPlans: 0,
+            executedPlans: 0,
+            scheduledMessages: 0,
+            sentMessages: 0,
+            tasks: []
+        };
+        
+        conversationHistory.forEach((message, index) => {
+            const futurePlan = message.futurePlan || message.future_plan;
+            
+            if (futurePlan) {
+                // Count tasks
+                if (futurePlan.tasks && Array.isArray(futurePlan.tasks)) {
+                    planningMetrics.totalPlans += futurePlan.tasks.length;
+                    futurePlan.tasks.forEach(task => {
+                        planningMetrics.tasks.push({
+                            turn: index,
+                            task: task.task,
+                            scheduledTurn: task.scheduled_turn,
+                            type: task.type
+                        });
+                    });
+                }
+                
+                // Count scheduled messages
+                if (futurePlan.scheduled_messages && Array.isArray(futurePlan.scheduled_messages)) {
+                    planningMetrics.scheduledMessages += futurePlan.scheduled_messages.length;
+                }
+            }
+            
+            // Check if future plans were executed in later turns
+            if (index > 0) {
+                const prevPlan = conversationHistory[index - 1]?.futurePlan || conversationHistory[index - 1]?.future_plan;
+                if (prevPlan && prevPlan.tasks) {
+                    prevPlan.tasks.forEach(task => {
+                        if (task.scheduled_turn === index) {
+                            planningMetrics.executedPlans++;
+                        }
+                    });
+                }
+            }
+        });
+        
+        return {
+            totalPlans: planningMetrics.totalPlans,
+            executedPlans: planningMetrics.executedPlans,
+            executionRate: planningMetrics.totalPlans > 0 ? planningMetrics.executedPlans / planningMetrics.totalPlans : 0,
+            scheduledMessages: planningMetrics.scheduledMessages,
+            tasks: planningMetrics.tasks,
+            planningEffectiveness: planningMetrics.totalPlans > 0 ? 
+                (planningMetrics.executedPlans / planningMetrics.totalPlans) : 0
         };
     }
 

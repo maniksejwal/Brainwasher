@@ -25,6 +25,19 @@ export class TrainingPipeline {
         this.optimizationInterval = options.optimizationInterval || 24 * 60 * 60 * 1000; // 24 hours
         this.lastOptimization = null;
         this.skipSimulations = options.skipSimulations || false; // Skip AB test simulations
+        /**
+         * optimizePrompts: Which prompts to optimize
+         * - 'all' (default): Optimize all prompts (unified, doctor, enrichment, etc.)
+         * - 'unified': Only optimize unified_prompt.js
+         * - Array: Specific prompt types to optimize (e.g., ['unified', 'doctor_summary'])
+         */
+        this.optimizePrompts = options.optimizePrompts || 'all';
+        this.maxRunsPerTest = options.maxRunsPerTest || 5; // Configurable via constructor
+        this.maxScenariosPerTest = options.maxScenariosPerTest || null; // Configurable via constructor
+        
+        // Conversation count calculation:
+        // For each optimized prompt: maxRunsPerTest × 2 (baseline + challenger) = conversations per prompt
+        // Example: 2 prompts, 5 runs each = 2 × 5 × 2 = 20 conversations total
         
         this.feedbackAnalyzer = new FeedbackAnalyzer();
         this.promptOptimizer = new PromptOptimizer();
@@ -97,7 +110,24 @@ export class TrainingPipeline {
 
             // Step 4: Generate optimized prompts
             console.log('[TrainingPipeline] Generating optimized prompts...');
-            const optimizedPrompts = await this.generateOptimizedPrompts(optimizationOpportunities);
+            let optimizedPrompts = [];
+            
+            if (this.optimizePrompts === 'unified' || (Array.isArray(this.optimizePrompts) && this.optimizePrompts.includes('unified'))) {
+                // Use existing unified prompt optimization (reuse code)
+                const unifiedPrompts = await this.generateOptimizedPrompts(optimizationOpportunities);
+                optimizedPrompts.push(...unifiedPrompts);
+            }
+            
+            if (this.optimizePrompts === 'all' || (Array.isArray(this.optimizePrompts) && this.optimizePrompts.some(p => p !== 'unified'))) {
+                // Use multi-prompt optimizer for other prompts
+                const { MultiPromptOptimizer } = await import('./prompt_optimizer_multi.js');
+                const multiOptimizer = new MultiPromptOptimizer();
+                const otherPrompts = await multiOptimizer.generateOptimizedPromptsForAll(
+                    optimizationOpportunities,
+                    this.optimizePrompts === 'all' ? ['unified', 'all'] : this.optimizePrompts
+                );
+                optimizedPrompts.push(...otherPrompts);
+            }
 
             // Step 5: A/B test new prompts
             if (this.skipSimulations) {
@@ -107,10 +137,15 @@ export class TrainingPipeline {
             }
             const abTestResults = await this.runABTests(optimizedPrompts, this.skipSimulations);
 
-            // Step 6: Deploy best performing prompt
+            // Step 6: Deploy best performing prompt (MANUAL APPROVAL REQUIRED)
             if (abTestResults.winner) {
-                console.log('[TrainingPipeline] Deploying winning prompt version...');
-                await this.deployPromptVersion(abTestResults.winner);
+                console.log('\n⚠️  DEPLOYMENT CANDIDATE DETECTED ⚠️');
+                console.log(`Winner: ${abTestResults.winner.version}`);
+                console.log(`Performance: ${abTestResults.winner.testResult?.challengerScore?.toFixed(2) || 'N/A'}`);
+                console.log('\n⚠️  Auto-deployment is DISABLED. Review prompts and deploy manually. ⚠️');
+                console.log(`\nTo deploy, review the prompts and run:`);
+                console.log(`  node cli/train.js deploy --version ${abTestResults.winner.version}`);
+                // await this.deployPromptVersion(abTestResults.winner); // DISABLED - requires manual approval
             }
 
             // Step 7: Update optimization timestamp
@@ -185,14 +220,18 @@ export class TrainingPipeline {
         const optimizedPrompts = [];
 
         // Load current unified prompt
-        const promptsDir = path.join(__dirname, '../../../prompts');
+        // From training/rl/ we need to go up 2 levels to reach project root
+        const promptsDir = path.join(__dirname, '../../prompts');
         const unifiedPromptPath = path.join(promptsDir, 'unified_prompt.js');
         
         let currentPrompt;
         try {
-            currentPrompt = await this.promptOptimizer.loadPrompt(unifiedPromptPath);
+            // Resolve to absolute path for better error messages
+            const resolvedPath = path.resolve(unifiedPromptPath);
+            currentPrompt = await this.promptOptimizer.loadPrompt(resolvedPath);
         } catch (error) {
-            console.warn('[TrainingPipeline] Could not load current prompt:', error.message);
+            console.warn(`[TrainingPipeline] Could not load current prompt from: ${path.resolve(unifiedPromptPath)}`);
+            console.warn(`[TrainingPipeline] Error: ${error.message}`);
             return [];
         }
 
@@ -207,10 +246,30 @@ export class TrainingPipeline {
                 const optimizedPrompt = await this.promptOptimizer.optimizePrompt(currentPrompt, focusedAnalysis);
 
                 if (optimizedPrompt && optimizedPrompt.length > 100) {
+                    const version = `v${Date.now()}`;
+                    const timestamp = new Date().toLocaleString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                    const promptName = `${opportunity.type || 'optimization'} - ${opportunity.description?.substring(0, 40) || 'optimization'} (${timestamp})`;
+                    
+                    // Save to database immediately for tracking
+                    try {
+                        const { savePromptVersion } = await import('../../db/index.js');
+                        await savePromptVersion(version, optimizedPrompt, promptName, 0);
+                        console.log(`[TrainingPipeline] Saved optimized prompt ${version}: ${promptName}`);
+                    } catch (error) {
+                        console.warn(`[TrainingPipeline] Could not save prompt to DB:`, error.message);
+                    }
+                    
                     optimizedPrompts.push({
                         ...opportunity,
                         optimizedPrompt,
-                        version: `v${Date.now()}`
+                        version,
+                        name: promptName
                     });
                 }
             } catch (error) {
@@ -266,26 +325,33 @@ export class TrainingPipeline {
                     // Select diverse scenarios - each run gets a different random scenario
                     // This ensures we test the prompt across various contexts, not just repeated scenarios
                     const diverseScenarios = [];
-                    const runsPerVersion = 5;
+                    const runsPerVersion = this.maxRunsPerTest || 2; // Configurable via constructor
+                    const maxScenariosToUse = this.maxScenariosPerTest || allScenarios.length; // Limit scenarios if needed
+                    
+                    // Limit scenarios if configured
+                    const scenariosToChooseFrom = maxScenariosToUse < allScenarios.length ? 
+                        allScenarios.slice(0, maxScenariosToUse) : allScenarios;
                     
                     // Ensure we have enough unique scenarios
-                    if (allScenarios.length >= runsPerVersion) {
+                    if (scenariosToChooseFrom.length >= runsPerVersion) {
                         // Pick unique random scenarios (no repetition)
-                        const shuffled = [...allScenarios].sort(() => Math.random() - 0.5);
+                        const shuffled = [...scenariosToChooseFrom].sort(() => Math.random() - 0.5);
                         diverseScenarios.push(...shuffled.slice(0, runsPerVersion));
                     } else {
                         // If we have fewer scenarios than runs, use all but minimize repetition
                         const scenarioCounts = {};
                         for (let i = 0; i < runsPerVersion; i++) {
                             // Prefer less-used scenarios
-                            const available = allScenarios.filter(s => !scenarioCounts[s] || scenarioCounts[s] < 2);
+                            const available = scenariosToChooseFrom.filter(s => !scenarioCounts[s] || scenarioCounts[s] < 2);
                             const selected = available.length > 0 ? 
                                 available[Math.floor(Math.random() * available.length)] :
-                                allScenarios[Math.floor(Math.random() * allScenarios.length)];
+                                scenariosToChooseFrom[Math.floor(Math.random() * scenariosToChooseFrom.length)];
                             diverseScenarios.push(selected);
                             scenarioCounts[selected] = (scenarioCounts[selected] || 0) + 1;
                         }
                     }
+                    
+                    console.log(`[TrainingPipeline] Using ${diverseScenarios.length} diverse scenarios for A/B test (from ${scenariosToChooseFrom.length} available, ${allScenarios.length} total)`);
                     
                     const abTest = new ABTest({
                         baseline: 'current',
@@ -348,23 +414,57 @@ export class TrainingPipeline {
      * Deploy a new prompt version
      */
     async deployPromptVersion(promptData) {
-        // Save the new prompt version
-        const promptPath = path.join(__dirname, '../../../prompts/unified_prompt.js');
-        const backupPath = path.join(__dirname, '../../../prompts/unified_prompt.js.backup');
+        // Use path.resolve to get absolute paths from relative __dirname
+        const projectRoot = path.resolve(__dirname, '../../../');
+        const promptPath = path.join(projectRoot, 'prompts/unified_prompt.js');
+        const backupPath = path.join(projectRoot, 'prompts/unified_prompt.js.backup');
+        
+        console.log(`[TrainingPipeline] Deploying to: ${promptPath}`);
+        
+        // Check if prompt file exists
+        try {
+            await fs.access(promptPath);
+        } catch (error) {
+            throw new Error(`Prompt file not found at ${promptPath}. Cannot deploy.`);
+        }
         
         // Backup current prompt
         await fs.copyFile(promptPath, backupPath);
+        console.log(`[TrainingPipeline] Backed up to: ${backupPath}`);
+        
+        // Wrap optimized prompt in proper export format
+        const wrappedPrompt = `/**
+ * @fileoverview prompts/unified_prompt.js
+ * The primary prompt for the unified conversational agent. This is the core "brain"
+ * for patient and caregiver agents, now with a dedicated intent classification task.
+ * 
+ * Version: ${promptData.version}
+ * Deployed: ${new Date().toISOString()}
+ * Optimization Type: ${promptData.type || 'unknown'}
+ * Performance: Baseline ${promptData.testResult?.baselineScore?.toFixed(2) || 'N/A'} -> Challenger ${promptData.testResult?.challengerScore?.toFixed(2) || 'N/A'}
+ */
+
+export const PROMPT_UNIFIED_AGENT_WITH_STATE = \`${promptData.optimizedPrompt}\`;
+`;
         
         // Write new prompt
-        await fs.writeFile(promptPath, promptData.optimizedPrompt);
+        await fs.writeFile(promptPath, wrappedPrompt, 'utf8');
         
         console.log(`[TrainingPipeline] ✓ Deployed ${promptData.version} (score: ${promptData.testResult?.challengerScore?.toFixed(2) || 'N/A'}, baseline: ${promptData.testResult?.baselineScore?.toFixed(2) || 'N/A'})`);
         
         // Update database with new version
-        await this.db.run(`
-            INSERT INTO prompt_versions (version, content, deployed_at, performance_score)
-            VALUES (?, ?, datetime('now'), ?)
-        `, [promptData.version, promptData.optimizedPrompt, promptData.testResult?.challengerScore || 0]);
+        try {
+            const { savePromptVersion } = await import('../../db/index.js');
+            const promptName = `Optimized ${promptData.type || 'prompt'} - ${promptData.version}`;
+            await savePromptVersion(
+                promptData.version,
+                promptData.optimizedPrompt,
+                promptName,
+                promptData.testResult?.challengerScore || 0
+            );
+        } catch (error) {
+            console.warn('[TrainingPipeline] Could not update prompt_versions table:', error.message);
+        }
     }
 
     /**

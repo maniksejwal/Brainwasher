@@ -142,19 +142,37 @@ export class ConversationRunner {
                 await this._logInteraction(user, userMessage, agentResult, latency, turn);
             }
 
+            // Process pending future plans and scheduled messages for this turn
+            const { processPendingFutureItems, executePlan, sendScheduledMessage } = await import('../../handlers/message_logic/futurePlanningHandler.js');
+            const pendingItems = await processPendingFutureItems(user.userId, this.conversationId, turn);
+            
+            // Execute due future plans
+            for (const plan of pendingItems.plans) {
+                await executePlan(plan);
+            }
+            
+            // Send due scheduled messages
+            for (const scheduledMsg of pendingItems.messages) {
+                await sendScheduledMessage(scheduledMsg);
+            }
+            
             // Add to conversation history
             conversationHistory.push({
                 role: 'user',
                 content: userMessage,
                 userId: user.userId,
                 userRole: user.role,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                orchestratorAction: agentResult.orchestrator_action,
+                futurePlan: agentResult.future_plan || null // Track future planning in conversation
             });
             
             conversationHistory.push({
                 role: 'agent',
                 content: agentResult.agent_response,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                orchestratorAction: agentResult.orchestrator_action,
+                futurePlan: agentResult.future_plan || null
             });
 
             // Small delay between turns

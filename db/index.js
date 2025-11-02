@@ -48,6 +48,25 @@ import {
     findPendingAction,
     removePendingAction
 } from './queries_actions.js';
+import {
+    createFuturePlan,
+    getPendingFuturePlans,
+    executeFuturePlan,
+    cancelFuturePlan,
+    rescheduleFuturePlan,
+    createScheduledMessage,
+    getPendingScheduledMessages,
+    markScheduledMessageSent,
+    cancelScheduledMessage,
+    rescheduleScheduledMessage
+} from './queries_future_plans.js';
+import {
+    savePromptVersion,
+    getPromptVersion,
+    findPromptVersionsByName,
+    getAllPromptVersions,
+    getCurrentDeployedPrompt
+} from './queries_prompts.js';
 
 export {
     getDb,
@@ -84,6 +103,21 @@ export {
     getActivePendingActions,
     getPendingAction,
     findPendingAction,
-    removePendingAction
+    removePendingAction,
+    createFuturePlan,
+    getPendingFuturePlans,
+    executeFuturePlan,
+    cancelFuturePlan,
+    rescheduleFuturePlan,
+    createScheduledMessage,
+    getPendingScheduledMessages,
+    markScheduledMessageSent,
+    cancelScheduledMessage,
+    rescheduleScheduledMessage,
+    savePromptVersion,
+    getPromptVersion,
+    findPromptVersionsByName,
+    getAllPromptVersions,
+    getCurrentDeployedPrompt
 };
 

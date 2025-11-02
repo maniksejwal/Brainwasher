@@ -1232,6 +1232,172 @@ export const SCENARIOS = {
             patient: 'You want to exercise by swimming but are concerned about hygiene in public pools. You\'ve heard stories about infections and don\'t want to risk your health.',
             agent: 'ASSESS: Does the agent address hygiene concerns while encouraging safe physical activity? Does it provide practical hygiene tips and alternative exercise options?'
         }
+    },
+
+    // ========== FUTURE PLANNING SCENARIOS ==========
+    future_planning_multi_turn: {
+        name: '📅 Future Planning - Multi-Turn Strategy',
+        description: 'Agent plans across multiple turns, schedules follow-ups, and uses blank turns to encourage user expression',
+        category: 'future_planning',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' }
+        ],
+        turns: 12,
+        instructions: {
+            patient: 'You have multiple health concerns but tend to express them gradually. You respond well to minimal encouragement ("Hmm", "Continue") when you\'re in the middle of explaining. You may use commands like /consent caregiver full to set permissions.',
+            caregiver: 'You want to know about the patient\'s health concerns but respect their pace. You use commands like /show_circle to see the conversation context.',
+            agent: 'ASSESS: Does the agent use future planning to schedule questions across multiple turns? Does it use blank turns ("I see", "Continue") to encourage user expression? Does it handle commands like /consent, /show_circle? Does it plan follow-ups based on conversation progress (when user discloses symptoms, when consent is granted)?'
+        }
+    },
+
+    future_planning_conversation_progress: {
+        name: '🎯 Future Planning - Conversation Progress Triggers',
+        description: 'Agent plans actions based on conversation milestones (when user agrees, discloses, hides information)',
+        category: 'future_planning',
+        complexity: 5,
+        users: [
+            { role: 'patient', personaKey: 'denial_prone' },
+            { role: 'caregiver', personaKey: 'helicopter_caregiver' }
+        ],
+        turns: 15,
+        instructions: {
+            patient: 'You initially hide information but may disclose it gradually. You use commands like /consent caregiver partial to control sharing. When you agree to see a doctor, you expect a follow-up reminder. When you hide medication adherence, you expect the agent to ask the caregiver for confirmation.',
+            caregiver: 'You use /show_circle to monitor the conversation. You want to be notified when the patient agrees to important actions.',
+            agent: 'ASSESS: Does the agent create conversation progress triggers like "when user agrees to see doctor" → schedule reminder? "when user discloses chest pain" → immediate escalation? "when user hides medication adherence" → ask caregiver? "when consent granted" → share immediately? Does it handle commands appropriately?'
+        }
+    },
+
+    future_planning_with_commands: {
+        name: '⚡ Future Planning with Commands',
+        description: 'Agent plans future actions while handling user commands (consent management, circle viewing, context switching)',
+        category: 'future_planning',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'medication_nonadherent' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' }
+        ],
+        turns: 10,
+        instructions: {
+            patient: 'You use commands frequently: /consent caregiver full to allow sharing, /clear to start fresh, /show_circle to see context. You want the agent to plan medication reminders and follow-ups based on your consent level.',
+            caregiver: 'You use /show_circle to check conversation history. You want scheduled reminders when the patient grants consent to share medication information.',
+            agent: 'ASSESS: Does the agent handle commands while maintaining future planning? Does it reschedule plans when consent changes? Does it create plans that trigger on "when consent granted"? Does it use blank turns appropriately to encourage disclosure?'
+        }
+    },
+
+    blank_turns_encouragement: {
+        name: '🤫 Blank Turns - Encouraging Expression',
+        description: 'Agent uses minimal responses to encourage user to continue speaking without explicit questions',
+        category: 'future_planning',
+        complexity: 3,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' }
+        ],
+        turns: 8,
+        instructions: {
+            patient: 'You tend to hold back information initially but will express more if encouraged subtly. You respond better to "Hmm", "I see", "Continue" than to direct questions when you\'re in the middle of explaining.',
+            agent: 'ASSESS: Does the agent use blank turns ("Hmm", "I see", "Go on", "Continue", "Tell me more") when the user seems to be holding back? Does it use these instead of probing questions when the user is in the middle of explaining? Does it plan future turns to follow up after encouraging more expression?'
+        }
+    },
+
+    rescheduling_plans: {
+        name: '🔄 Rescheduling Future Plans',
+        description: 'Agent adapts future plans based on conversation changes, reschedules when user behavior changes',
+        category: 'future_planning',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'medication_nonadherent' },
+            { role: 'caregiver', personaKey: 'helicopter_caregiver' }
+        ],
+        turns: 12,
+        instructions: {
+            patient: 'You change your mind frequently. You may agree to see a doctor in turn 3, then back out by turn 5. You use /clear to reset context. You want the agent to adapt its plans accordingly.',
+            caregiver: 'You monitor the conversation and want the agent to update scheduled actions when the patient changes their mind.',
+            agent: 'ASSESS: Does the agent reschedule plans when user behavior changes? For example, if it planned "remind about doctor appointment" for turn 5, but user backs out in turn 4, does it cancel or reschedule that plan? Does it handle /clear command and cancel/reschedule affected plans?'
+        }
+    },
+
+    // ========== MORE FUTURE PLANNING SCENARIOS (based on existing templates) ==========
+    future_planning_medication_adherence: {
+        name: '💊 Future Planning - Medication Adherence Tracking',
+        description: 'Agent plans multi-turn medication adherence check-ins with scheduled reminders',
+        category: 'future_planning',
+        complexity: 3,
+        users: [
+            { role: 'patient', personaKey: 'medication_nonadherent' }
+        ],
+        turns: 10,
+        instructions: {
+            patient: 'You often forget medications. You want the agent to plan check-ins at specific times (e.g., after breakfast, before bed) using duration triggers.',
+            agent: 'ASSESS: Does the agent create future plans for medication reminders? Does it schedule messages using duration triggers (e.g., "check in after 1 day")? Does it use blank turns to encourage disclosure about missed doses?'
+        }
+    },
+
+    future_planning_symptom_progression: {
+        name: '📈 Future Planning - Symptom Progression Tracking',
+        description: 'Agent plans follow-ups to track symptom progression over time',
+        category: 'future_planning',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' }
+        ],
+        turns: 12,
+        instructions: {
+            patient: 'You have chronic symptoms that fluctuate. You want the agent to check in periodically (using duration triggers) to track how symptoms change.',
+            caregiver: 'You want updates when patient discloses worsening symptoms.',
+            agent: 'ASSESS: Does the agent create plans to track symptom progression? Does it schedule follow-ups with duration triggers? Does it create conversation progress triggers like "when user discloses worsening symptom" → immediate check?'
+        }
+    },
+
+    future_planning_appointment_preparation: {
+        name: '📅 Future Planning - Appointment Preparation',
+        description: 'Agent plans ahead to prepare patient for upcoming doctor appointments',
+        category: 'future_planning',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'denial_prone' },
+            { role: 'caregiver', personaKey: 'helicopter_caregiver' }
+        ],
+        turns: 15,
+        instructions: {
+            patient: 'You have an appointment in 3 days. You tend to forget what to ask and avoid preparation. You use commands like /clear when stressed.',
+            caregiver: 'You want the agent to help prepare questions and gather information before the appointment.',
+            agent: 'ASSESS: Does the agent create plans for appointment preparation using duration triggers? Does it schedule questions across multiple turns? Does it reschedule when user uses /clear? Does it create conversation progress triggers like "when user agrees to prepare" → schedule follow-up?'
+        }
+    },
+
+    future_planning_crisis_intervention: {
+        name: '🚨 Future Planning - Crisis Intervention Strategy',
+        description: 'Agent plans multi-turn crisis intervention with escalation and follow-up',
+        category: 'future_planning',
+        complexity: 5,
+        users: [
+            { role: 'patient', personaKey: 'anxious_patient' },
+            { role: 'caregiver', personaKey: 'engaged_caregiver' }
+        ],
+        turns: 10,
+        instructions: {
+            patient: 'You experience panic attacks. When you disclose severe symptoms, you expect immediate help but also follow-up.',
+            caregiver: 'You want to be notified immediately when patient has crisis, and follow-up information later.',
+            agent: 'ASSESS: Does the agent create conversation progress triggers like "when user discloses panic attack" → immediate escalation + scheduled follow-up? Does it plan multi-turn crisis response (acknowledge → escalate → follow up)?'
+        }
+    },
+
+    future_planning_behavior_change: {
+        name: '🔄 Future Planning - Behavior Change Support',
+        description: 'Agent plans long-term support for behavior change using multiple trigger types',
+        category: 'future_planning',
+        complexity: 4,
+        users: [
+            { role: 'patient', personaKey: 'medication_nonadherent' }
+        ],
+        turns: 15,
+        instructions: {
+            patient: 'You want to improve medication adherence but struggle with consistency. You respond better to gradual, planned encouragement.',
+            agent: 'ASSESS: Does the agent create plans with various triggers (turn-based, duration-based)? Does it plan progressive behavior change support across multiple turns? Does it use blank turns to encourage user to express struggles?'
+        }
     }
 };
 

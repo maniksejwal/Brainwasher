@@ -74,6 +74,17 @@ events.on('broadcast', (payload) => {
     broadcast(payload.targetUsers, { type: 'message', ...payload });
 });
 
+// Listen for future plan execution events (for client notifications)
+events.on('future_plan_executed', (planData) => {
+    // Broadcast plan execution to relevant users
+    if (planData.userId && clients[planData.userId]) {
+        clients[planData.userId].write(`data: ${JSON.stringify({ 
+            type: 'future_plan_executed', 
+            ...planData 
+        })}\n\n`);
+    }
+});
+
 events.on('context_switch', (payload) => {
      if (clients[payload.userId]) {
         clients[payload.userId].write(`data: ${JSON.stringify({ 
