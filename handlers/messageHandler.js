@@ -77,6 +77,7 @@ export async function handleMessage(userId, circleId, message) {
     }
 
     // Step 2: Perform the full AI analysis, including entity resolution.
+    // This will use Companion system or unified agent based on config
     const analysis = await performAiAnalysis(userId, memberInfo.role, message, circleId);
     
     // Step 3: Process pending future plans and scheduled messages for current turn (PRODUCTION)
@@ -141,10 +142,11 @@ export async function handleMessage(userId, circleId, message) {
         conversationId: `${circleId}_${userId}_${Date.now()}`,
         userId,
         message,
-        agentResponse: analysis?.agent_response || '',
+        agentResponse: analysis?.reply || analysis?.agent_response || '',
         orchestratorAction: sharingResult?.action || { type: 'NONE' },
         stateVector: analysis?.state_vector,
         promptVersion: 'unified_v1.0',
+        systemUsed: analysis?.system_used || 'unified', // Track Companion vs unified
         latencyMs
     }).catch(err => {}); // Silently fail
     

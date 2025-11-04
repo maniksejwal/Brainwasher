@@ -83,11 +83,13 @@ export class ConversationRunner {
                     user.persona?.traits // Pass persona traits for baseline
                 );
                 
+                // Diversity feedback is now suppressed - only used internally for scoring
+                // Removed console.log to reduce noise
                 // Only log significant deviations from persona baseline
-                if (feedback.score < -1) {
-                    const example = feedback.example_responses?.[0] ? ` | Example: "${feedback.example_responses[0]}"` : '';
-                    console.log(`    📝 [Diversity] ${feedback.feedback_type}: ${feedback.reason}${example}`);
-                }
+                // if (feedback.score < -1) {
+                //     const example = feedback.example_responses?.[0] ? ` | Example: "${feedback.example_responses[0]}"` : '';
+                //     console.log(`    📝 [Diversity] ${feedback.feedback_type}: ${feedback.reason}${example}`);
+                // }
             } catch (error) {
                 logger.warn(`[ConversationRunner] Synthetic user feedback failed: ${error.message}`);
             }
@@ -277,11 +279,8 @@ export class ConversationRunner {
                     activeUser.persona?.traits // Pass persona traits for baseline
                 );
                 
-                // Only log significant deviations from persona baseline
-                if (feedback.score < -1) {
-                    const example = feedback.example_responses?.[0] ? ` | Example: "${feedback.example_responses[0]}"` : '';
-                    console.log(`    📝 [Diversity] ${feedback.feedback_type}: ${feedback.reason}${example}`);
-                }
+                // Diversity feedback is now suppressed - only used internally for scoring
+                // Removed console.log to reduce noise
             } catch (error) {
                 logger.warn(`[ConversationRunner] Synthetic user feedback failed: ${error.message}`);
             }
@@ -617,6 +616,9 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
      * Log single-user interaction
      */
     async _logInteraction(user, userMessage, agentResult, latency, turn) {
+        // Extract system used from analysis if available
+        const systemUsed = agentResult?.system_used || agentResult?.analysis?.system_used || 'unified';
+        
         await trainingLogger.logInteraction({
             conversationId: `${this.conversationId}_${user.userId}`,
             userId: user.userId,
@@ -625,7 +627,8 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             agentResponse: agentResult.agent_response,
             orchestratorAction: agentResult.orchestrator_action,
             stateVector: agentResult.state_vector,
-            promptVersion: 'simulation_v1.0',
+            promptVersion: this.promptVersion || 'simulation_v1.0',
+            systemUsed: systemUsed, // Track Companion vs unified
             latencyMs: latency,
             simulation: true,
             persona: user.personaKey,
@@ -643,14 +646,19 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
      * Log multi-user interaction
      */
     async _logMultiUserInteraction(activeUser, allUsers, userMessage, agentResult, latency, turn) {
+        // Extract system used from analysis if available
+        const systemUsed = agentResult?.system_used || agentResult?.analysis?.system_used || 'unified';
+        
         await trainingLogger.logInteraction({
             conversationId: `${this.conversationId}_multi`,
             userId: activeUser.userId,
+            turn: turn,
             message: userMessage,
             agentResponse: agentResult.agent_response,
             orchestratorAction: agentResult.orchestrator_action,
             stateVector: agentResult.state_vector,
-            promptVersion: 'simulation_v1.0',
+            promptVersion: this.promptVersion || 'simulation_v1.0',
+            systemUsed: systemUsed, // Track Companion vs unified
             latencyMs: latency,
             simulation: true,
             persona: activeUser.personaKey,

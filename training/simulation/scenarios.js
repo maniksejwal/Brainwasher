@@ -752,8 +752,16 @@ export const SCENARIOS = {
         complexity: 4,
         turns: 10,
         users: [
-            { role: 'patient', personaKey: 'anxious_patient' },
-            { role: 'caregiver', personaKey: 'helicopter_caregiver' }
+            { 
+                role: 'patient', 
+                personaKey: 'anxious_patient', // Default persona
+                personaOptions: ['anxious_patient', 'medication_nonadherent', 'denial_prone', 'elderly_cognitive'] // Alternative personas
+            },
+            { 
+                role: 'caregiver', 
+                personaKey: 'helicopter_caregiver',
+                personaOptions: ['helicopter_caregiver', 'engaged_caregiver', 'burned_out_caregiver']
+            }
         ],
         instructions: {
             patient: 'You\'re obese with prediabetes and want a comprehensive metabolic health plan. You\'ve tried diets before and want sustainable, science-based approaches.',

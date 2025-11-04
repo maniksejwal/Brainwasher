@@ -44,6 +44,11 @@ const config = {
     MAX_RETRIES: 3,
     RETRY_DELAY: 1000,
     USE_ONLY_OPENAI: true,                           // Skip Gemini due to reliability issues
+    
+    // Companion System Configuration
+    USE_COMPANIONS: true,                            // Use Companion system (false = use unified agent)
+    COMPANION_AB_TEST_ENABLED: true,                // A/B test Companion vs unified agent
+    COMPANION_AB_TEST_RATIO: 0.5,                    // 50% Companion, 50% unified (when enabled)
 
     HOST: '127.0.0.1',
     PORT: 5000,

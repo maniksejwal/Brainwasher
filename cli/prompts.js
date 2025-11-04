@@ -176,6 +176,20 @@ async function showPrompt(version) {
         }
     }
     
+    // Handle unified_prompt_v{timestamp} format (simulation versions)
+    if (!prompt && version.includes('_v')) {
+        const parts = version.split('_v');
+        if (parts.length === 2) {
+            const timestamp = parts[1];
+            // Try exact timestamp match
+            const prompts = await findPromptVersionsByName(timestamp);
+            if (prompts.length > 0) {
+                prompt = prompts[0];
+                console.log(chalk.yellow(`⚠️  Found match for ${version}: ${prompt.version}`));
+            }
+        }
+    }
+    
     // If still not found, try searching in feedback table for simulation versions
     if (!prompt) {
         try {
@@ -189,17 +203,42 @@ async function showPrompt(version) {
             const hasPromptVersion = tableInfo.some(col => col.name === 'prompt_version');
             
             if (hasPromptVersion) {
-                const feedbackRow = await db.get(`
+                // Try exact match first
+                let feedbackRow = await db.get(`
                     SELECT DISTINCT prompt_version 
                     FROM feedback 
-                    WHERE prompt_version LIKE ?
+                    WHERE prompt_version = ?
                     LIMIT 1
-                `, [`%${version}%`]);
+                `, [version]);
+                
+                // If not found, try LIKE match (partial)
+                if (!feedbackRow) {
+                    feedbackRow = await db.get(`
+                        SELECT DISTINCT prompt_version 
+                        FROM feedback 
+                        WHERE prompt_version LIKE ?
+                        ORDER BY prompt_version DESC
+                        LIMIT 1
+                    `, [`%${version}%`]);
+                }
+                
+                // If still not found and format is unified_prompt_v{timestamp}, try just timestamp
+                if (!feedbackRow && version.includes('_v')) {
+                    const timestamp = version.split('_v')[1];
+                    feedbackRow = await db.get(`
+                        SELECT DISTINCT prompt_version 
+                        FROM feedback 
+                        WHERE prompt_version LIKE ?
+                        ORDER BY prompt_version DESC
+                        LIMIT 1
+                    `, [`%${timestamp}%`]);
+                }
                 
                 if (feedbackRow && feedbackRow.prompt_version) {
                     console.log(chalk.yellow(`⚠️  Found in feedback table: ${feedbackRow.prompt_version}`));
                     console.log(chalk.yellow(`   This prompt may exist only in simulations, not in prompt_versions table.`));
                     console.log(chalk.yellow(`   The prompt content is not stored - only feedback data exists.`));
+                    console.log(chalk.yellow(`   Use: node cli/analyze_prompts.js feedback ${feedbackRow.prompt_version}`));
                     return;
                 }
             }

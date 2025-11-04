@@ -53,6 +53,63 @@ export const PROMPT_CONFIGS = {
         description: 'User intent classification',
         primary: false,
         optimizationPriority: 3
+    },
+    // Companion system prompts
+    companion_input_understanding: {
+        file: 'companion_input_understanding.js',
+        export: 'PROMPT_COMPANION_INPUT_UNDERSTANDING',
+        name: 'Companion Input Understanding',
+        description: 'Extracts intent, entities, and facts from user messages',
+        primary: false,
+        optimizationPriority: 2
+    },
+    companion_empathy: {
+        file: 'companion_empathy.js',
+        export: 'PROMPT_COMPANION_EMPATHY',
+        name: 'Companion Empathy Handler',
+        description: 'Decides between empathy and pragmatism based on communication style',
+        primary: false,
+        optimizationPriority: 2
+    },
+    companion_clinical: {
+        file: 'companion_clinical.js',
+        export: 'PROMPT_COMPANION_CLINICAL',
+        name: 'Companion Clinical Agent',
+        description: 'Medical assessment and symptom evaluation',
+        primary: false,
+        optimizationPriority: 2
+    },
+    companion_patient_optimizer: {
+        file: 'companion_patient_optimizer.js',
+        export: 'PROMPT_COMPANION_PATIENT_OPTIMIZER',
+        name: 'Companion Patient Optimizer',
+        description: 'Optimizes responses specifically for patients',
+        primary: false,
+        optimizationPriority: 2
+    },
+    companion_doctor_optimizer: {
+        file: 'companion_doctor_optimizer.js',
+        export: 'PROMPT_COMPANION_DOCTOR_OPTIMIZER',
+        name: 'Companion Doctor Optimizer',
+        description: 'Optimizes responses specifically for doctors',
+        primary: false,
+        optimizationPriority: 2
+    },
+    companion_future_planning: {
+        file: 'companion_future_planning.js',
+        export: 'PROMPT_COMPANION_FUTURE_PLANNING',
+        name: 'Companion Future Planning Agent',
+        description: 'Generates future plans for multi-turn conversation strategy',
+        primary: false,
+        optimizationPriority: 3
+    },
+    companion_state_tracker: {
+        file: 'companion_state_tracker.js',
+        export: 'PROMPT_COMPANION_STATE_TRACKER',
+        name: 'Companion State Tracker',
+        description: 'Tracks behavioral state changes (stages of change, coping styles)',
+        primary: false,
+        optimizationPriority: 3
     }
 };
 
