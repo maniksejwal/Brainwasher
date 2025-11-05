@@ -41,10 +41,11 @@ async function main() {
             case 'view':
                 if (!arg) {
                     console.log(chalk.red('❌ Please provide a prompt version'));
-                    console.log('Usage: node cli/prompts.js show <version>');
+                    console.log('Usage: node cli/prompts.js show <version> [--compare]');
                     process.exit(1);
                 }
-                await showPrompt(arg);
+                const compareMode = process.argv.includes('--compare') || process.argv.includes('-c');
+                await showPrompt(arg, compareMode);
                 break;
                 
             case 'current':
@@ -149,7 +150,7 @@ async function findPrompts(searchTerm) {
     }
 }
 
-async function showPrompt(version) {
+async function showPrompt(version, compareMode = false) {
     console.log(chalk.cyan(`📄 Prompt Version: ${version}\n`));
     
     // Handle numeric input (from list)
@@ -289,9 +290,15 @@ async function showPrompt(version) {
     }
     console.log('\n' + chalk.bold('Content:'));
     console.log('-'.repeat(80));
-    console.log(prompt.content.substring(0, 500) + (prompt.content.length > 500 ? '...' : ''));
+    // Show full content, not truncated
+    console.log(prompt.content);
     console.log('-'.repeat(80));
     console.log(`\nFull length: ${prompt.content.length} characters`);
+    
+    // If compare mode, try to show original prompt for comparison
+    if (compareMode) {
+        await showOriginalComparison(prompt);
+    }
 }
 
 async function showCurrentPrompt() {
@@ -313,6 +320,74 @@ async function showCurrentPrompt() {
     console.log(prompt.content.substring(0, 500) + '...');
 }
 
+async function showOriginalComparison(optimizedPrompt) {
+    try {
+        // Extract prompt type from version (e.g., "doctor_prompts_v..." -> "doctor_prompts")
+        const versionMatch = optimizedPrompt.version.match(/^([^_]+(?:_[^_]+)?)_v\d+$/);
+        if (!versionMatch) {
+            console.log(chalk.yellow('\n💡 Could not determine original prompt file for comparison'));
+            return;
+        }
+        
+        const promptFile = versionMatch[1] + '.js';
+        const promptPath = `prompts/${promptFile}`;
+        
+        try {
+            const fs = await import('fs/promises');
+            const originalContent = await fs.readFile(promptPath, 'utf8');
+            
+            // Try to determine which prompt export based on the name
+            // Check if name mentions specific prompt type (e.g., "Doctor Probe", "Doctor Summary")
+            let exportName = null;
+            if (optimizedPrompt.name) {
+                if (optimizedPrompt.name.toLowerCase().includes('probe')) {
+                    exportName = 'PROMPT_DELEGATED_PROBE';
+                } else if (optimizedPrompt.name.toLowerCase().includes('summary')) {
+                    exportName = 'PROMPT_DOCTOR_SUMMARY';
+                }
+            }
+            
+            // Try to extract the specific prompt export
+            let originalPrompt = null;
+            if (exportName) {
+                // Extract specific export
+                const specificExport = new RegExp(`export\\s+(?:const|let|var)\\s+${exportName}\\s*=\\s*\`([^\`]+)\``, 's');
+                const match = originalContent.match(specificExport);
+                if (match) {
+                    originalPrompt = match[1];
+                }
+            }
+            
+            // Fallback: try to extract any prompt export
+            if (!originalPrompt) {
+                const exportMatch = originalContent.match(/export\s+(?:const|let|var)\s+PROMPT_\w+\s*=\s*`([^`]+)`/s);
+                if (exportMatch) {
+                    originalPrompt = exportMatch[1];
+                    console.log(chalk.yellow('\n⚠️  Could not determine specific prompt export, showing first match'));
+                }
+            }
+            
+            if (originalPrompt) {
+                console.log(chalk.cyan('\n\n📊 COMPARISON WITH ORIGINAL:'));
+                console.log('-'.repeat(80));
+                console.log(chalk.bold('Original Prompt:'));
+                console.log(originalPrompt);
+                console.log('-'.repeat(80));
+                console.log(chalk.green(`Original length: ${originalPrompt.length} characters`));
+                console.log(chalk.yellow(`Optimized length: ${optimizedPrompt.content.length} characters`));
+                console.log(chalk.blue(`Difference: ${optimizedPrompt.content.length - originalPrompt.length} characters`));
+            } else {
+                console.log(chalk.yellow('\n💡 Could not extract original prompt from file'));
+            }
+        } catch (error) {
+            console.log(chalk.yellow(`\n💡 Could not read original prompt file: ${promptPath}`));
+            console.log(chalk.gray(`   Error: ${error.message}`));
+        }
+    } catch (error) {
+        console.log(chalk.yellow('\n💡 Comparison feature unavailable'));
+    }
+}
+
 function showUsage() {
     console.log(chalk.cyan('📝 Prompt Management CLI\n'));
     console.log('Usage: node cli/prompts.js <command> [arguments]\n');
@@ -320,6 +395,7 @@ function showUsage() {
     console.log('  list, ls              List all prompt versions');
     console.log('  find, search <term>    Search prompts by name or version');
     console.log('  show, view <version>   Show full prompt content by version');
+    console.log('                        Add --compare or -c to compare with original');
     console.log('  current, deployed      Show currently deployed prompt\n');
     console.log('Examples:');
     console.log('  node cli/prompts.js list');
