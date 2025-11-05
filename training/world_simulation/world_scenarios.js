@@ -6,6 +6,7 @@
 export const WORLD_SCENARIOS = {
     // ========== ROLE INVERSION SCENARIOS ==========
     patient_caregiver_swap: {
+        key: 'patient_caregiver_swap',
         name: '🔄 Patient-Caregiver Role Swap',
         description: 'Patient becomes caregiver, caregiver becomes patient - inverted care dynamics',
         category: 'role_inversion',
@@ -49,6 +50,7 @@ export const WORLD_SCENARIOS = {
     },
 
     family_network_care: {
+        key: 'family_network_care',
         name: '👨‍👩‍👧‍👦 Family Network Care',
         description: 'Complex family network where everyone cares for everyone else',
         category: 'family_network',
@@ -110,6 +112,7 @@ export const WORLD_SCENARIOS = {
 
     // ========== GENERATIONAL CARE SCENARIOS ==========
     sandwich_generation: {
+        key: 'sandwich_generation',
         name: '🥪 Sandwich Generation Care',
         description: 'Middle-aged person caring for both parents and children simultaneously',
         category: 'generational',
@@ -169,6 +172,7 @@ export const WORLD_SCENARIOS = {
 
     // ========== COMPLEX RELATIONSHIP SCENARIOS ==========
     blended_family_care: {
+        key: 'blended_family_care',
         name: '👨‍👩‍👧‍👦 Blended Family Care Dynamics',
         description: 'Step-family relationships creating complex care dynamics',
         category: 'blended_family',
@@ -233,7 +237,58 @@ export const WORLD_SCENARIOS = {
 export function getWorldScenariosByCategory(category) {
     return Object.entries(WORLD_SCENARIOS)
         .filter(([key, scenario]) => scenario.category === category)
-        .map(([key, scenario]) => ({ key, ...scenario }));
+        .map(([key, scenario]) => ({ key, ...scenario, key: key })); // Ensure key is set
+}
+
+/**
+ * Get all world scenario categories
+ */
+export function getWorldScenarioCategories() {
+    const categories = {};
+    Object.entries(WORLD_SCENARIOS).forEach(([key, scenario]) => {
+        if (!categories[scenario.category]) {
+            categories[scenario.category] = [];
+        }
+        categories[scenario.category].push({ key, ...scenario });
+    });
+    return categories;
+}
+
+/**
+ * Display world scenarios grouped by category
+ */
+export function displayWorldScenariosByCategory(showNumbers = false) {
+    const categories = getWorldScenarioCategories();
+    let optionNumber = 1;
+    const options = [];
+    
+    const categoryNames = {
+        'role_inversion': '🔄 Role Inversion Scenarios',
+        'family_network': '👨‍👩‍👧‍👦 Family Network Scenarios',
+        'generational': '🥪 Generational Care Scenarios',
+        'blended_family': '👨‍👩‍👧‍👦 Blended Family Scenarios'
+    };
+
+    for (const [categoryKey, scenarios] of Object.entries(categories)) {
+        const categoryName = categoryNames[categoryKey] || categoryKey;
+        if (scenarios.length > 0) {
+            console.log(`\n${categoryName}:`);
+            scenarios.forEach((scenario) => {
+                const complexity = '★'.repeat(scenario.complexity);
+                const circles = scenario.circles?.length || 0;
+                
+                if (showNumbers) {
+                    console.log(`  ${optionNumber.toString().padStart(2)}. ${scenario.name} (${circles} circles) ${complexity}`);
+                    options.push(scenario);
+                    optionNumber++;
+                } else {
+                    console.log(`  ${scenario.key.padEnd(30)} - ${scenario.name} (${circles} circles) ${complexity}`);
+                }
+            });
+        }
+    }
+
+    return options;
 }
 
 /**

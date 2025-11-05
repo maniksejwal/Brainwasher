@@ -59,13 +59,14 @@ class SimpleDashboard {
         console.log(chalk.cyan.bold('\n🎯 SIMULATION DASHBOARD'));
         console.log('-'.repeat(40));
         console.log('1. Run New Simulation');
-        console.log('2. View Recent Conversations');
-        console.log('3. Analyze Performance');
-        console.log('4. Prompt Management');
-        console.log('5. Exit');
+        console.log('2. Run World Simulation');
+        console.log('3. View Recent Conversations');
+        console.log('4. Analyze Performance');
+        console.log('5. Prompt Management');
+        console.log('6. Exit');
         console.log('-'.repeat(40));
 
-        const choice = await this.askQuestion('Select option (1-5): ');
+        const choice = await this.askQuestion('Select option (1-6): ');
         return choice.trim();
     }
 
@@ -292,21 +293,28 @@ class SimpleDashboard {
                         this.cleanup();
                         return;
                     case '2':
+                        await this.runWorldSimulation();
+                        // Exit after simulation to avoid readline issues
+                        console.log(chalk.cyan('\n🔄 World simulation completed. Exiting dashboard.'));
+                        console.log(chalk.gray('💡 Run `node cli/simple_dashboard.js` to restart.'));
+                        this.cleanup();
+                        return;
+                    case '3':
                         await this.viewRecentConversations();
                         break;
-                    case '3':
+                    case '4':
                         await this.analyzePerformance();
                         break;
-                    case '4':
+                    case '5':
                         await this.openPromptManagement();
                         break;
-                    case '5':
+                    case '6':
                         console.log(chalk.green('👋 Goodbye!'));
                         this.cleanup();
                         process.exit(0);
                         return;
                     default:
-                        console.log(chalk.red('Invalid choice. Please enter 1-5.'));
+                        console.log(chalk.red('Invalid choice. Please enter 1-6.'));
                 }
                 
                 await this.askQuestion('\nPress Enter to continue...');
@@ -316,6 +324,38 @@ class SimpleDashboard {
         } finally {
             this.cleanup();
         }
+    }
+
+    async runWorldSimulation() {
+        console.log(chalk.cyan('🌍 Launching world simulation...'));
+        
+        // Stop dashboard's readline to prevent conflicts
+        console.log(chalk.gray('📱 Stopping dashboard interface...'));
+        readlineManager.cleanup();
+        
+        // Spawn world simulation CLI
+        const { spawn } = await import('child_process');
+        const process = spawn('node', ['cli/world_simulation_cli.js'], { 
+            stdio: 'inherit', 
+            shell: true,
+            detached: false
+        });
+        
+        return new Promise((resolve) => {
+            process.on('close', (code) => {
+                if (code === 0) {
+                    console.log(chalk.green('\n✅ World simulation completed!'));
+                } else {
+                    console.log(chalk.red(`\n❌ World simulation failed with code ${code}`));
+                }
+                resolve();
+            });
+            
+            process.on('error', (error) => {
+                console.log(chalk.red(`\n❌ World simulation error: ${error.message}`));
+                resolve();
+            });
+        });
     }
 
     async openPromptManagement() {

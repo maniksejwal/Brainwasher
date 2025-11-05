@@ -6,8 +6,14 @@
  */
 
 import { WorldSimulator } from '../training/world_simulation/world_simulator.js';
-import { WORLD_SCENARIOS, getWorldScenariosByCategory, getRandomWorldScenario } from '../training/world_simulation/world_scenarios.js';
+import { 
+    WORLD_SCENARIOS, 
+    getWorldScenariosByCategory, 
+    getRandomWorldScenario,
+    displayWorldScenariosByCategory
+} from '../training/world_simulation/world_scenarios.js';
 import { readlineManager } from './readline_manager.js';
+import chalk from 'chalk';
 
 class WorldSimulationCLI {
     constructor() {
@@ -41,57 +47,73 @@ class WorldSimulationCLI {
         readlineManager.initialize();
         
         while (true) {
-            console.log('\n📋 WORLD SIMULATION OPTIONS:');
-            console.log('1. Run Role Inversion Scenario');
-            console.log('2. Run Family Network Scenario');
-            console.log('3. Run Sandwich Generation Scenario');
-            console.log('4. Run Blended Family Scenario');
-            console.log('5. List All Scenarios');
-            console.log('6. Run Random Scenario');
-            console.log('7. Exit');
-            console.log('----------------------------------------');
+            console.log(chalk.cyan.bold('\n🌍 WORLD SIMULATION CLI'));
+            console.log('-'.repeat(50));
+            console.log('1. Select Scenario from Categories');
+            console.log('2. Run Random Scenario');
+            console.log('3. List All Scenarios');
+            console.log('4. Exit');
+            console.log('-'.repeat(50));
 
-            const choice = await readlineManager.askQuestion('Select option (1-7): ');
+            const choice = await readlineManager.askQuestion('Select option (1-4): ');
             
             switch (choice.trim()) {
                 case '1':
-                    await this.runScenario('patient_caregiver_swap');
+                    await this.selectScenarioFromCategories();
                     break;
                 case '2':
-                    await this.runScenario('family_network_care');
-                    break;
-                case '3':
-                    await this.runScenario('sandwich_generation');
-                    break;
-                case '4':
-                    await this.runScenario('blended_family_care');
-                    break;
-                case '5':
-                    await this.listScenarios();
-                    break;
-                case '6':
                     await this.runRandomScenario();
                     break;
-                case '7':
+                case '3':
+                    await this.listScenarios();
+                    break;
+                case '4':
                     console.log('👋 Goodbye!');
                     return;
                 default:
-                    console.log('❌ Invalid option. Please select 1-7.');
+                    console.log(chalk.red('❌ Invalid option. Please select 1-4.'));
             }
+        }
+    }
+
+    async selectScenarioFromCategories() {
+        console.log(chalk.cyan('\n🎯 Select World Scenario'));
+        console.log('-'.repeat(50));
+        
+        // Use category-based display
+        const options = displayWorldScenariosByCategory(true);
+        
+        console.log(`\n  ${(options.length + 1).toString().padStart(2)}. 🎲 Random scenario`);
+        options.push({ key: 'random', name: 'Random Scenario' });
+
+        const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${options.length}): `);
+        const choiceNum = parseInt(choice);
+        
+        if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > options.length) {
+            console.log(chalk.yellow('Invalid choice. Using random scenario.'));
+            await this.runRandomScenario();
+            return;
+        }
+
+        const selected = options[choiceNum - 1];
+        if (selected.key === 'random') {
+            await this.runRandomScenario();
+        } else {
+            await this.runScenario(selected.key);
         }
     }
 
     async runScenario(scenarioKey) {
         const scenario = WORLD_SCENARIOS[scenarioKey];
         if (!scenario) {
-            console.log(`❌ Scenario '${scenarioKey}' not found`);
+            console.log(chalk.red(`❌ Scenario '${scenarioKey}' not found`));
             return;
         }
 
-        console.log(`\n🌍 Starting World Simulation: ${scenario.name}`);
-        console.log(`📋 Description: ${scenario.description}`);
-        console.log(`👥 Users: ${scenario.users.length} | 🔄 Turns: ${scenario.turns}`);
-        console.log(`📊 Complexity: ${scenario.complexity}/5\n`);
+        console.log(chalk.cyan.bold(`\n🌍 Starting World Simulation: ${scenario.name}`));
+        console.log(chalk.gray(`📋 Description: ${scenario.description}`));
+        console.log(chalk.gray(`👥 Users: ${scenario.users.length} | 🔄 Turns: ${scenario.turns} | 📊 Complexity: ${scenario.complexity}/5`));
+        console.log(chalk.gray(`🌍 Circles: ${scenario.circles.length}\n`));
 
         this.simulator = new WorldSimulator({
             logResults: true,
@@ -144,21 +166,9 @@ class WorldSimulationCLI {
     }
 
     async listScenarios() {
-        console.log('\n📋 AVAILABLE WORLD SCENARIOS:\n');
-        
-        const categories = ['role_inversion', 'family_network', 'generational', 'blended_family'];
-        
-        for (const category of categories) {
-            const scenarios = getWorldScenariosByCategory(category);
-            if (scenarios.length > 0) {
-                console.log(`📁 ${category.toUpperCase().replace('_', ' ')}:`);
-                scenarios.forEach((scenario, index) => {
-                    console.log(`   ${index + 1}. ${scenario.name}`);
-                    console.log(`      ${scenario.description}`);
-                    console.log(`      👥 Users: ${scenario.users.length} | 🔄 Turns: ${scenario.turns} | 📊 Complexity: ${scenario.complexity}/5\n`);
-                });
-            }
-        }
+        console.log(chalk.cyan.bold('\n📋 AVAILABLE WORLD SCENARIOS:\n'));
+        displayWorldScenariosByCategory(false);
+        console.log('');
     }
 
     async cleanup() {

@@ -13,12 +13,16 @@
  */
 
 import { SimulationDriver } from '../training/simulation/simulator.js';
+import { WorldSimulator } from '../training/world_simulation/world_simulator.js';
 import { PERSONAS } from '../training/simulation/personas.js';
 import { SCENARIOS, getRandomScenario } from '../training/simulation/scenarios.js';
+import { WORLD_SCENARIOS, getRandomWorldScenario } from '../training/world_simulation/world_scenarios.js';
 import { getScenarioCategories, displayScenariosByCategory, displayPersonasByCategory } from '../training/simulation/scenario_categories.js';
+import { displayWorldScenariosByCategory } from '../training/world_simulation/world_scenarios.js';
 import { getDb } from '../db/connection.js';
 import fs from 'fs';
 import { readlineManager } from './readline_manager.js';
+import chalk from 'chalk';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -60,13 +64,16 @@ Examples:
   node run_simulation.js                           # Interactive scenario selection
   node run_simulation.js random_single 5          # Specific scenario, 5 turns
   node run_simulation.js full_care_circle         # Multi-user scenario
+  node run_simulation.js patient_caregiver_swap   # World simulation (multi-circle)
   node run_simulation.js hiding_symptoms 3        # Privacy/deception scenario
   node run_simulation.js cancer_treatment         # Multi-session scenario
 
 Options:
-  --list, -l        List all available scenarios
+  --list, -l        List all available scenarios (regular + world)
   --personas, -p    List all available personas
   --help, -h        Show this help message
+  --world-only      Show only world scenarios
+  --regular-only    Show only regular scenarios
 
 Scenario Types:
   🎲 Basic: Single user conversations
@@ -74,14 +81,29 @@ Scenario Types:
   🚨 Privacy: Consent violations & breaches
   📉 Longitudinal: Multi-session tracking
   ⚡ Stress: Edge cases & rapid interactions
+  🌍 World: Multi-care circle dynamics (role inversions, family networks)
 `);
     process.exit(0);
 }
 
 // List scenarios
 if (args.includes('--list') || args.includes('-l')) {
-    console.log('\n📋 Available Scenarios:\n');
+    console.log(chalk.cyan.bold('\n📋 Available Regular Scenarios:\n'));
     displayScenariosByCategory();
+    
+    if (!args.includes('--regular-only')) {
+        console.log(chalk.cyan.bold('\n🌍 Available World Scenarios:\n'));
+        displayWorldScenariosByCategory();
+    }
+    
+    console.log('');
+    process.exit(0);
+}
+
+// List world scenarios only
+if (args.includes('--world-only')) {
+    console.log(chalk.cyan.bold('\n🌍 Available World Scenarios:\n'));
+    displayWorldScenariosByCategory();
     console.log('');
     process.exit(0);
 }
@@ -97,53 +119,78 @@ if (args.includes('--personas') || args.includes('-p')) {
 // Get scenario and turns from parsed arguments
 
 async function runSimulation() {
-    console.log('🧪 Starting Enhanced CLI Simulation...\n');
+    console.log(chalk.cyan.bold('🧪 Starting Enhanced CLI Simulation...\n'));
     
     // Set simulation mode for database connection
     process.env.SIMULATION_MODE = 'true';
     
-    // Keep simulation database for training pipeline analysis
-    const dbPath = './care_circle_simulation.db';
-    console.log(`📊 Using simulation database: ${dbPath}`);
-    
-    const sim = new SimulationDriver({ autoFeedback: true, logResults: true });
-    
-    // Select scenario
+    // Select scenario (check both regular and world)
     let selectedScenario;
+    let isWorldScenario = false;
+    
     if (!scenarioKey) {
         // Interactive scenario selection
         selectedScenario = await selectScenarioInteractively();
+        isWorldScenario = selectedScenario.isWorld || false;
     } else if (scenarioKey === 'random') {
+        // Random regular scenario (backward compatibility)
         const randomKey = getRandomScenario();
-        selectedScenario = { key: randomKey, ...SCENARIOS[randomKey] };
-        console.log(`🎲 Random scenario selected: ${selectedScenario.name}`);
+        selectedScenario = { key: randomKey, ...SCENARIOS[randomKey], isWorld: false };
+        console.log(chalk.green(`🎲 Random scenario selected: ${selectedScenario.name}`));
+        isWorldScenario = false;
     } else {
-        if (!SCENARIOS[scenarioKey]) {
-            console.error(`❌ Scenario '${scenarioKey}' not found. Use --list to see available scenarios.`);
+        // Check both regular and world scenarios
+        if (SCENARIOS[scenarioKey]) {
+            selectedScenario = { key: scenarioKey, ...SCENARIOS[scenarioKey], isWorld: false };
+            isWorldScenario = false;
+        } else if (WORLD_SCENARIOS[scenarioKey]) {
+            selectedScenario = { ...WORLD_SCENARIOS[scenarioKey], isWorld: true };
+            isWorldScenario = true;
+        } else {
+            console.error(chalk.red(`❌ Scenario '${scenarioKey}' not found. Use --list to see available scenarios.`));
             process.exit(1);
         }
-        selectedScenario = { key: scenarioKey, ...SCENARIOS[scenarioKey] };
-        console.log(`🎯 Scenario from CLI: ${selectedScenario.name}`);
+        console.log(chalk.green(`🎯 Scenario from CLI: ${selectedScenario.name}${isWorldScenario ? ' (World Simulation)' : ''}`));
     }
     
-    console.log(`📋 Scenario: ${selectedScenario.name}`);
-    console.log(`📝 Description: ${selectedScenario.description}`);
-    console.log(`🏷️ Category: ${selectedScenario.category}`);
-    console.log(`⭐ Complexity: ${'★'.repeat(selectedScenario.complexity)}`);
-    console.log(`👥 Users: ${selectedScenario.users.length}`);
+    // Auto-detect world scenario if not explicitly set
+    if (!isWorldScenario && checkIsWorldScenario(selectedScenario)) {
+        isWorldScenario = true;
+        selectedScenario.isWorld = true;
+    }
+    
+    // Route to appropriate simulator
+    if (isWorldScenario) {
+        await runWorldSimulation(selectedScenario, turns);
+        return;
+    }
+    
+    // Regular simulation
+    console.log(chalk.gray(`📊 Using simulation database: ./care_circle_simulation.db`));
+    const sim = new SimulationDriver({ autoFeedback: true, logResults: true });
+    
+    console.log(chalk.cyan.bold(`📋 Scenario: ${selectedScenario.name}`));
+    console.log(chalk.gray(`📝 Description: ${selectedScenario.description}`));
+    console.log(chalk.gray(`🏷️ Category: ${selectedScenario.category}`));
+    console.log(chalk.gray(`⭐ Complexity: ${'★'.repeat(selectedScenario.complexity)}`));
+    console.log(chalk.gray(`👥 Users: ${selectedScenario.users.length}`));
     
     if (selectedScenario.multiSession) {
-        console.log(`📅 Multi-session: ${selectedScenario.sessions} sessions (${selectedScenario.sessionGap} apart)`);
+        console.log(chalk.gray(`📅 Multi-session: ${selectedScenario.sessions} sessions (${selectedScenario.sessionGap} apart)`));
+    }
+    
+    if (selectedScenario.circles) {
+        console.log(chalk.gray(`🌍 Circles: ${selectedScenario.circles.length}`));
     }
     
     if (selectedScenario.instructions) {
-        console.log(`💡 Instructions: ${selectedScenario.instructions}`);
+        console.log(chalk.gray(`💡 Instructions: ${selectedScenario.instructions}`));
     }
     
     // Use specified turns or scenario default
     const defaultTurns = selectedScenario.multiSession ? selectedScenario.sessions : (selectedScenario.turns || 5);
     const finalTurns = turns || defaultTurns;
-    console.log(`🔄 Turns: ${finalTurns}\n`);
+    console.log(chalk.gray(`🔄 Turns: ${finalTurns}\n`));
     
     // Build user configurations
     const userConfigs = selectedScenario.users.map((user, index) => ({
@@ -173,7 +220,7 @@ async function runSimulation() {
         console.log('\n✅ Simulation completed successfully!');
         
         // Show summary
-        console.log('\n📊 Summary:');
+        console.log(chalk.cyan.bold('\n📊 Summary:'));
         console.log(`   Scenario: ${selectedScenario.name}`);
         console.log(`   Users: ${userConfigs.length} (${userConfigs.map(u => `${u.role}:${u.personaKey}`).join(', ')})`);
         console.log(`   Turns: ${finalTurns}`);
@@ -300,35 +347,99 @@ async function runSimulation() {
 }
 
 /**
- * Interactive scenario selection
+ * Check if scenario is a world scenario (has circles array and users with circles property)
+ */
+function checkIsWorldScenario(scenario) {
+    return scenario && Array.isArray(scenario.circles) && 
+           scenario.users && scenario.users.some(u => Array.isArray(u.circles));
+}
+
+/**
+ * Interactive scenario selection (includes both regular and world scenarios)
  */
 async function selectScenarioInteractively() {
     readlineManager.initialize();
 
-    console.log('\n🎯 Interactive Scenario Selection\n');
+    console.log(chalk.cyan.bold('\n🎯 Interactive Scenario Selection\n'));
     
-    // Use centralized scenario display with numbers
-    const options = displayScenariosByCategory(true);
+    // Show regular scenarios first
+    console.log(chalk.bold('📋 Regular Scenarios:'));
+    const regularOptions = displayScenariosByCategory(true);
+    let optionNumber = regularOptions.length + 1;
+    
+    // Show world scenarios
+    console.log(chalk.bold('\n🌍 World Scenarios:'));
+    const worldOptions = displayWorldScenariosByCategory(true);
+    const allOptions = [...regularOptions.map(o => ({ ...o, isWorld: false })), 
+                        ...worldOptions.map(o => ({ ...o, isWorld: true }))];
+    
+    // Add random options
+    console.log(chalk.bold(`\n🎲 Random Options:`));
+    console.log(`  ${optionNumber.toString().padStart(2)}. 🎲 Random regular scenario`);
+    allOptions.push({ key: 'random_regular', isWorld: false });
+    optionNumber++;
+    
+    console.log(`  ${optionNumber.toString().padStart(2)}. 🌍 Random world scenario`);
+    allOptions.push({ key: 'random_world', isWorld: true });
+    optionNumber++;
 
-    console.log(`\n  ${(options.length + 1).toString().padStart(2)}. 🎲 Random scenario`);
-    options.push({ key: 'random', scenario: null });
-
-    const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${options.length}): `);
+    const choice = await readlineManager.askQuestion(`\nSelect scenario (1-${allOptions.length}): `);
 
     const choiceNum = parseInt(choice);
-    if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > options.length) {
-        console.log('Invalid choice. Using random scenario.');
+    if (isNaN(choiceNum) || choiceNum < 1 || choiceNum > allOptions.length) {
+        console.log(chalk.yellow('Invalid choice. Using random regular scenario.'));
         const randomKey = getRandomScenario();
-        return { key: randomKey, ...SCENARIOS[randomKey] };
+        return { key: randomKey, ...SCENARIOS[randomKey], isWorld: false };
     }
 
-    const selected = options[choiceNum - 1];
-    if (selected.key === 'random') {
+    const selected = allOptions[choiceNum - 1];
+    
+    if (selected.key === 'random_regular') {
         const randomKey = getRandomScenario();
-        return { key: randomKey, ...SCENARIOS[randomKey] };
+        return { key: randomKey, ...SCENARIOS[randomKey], isWorld: false };
+    } else if (selected.key === 'random_world') {
+        const randomScenario = getRandomWorldScenario();
+        return { ...randomScenario, isWorld: true };
+    } else if (selected.isWorld) {
+        return { ...selected, isWorld: true };
+    } else {
+        return { key: selected.key, ...selected.scenario, isWorld: false };
     }
+}
 
-    return { key: selected.key, ...selected.scenario };
+/**
+ * Run world simulation
+ */
+async function runWorldSimulation(selectedScenario, turnsOverride) {
+    console.log(chalk.cyan.bold('🌍 Starting World Simulation...\n'));
+    
+    const worldSim = new WorldSimulator({
+        logResults: true,
+        autoFeedback: true
+    });
+    
+    try {
+        console.log('='.repeat(80));
+        await worldSim.runWorldScenario(selectedScenario.key);
+        console.log('='.repeat(80));
+        console.log(chalk.green.bold('\n✅ World simulation completed successfully!'));
+        
+        // Show summary
+        console.log(chalk.cyan.bold('\n📊 Summary:'));
+        console.log(`   Scenario: ${selectedScenario.name}`);
+        console.log(`   Users: ${selectedScenario.users.length}`);
+        console.log(`   Circles: ${selectedScenario.circles?.length || 0}`);
+        console.log(`   Turns: ${selectedScenario.turns}`);
+        console.log(`   Feedback: Auto-generated`);
+        
+    } catch (error) {
+        console.error(chalk.red('\n❌ World simulation failed:'), error.message);
+        console.error('Stack:', error.stack);
+        process.exit(1);
+    } finally {
+        await worldSim.cleanup();
+        delete process.env.SIMULATION_MODE;
+    }
 }
 
 /**
