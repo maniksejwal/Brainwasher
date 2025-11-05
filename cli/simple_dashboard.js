@@ -61,10 +61,11 @@ class SimpleDashboard {
         console.log('1. Run New Simulation');
         console.log('2. View Recent Conversations');
         console.log('3. Analyze Performance');
-        console.log('4. Exit');
+        console.log('4. Prompt Management');
+        console.log('5. Exit');
         console.log('-'.repeat(40));
 
-        const choice = await this.askQuestion('Select option (1-4): ');
+        const choice = await this.askQuestion('Select option (1-5): ');
         return choice.trim();
     }
 
@@ -297,12 +298,15 @@ class SimpleDashboard {
                         await this.analyzePerformance();
                         break;
                     case '4':
+                        await this.openPromptManagement();
+                        break;
+                    case '5':
                         console.log(chalk.green('👋 Goodbye!'));
                         this.cleanup();
                         process.exit(0);
                         return;
                     default:
-                        console.log(chalk.red('Invalid choice. Please enter 1-4.'));
+                        console.log(chalk.red('Invalid choice. Please enter 1-5.'));
                 }
                 
                 await this.askQuestion('\nPress Enter to continue...');
@@ -312,6 +316,12 @@ class SimpleDashboard {
         } finally {
             this.cleanup();
         }
+    }
+
+    async openPromptManagement() {
+        const { PromptDashboard } = await import('./dashboard/prompts.js');
+        const promptDashboard = new PromptDashboard();
+        await promptDashboard.run();
     }
 
     cleanup() {

@@ -3,7 +3,8 @@
  * Connects simulations to the AI system using separate database
  */
 
-import { handleMessage } from '../../handlers/messageHandler.js';
+// Use dynamic imports to avoid circular dependency with getRecentMessages
+// import { handleMessage } from '../../handlers/messageHandler.js';
 import { handleCommand } from '../../handlers/commandHandler.js';
 import { performAiAnalysis } from '../../handlers/message_logic/aiAnalysisHandler.js';
 import { ORCHESTRATOR_ACTIONS } from '../../constants.js';
@@ -88,6 +89,8 @@ export class SimulationAI {
             // 2. Escalation/Mediation (handleSharingAndEscalation) 
             // 3. Fact Processing (handleFactProcessing)
             // 4. All orchestrator events and cross-messaging
+            // Use dynamic import to avoid circular dependency with getRecentMessages
+            const { handleMessage } = await import('../../handlers/messageHandler.js');
             const analysis = await handleMessage(userId, circleId, message);
             
             if (!analysis || !analysis.reply) {

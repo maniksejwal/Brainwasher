@@ -33,6 +33,7 @@ class TrainingLogger {
         orchestrator_action: data.orchestratorAction,
         state_vector: data.stateVector,
         prompt_version: data.promptVersion || 'unknown',
+        system_used: data.systemUsed || 'unified', // Track Companion vs unified
         latency_ms: data.latencyMs,
         // Metadata for analysis
         message_length: data.message?.length || 0,

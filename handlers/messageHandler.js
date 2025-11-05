@@ -4,12 +4,14 @@
  * This module follows a clear "chain of thought" to process incoming messages.
  */
 
-import { getMemberInfo, findUserById, findCircleByPatientId, getCircleMembers, addMessage } from '../db/index.js';
+import { getMemberInfo, findUserById, findCircleByPatientId, getCircleMembers, addMessage, getRecentMessages } from '../db/index.js';
 import { performAiAnalysis } from './message_logic/aiAnalysisHandler.js';
 import { handleFactProcessing } from './message_logic/conflictHandler.js';
 import { handleSharingAndEscalation } from './message_logic/sharing/index.js';
 import { handlePendingActionResponse } from './message_logic/actionResponseHandler.js';
 import { initializeTopicShiftHandler } from './message_logic/topicShiftHandler.js';
+import { handleFuturePlanning } from './message_logic/futurePlanningHandler.js';
+import { checkIfShouldReschedule, rescheduleAffectedPlans } from './message_logic/rescheduleHandler.js';
 import { events } from '../orchestrator.js';
 import { logger as trainingLogger, metrics as metricsCollector } from '../training/index.js';
 
@@ -75,13 +77,70 @@ export async function handleMessage(userId, circleId, message) {
     }
 
     // Step 2: Perform the full AI analysis, including entity resolution.
+    // This will use Companion system or unified agent based on config
     const analysis = await performAiAnalysis(userId, memberInfo.role, message, circleId);
     
-    // Step 3: Handle the core logic for sharing, advice, and escalations.
+    // Step 3: Process pending future plans and scheduled messages for current turn (PRODUCTION)
+    // Get current turn from conversation history (used for both future planning and execution)
+    const conversationHistory = await getRecentMessages(circleId, 100);
+    const currentTurn = conversationHistory.filter(m => m.user_id === userId).length;
+    
+    // Prepare conversation context for progress triggers
+    const conversationContext = {
+        analysis,
+        userMessage: message,
+        consentGranted: false, // Will be set by sharing handler if consent is granted
+        currentTurn
+    };
+    
+    // Execute any due future plans and scheduled messages (including conversation progress triggers)
+    const { processPendingFutureItems, executePlan, sendScheduledMessage } = await import('./message_logic/futurePlanningHandler.js');
+    const pendingItems = await processPendingFutureItems(userId, circleId, currentTurn, conversationContext);
+    
+    // Execute due future plans
+    for (const plan of pendingItems.plans) {
+        await executePlan(plan);
+    }
+    
+    // Send due scheduled messages
+    for (const scheduledMsg of pendingItems.messages) {
+        await sendScheduledMessage(scheduledMsg);
+    }
+    
+    // Step 3.5: Handle future planning (if present in analysis) - creates NEW plans
+    if (analysis.future_plan) {
+        await handleFuturePlanning(userId, circleId, analysis, currentTurn);
+    }
+    
+    // Step 4: Handle the core logic for sharing, advice, and escalations.
     const sharingResult = await handleSharingAndEscalation(userId, memberInfo.role, message, circleId, analysis);
     
-    // Step 4: Process facts and check for conflicts.
+    // Update conversation context with consent status if sharing was handled
+    if (sharingResult?.consentGranted) {
+        conversationContext.consentGranted = true;
+    }
+    
+    // Step 4.5: Handle care circle probing questions (caregiver/patient cross-questioning)
+    // This doesn't interfere with doctor commands - checks for active doctor delegations first
+    const { handleCaregiverProbing, handlePatientProbingFromCaregiver } = await import('./message_logic/sharing/caregiverProbing.js');
+    await handleCaregiverProbing(userId, memberInfo.role, message, circleId, analysis, currentTurn);
+    await handlePatientProbingFromCaregiver(userId, memberInfo.role, message, circleId, analysis, currentTurn);
+    
+    // Step 4.6: Reschedule future plans if conversation doesn't make sense or commands were run
+    // Check if conversation context changed significantly (e.g., /clear, topic shift, user backtracking)
+    const shouldReschedule = await checkIfShouldReschedule(userId, circleId, analysis, message);
+    if (shouldReschedule.shouldReschedule) {
+        await rescheduleAffectedPlans(userId, circleId, shouldReschedule.reason);
+    }
+    
+    // Step 5: Process facts and check for conflicts.
     await handleFactProcessing(userId, circleId, analysis);
+    
+    // Step 5.5: Update behavioral state if state_update is present
+    if (analysis.state_update) {
+        const { updateUserState } = await import('../db/index.js');
+        await updateUserState(userId, circleId, analysis.state_update);
+    }
     
     // Training log (fire-and-forget, non-blocking) - happens after main flow completes
     const latencyMs = Date.now() - startTime;
@@ -89,10 +148,11 @@ export async function handleMessage(userId, circleId, message) {
         conversationId: `${circleId}_${userId}_${Date.now()}`,
         userId,
         message,
-        agentResponse: analysis?.agent_response || '',
+        agentResponse: analysis?.reply || analysis?.agent_response || '',
         orchestratorAction: sharingResult?.action || { type: 'NONE' },
         stateVector: analysis?.state_vector,
         promptVersion: 'unified_v1.0',
+        systemUsed: analysis?.system_used || 'unified', // Track Companion vs unified
         latencyMs
     }).catch(err => {}); // Silently fail
     

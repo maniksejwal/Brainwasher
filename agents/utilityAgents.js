@@ -14,7 +14,9 @@ import {
     PROMPT_SHARING_REQUEST,
     PROMPT_MEDIATED_CLARIFICATION,
     PROMPT_RELATIONSHIP_ANALYSIS,
-    PROMPT_SHARING_SUMMARY
+    PROMPT_SHARING_SUMMARY,
+    PROMPT_CAREGIVER_PROBE,
+    PROMPT_PATIENT_PROBE_FROM_CAREGIVER
 } from '../prompts/utility_prompts.js';
 
 export async function classifyExplicitIntent(message) {
@@ -60,6 +62,27 @@ export async function generateSharingSummaryOrProbe(fromUser, toUser, message) {
         .replace('{{TO_USER}}', toUser)
         .replace('{{MESSAGE}}', message);
     const result = await makeApiCall(prompt, [], false);
+    return result.reply;
+}
+
+export async function generateCaregiverProbe(patientUsername, patientMessage, facts) {
+    const factsText = JSON.stringify(facts || {});
+    const prompt = PROMPT_CAREGIVER_PROBE
+        .replace('{{PATIENT_USERNAME}}', patientUsername)
+        .replace('{{PATIENT_MESSAGE}}', patientMessage)
+        .replace('{{FACTS}}', factsText);
+    const result = await makeApiCall(prompt, [], false, 0.7, 100);
+    return result.reply;
+}
+
+export async function generatePatientProbeFromCaregiver(caregiverUsername, patientUsername, caregiverMessage, facts) {
+    const factsText = JSON.stringify(facts || {});
+    const prompt = PROMPT_PATIENT_PROBE_FROM_CAREGIVER
+        .replace('{{CAREGIVER_USERNAME}}', caregiverUsername)
+        .replace('{{PATIENT_USERNAME}}', patientUsername)
+        .replace('{{CAREGIVER_MESSAGE}}', caregiverMessage)
+        .replace('{{FACTS}}', factsText);
+    const result = await makeApiCall(prompt, [], false, 0.7, 100);
     return result.reply;
 }
 

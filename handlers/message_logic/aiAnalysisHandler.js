@@ -5,7 +5,18 @@
  * the system's final analysis is safe and context-aware.
  */
 
-import { getCircleMembers, addMessage, updateUserState, findUserById, findCircleByPatientId, addEscalation } from '../../db/index.js';
+import { 
+    getCircleMembers, 
+    addMessage, 
+    updateUserState, 
+    findUserById, 
+    findCircleByPatientId, 
+    addEscalation,
+    getRecentMessages,
+    getUserState,
+    getFactHistory,
+    getUnreadEscalationsForCircle
+} from '../../db/index.js';
 import { processUserMessage, performContextEnrichment } from '../../agents/index.js';
 import { events } from '../../orchestrator.js';
 import { getAgentName } from '../utils/agentIdentity.js';
@@ -43,10 +54,109 @@ async function resolveEntitiesAndEnrichContext(message, analysis, circleId) {
     return enrichedAnalysis;
 }
 
+/**
+ * Perform analysis using Companion system
+ */
+async function performCompanionAnalysis(userId, role, message, circleId) {
+    console.log(`[AIAnalysisHandler] Using Companion system...`);
+    events.emit('analysis_progress', { 
+        userId, 
+        step: 1, 
+        description: 'Analyzing with Companion system...', 
+        details: 'Coordinating specialized handlers'
+    });
+    
+    const { coordinateCompanions } = await import('../../companions/CompanionCoordinator.js');
+    const { STAGES_OF_CHANGE, COPING_STYLES } = await import('../../behavioral_models.js');
+    
+    // Gather rich context (like unified agent does)
+    const history = await getRecentMessages(circleId, 20);
+    const members = await getCircleMembers(circleId);
+    const currentState = await getUserState(userId, circleId);
+    const factHistory = await getFactHistory(circleId, 'all', 10);
+    const recentEscalations = await getUnreadEscalationsForCircle(circleId);
+    const speaker = await findUserById(userId);
+    const circle = await findCircleByPatientId(circleId);
+    const patient = await findUserById(circle?.primary_patient_id);
+    
+    const behavioralModels = {
+        stages_of_change: STAGES_OF_CHANGE,
+        coping_styles: COPING_STYLES
+    };
+    
+    // Format care circle members as string (like unified agent)
+    const careCircleMembers = members.map(m => m.username).join(', ');
+    
+    // Prepare rich context for Companion handlers
+    const conversationContext = {
+        history,
+        historyText: history.map(h => `${h.user_id}: ${h.message}`),
+        members,
+        careCircleMembers,
+        currentState,
+        factHistory,
+        recentEscalations,
+        speaker: speaker ? { username: speaker.username, userId: speaker.user_id } : null,
+        patient: patient ? { username: patient.username, userId: patient.user_id } : null,
+        hasMedicalContent: /pain|symptom|medication|diagnosis|treatment/i.test(message),
+        hasCriticalContent: /emergency|urgent|critical|severe/i.test(message),
+        circleId,
+        behavioralModels,
+        userAge: currentState?.age || null // For elderly fall detection
+    };
+    
+    // Coordinate companions
+    const companionResult = await coordinateCompanions(userId, role, message, circleId, conversationContext);
+    
+    // Convert Companion result to unified analysis format
+    let analysis = {
+        intent: companionResult.intent || 'ASKING_QUESTION',
+        reply: companionResult.reply || 'I understand.',
+        privacyLevel: companionResult.privacyLevel || 'PRIVATE',
+        criticality: companionResult.criticality || 'NONE',
+        facts: companionResult.facts || {},
+        mentioned_usernames: companionResult.mentioned_usernames || [],
+        sharingSuggestion: companionResult.sharingSuggestion || null,
+        state_update: companionResult.state_update || null, // Include state update if generated
+        future_plan: companionResult.future_plan || null, // Include future planning from Companion (now generated!)
+        system_used: 'companion' // Track which system was used
+    };
+    
+    // Extract mentioned_usernames from inputUnderstanding if not already set
+    if (!analysis.mentioned_usernames || analysis.mentioned_usernames.length === 0) {
+        const inputResult = conversationContext.inputUnderstanding?.result || 
+                           companionResult.inputUnderstanding?.result ||
+                           conversationContext.inputUnderstanding;
+        if (inputResult?.mentionedUsernames || inputResult?.mentioned_usernames) {
+            analysis.mentioned_usernames = inputResult.mentionedUsernames || inputResult.mentioned_usernames || [];
+        }
+    }
+    
+    // Entity resolution and context enrichment
+    if (analysis.mentioned_usernames && analysis.mentioned_usernames.length > 0) {
+        analysis = await resolveEntitiesAndEnrichContext(message, analysis, circleId);
+    }
+    
+    return analysis;
+}
 
 export async function performAiAnalysis(userId, role, message, circleId) {
-    // Step 1: Initial Analysis
-    console.log(`[AIAnalysisHandler] Step 1: Performing initial analysis...`);
+    // Check if we should use Companion system or unified agent
+    const config = await import('../../config.js');
+    const useCompanions = config.default.USE_COMPANIONS;
+    
+    // A/B testing: randomly assign to Companion or unified based on ratio
+    let useCompanion = useCompanions;
+    if (!useCompanions && config.default.COMPANION_AB_TEST_ENABLED) {
+        useCompanion = Math.random() < config.default.COMPANION_AB_TEST_RATIO;
+    }
+    
+    if (useCompanion) {
+        return await performCompanionAnalysis(userId, role, message, circleId);
+    }
+    
+    // Step 1: Initial Analysis (Unified Agent)
+    console.log(`[AIAnalysisHandler] Step 1: Performing initial analysis (Unified Agent)...`);
     events.emit('analysis_progress', { 
         userId, 
         step: 1, 
@@ -58,6 +168,7 @@ export async function performAiAnalysis(userId, role, message, circleId) {
     const memberUsernames = members.map(m => m.username);
     
     let analysis = await processUserMessage(userId, role, message, memberUsernames, circleId);
+    analysis.system_used = 'unified'; // Track which system was used
     console.log(`[AIAnalysisHandler] Initial analysis complete. Mentioned entities: ${analysis.mentioned_usernames?.join(', ')}`);
 
     // Step 2: Entity Resolution and Context Enrichment

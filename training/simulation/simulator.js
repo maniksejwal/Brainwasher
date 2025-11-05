@@ -143,6 +143,42 @@ export class SimulationDriver {
                 expires_at INTEGER NOT NULL, 
                 PRIMARY KEY (user_id, circle_id, topic) 
             );
+            CREATE TABLE IF NOT EXISTS future_plans (
+                plan_id TEXT PRIMARY KEY,
+                circle_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                plan_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                scheduled_turn INTEGER,
+                scheduled_timestamp INTEGER,
+                trigger_type TEXT,
+                trigger_value TEXT,
+                trigger_details TEXT,
+                status TEXT DEFAULT 'pending',
+                details TEXT,
+                created_at INTEGER NOT NULL,
+                executed_at INTEGER,
+                FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
+            CREATE TABLE IF NOT EXISTS scheduled_messages (
+                scheduled_message_id TEXT PRIMARY KEY,
+                circle_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                target_user_id TEXT,
+                message_text TEXT NOT NULL,
+                scheduled_turn INTEGER,
+                scheduled_timestamp INTEGER,
+                trigger_type TEXT,
+                trigger_value TEXT,
+                trigger_details TEXT,
+                trigger_condition TEXT,
+                status TEXT DEFAULT 'pending',
+                sent_at INTEGER,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
             CREATE TABLE IF NOT EXISTS feedback (
                 feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id TEXT,
@@ -153,6 +189,8 @@ export class SimulationDriver {
                 comment TEXT,
                 category TEXT,
                 prompt_version TEXT,
+                prompt_type TEXT,
+                system_used TEXT,
                 timestamp INTEGER NOT NULL,
                 source TEXT DEFAULT 'simulation',
                 goal_adherence_score REAL,
@@ -160,6 +198,15 @@ export class SimulationDriver {
                 goal_conversation_score REAL,
                 critical_failure BOOLEAN DEFAULT 0,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
+            
+            CREATE TABLE IF NOT EXISTS prompt_versions (
+                version TEXT PRIMARY KEY,
+                name TEXT,
+                content TEXT NOT NULL,
+                deployed_at TEXT,
+                performance_score REAL DEFAULT 0,
+                created_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS detailed_feedback (
                 report_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -197,13 +244,21 @@ export class SimulationDriver {
         for (const config of userConfigs) {
             // userId may be missing in scenario configs - generate fallback
             const userId = config.userId || `sim_${config.role}_${Date.now()}`;
-            const { role, personaKey } = config;
-            const personaData = getPersona(role, personaKey);
+            const { role, personaKey, personaOptions } = config;
+            
+            // Support multiple persona options: if personaOptions array exists, randomly select one
+            let selectedPersonaKey = personaKey;
+            if (personaOptions && Array.isArray(personaOptions) && personaOptions.length > 0) {
+                // Randomly select from options
+                selectedPersonaKey = personaOptions[Math.floor(Math.random() * personaOptions.length)];
+            }
+            
+            const personaData = getPersona(role, selectedPersonaKey);
             
             // Create run-specific user ID to prevent contamination
             const runSpecificUserId = `${userId}_run_${this.runId}`;
             
-            const syntheticUser = new SyntheticUser(runSpecificUserId, role, personaKey, personaData);
+            const syntheticUser = new SyntheticUser(runSpecificUserId, role, selectedPersonaKey, personaData);
             this.syntheticUsers.push(syntheticUser);
 
             // Create simulation client for this user to receive notifications
@@ -270,8 +325,8 @@ export class SimulationDriver {
         // Set scenario ID and update conversation ID
         this.setScenario(scenarioKey);
         
-        console.log(`\n🧪 SIMULATION: ${scenarioConfig.name}`);
-        console.log(`📋 Scenario: ${scenarioConfig.description}`);
+        console.log(`\n🧪 SIMULATION: ${scenarioConfig.name || scenarioKey}`);
+        console.log(`📋 Scenario: ${scenarioConfig.description || 'No description provided'}`);
         console.log(`👥 Users: ${scenarioConfig.users.length} | 🔄 Turns: ${scenarioConfig.turns || 6}\n`);
 
         // Emit progress events if callback provided

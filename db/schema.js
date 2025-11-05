@@ -37,15 +37,56 @@ export async function initializeDatabase() {
         CREATE TABLE IF NOT EXISTS pending_actions ( action_id TEXT PRIMARY KEY, circle_id TEXT NOT NULL, user_id TEXT NOT NULL, action_type TEXT NOT NULL, details TEXT NOT NULL, created_at INTEGER NOT NULL );
         CREATE TABLE IF NOT EXISTS implied_consent ( user_id TEXT NOT NULL, circle_id TEXT NOT NULL, topic TEXT NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (user_id, circle_id, topic) );
         
+        CREATE TABLE IF NOT EXISTS future_plans (
+            plan_id TEXT PRIMARY KEY,
+            circle_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            plan_type TEXT NOT NULL,
+            description TEXT NOT NULL,
+            scheduled_turn INTEGER,
+            scheduled_timestamp INTEGER,
+            trigger_type TEXT,
+            trigger_value TEXT,
+            trigger_details TEXT,
+            status TEXT DEFAULT 'pending',
+            details TEXT,
+            created_at INTEGER NOT NULL,
+            executed_at INTEGER,
+            FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+        
+        CREATE TABLE IF NOT EXISTS scheduled_messages (
+            scheduled_message_id TEXT PRIMARY KEY,
+            circle_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            target_user_id TEXT,
+            message_text TEXT NOT NULL,
+            scheduled_turn INTEGER,
+            scheduled_timestamp INTEGER,
+            trigger_type TEXT,
+            trigger_value TEXT,
+            trigger_details TEXT,
+            trigger_condition TEXT,
+            status TEXT DEFAULT 'pending',
+            sent_at INTEGER,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+        
         CREATE TABLE IF NOT EXISTS feedback (
             feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
             conversation_id TEXT,
+            message_id INTEGER,
             user_id TEXT NOT NULL,
             circle_id TEXT,
             score INTEGER NOT NULL,
             comment TEXT,
             category TEXT,
             prompt_version TEXT,
+            prompt_type TEXT,
+            system_used TEXT,
             timestamp INTEGER NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         );
@@ -60,6 +101,15 @@ export async function initializeDatabase() {
             prompt_version TEXT,
             timestamp INTEGER NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+        
+        CREATE TABLE IF NOT EXISTS prompt_versions (
+            version TEXT PRIMARY KEY,
+            name TEXT,
+            content TEXT NOT NULL,
+            deployed_at TEXT,
+            performance_score REAL DEFAULT 0,
+            created_at INTEGER NOT NULL
         );
     `);
     console.log('[Database] Initialized.');

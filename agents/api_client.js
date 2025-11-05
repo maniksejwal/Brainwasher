@@ -8,6 +8,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import config from '../config.js';
+import { parseJsonWithFixes } from '../utils/jsonParser.js';
 
 let geminiClients = [];
 let openAIClient;
@@ -167,15 +168,22 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
             if (expectJson) {
                 const parsedResponse = parseJsonResponse(text, attempt, maxRetries);
                 if (parsedResponse) {
+                    // Success - don't log errors if retry succeeded
                     return parsedResponse;
                 }
-                // If parsing failed and we have retries left, continue to retry
+                // If parsing failed and we have retries left, continue to retry (don't log yet)
                 if (attempt < maxRetries) {
-                    console.warn(`[Agent] JSON parsing failed on attempt ${attempt}, retrying...`);
+                    // Suppress log - will only log if all retries fail
                     continue;
                 }
-                // Last attempt failed - return fallback
-                return createFallbackResponse(text);
+                // Last attempt failed - log only now
+                console.warn(`[Agent] All JSON parsing attempts failed, returning raw text for handler processing`);
+                return { 
+                    reply: text, 
+                    modelUsed: modelToUse,
+                    modelProvider: provider.type,
+                    _parsingFailed: true // Flag to indicate parsing failed
+                };
             }
             
             return { 
@@ -213,28 +221,15 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
         }
     }
 
-    console.error(`[Agent] All retries failed: ${lastError.message.split('.')[0]}`);
+    const errorMessage = lastError?.message || String(lastError) || 'Unknown error';
+    console.error(`[Agent] All retries failed: ${errorMessage.split('.')[0]}`);
     return createFallbackResponse("I'm having some trouble processing that right now.");
 }
 
 function parseJsonResponse(text, attempt, maxRetries) {
-    // Try markdown-wrapped JSON first
-    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
-    if (jsonMatch && jsonMatch[1]) {
-        try {
-            return JSON.parse(jsonMatch[1]);
-        } catch (e) {
-            console.warn(`[Agent] Failed to parse markdown JSON on attempt ${attempt}:`, e.message);
-        }
-    }
-    
-    // Try raw JSON
-    try {
-        return JSON.parse(text);
-    } catch (e) {
-        console.warn(`[Agent] Failed to parse raw JSON on attempt ${attempt}:`, e.message);
-        return null;
-    }
+    // Only log errors on the final attempt (when all retries will fail)
+    // First error: silent, second attempt success: silent, second attempt failure: log
+    return parseJsonWithFixes(text, { logErrors: attempt === maxRetries, attempt });
 }
 
 function isKeyFailureError(error) {

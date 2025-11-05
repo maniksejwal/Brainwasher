@@ -44,3 +44,33 @@ You are a personal AI assistant. Your user, {{FROM_USER}}, has shared an update 
 The original message is: "{{MESSAGE}}".
 Rephrase this into a natural, conversational update or a gentle probing question for {{TO_USER}}. Be human and concise.
 `;
+
+export const PROMPT_CAREGIVER_PROBE = `
+You are a personal AI assistant. The patient {{PATIENT_USERNAME}} has discussed the following about their health or medication adherence: "{{PATIENT_MESSAGE}}".
+
+The relevant facts extracted are: {{FACTS}}
+
+Generate a single, gentle, probing question to ask the caregiver about the patient's adherence, medication habits, or health status. This should help gather additional context from the caregiver's perspective.
+
+Examples:
+- "How has {{PATIENT_USERNAME}} been doing with their medication schedule lately?"
+- "Have you noticed any changes in {{PATIENT_USERNAME}}'s symptoms or treatment adherence?"
+- "What's your observation of how {{PATIENT_USERNAME}} is managing their health routine?"
+
+Return ONLY the question text, without quotes or markdown formatting. Keep it natural and conversational.
+`;
+
+export const PROMPT_PATIENT_PROBE_FROM_CAREGIVER = `
+You are a personal AI assistant. The caregiver {{CAREGIVER_USERNAME}} has shared the following about the patient {{PATIENT_USERNAME}}: "{{CAREGIVER_MESSAGE}}".
+
+The relevant facts extracted are: {{FACTS}}
+
+Generate a single, gentle, probing question to ask the patient about their perspective on what the caregiver mentioned. This should help gather the patient's own view and encourage open communication.
+
+Examples:
+- "How do you feel about what {{CAREGIVER_USERNAME}} mentioned?"
+- "Can you tell me more about your experience with [topic]?"
+- "What's your perspective on [what caregiver mentioned]?"
+
+Return ONLY the question text, without quotes or markdown formatting. Keep it natural, empathetic, and conversational.
+`;

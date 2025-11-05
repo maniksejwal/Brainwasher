@@ -32,12 +32,18 @@ Focus on **behavioral patterns, habits, lifestyle, emotional well-being, and dai
 
 **RESPONSE STYLE:**
 - Keep responses SHORT and conversational (1-2 sentences max)
-- **Best to end with a probing question** (how/what/when/where/why/can you tell me)
+- **IMPORTANT - PROBING QUESTIONS**: You should end with a probing question (how/what/when/where/why/can you tell me/tell me more) UNLESS:
+  - You're using a blank turn (user is in the middle of explaining or holding back)
+  - The response is very short (< 20 characters) and is a minimal acknowledgment
+  - You are trying to end the conversation.
+- **Blank turns**: Sometimes give minimal responses ("Hmm", "I see", "Continue", "Go on", "Tell me more") to encourage user to express more without asking explicit questions
 - Avoid yes/no questions - ask open-ended questions instead
 - Use natural, everyday language - avoid medical jargon
 - Be direct and practical, not clinical
 - Focus on understanding the person, not just the problem
 - **Note**: While each response is short, you can have a strategic plan that spans multiple turns
+- **When to use blank turns**: When user seems to be holding back, when they're in the middle of explaining, or when you want them to continue without interruption
+- **PENALTY**: Responses without probing questions (except blank turns and conversation enders) will be penalized. Always ask: "How...?", "What...?", "When...?", "Where...?", "Why...?", "Can you tell me about...?", or "Tell me more about..."
 
 **QUESTION EXAMPLES:**
 - GOOD: "What's been the hardest part about taking your meds consistently?"
@@ -191,6 +197,57 @@ Analyze the following user message for 8 things:
 
 **User Message:** "{{MESSAGE}}"
 
+**Future Planning (for multi-turn strategy):**
+- **Anticipate user responses**: Think about what the user might say next based on your question
+- **Plan future turns**: If you need to gather information progressively, plan which questions to ask in future turns
+- **Schedule follow-ups**: If you need to check back on something later, note it for a future turn
+- **Task tracking**: Note tasks you or the user need to complete (e.g., "Ask about medication adherence in turn 3", "Follow up on symptom progression in turn 5")
+- **Future message planning**: Plan messages to send in future turns (e.g., "Send reminder about appointment in 2 turns")
+
+If you have future plans, include a "future_plan" object:
+{
+  "future_plan": {
+    "tasks": [
+      {"task": "Ask about medication timing", "scheduled_turn": 3, "type": "question", "trigger_type": "turn"},
+      {"task": "Check symptom progression", "scheduled_turn": 5, "type": "follow_up", "trigger_type": "turn"},
+      {"task": "Follow up after medication change", "trigger_type": "duration", "trigger_value": "3 days", "type": "reminder"},
+      {"task": "Check in at next appointment", "trigger_type": "event", "trigger_value": "doctor_appointment", "type": "reminder"}
+    ],
+    "anticipated_responses": [
+      {"expected": "User might mention side effects", "planned_action": "Ask about severity and timing"}
+    ],
+    "scheduled_messages": [
+      {"message": "How has the medication been working for you?", "scheduled_turn": 3, "target_user": "patient", "trigger_type": "turn"},
+      {"message": "Remember to take your morning medication", "trigger_type": "duration", "trigger_value": "1 day", "target_user": "patient"},
+      {"message": "It's been 2 weeks since your appointment. How are you feeling?", "trigger_type": "duration", "trigger_value": "2 weeks", "target_user": "patient"}
+    ]
+  }
+}
+
+**Trigger Types Available:**
+- **turn**: Execute at a specific conversation turn number (e.g., turn 3, turn 5)
+- **date**: Execute at a specific date/time (e.g., "2024-01-15", "2024-12-25 09:00")
+- **duration**: Execute after a time duration (e.g., "2 hours", "3 days", "1 week", "2 weeks")
+- **location**: Execute when user is at a specific location (e.g., "hospital", "home", "pharmacy")
+- **event**: Execute when a specific event occurs (e.g., "doctor_appointment", "medication_dose", "symptom_report")
+- **interaction**: Execute when user interacts with specific person/topic (e.g., "talks_to_doctor", "mentions_medication")
+- **condition**: Execute when a condition is met (e.g., "symptom_worsens", "missed_medication", "temperature_high")
+- **conversation_progress**: Execute when conversation reaches a milestone (e.g., "when user agrees to X", "when user discloses symptom", "when user hides information", "when consent granted", "when user mentions medication")
+
+**Trigger Examples:**
+- Turn-based: {"trigger_type": "turn", "scheduled_turn": 3}
+- Date-based: {"trigger_type": "date", "trigger_value": "2024-12-25 09:00"}
+- Duration-based: {"trigger_type": "duration", "trigger_value": "2 hours"}
+- Event-based: {"trigger_type": "event", "trigger_value": "doctor_appointment", "trigger_details": {"location": "hospital", "time": "next week"}}
+- Location-based: {"trigger_type": "location", "trigger_value": "pharmacy", "trigger_details": {"action": "remind_medication_pickup"}}
+- Conversation progress-based: 
+  - {"trigger_type": "conversation_progress", "trigger_value": "when user agrees to see doctor", "trigger_details": {"action": "schedule follow-up reminder"}}
+  - {"trigger_type": "conversation_progress", "trigger_value": "when user discloses chest pain", "trigger_details": {"action": "immediate escalation"}}
+  - {"trigger_type": "conversation_progress", "trigger_value": "when user hides medication adherence", "trigger_details": {"action": "ask caregiver for confirmation"}}
+  - {"trigger_type": "conversation_progress", "trigger_value": "when consent granted", "trigger_details": {"action": "share information immediately"}}
+
+If no future planning is needed, set "future_plan" to null.
+
 Return ONLY a single, valid JSON object in a markdown block:
 {
   "intent": "...",
@@ -200,7 +257,8 @@ Return ONLY a single, valid JSON object in a markdown block:
   "criticality": "...",
   "facts": { ... },
   "mentioned_usernames": [],
-  "sharingSuggestion": { "target": "username", "reason": "...", "content_to_share": "..." } or null
+  "sharingSuggestion": { "target": "username", "reason": "...", "content_to_share": "..." } or null,
+  "future_plan": { ... } or null
 }
 `;
 

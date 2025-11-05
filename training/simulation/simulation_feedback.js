@@ -39,10 +39,15 @@ export class SimulationFeedback {
             
             // 3. Store feedback in database
             if (process.env.SIMULATION_DEBUG === 'true') console.log('[SimulationFeedback] Debug - analysis:', JSON.stringify(analysis, null, 2));
+            
+            // Extract prompt type and system used from agent response
+            const promptType = agentResponse?.promptType || agentResponse?.analysis?.prompt_type || 'unified';
+            const systemUsed = agentResponse?.system_used || agentResponse?.analysis?.system_used || 'unified';
+            
             await this.reporter.autoScore(
                 conversationId, userId, circleId, messageId, 
                 analysis.totalScore, analysis.scores?.[0]?.reason || 'No reason provided', 
-                actualPromptVersion, goalAssessment, agentResponse.modelUsed
+                actualPromptVersion, goalAssessment, agentResponse.modelUsed, promptType, systemUsed
             );
             
             // 4. Store detailed reports for each issue
@@ -104,10 +109,13 @@ export class SimulationFeedback {
             const conversationRecommendations = this._generateConversationRecommendations(conversationAnalysis);
             
             console.log(`[SimulationFeedback] Conversation analysis complete:`);
-            console.log(`  📊 Context Continuity: ${(conversationAnalysis.contextContinuity.continuityRate * 100).toFixed(1)}%`);
-            console.log(`  🔄 Repetitive Patterns: ${conversationAnalysis.repetitivePatterns.severity}`);
-            console.log(`  ⚡ Escalation Effectiveness: ${(conversationAnalysis.escalationPatterns.effectiveness * 100).toFixed(1)}%`);
-            console.log(`  🎯 Engagement Quality: ${(conversationAnalysis.engagementQuality.overallScore * 100).toFixed(1)}%`);
+            console.log(`  📊 Context Continuity: ${((conversationAnalysis.contextContinuity?.continuityRate || 0) * 100).toFixed(1)}%`);
+            console.log(`  🔄 Repetitive Patterns: ${conversationAnalysis.repetitivePatterns?.severity || 'low'}`);
+            console.log(`  ⚡ Escalation Effectiveness: ${((conversationAnalysis.escalationPatterns?.effectiveness || 0) * 100).toFixed(1)}%`);
+            console.log(`  🎯 Engagement Quality: ${((conversationAnalysis.engagementQuality?.overallScore || 0) * 100).toFixed(1)}%`);
+            if (conversationAnalysis.futurePlanning) {
+                console.log(`  🔮 Future Planning: ${conversationAnalysis.futurePlanning.totalPlans || 0} plans, ${((conversationAnalysis.futurePlanning.executionRate || 0) * 100).toFixed(1)}% executed`);
+            }
             console.log(`  💡 Recommendations: ${conversationRecommendations.length} generated`);
             
             return {

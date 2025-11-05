@@ -12,6 +12,8 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import config from '../../config.js';
 import { ANALYSIS_SYSTEM_PROMPT, FEEDBACK_ANALYSIS_TEMPLATE } from '../config/analysis_prompts.js';
+import { generateFeedbackAnalysisPrompt } from '../../prompts/feedback_analysis_prompt.js';
+import { makeApiCall } from '../../agents/api_client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -142,7 +144,7 @@ class FeedbackAnalyzer {
         const db = await getDb();
         
         try {
-            // Get feedback with prompt versions and goal assessments
+            // Get feedback with prompt versions, goal assessments, AND feedback comments for backpropagation
             const feedbackData = await db.all(`
                 SELECT 
                     conversation_id,
@@ -153,6 +155,7 @@ class FeedbackAnalyzer {
                     goal_conversation_score,
                     critical_failure,
                     comment,
+                    feedback_text,
                     timestamp
                 FROM feedback 
                 WHERE source = 'simulation' AND prompt_version IS NOT NULL
@@ -209,13 +212,18 @@ class FeedbackAnalyzer {
             // Generate reward signals for optimization
             const rewardSignals = this.generateRewardSignals(promptPerformance);
             
-            // Identify optimization opportunities
+            // Identify optimization opportunities (includes both rewards AND feedback comments)
             const optimizationOpportunities = this.identifyOptimizationOpportunities(promptPerformance, feedbackData);
+            
+            // BACKPROPAGATION EXTENSION: Include feedback comments in backpropagation
+            // Analyze feedback text/comments to identify patterns and issues
+            const feedbackAnalysis = await this.analyzeFeedbackComments(feedbackData, promptGroups);
             
             return {
                 prompt_performance: promptPerformance,
                 reward_signals: rewardSignals,
                 optimization_opportunities: optimizationOpportunities,
+                feedback_analysis: feedbackAnalysis, // NEW: Feedback-based backpropagation
                 total_feedback_points: feedbackData.length
             };
             
@@ -345,6 +353,168 @@ class FeedbackAnalyzer {
     }
     
     /**
+     * Analyze feedback comments for backpropagation (NEW: Extends backpropagation to include feedback text)
+     * Uses LLM to intelligently extract themes, issues, and suggestions from feedback comments
+     * @param {Array} feedbackData - All feedback entries with comments
+     * @param {Object} promptGroups - Feedback grouped by prompt version
+     * @returns {Promise<Object>} Analysis of feedback comments per prompt version
+     */
+    async analyzeFeedbackComments(feedbackData, promptGroups) {
+        const feedbackAnalysis = {};
+        
+        // Analyze feedback comments per prompt version using LLM
+        for (const [version, group] of Object.entries(promptGroups)) {
+            const comments = group.interactions
+                .filter(f => f.comment || f.feedback_text)
+                .map(f => f.comment || f.feedback_text || '');
+            
+            if (comments.length === 0) {
+                feedbackAnalysis[version] = {
+                    total_feedback: 0,
+                    themes: [],
+                    issues: [],
+                    suggestions: []
+                };
+                continue;
+            }
+            
+            // Use LLM to analyze comments
+            try {
+                const analysis = await this._analyzeCommentsWithLLM(comments, version);
+                feedbackAnalysis[version] = analysis;
+            } catch (error) {
+                console.warn(`[FeedbackAnalyzer] LLM analysis failed for version ${version}, using fallback:`, error.message);
+                // Fallback to simple analysis if LLM fails
+                feedbackAnalysis[version] = this._analyzeCommentsFallback(comments);
+            }
+        }
+        
+        return feedbackAnalysis;
+    }
+
+    /**
+     * Use LLM to analyze feedback comments and extract themes, issues, and suggestions
+     * @param {Array<string>} comments - Array of feedback comments
+     * @param {string} promptVersion - The prompt version being analyzed
+     * @returns {Promise<Object>} Structured analysis with themes, issues, and suggestions
+     */
+    async _analyzeCommentsWithLLM(comments, promptVersion) {
+        const commentsText = comments.join('\n---\n');
+        
+        // Use prompt from prompts package
+        const analysisPrompt = generateFeedbackAnalysisPrompt(promptVersion, commentsText);
+
+        try {
+            const result = await makeApiCall(
+                analysisPrompt,
+                [],
+                true, // expectJson
+                0.3, // temperature (lower for more consistent analysis)
+                2000, // maxTokens
+                'analysis' // useCase
+            );
+            
+            // Parse the JSON response
+            let analysis;
+            if (typeof result === 'object' && result.reply) {
+                // If wrapped in reply object, extract it
+                const jsonText = result.reply;
+                try {
+                    analysis = JSON.parse(jsonText);
+                } catch (parseError) {
+                    // Try to extract JSON from markdown code blocks
+                    const jsonMatch = jsonText.match(/```json\s*([\s\S]*?)\s*```/) || jsonText.match(/```\s*([\s\S]*?)\s*```/) || jsonText.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        analysis = JSON.parse(jsonMatch[1] || jsonMatch[0]);
+                    } else {
+                        throw new Error('Could not parse JSON from LLM response');
+                    }
+                }
+            } else if (typeof result === 'object') {
+                analysis = result;
+            } else {
+                throw new Error('Unexpected response format from LLM');
+            }
+            
+            // Validate and normalize the response structure
+            return {
+                total_feedback: comments.length,
+                themes: (analysis.themes || []).map(t => ({
+                    theme: t.theme || t.name || 'unknown',
+                    count: t.count || 1,
+                    description: t.description || ''
+                })).slice(0, 5), // Top 5 themes
+                issues: (analysis.issues || []).map(i => ({
+                    issue: i.issue || i.name || 'unknown',
+                    frequency: i.frequency || 1,
+                    examples: (i.examples || []).slice(0, 3), // Max 3 examples
+                    severity: i.severity || 'medium'
+                })),
+                suggestions: [...new Set((analysis.suggestions || []))] // Unique suggestions
+            };
+        } catch (error) {
+            console.error(`[FeedbackAnalyzer] Error in LLM analysis for version ${promptVersion}:`, error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * Fallback analysis method if LLM fails
+     * @param {Array<string>} comments - Array of feedback comments
+     * @returns {Object} Basic analysis using simple pattern matching
+     */
+    _analyzeCommentsFallback(comments) {
+        const themes = {};
+        const issues = {};
+        const suggestions = [];
+        
+        comments.forEach(comment => {
+            const lowerComment = comment.toLowerCase();
+            
+            // Extract common themes with simple pattern matching
+            if (lowerComment.includes('verbose') || lowerComment.includes('too long') || lowerComment.includes('repetitive')) {
+                themes.verbosity = (themes.verbosity || 0) + 1;
+                issues.verbosity = issues.verbosity || [];
+                issues.verbosity.push(comment);
+            }
+            if (lowerComment.includes('escalat') || lowerComment.includes('critical') || lowerComment.includes('denial')) {
+                themes.escalation = (themes.escalation || 0) + 1;
+                issues.escalation = issues.escalation || [];
+                issues.escalation.push(comment);
+            }
+            if (lowerComment.includes('empathy') || lowerComment.includes('emotion') || lowerComment.includes('warm')) {
+                themes.empathy = (themes.empathy || 0) + 1;
+            }
+            if (lowerComment.includes('generic') || lowerComment.includes('bland') || lowerComment.includes('unhelpful')) {
+                themes.generic = (themes.generic || 0) + 1;
+                suggestions.push('Add more specific, actionable guidance');
+            }
+            if (lowerComment.includes('topic') || lowerComment.includes('shift') || lowerComment.includes('stuck')) {
+                themes.topic_management = (themes.topic_management || 0) + 1;
+                suggestions.push('Improve topic shifting when conversation becomes repetitive');
+            }
+            if (lowerComment.includes('misconception') || lowerComment.includes('harmful') || lowerComment.includes('dangerous')) {
+                themes.misconception_handling = (themes.misconception_handling || 0) + 1;
+                suggestions.push('Strengthen 6-step misconception handling process');
+            }
+        });
+        
+        return {
+            total_feedback: comments.length,
+            themes: Object.entries(themes)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([theme, count]) => ({ theme, count })),
+            issues: Object.entries(issues).map(([issue, examples]) => ({
+                issue,
+                frequency: examples.length,
+                examples: examples.slice(0, 3)
+            })),
+            suggestions: [...new Set(suggestions)]
+        };
+    }
+    
+    /**
      * Get specific prompt improvement suggestions
      */
     getPromptSuggestions(pattern) {
@@ -392,7 +562,6 @@ class FeedbackAnalyzer {
                     AVG(goal_conversation_score) as avgConversation
                 FROM feedback 
                 WHERE source = 'simulation'
-                AND timestamp > datetime('now', '-7 days')
             `);
             
             const metrics = feedbackData[0] || {};
@@ -423,6 +592,97 @@ class FeedbackAnalyzer {
                 totalFeedback: 0,
                 criticalFailures: 0
             };
+        }
+    }
+
+    /**
+     * Compare Companion vs Unified system performance
+     * Uses training_log.jsonl to analyze system_used field
+     */
+    async compareCompanionVsUnified() {
+        try {
+            const logPath = path.join(__dirname, '../training_log.jsonl');
+            const logs = await this.loadTrainingLog(logPath);
+            
+            // Separate logs by system_used
+            const companionLogs = logs.filter(log => log.system_used === 'companion');
+            const unifiedLogs = logs.filter(log => log.system_used === 'unified');
+            
+            // Calculate metrics for each system
+            const companionMetrics = this.calculateSystemMetrics(companionLogs);
+            const unifiedMetrics = this.calculateSystemMetrics(unifiedLogs);
+            
+            // Compare performance
+            const comparison = {
+                companion: companionMetrics,
+                unified: unifiedMetrics,
+                comparison: {
+                    avgScoreDifference: companionMetrics.avgScore - unifiedMetrics.avgScore,
+                    avgLatencyDifference: companionMetrics.avgLatency - unifiedMetrics.avgLatency,
+                    avgResponseLengthDifference: companionMetrics.avgResponseLength - unifiedMetrics.avgResponseLength,
+                    escalationRateDifference: companionMetrics.escalationRate - unifiedMetrics.escalationRate,
+                    betterSystem: companionMetrics.avgScore > unifiedMetrics.avgScore ? 'companion' : 'unified',
+                    recommendation: this.generateRecommendation(companionMetrics, unifiedMetrics)
+                }
+            };
+            
+            return comparison;
+        } catch (error) {
+            console.error('[FeedbackAnalyzer] Error comparing systems:', error.message);
+            return null;
+        }
+    }
+
+    /**
+     * Calculate metrics for a system based on training logs
+     */
+    calculateSystemMetrics(logs) {
+        if (logs.length === 0) {
+            return {
+                totalInteractions: 0,
+                avgScore: 0,
+                avgLatency: 0,
+                avgResponseLength: 0,
+                avgMessageLength: 0,
+                escalationRate: 0,
+                shareRate: 0
+            };
+        }
+        
+        const withFeedback = logs.filter(log => log.human_score !== undefined);
+        const totalScore = withFeedback.reduce((sum, log) => sum + (log.human_score || 0), 0);
+        const totalLatency = logs.reduce((sum, log) => sum + (log.latency_ms || 0), 0);
+        const totalResponseLength = logs.reduce((sum, log) => sum + (log.response_length || 0), 0);
+        const totalMessageLength = logs.reduce((sum, log) => sum + (log.message_length || 0), 0);
+        const escalatedCount = logs.filter(log => log.escalated === true).length;
+        const sharedCount = logs.filter(log => log.shared === true).length;
+        
+        return {
+            totalInteractions: logs.length,
+            avgScore: withFeedback.length > 0 ? totalScore / withFeedback.length : 0,
+            avgLatency: logs.length > 0 ? totalLatency / logs.length : 0,
+            avgResponseLength: logs.length > 0 ? totalResponseLength / logs.length : 0,
+            avgMessageLength: logs.length > 0 ? totalMessageLength / logs.length : 0,
+            escalationRate: logs.length > 0 ? escalatedCount / logs.length : 0,
+            shareRate: logs.length > 0 ? sharedCount / logs.length : 0
+        };
+    }
+
+    /**
+     * Generate recommendation based on comparison
+     */
+    generateRecommendation(companionMetrics, unifiedMetrics) {
+        const companionScore = companionMetrics.avgScore;
+        const unifiedScore = unifiedMetrics.avgScore;
+        
+        if (Math.abs(companionScore - unifiedScore) < 0.1) {
+            return 'Both systems perform similarly. Consider A/B testing with more data.';
+        }
+        
+        if (companionScore > unifiedScore) {
+            return `Companion system outperforms unified by ${((companionScore - unifiedScore) * 100).toFixed(1)}% average score. Consider promoting Companion to production.`;
+        } else {
+            return `Unified system outperforms Companion by ${((unifiedScore - companionScore) * 100).toFixed(1)}% average score. Continue optimizing Companion or maintain Unified as primary.`;
         }
     }
 
@@ -579,8 +839,16 @@ class FeedbackAnalyzer {
         console.log('Generating AI-powered analysis...');
         const aiAnalysis = await this.generateAIAnalysis(mergedData, stats, negativePatterns, positiveChars);
 
+        // Compare Companion vs Unified systems (if data available)
+        let systemComparison = null;
+        try {
+            systemComparison = await this.compareCompanionVsUnified();
+        } catch (error) {
+            console.warn('[FeedbackAnalyzer] Could not generate system comparison:', error.message);
+        }
+
         // Build report
-        const report = this._buildReport(stats, negativePatterns, positiveChars, aiAnalysis);
+        const report = this._buildReport(stats, negativePatterns, positiveChars, aiAnalysis, systemComparison);
 
         // Save report
         await fs.writeFile(outputPath, report, 'utf8');
@@ -592,7 +860,7 @@ class FeedbackAnalyzer {
     /**
      * Build markdown report
      */
-    _buildReport(stats, negativePatterns, positiveChars, aiAnalysis) {
+    _buildReport(stats, negativePatterns, positiveChars, aiAnalysis, systemComparison = null) {
         const timestamp = new Date().toISOString();
         
         return `# Training Data Analysis Report
@@ -662,6 +930,12 @@ ${aiAnalysis}
 
 ---
 
+${systemComparison ? `## Companion vs Unified System Comparison
+
+${this._formatSystemComparison(systemComparison)}
+
+---` : ''}
+
 ## Recommendations Priority
 
 ${this._generatePriorityRecommendations(stats, negativePatterns)}
@@ -669,6 +943,36 @@ ${this._generatePriorityRecommendations(stats, negativePatterns)}
 ---
 
 *This report is automatically generated by the Feedback Analyzer*
+`;
+    }
+    
+    /**
+     * Format system comparison for report
+     */
+    _formatSystemComparison(comparison) {
+        if (!comparison || !comparison.comparison) {
+            return 'Insufficient data for system comparison.';
+        }
+        
+        const comp = comparison.comparison;
+        const companion = comparison.companion;
+        const unified = comparison.unified;
+        
+        return `
+### Performance Metrics
+
+| Metric | Companion | Unified | Difference |
+|--------|-----------|--------|------------|
+| Average Score | ${companion.avgScore?.toFixed(2) || 'N/A'} | ${unified.avgScore?.toFixed(2) || 'N/A'} | ${comp.avgScoreDifference > 0 ? '+' : ''}${comp.avgScoreDifference?.toFixed(2) || 'N/A'} |
+| Average Latency | ${companion.avgLatency?.toFixed(0) || 'N/A'}ms | ${unified.avgLatency?.toFixed(0) || 'N/A'}ms | ${comp.avgLatencyDifference > 0 ? '+' : ''}${comp.avgLatencyDifference?.toFixed(0) || 'N/A'}ms |
+| Response Length | ${companion.avgResponseLength?.toFixed(0) || 'N/A'} | ${unified.avgResponseLength?.toFixed(0) || 'N/A'} | ${comp.avgResponseLengthDifference > 0 ? '+' : ''}${comp.avgResponseLengthDifference?.toFixed(0) || 'N/A'} |
+| Escalation Rate | ${(companion.escalationRate * 100)?.toFixed(1) || 'N/A'}% | ${(unified.escalationRate * 100)?.toFixed(1) || 'N/A'}% | ${comp.escalationRateDifference > 0 ? '+' : ''}${(comp.escalationRateDifference * 100)?.toFixed(1) || 'N/A'}% |
+
+### Recommendation
+
+**Better System**: ${comp.betterSystem === 'companion' ? '🟢 Companion' : comp.betterSystem === 'unified' ? '🔵 Unified' : '🤝 Tie'}
+
+${comp.recommendation || 'Continue monitoring both systems.'}
 `;
     }
 

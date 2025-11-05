@@ -54,6 +54,7 @@ export class ConversationAnalyzer {
             mediationEffectiveness: this._analyzeMediationEffectiveness(conversationHistory),
             consentManagement: this._analyzeConsentManagement(conversationHistory),
             crossConversationMessaging: this._analyzeCrossConversationMessaging(conversationHistory),
+            futurePlanning: this._analyzeFuturePlanning(conversationHistory),
             
             // Overall Metrics
             engagementQuality: this._assessEngagementQuality(conversationHistory, feedbackHistory),
@@ -227,11 +228,13 @@ export class ConversationAnalyzer {
         const successfulEscalations = escalationEvents.filter(e => e.escalationScore > 0).length;
         const totalEscalations = escalationEvents.length;
         
+        const feedbackLength = Math.max(feedbackHistory.length, 1);
+        
         return {
             totalEscalations: totalEscalations,
             successfulEscalations: successfulEscalations,
-            escalationRate: feedbackHistory.length > 0 ? escalationEvents.length / feedbackHistory.length : 0,
-            effectiveness: totalEscalations > 0 ? successfulEscalations / totalEscalations : 0,
+            escalationRate: feedbackLength > 0 ? escalationEvents.length / feedbackLength : 0,
+            effectiveness: totalEscalations > 0 ? Math.max(0, Math.min(1, successfulEscalations / totalEscalations)) : 0,
             patterns: escalationEvents.map(e => ({
                 turn: e.turn || 0,
                 urgencyLevel: e.urgencyAssessment?.level,
@@ -464,6 +467,65 @@ export class ConversationAnalyzer {
     }
 
     /**
+     * Analyze future planning effectiveness
+     */
+    _analyzeFuturePlanning(conversationHistory) {
+        const planningMetrics = {
+            totalPlans: 0,
+            executedPlans: 0,
+            scheduledMessages: 0,
+            sentMessages: 0,
+            tasks: []
+        };
+        
+        conversationHistory.forEach((message, index) => {
+            const futurePlan = message.futurePlan || message.future_plan;
+            
+            if (futurePlan) {
+                // Count tasks
+                if (futurePlan.tasks && Array.isArray(futurePlan.tasks)) {
+                    planningMetrics.totalPlans += futurePlan.tasks.length;
+                    futurePlan.tasks.forEach(task => {
+                        planningMetrics.tasks.push({
+                            turn: index,
+                            task: task.task,
+                            scheduledTurn: task.scheduled_turn,
+                            type: task.type
+                        });
+                    });
+                }
+                
+                // Count scheduled messages
+                if (futurePlan.scheduled_messages && Array.isArray(futurePlan.scheduled_messages)) {
+                    planningMetrics.scheduledMessages += futurePlan.scheduled_messages.length;
+                }
+            }
+            
+            // Check if future plans were executed in later turns
+            if (index > 0) {
+                const prevPlan = conversationHistory[index - 1]?.futurePlan || conversationHistory[index - 1]?.future_plan;
+                if (prevPlan && prevPlan.tasks) {
+                    prevPlan.tasks.forEach(task => {
+                        if (task.scheduled_turn === index) {
+                            planningMetrics.executedPlans++;
+                        }
+                    });
+                }
+            }
+        });
+        
+        return {
+            totalPlans: planningMetrics.totalPlans,
+            executedPlans: planningMetrics.executedPlans,
+            executionRate: planningMetrics.totalPlans > 0 ? planningMetrics.executedPlans / planningMetrics.totalPlans : 0,
+            scheduledMessages: planningMetrics.scheduledMessages,
+            tasks: planningMetrics.tasks,
+            planningEffectiveness: planningMetrics.totalPlans > 0 ? 
+                (planningMetrics.executedPlans / planningMetrics.totalPlans) : 0
+        };
+    }
+
+    /**
      * Assess overall engagement quality
      */
     _assessEngagementQuality(conversationHistory, feedbackHistory) {
@@ -495,10 +557,14 @@ export class ConversationAnalyzer {
         });
         
         const totalMessages = Math.max(conversationHistory.length, 1);
+        const totalFactorCount = Object.keys(engagementFactors).length;
+        const totalScore = Object.values(engagementFactors).reduce((sum, val) => sum + val, 0);
+        const maxPossible = totalMessages * totalFactorCount;
+        
         return {
-            overallScore: Object.values(engagementFactors).reduce((sum, val) => sum + val, 0) / (totalMessages * 4),
+            overallScore: maxPossible > 0 ? totalScore / maxPossible : 0,
             factors: Object.fromEntries(
-                Object.entries(engagementFactors).map(([key, value]) => [key, value / totalMessages])
+                Object.entries(engagementFactors).map(([key, value]) => [key, totalMessages > 0 ? value / totalMessages : 0])
             )
         };
     }
@@ -541,11 +607,15 @@ export class ConversationAnalyzer {
             }
         });
         
-        const totalMessages = conversationHistory.length;
+        const totalMessages = Math.max(conversationHistory.length, 1);
+        const totalIndicatorCount = Object.keys(trustIndicators).length;
+        const totalScore = Object.values(trustIndicators).reduce((sum, val) => sum + val, 0);
+        const maxPossible = totalMessages * totalIndicatorCount;
+        
         return {
-            overallScore: Object.values(trustIndicators).reduce((sum, val) => sum + val, 0) / (totalMessages * 4),
+            overallScore: maxPossible > 0 ? totalScore / maxPossible : 0,
             indicators: Object.fromEntries(
-                Object.entries(trustIndicators).map(([key, value]) => [key, value / totalMessages])
+                Object.entries(trustIndicators).map(([key, value]) => [key, totalMessages > 0 ? value / totalMessages : 0])
             )
         };
     }
@@ -584,12 +654,15 @@ export class ConversationAnalyzer {
             }
         });
         
+        const historyLength = Math.max(conversationHistory.length, 1);
+        
         return {
-            questionRate: gatheringMetrics.questionsAsked / conversationHistory.length,
+            questionRate: historyLength > 0 ? gatheringMetrics.questionsAsked / historyLength : 0,
             relevanceRate: gatheringMetrics.questionsAsked > 0 ? 
-                gatheringMetrics.relevantQuestions / gatheringMetrics.questionsAsked : 0,
-            informationRate: gatheringMetrics.informationCollected / conversationHistory.length,
-            followUpRate: gatheringMetrics.followUpQuestions / Math.max(conversationHistory.length - 1, 1)
+                Math.max(0, Math.min(1, gatheringMetrics.relevantQuestions / gatheringMetrics.questionsAsked)) : 0,
+            informationRate: historyLength > 0 ? gatheringMetrics.informationCollected / historyLength : 0,
+            followUpRate: Math.max(conversationHistory.length - 1, 1) > 0 ? 
+                gatheringMetrics.followUpQuestions / Math.max(conversationHistory.length - 1, 1) : 0
         };
     }
 
