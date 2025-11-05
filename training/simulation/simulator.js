@@ -189,6 +189,8 @@ export class SimulationDriver {
                 comment TEXT,
                 category TEXT,
                 prompt_version TEXT,
+                prompt_type TEXT,
+                system_used TEXT,
                 timestamp INTEGER NOT NULL,
                 source TEXT DEFAULT 'simulation',
                 goal_adherence_score REAL,
@@ -196,6 +198,15 @@ export class SimulationDriver {
                 goal_conversation_score REAL,
                 critical_failure BOOLEAN DEFAULT 0,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
+            
+            CREATE TABLE IF NOT EXISTS prompt_versions (
+                version TEXT PRIMARY KEY,
+                name TEXT,
+                content TEXT NOT NULL,
+                deployed_at TEXT,
+                performance_score REAL DEFAULT 0,
+                created_at INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS detailed_feedback (
                 report_id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -16,9 +16,10 @@ export class SimulationReporter {
     /**
      * Auto-score feedback and store in database
      */
-    async autoScore(conversationId, userId, circleId, messageId, score, reason, promptVersion = 'simulation_v1.0', goalAssessment = null, modelUsed = null) {
+    async autoScore(conversationId, userId, circleId, messageId, score, reason, promptVersion = 'simulation_v1.0', goalAssessment = null, modelUsed = null, promptType = null, systemUsed = null) {
         const db = this.dbConnection || await getDb();
         
+        // Create table with correct schema
         await db.run(`
             CREATE TABLE IF NOT EXISTS feedback (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -31,12 +32,17 @@ export class SimulationReporter {
                 timestamp INTEGER,
                 source TEXT DEFAULT 'user',
                 prompt_version TEXT,
+                prompt_type TEXT,
+                system_used TEXT,
                 goal_adherence_score REAL,
                 goal_history_score REAL,
                 goal_conversation_score REAL,
                 critical_failure BOOLEAN DEFAULT 0
             )
         `);
+        
+        // Migrate existing table to add missing columns
+        await this._ensureFeedbackSchema(db);
 
         const criticalFailure = score <= -2;
         const goalAdherence = goalAssessment?.adherence || null;
@@ -44,14 +50,16 @@ export class SimulationReporter {
         const goalConversation = goalAssessment?.conversation || null;
 
         await db.run(
-            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source, prompt_version, goal_adherence_score, goal_history_score, goal_conversation_score, critical_failure, model_used, model_version)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?, ?, ?, ?, ?, ?)`,
-            [conversationId, messageId, userId, circleId, score, reason, Date.now(), promptVersion, goalAdherence, goalHistory, goalConversation, criticalFailure, modelUsed, modelUsed]
+            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source, prompt_version, prompt_type, system_used, goal_adherence_score, goal_history_score, goal_conversation_score, critical_failure, model_used, model_version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [conversationId, messageId, userId, circleId, score, reason, Date.now(), promptVersion, promptType, systemUsed, goalAdherence, goalHistory, goalConversation, criticalFailure, modelUsed, modelUsed]
         );
 
         const autoScoredMsg = `[SimulationReporter][Auto-Scored]: Score ${score} - "${reason}"`;
         if (criticalFailure) {
             console.log(chalk.yellowBright(autoScoredMsg) + chalk.red.bold('  🚨 [Critical Failure]'));
+            // Flag the message, not the whole simulation
+            await this.flagMessage(conversationId, messageId, 'critical_failure', reason);
         } else {
             console.log(chalk.yellowBright(autoScoredMsg));
         }
@@ -59,8 +67,76 @@ export class SimulationReporter {
         // Store advice/recommendations if critical failure
         if (criticalFailure) {
             await this.storeAdvice(conversationId, userId, 'improvement', reason, 'high');
-            await this.flagSimulation(conversationId, 'critical_failure', reason);
         }
+    }
+
+    /**
+     * Ensure feedback table has all required columns (migration for existing databases)
+     */
+    async _ensureFeedbackSchema(db) {
+        try {
+            // Check if table exists
+            const tableExists = await db.get(`
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='feedback'
+            `);
+            
+            if (!tableExists) {
+                // Table will be created by CREATE TABLE above
+                return;
+            }
+            
+            // Check existing columns
+            const tableInfo = await db.all(`PRAGMA table_info(feedback)`);
+            const columnNames = tableInfo.map(col => col.name);
+            
+            // Add prompt_type if missing
+            if (!columnNames.includes('prompt_type')) {
+                console.log('[DB Migration] Adding missing "prompt_type" column to feedback table...');
+                await db.run(`ALTER TABLE feedback ADD COLUMN prompt_type TEXT`);
+                console.log('[DB Migration] Successfully added "prompt_type" column');
+            }
+            
+            // Add system_used if missing
+            if (!columnNames.includes('system_used')) {
+                console.log('[DB Migration] Adding missing "system_used" column to feedback table...');
+                await db.run(`ALTER TABLE feedback ADD COLUMN system_used TEXT`);
+                console.log('[DB Migration] Successfully added "system_used" column');
+            }
+            
+            // Add message_id if missing
+            if (!columnNames.includes('message_id')) {
+                console.log('[DB Migration] Adding missing "message_id" column to feedback table...');
+                await db.run(`ALTER TABLE feedback ADD COLUMN message_id INTEGER`);
+                console.log('[DB Migration] Successfully added "message_id" column');
+            }
+        } catch (error) {
+            console.warn('[DB Migration] Error checking feedback schema:', error.message);
+        }
+    }
+
+    /**
+     * Flag a specific message instead of the whole simulation
+     */
+    async flagMessage(conversationId, messageId, flagType, reason) {
+        const db = this.dbConnection || await getDb();
+        
+        await db.run(`
+            CREATE TABLE IF NOT EXISTS flagged_messages (
+                flag_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT,
+                message_id INTEGER,
+                flag_type TEXT,
+                reason TEXT,
+                timestamp INTEGER
+            )
+        `);
+        
+        await db.run(
+            `INSERT INTO flagged_messages (conversation_id, message_id, flag_type, reason, timestamp)
+             VALUES (?, ?, ?, ?, ?)`,
+            [conversationId, messageId, flagType, reason, Date.now()]
+        );
     }
 
     /**

@@ -10,7 +10,7 @@
 
 import { FeedbackAnalyzer } from '../analysis/feedback_analyzer.js';
 import { PromptOptimizer } from '../analysis/prompt_optimizer.js';
-import { ABTest } from '../analysis/ab_test.js';
+import { ThompsonSampling } from './thompson_sampling.js';
 import { trainingDb } from '../core/database_manager.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -95,7 +95,8 @@ export class TrainingPipeline {
                 return;
             }
 
-            // Step 2: Analyze current performance
+            // Step 2: Analyze current performance (uses EXISTING feedback from past simulations)
+            // This generates a report BEFORE running new simulations - it analyzes past data to identify what needs optimization
             console.log('[TrainingPipeline] Analyzing current performance...');
             const performanceAnalysis = await this.feedbackAnalyzer.analyzePerformance();
             
@@ -109,7 +110,15 @@ export class TrainingPipeline {
             }
 
             // Step 4: Generate optimized prompts
+            // MULTI-PROMPT OPTIMIZATION APPROACH:
+            // - The system optimizes MULTIPLE prompts in PARALLEL (not one at a time)
+            // - Each prompt type (unified, doctor_summary, companion_*, etc.) gets its own optimization
+            // - Each optimized prompt is tested independently with Thompson Sampling
+            // - ALL winners are shown (one per prompt type that outperformed baseline)
+            // - This allows simultaneous optimization of different parts of the system
+            // - Use --prompts "all" to optimize all prompts, or --prompts "unified,doctor_summary" for specific ones
             console.log('[TrainingPipeline] Generating optimized prompts...');
+            console.log(`[TrainingPipeline] Optimizing prompts: ${this.optimizePrompts === 'all' ? 'all prompt types' : Array.isArray(this.optimizePrompts) ? this.optimizePrompts.join(', ') : this.optimizePrompts}`);
             let optimizedPrompts = [];
             
             if (this.optimizePrompts === 'unified' || (Array.isArray(this.optimizePrompts) && this.optimizePrompts.includes('unified'))) {
@@ -128,24 +137,67 @@ export class TrainingPipeline {
                 );
                 optimizedPrompts.push(...otherPrompts);
             }
+            
+            console.log(`[TrainingPipeline] Generated ${optimizedPrompts.length} optimized prompt version(s) across ${new Set(optimizedPrompts.map(p => p.type)).size} prompt type(s)`);
 
-            // Step 5: A/B test new prompts
+            // Step 5: Multi-arm bandit testing with Thompson Sampling (replaces A/B testing)
             if (this.skipSimulations) {
-                console.log('[TrainingPipeline] Analyzing existing data for A/B tests (skipping simulations)...');
+                console.log('[TrainingPipeline] Analyzing existing data for multi-arm bandit (skipping simulations)...');
             } else {
-                console.log('[TrainingPipeline] Running A/B tests...');
+                console.log('[TrainingPipeline] Running multi-arm bandit with Thompson Sampling...');
             }
-            const abTestResults = await this.runABTests(optimizedPrompts, this.skipSimulations);
+            const banditResults = await this.runMultiArmBandit(optimizedPrompts, this.skipSimulations);
 
-            // Step 6: Deploy best performing prompt (MANUAL APPROVAL REQUIRED)
-            if (abTestResults.winner) {
-                console.log('\n⚠️  DEPLOYMENT CANDIDATE DETECTED ⚠️');
-                console.log(`Winner: ${abTestResults.winner.version}`);
-                console.log(`Performance: ${abTestResults.winner.testResult?.challengerScore?.toFixed(2) || 'N/A'}`);
-                console.log('\n⚠️  Auto-deployment is DISABLED. Review prompts and deploy manually. ⚠️');
-                console.log(`\nTo deploy, review the prompts and run:`);
-                console.log(`  node cli/train.js deploy --version ${abTestResults.winner.version}`);
-                // await this.deployPromptVersion(abTestResults.winner); // DISABLED - requires manual approval
+            // Step 6: Deploy best performing prompts (MANUAL APPROVAL REQUIRED)
+            // Show ALL winners (one per prompt type tested)
+            const winners = [];
+            if (banditResults.winner) {
+                winners.push(banditResults.winner);
+            }
+            // Also check test results for other prompt types that outperformed baseline
+            for (const test of banditResults.tests || []) {
+                if (test.testResult && test.testResult.score > 0 && test.version !== 'current') {
+                    // Check if this version outperformed baseline
+                    const stats = test.testResult.stats || [];
+                    const baselineStats = stats.find(s => s.version === 'current');
+                    const challengerStats = stats.find(s => s.version === test.version);
+                    if (challengerStats && baselineStats && challengerStats.expectedValue > baselineStats.expectedValue) {
+                        // Only add if not already in winners (avoid duplicates)
+                        if (!winners.find(w => w.version === test.version)) {
+                            winners.push({
+                                ...test,
+                                testResult: {
+                                    score: challengerStats.expectedValue,
+                                    stats: stats
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+            
+            if (winners.length > 0) {
+                console.log('\n⚠️  DEPLOYMENT CANDIDATES DETECTED ⚠️');
+                console.log(`Found ${winners.length} optimized prompt(s) that outperformed baseline:\n`);
+                
+                for (const winner of winners) {
+                    console.log(`📝 ${winner.name || winner.type || 'Unknown Prompt'}:`);
+                    console.log(`   Version: ${winner.version}`);
+                    console.log(`   Performance: ${winner.testResult?.score?.toFixed(2) || 'N/A'}`);
+                    console.log(`   Type: ${winner.type || 'N/A'}`);
+                    console.log(`\n   To view this prompt:`);
+                    console.log(`     node cli/prompts.js show ${winner.version}`);
+                    console.log(`\n   To deploy this prompt:`);
+                    console.log(`     node cli/train.js deploy --version ${winner.version}`);
+                    console.log('');
+                }
+                
+                console.log('⚠️  Auto-deployment is DISABLED. Review prompts and deploy manually. ⚠️');
+                console.log('\n💡 Note: Prompts are stored in the PRODUCTION database (care_circle.db)');
+                console.log('   They can be viewed from any database using: node cli/prompts.js list');
+                // await this.deployPromptVersion(banditResults.winner); // DISABLED - requires manual approval
+            } else {
+                console.log('\n📊 No deployment candidates - all prompts performed similarly or baseline was better');
             }
 
             // Step 7: Update optimization timestamp
@@ -256,13 +308,22 @@ export class TrainingPipeline {
                     });
                     const promptName = `${opportunity.type || 'optimization'} - ${opportunity.description?.substring(0, 40) || 'optimization'} (${timestamp})`;
                     
-                    // Save to database immediately for tracking
+                    // Save to database immediately for tracking (ALWAYS to production DB)
+                    let originalSimMode = process.env.SIMULATION_MODE;
                     try {
+                        // Force use of production database for prompt storage
+                        delete process.env.SIMULATION_MODE; // Temporarily disable simulation mode
+                        
                         const { savePromptVersion } = await import('../../db/index.js');
                         await savePromptVersion(version, optimizedPrompt, promptName, 0);
                         console.log(`[TrainingPipeline] Saved optimized prompt ${version}: ${promptName}`);
                     } catch (error) {
                         console.warn(`[TrainingPipeline] Could not save prompt to DB:`, error.message);
+                    } finally {
+                        // Restore simulation mode if it was set
+                        if (originalSimMode) {
+                            process.env.SIMULATION_MODE = originalSimMode;
+                        }
                     }
                     
                     optimizedPrompts.push({
@@ -281,10 +342,10 @@ export class TrainingPipeline {
     }
 
     /**
-     * Run A/B tests on optimized prompts
+     * Run multi-arm bandit with Thompson Sampling (replaces A/B testing)
      * @param {boolean} skipSimulations - If true, analyze existing data instead of running new simulations
      */
-    async runABTests(optimizedPrompts, skipSimulations = false) {
+    async runMultiArmBandit(optimizedPrompts, skipSimulations = false) {
         if (optimizedPrompts.length === 0) {
             console.log('[TrainingPipeline] No optimized prompts to test');
             return { tests: [], winner: null };
@@ -296,11 +357,11 @@ export class TrainingPipeline {
         };
 
         if (skipSimulations) {
-            // Analyze existing feedback data instead of running simulations
-            console.log('[TrainingPipeline] Skipping simulations - analyzing existing feedback data');
+            // Analyze existing feedback data using Thompson Sampling
+            console.log('[TrainingPipeline] Skipping simulations - analyzing existing feedback data with Thompson Sampling');
             for (const promptData of optimizedPrompts) {
                 try {
-                    const testResult = await this._analyzeExistingDataForABTest('current', promptData.version);
+                    const testResult = await this._analyzeExistingDataForBandit('current', promptData.version);
                     
                     results.tests.push({
                         ...promptData,
@@ -351,39 +412,159 @@ export class TrainingPipeline {
                         }
                     }
                     
-                    console.log(`[TrainingPipeline] Using ${diverseScenarios.length} diverse scenarios for A/B test (from ${scenariosToChooseFrom.length} available, ${allScenarios.length} total)`);
+                    console.log(`[TrainingPipeline] Using ${diverseScenarios.length} diverse scenarios for multi-arm bandit (from ${scenariosToChooseFrom.length} available, ${allScenarios.length} total)`);
                     
-                    const abTest = new ABTest({
-                        baseline: 'current',
-                        challenger: promptData.version,
-                        runs: runsPerVersion,
-                        scenarios: diverseScenarios // Diverse scenarios instead of repeated ones
+                    // Multi-arm bandit with Thompson Sampling
+                    const versions = ['current', promptData.version];
+                    const thompsonSampling = new ThompsonSampling(versions, {
+                        minSamples: runsPerVersion || 2
                     });
                     
-                    const testResult = await abTest.runTest(`Optimization: ${promptData.type}`);
+                    // Run simulations and update Thompson Sampling
+                    const testResult = await this._runThompsonSamplingTest(
+                        thompsonSampling,
+                        versions,
+                        diverseScenarios,
+                        promptData
+                    );
 
                     results.tests.push({
                         ...promptData,
                         testResult
                     });
 
-                    if (testResult.challengerScore > testResult.baselineScore) {
-                        results.winner = promptData;
+                    // Determine winner based on Thompson Sampling statistics
+                    const stats = thompsonSampling.getStatistics();
+                    const bestVersion = stats.sort((a, b) => b.expectedValue - a.expectedValue)[0];
+                    
+                    if (bestVersion.version === promptData.version) {
+                        results.winner = {
+                            ...promptData,
+                            testResult: {
+                                score: bestVersion.expectedValue,
+                                stats: stats
+                            }
+                        };
                     }
                 } catch (error) {
-                    console.warn(`[TrainingPipeline] A/B test failed for ${promptData.type}:`, error.message);
+                    console.warn(`[TrainingPipeline] Multi-arm bandit test failed for ${promptData.type}:`, error.message);
                 }
             }
         }
 
         return results;
     }
+    
+    /**
+     * Run Thompson Sampling test for a prompt
+     * @private
+     */
+    async _runThompsonSamplingTest(thompsonSampling, versions, scenarios, promptData) {
+        const { SimulationDriver } = await import('../simulation/simulator.js');
+        const simulator = new SimulationDriver();
+        
+        const results = {
+            versionResults: {},
+            totalRuns: 0
+        };
+        
+        // Run simulations for each scenario, using Thompson Sampling to select versions
+        for (const scenario of scenarios) {
+            // Select version using Thompson Sampling
+            const selectedVersion = thompsonSampling.selectVersion();
+            
+            // Set prompt version for this simulation
+            const originalEnv = process.env.PROMPT_VERSION;
+            process.env.PROMPT_VERSION = selectedVersion === 'current' ? null : selectedVersion;
+            
+            try {
+                const startTime = Date.now();
+                
+                // Run simulation (scenario is a string key, need to get the scenario config)
+                const { SCENARIOS } = await import('../simulation/scenarios.js');
+                const scenarioConfig = SCENARIOS[scenario];
+                if (!scenarioConfig) {
+                    throw new Error(`Scenario ${scenario} not found`);
+                }
+                
+                await simulator.runScenario(scenarioConfig, scenario);
+                
+                const duration = Date.now() - startTime;
+                
+                // Get score from feedback (simulation stores feedback in database)
+                // Query feedback table for this conversation
+                const db = simulator.db;
+                const feedback = await db.all(`
+                    SELECT score, goal_adherence_score, goal_history_score, goal_conversation_score
+                    FROM feedback
+                    WHERE conversation_id = ? AND (prompt_version = ? OR prompt_version IS NULL)
+                    ORDER BY timestamp DESC
+                    LIMIT 10
+                `, [simulator.conversationId, selectedVersion === 'current' ? null : selectedVersion]);
+                
+                // Calculate average score from feedback
+                const avgScore = feedback.length > 0 
+                    ? feedback.reduce((sum, f) => sum + (f.score || 0), 0) / feedback.length
+                    : 0;
+                
+                // Use weighted score: feedback score + goal scores
+                const weightedScore = avgScore * 0.6 + 
+                    (feedback.length > 0 ? feedback.reduce((sum, f) => 
+                        sum + (f.goal_adherence_score || 0) + (f.goal_history_score || 0) + (f.goal_conversation_score || 0), 0) / feedback.length / 3 : 0) * 0.4;
+                
+                const reward = weightedScore > 0 ? true : false; // Convert to boolean for Thompson Sampling
+                
+                // Update Thompson Sampling
+                thompsonSampling.updateReward(selectedVersion, reward);
+                
+                // Track results
+                if (!results.versionResults[selectedVersion]) {
+                    results.versionResults[selectedVersion] = {
+                        runs: 0,
+                        successes: 0,
+                        totalScore: 0
+                    };
+                }
+                results.versionResults[selectedVersion].runs++;
+                results.versionResults[selectedVersion].totalScore += weightedScore;
+                if (reward) {
+                    results.versionResults[selectedVersion].successes++;
+                }
+                results.totalRuns++;
+                
+            } catch (error) {
+                console.warn(`[TrainingPipeline] Simulation failed for ${scenario}:`, error.message);
+                // Update as failure
+                thompsonSampling.updateReward(selectedVersion, false);
+            } finally {
+                // Restore original prompt version
+                if (originalEnv !== undefined) {
+                    process.env.PROMPT_VERSION = originalEnv;
+                } else {
+                    delete process.env.PROMPT_VERSION;
+                }
+            }
+        }
+        
+        // Calculate final scores
+        const stats = thompsonSampling.getStatistics();
+        const baselineStats = stats.find(s => s.version === 'current');
+        const challengerStats = stats.find(s => s.version === promptData.version);
+        
+        return {
+            baselineScore: baselineStats?.expectedValue || 0,
+            challengerScore: challengerStats?.expectedValue || 0,
+            score: challengerStats?.expectedValue || 0, // For compatibility
+            stats: stats,
+            versionResults: results.versionResults
+        };
+    }
 
     /**
-     * Analyze existing feedback data for A/B test comparison
+     * Analyze existing feedback data for multi-arm bandit comparison
      * Reuses FeedbackAnalyzer to avoid code duplication
      */
-    async _analyzeExistingDataForABTest(baselineVersion, challengerVersion) {
+    async _analyzeExistingDataForBandit(baselineVersion, challengerVersion) {
         // Reuse FeedbackAnalyzer's reward backpropagation method
         const rewardAnalysis = await this.feedbackAnalyzer.calculateRewardBackpropagation();
         

@@ -34,50 +34,13 @@ You are a future planning specialist. Analyze the conversation and create a stra
 - Appointment preparation
 - Behavioral change support
 
-**If future planning is needed**, return a JSON object with:
-{
-  "future_plan": {
-    "tasks": [
-      {
-        "task": "Description",
-        "scheduled_turn": 3,
-        "type": "question|follow_up|reminder|escalation",
-        "trigger_type": "turn"
-      },
-      {
-        "task": "Description",
-        "trigger_type": "duration",
-        "trigger_value": "3 days",
-        "type": "reminder"
-      },
-      {
-        "task": "Description",
-        "trigger_type": "conversation_progress",
-        "trigger_value": "when user agrees to see doctor",
-        "type": "follow_up"
-      }
-    ],
-    "scheduled_messages": [
-      {
-        "message": "Follow-up question",
-        "scheduled_turn": 3,
-        "target_user": "patient",
-        "trigger_type": "turn"
-      },
-      {
-        "message": "Reminder",
-        "trigger_type": "duration",
-        "trigger_value": "1 day",
-        "target_user": "patient"
-      }
-    ]
-  }
-}
+**CRITICAL: Return ONLY valid JSON. Keep it simple. If you need future planning, create 1-2 tasks max. If not needed, return null.**
+
+**If future planning is needed**, return:
+{"future_plan": {"tasks": [{"task": "Description", "scheduled_turn": 3, "type": "question", "trigger_type": "turn"}], "scheduled_messages": [{"message": "Follow-up", "scheduled_turn": 3, "target_user": "patient", "trigger_type": "turn"}]}}
 
 **If no future planning is needed**, return:
-{
-  "future_plan": null
-}
+{"future_plan": null}
 
 **User Message:** "{{MESSAGE}}"
 

@@ -78,12 +78,15 @@ export async function initializeDatabase() {
         CREATE TABLE IF NOT EXISTS feedback (
             feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
             conversation_id TEXT,
+            message_id INTEGER,
             user_id TEXT NOT NULL,
             circle_id TEXT,
             score INTEGER NOT NULL,
             comment TEXT,
             category TEXT,
             prompt_version TEXT,
+            prompt_type TEXT,
+            system_used TEXT,
             timestamp INTEGER NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         );

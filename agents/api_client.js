@@ -168,15 +168,15 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
             if (expectJson) {
                 const parsedResponse = parseJsonResponse(text, attempt, maxRetries);
                 if (parsedResponse) {
+                    // Success - don't log errors if retry succeeded
                     return parsedResponse;
                 }
-                // If parsing failed and we have retries left, continue to retry
+                // If parsing failed and we have retries left, continue to retry (don't log yet)
                 if (attempt < maxRetries) {
-                    console.warn(`[Agent] JSON parsing failed on attempt ${attempt}, retrying...`);
+                    // Suppress log - will only log if all retries fail
                     continue;
                 }
-                // Last attempt failed - return the text as-is so handlers can extract it
-                // Don't wrap in fallback structure - let handlers handle it
+                // Last attempt failed - log only now
                 console.warn(`[Agent] All JSON parsing attempts failed, returning raw text for handler processing`);
                 return { 
                     reply: text, 
@@ -227,7 +227,9 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
 }
 
 function parseJsonResponse(text, attempt, maxRetries) {
-    return parseJsonWithFixes(text, { logErrors: true, attempt });
+    // Only log errors on the final attempt (when all retries will fail)
+    // First error: silent, second attempt success: silent, second attempt failure: log
+    return parseJsonWithFixes(text, { logErrors: attempt === maxRetries, attempt });
 }
 
 function isKeyFailureError(error) {

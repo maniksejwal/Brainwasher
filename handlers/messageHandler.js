@@ -120,7 +120,13 @@ export async function handleMessage(userId, circleId, message) {
         conversationContext.consentGranted = true;
     }
     
-    // Step 4.5: Reschedule future plans if conversation doesn't make sense or commands were run
+    // Step 4.5: Handle care circle probing questions (caregiver/patient cross-questioning)
+    // This doesn't interfere with doctor commands - checks for active doctor delegations first
+    const { handleCaregiverProbing, handlePatientProbingFromCaregiver } = await import('./message_logic/sharing/caregiverProbing.js');
+    await handleCaregiverProbing(userId, memberInfo.role, message, circleId, analysis, currentTurn);
+    await handlePatientProbingFromCaregiver(userId, memberInfo.role, message, circleId, analysis, currentTurn);
+    
+    // Step 4.6: Reschedule future plans if conversation doesn't make sense or commands were run
     // Check if conversation context changed significantly (e.g., /clear, topic shift, user backtracking)
     const shouldReschedule = await checkIfShouldReschedule(userId, circleId, analysis, message);
     if (shouldReschedule.shouldReschedule) {

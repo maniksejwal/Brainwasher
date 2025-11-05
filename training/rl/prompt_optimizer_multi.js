@@ -176,7 +176,8 @@ export class MultiPromptOptimizer {
                     continue;
                 }
 
-                // Get analysis report
+                // Get analysis report (analyzes EXISTING feedback to identify optimization opportunities)
+                // This runs BEFORE new simulations - it uses past data to determine what needs optimization
                 const analysisReport = await this.feedbackAnalyzer.generateReport();
 
                 for (const opportunity of relevantOpportunities) {
@@ -197,13 +198,22 @@ export class MultiPromptOptimizer {
                             });
                             const promptName = `${promptConfig.name} - ${opportunity.type} - ${opportunity.description?.substring(0, 25) || 'optimization'} (${timestamp})`;
                             
-                            // Save to database
+                            // Save to database (ALWAYS to production DB, even in simulation mode)
+                            let originalSimMode = process.env.SIMULATION_MODE;
                             try {
+                                // Force use of production database for prompt storage
+                                delete process.env.SIMULATION_MODE; // Temporarily disable simulation mode
+                                
                                 const { savePromptVersion } = await import('../../db/index.js');
                                 await savePromptVersion(version, optimizedPrompt, promptName, 0);
                                 console.log(`[MultiPromptOptimizer] Saved optimized ${promptConfig.name} ${version}: ${promptName}`);
                             } catch (error) {
                                 console.warn(`[MultiPromptOptimizer] Could not save to DB:`, error.message);
+                            } finally {
+                                // Restore simulation mode if it was set
+                                if (originalSimMode) {
+                                    process.env.SIMULATION_MODE = originalSimMode;
+                                }
                             }
                             
                             optimizedPrompts.push({
@@ -233,19 +243,29 @@ export class MultiPromptOptimizer {
     _determinePromptsToOptimize(opportunities, focusPrompts) {
         const promptsToOptimize = [];
         
-        // Always optimize unified (primary)
-        if (focusPrompts.includes('unified')) {
+        // Always optimize unified (primary) if requested
+        if (focusPrompts.includes('unified') || focusPrompts.includes('all')) {
             promptsToOptimize.push(PROMPT_CONFIGS.unified);
         }
 
-        // Check opportunities for other prompt types
+        // Check opportunities for other prompt types (including Companion prompts)
         for (const [key, config] of Object.entries(PROMPT_CONFIGS)) {
             if (key === 'unified') continue; // Already added
             
-            // Check if any opportunity is relevant to this prompt type
-            const relevant = this._hasRelevantOpportunity(opportunities, config);
-            if (relevant && (focusPrompts.includes('all') || focusPrompts.includes(key))) {
+            // If 'all' is specified, include all prompts (including Companion)
+            if (focusPrompts.includes('all')) {
                 promptsToOptimize.push(config);
+            }
+            // Otherwise check if this specific prompt is requested
+            else if (focusPrompts.includes(key)) {
+                promptsToOptimize.push(config);
+            }
+            // Or check if opportunity is relevant
+            else {
+                const relevant = this._hasRelevantOpportunity(opportunities, config);
+                if (relevant) {
+                    promptsToOptimize.push(config);
+                }
             }
         }
 

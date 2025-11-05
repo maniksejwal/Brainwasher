@@ -6,6 +6,7 @@
 import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { loadPrompt } from '../utils/promptLoader.js';
+import { validateAndAdjustResponse, shouldUseBlankTurn, getBlankTurnResponse } from '../utils/responseStyleValidator.js';
 
 /**
  * Process patient optimization
@@ -27,9 +28,30 @@ export async function processPatientOptimization(userId, role, message, circleId
     const topicShift = historyAnalysis.topicShift ? 'yes' : 'no';
     
     // Format conversation history
-    const conversationHistory = (context.history || []).slice(-5).map(h => 
+    const conversationHistory = (context.history || []).slice(-5);
+    const conversationHistoryText = conversationHistory.map(h => 
         `${h.user_id}: ${h.message}`
     ).join('\n') || 'No recent history';
+    
+    // Check if blank turn should be used
+    if (shouldUseBlankTurn(message, historyAnalysis, conversationHistory)) {
+        return { reply: getBlankTurnResponse() };
+    }
+    
+    // Build repetition guidance and topic shift instructions
+    let repetitionGuidance = '';
+    let topicShiftGuidance = '';
+    if (historyAnalysis.isRepetitive) {
+        repetitionGuidance = 'CRITICAL: Repetition detected in conversation. You MUST change your approach. Provide fresh information, ask different questions, or introduce new angles. Do NOT repeat similar responses.';
+        
+        // TOPIC SHIFTING: When repetition is detected, suggest shifting to a related but different topic
+        topicShiftGuidance = 'TOPIC SHIFT REQUIRED: The conversation has become repetitive. You MUST shift to a related but different topic. Examples:\n' +
+            '- If discussing medication, shift to lifestyle habits or daily routines\n' +
+            '- If discussing symptoms, shift to how they affect daily life or emotional well-being\n' +
+            '- If discussing treatment, shift to support systems or family dynamics\n' +
+            '- If discussing health concerns, shift to prevention or coping strategies\n' +
+            'INTRODUCE THE TOPIC SHIFT NATURALLY: "Speaking of [current topic], I\'m curious about [new topic]..." or "Let\'s also talk about [new topic]..."';
+    }
     
     const prompt = loadPrompt('patient_optimizer', {
         MESSAGE: message,
@@ -37,8 +59,10 @@ export async function processPatientOptimization(userId, role, message, circleId
         CLINICAL_ASSESSMENT: context.clinicalAssessment?.assessment || 'No immediate concerns',
         CRITICALITY: context.clinicalAssessment?.criticality || 'NONE',
         REPETITION_DETECTED: repetitionDetected,
+        REPETITION_GUIDANCE: repetitionGuidance,
+        TOPIC_SHIFT_GUIDANCE: topicShiftGuidance,
         TOPIC_SHIFT: topicShift,
-        CONVERSATION_HISTORY: conversationHistory
+        CONVERSATION_HISTORY: conversationHistoryText
     });
 
     try {
@@ -64,8 +88,27 @@ export async function processPatientOptimization(userId, role, message, circleId
             throw new Error('Failed to parse JSON response');
         }
         
+        // Validate and adjust response style
+        const validation = validateAndAdjustResponse(
+            analysis.reply,
+            message,
+            historyAnalysis,
+            conversationHistory,
+            {
+                allowBlankTurns: false, // Already checked above
+                allowRepetition: false,
+                allowYesNo: false,
+                requireProbing: true
+            }
+        );
+        
+        // If response needs regeneration due to style issues, log it
+        if (validation.needsRegeneration && process.env.DEBUG_COMPANION) {
+            console.warn('[PatientOptimizer] Response style issues detected:', validation.adjustments);
+        }
+        
         return {
-            reply: analysis.reply || null
+            reply: validation.response || analysis.reply || null
         };
     } catch (error) {
         console.error('[PatientOptimizer] Error:', error.message);

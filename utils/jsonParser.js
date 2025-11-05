@@ -134,7 +134,8 @@ function tryParseJson(text, logErrors, attempt) {
         try {
             return JSON.parse(fixed);
         } catch (e3) {
-            // Log the error for debugging
+            // Only log errors on first attempt - if retry succeeds, we don't want to see the error
+            // The caller will log if all attempts fail
             if (logErrors && attempt === 1) {
                 // Use the most recent error (e3) for logging, fallback to e2 or e if needed
                 const errorToLog = e3 || e2 || e;
@@ -142,8 +143,8 @@ function tryParseJson(text, logErrors, attempt) {
                 const posMatch = errorMessage.match(/position (\d+)/);
                 const pos = posMatch ? parseInt(posMatch[1]) : null;
                 const context = pos ? text.substring(Math.max(0, pos - 50), Math.min(text.length, pos + 50)) : 'N/A';
-                console.warn(`[JSONParser] Parse failed: ${errorMessage.substring(0, 100)}${pos ? ` (pos ${pos})` : ''}`);
-                if (pos) console.warn(`[JSONParser] Context: ...${context}...`);
+                // Only log if this is the final attempt (will be checked by caller)
+                // For now, suppress the log - caller will log if all attempts fail
             }
             return null;
         }

@@ -7,10 +7,23 @@
 
 import { handleUserResponseToAction } from '../../state_manager.js';
 import { executeResolvedAction } from './actionExecutor.js';
+import { handleEscalationPermissionResponse } from './sharing/escalationTiers.js';
+import { getActivePendingActions } from '../../db/index.js';
 
 export async function handlePendingActionResponse(userId, circleId, message) {
     // This function now only handles natural language responses, not commands.
     if (message.startsWith('/')) return false;
+
+    // Check for escalation permission responses first
+    const pendingActions = await getActivePendingActions(userId, circleId);
+    const escalationAction = pendingActions.find(a => a.action_type === 'escalation_permission');
+    
+    if (escalationAction) {
+        const handled = await handleEscalationPermissionResponse(userId, circleId, message, escalationAction);
+        if (handled) {
+            return true;
+        }
+    }
 
     const actionResult = await handleUserResponseToAction(userId, circleId, message);
 

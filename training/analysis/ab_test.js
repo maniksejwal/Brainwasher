@@ -547,11 +547,7 @@ ${this._generateRecommendation(comparison)}
         console.log(`    Challenger: ${(comparison.metrics.successRate.challenger * 100).toFixed(1)}%`);
         console.log(`    Change:     ${comparison.metrics.successRate.improvement} ${comparison.metrics.successRate.improvement !== 'N/A' && parseFloat(comparison.metrics.successRate.improvement) > 0 ? '⬆️' : parseFloat(comparison.metrics.successRate.improvement) < 0 ? '⬇️' : ''}`);
         console.log(`    Winner:     ${comparison.metrics.successRate.winner === 'challenger' ? '🟢 Challenger' : comparison.metrics.successRate.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}`);
-        console.log(`\n  Avg Duration (${comparison.metrics.avgDuration.description}):`);
-        console.log(`    Baseline:   ${(baseline.averageDuration / 1000).toFixed(2)}s`);
-        console.log(`    Challenger: ${(challenger.averageDuration / 1000).toFixed(2)}s`);
-        console.log(`    Change:     ${comparison.metrics.avgDuration.improvement} ${comparison.metrics.avgDuration.improvement !== 'N/A' && parseFloat(comparison.metrics.avgDuration.improvement) > 0 ? '⬆️' : parseFloat(comparison.metrics.avgDuration.improvement) < 0 ? '⬇️' : ''}`);
-        console.log(`    Winner:     ${comparison.metrics.avgDuration.winner === 'challenger' ? '🟢 Challenger' : comparison.metrics.avgDuration.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}`);
+        console.log(`\n  Avg Duration (${comparison.metrics.avgDuration.description}): Baseline ${(baseline.averageDuration / 1000).toFixed(2)}s | Challenger ${(challenger.averageDuration / 1000).toFixed(2)}s | Change: ${comparison.metrics.avgDuration.improvement} ${comparison.metrics.avgDuration.improvement !== 'N/A' && parseFloat(comparison.metrics.avgDuration.improvement) > 0 ? '⬆️' : parseFloat(comparison.metrics.avgDuration.improvement) < 0 ? '⬇️' : ''} | Winner: ${comparison.metrics.avgDuration.winner === 'challenger' ? '🟢 Challenger' : comparison.metrics.avgDuration.winner === 'baseline' ? '🔵 Baseline' : '🤝 Tie'}`);
         // Calculate metric wins for display
         const challengerWins = [
             comparison.metrics.successRate.winner === 'challenger',

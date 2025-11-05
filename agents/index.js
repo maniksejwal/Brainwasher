@@ -11,7 +11,9 @@ import {
     generateSharingRequest,
     generateMediatedClarification,
     analyzeRelationship,
-    generateSharingSummaryOrProbe
+    generateSharingSummaryOrProbe,
+    generateCaregiverProbe,
+    generatePatientProbeFromCaregiver
 } from './utilityAgents.js';
 import { matchResponseToAction } from './stateAgent.js';
 
@@ -26,6 +28,8 @@ export {
     generateMediatedClarification,
     analyzeRelationship,
     generateSharingSummaryOrProbe,
+    generateCaregiverProbe,
+    generatePatientProbeFromCaregiver,
     matchResponseToAction
 };
 

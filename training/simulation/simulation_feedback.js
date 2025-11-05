@@ -39,10 +39,15 @@ export class SimulationFeedback {
             
             // 3. Store feedback in database
             if (process.env.SIMULATION_DEBUG === 'true') console.log('[SimulationFeedback] Debug - analysis:', JSON.stringify(analysis, null, 2));
+            
+            // Extract prompt type and system used from agent response
+            const promptType = agentResponse?.promptType || agentResponse?.analysis?.prompt_type || 'unified';
+            const systemUsed = agentResponse?.system_used || agentResponse?.analysis?.system_used || 'unified';
+            
             await this.reporter.autoScore(
                 conversationId, userId, circleId, messageId, 
                 analysis.totalScore, analysis.scores?.[0]?.reason || 'No reason provided', 
-                actualPromptVersion, goalAssessment, agentResponse.modelUsed
+                actualPromptVersion, goalAssessment, agentResponse.modelUsed, promptType, systemUsed
             );
             
             // 4. Store detailed reports for each issue
