@@ -36,7 +36,12 @@ export async function handleMessage(userId, circleId, message) {
         console.log(`[MessageHandler] Doctor '${userId}' is broadcasting a message to circle '${circleId}'.`);
         const members = await getCircleMembers(circleId);
         const targetUserIds = members.map(m => m.user_id).filter(id => id !== userId);
-        const circle = await findCircleByPatientId(circleId);
+        const { findCircleById } = await import('../db/index.js');
+        const circle = await findCircleById(circleId);
+        if (!circle) {
+            console.error(`[MessageHandler] ERROR: Circle '${circleId}' not found.`);
+            return;
+        }
         const patient = await findUserById(circle.primary_patient_id);
 
         await addMessage(circleId, userId, memberInfo.role, message, 'PRIVATE', 'NONE');

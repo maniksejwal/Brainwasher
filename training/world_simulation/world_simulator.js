@@ -22,35 +22,43 @@ import { getPersona } from '../simulation/personas.js';
 
 export class WorldSimulator {
     constructor(options = {}) {
-        this.dbPath = options.dbPath || './care_circle_world_simulation.db';
+        // Use the same simulation database as regular simulations
+        this.dbPath = options.dbPath || './care_circle_simulation.db';
         this.db = null;
         this.worldUsers = []; // Users who exist across multiple circles
         this.circles = []; // Multiple care circles in the world
         this.runId = Date.now();
         this.worldId = `world_${this.runId}`;
+        this.conversationId = `world_${this.runId}`; // Main conversation ID for training pipeline compatibility
+        this.conversationIds = []; // Track all conversation IDs from multiple circles
+        this.scenarioId = null; // Will be set when scenario is selected
         this.logResults = options.logResults !== false;
         this.autoFeedback = options.autoFeedback !== false;
-        this.promptVersion = options.promptVersion || `world_v${Date.now()}`;
+        this.promptVersion = options.promptVersion || process.env.PROMPT_VERSION || `world_v${Date.now()}`;
         this.conversationRunners = new Map(); // Track conversation runners per circle
         this.feedbackCollectors = new Map(); // Track feedback collectors per circle
+        this.progressCallback = options.progressCallback || null;
     }
 
     /**
      * Initialize world simulation database
      */
     async initializeWorldDatabase() {
-        // Use separate database for world simulations
-        // Open directly to avoid conflicts with regular simulation database
+        // Use the same simulation database as regular simulations
+        // This allows feedback from world simulations to be included in training analysis
         this.db = await open({
             filename: this.dbPath,
             driver: sqlite3.Database
         });
+        
+        // Disable foreign key constraints temporarily during setup
+        // We'll re-enable them after all data is created
+        await this.db.run('PRAGMA foreign_keys = OFF');
 
         // Create standard tables (required by ConversationRunner and SimulationAI)
         // Also create world-specific tables for tracking
         await this.db.exec(`
             PRAGMA journal_mode = WAL;
-            PRAGMA foreign_keys = ON;
             
             -- Standard tables (required by ConversationRunner/SimulationAI)
             CREATE TABLE IF NOT EXISTS users ( 
@@ -94,6 +102,14 @@ export class WorldSimulator {
                 value TEXT, 
                 timestamp INTEGER NOT NULL, 
                 UNIQUE(fact_key, circle_id, reported_by) 
+            );
+            CREATE TABLE IF NOT EXISTS fact_history ( 
+                history_id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                fact_key TEXT NOT NULL, 
+                circle_id TEXT NOT NULL, 
+                reported_by TEXT NOT NULL, 
+                value TEXT, 
+                timestamp INTEGER NOT NULL 
             );
             CREATE TABLE IF NOT EXISTS escalations ( 
                 escalation_id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -169,6 +185,15 @@ export class WorldSimulator {
                 model_version TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             );
+            CREATE TABLE IF NOT EXISTS advice (
+                advice_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                advice_type TEXT NOT NULL,
+                advice_text TEXT NOT NULL,
+                priority TEXT DEFAULT 'medium',
+                timestamp INTEGER NOT NULL
+            );
             
             -- World-specific tracking tables (for analysis and multi-circle tracking)
             CREATE TABLE IF NOT EXISTS world_users (
@@ -235,10 +260,24 @@ export class WorldSimulator {
         for (const config of circleConfigs) {
             const worldCircleId = `${config.name}_world_${this.runId}`;
             
-            // Find the actual user ID (may be prefixed with world_)
-            const patientUser = this.worldUsers.find(u => u.worldUserId === config.primaryPatientId || 
-                                                         u.username === config.primaryPatientId);
-            const patientId = patientUser ? patientUser.worldUserId : config.primaryPatientId;
+            // Find the actual user ID (may be prefixed with world_ or just username)
+            // Try exact match first, then username match, then prefix match
+            let patientUser = this.worldUsers.find(u => u.worldUserId === config.primaryPatientId);
+            if (!patientUser) {
+                patientUser = this.worldUsers.find(u => u.username === config.primaryPatientId || 
+                                                         u.username === config.primaryPatientId.replace('_world_', ''));
+            }
+            if (!patientUser && config.primaryPatientId.includes('_world_')) {
+                // Try matching by username prefix (e.g., 'alice_world_' matches 'alice')
+                const usernamePrefix = config.primaryPatientId.split('_world_')[0];
+                patientUser = this.worldUsers.find(u => u.username === usernamePrefix);
+            }
+            
+            if (!patientUser) {
+                throw new Error(`Primary patient not found for circle ${config.name}. Looking for: ${config.primaryPatientId}, Available users: ${this.worldUsers.map(u => u.username).join(', ')}`);
+            }
+            
+            const patientId = patientUser.worldUserId;
             
             // Create in world_circles table (for tracking)
             await this.db.run(
@@ -268,10 +307,30 @@ export class WorldSimulator {
     async addMembersToCircles() {
         for (const user of this.worldUsers) {
             for (const circleConfig of user.circles) {
-                // Find the actual circle ID
-                const circle = this.circles.find(c => c.worldCircleId === circleConfig.circleId || 
-                                                      c.name === circleConfig.circleId);
-                const circleId = circle ? circle.worldCircleId : circleConfig.circleId;
+                // Find the actual circle ID - match by circleId from scenario (e.g., 'alice_circle')
+                // to circle name (e.g., 'Alice Circle') to worldCircleId
+                const circle = this.circles.find(c => {
+                    // Try exact match first
+                    if (c.worldCircleId === circleConfig.circleId) return true;
+                    // Try matching by name
+                    const circleNameNormalized = c.name.toLowerCase().replace(/\s+/g, '_');
+                    if (circleConfig.circleId === circleNameNormalized) return true;
+                    // Try matching by removing 'Circle' suffix
+                    const nameWithoutCircle = c.name.replace(/\s+Circle/i, '').toLowerCase();
+                    if (circleConfig.circleId === `${nameWithoutCircle}_circle` || circleConfig.circleId === nameWithoutCircle) return true;
+                    // Try reverse matching
+                    const circleIdBase = circleConfig.circleId.replace('_circle', '').replace('Circle', '');
+                    if (c.name.toLowerCase().includes(circleIdBase)) return true;
+                    return false;
+                });
+                
+                if (!circle) {
+                    console.warn(`[WorldSimulator] Circle not found for user ${user.username}, circleId: ${circleConfig.circleId}`);
+                    console.warn(`[WorldSimulator] Available circles: ${this.circles.map(c => c.name).join(', ')}`);
+                    continue;
+                }
+                
+                const circleId = circle.worldCircleId;
                 
                 // Add to world_circle_members (for tracking)
                 await this.db.run(
@@ -293,7 +352,70 @@ export class WorldSimulator {
     }
 
     /**
-     * Run a world scenario with role inversions
+     * Set scenario (for training pipeline compatibility)
+     */
+    setScenario(scenarioKey) {
+        this.scenarioId = scenarioKey;
+        this.conversationId = `world_${this.runId}_${scenarioKey}`;
+    }
+
+    /**
+     * Run scenario (matching SimulationDriver interface for training pipeline)
+     * This allows world scenarios to be used in training iterations
+     */
+    async runScenario(scenarioConfig, scenarioKey) {
+        // Set scenario ID and update conversation ID
+        this.setScenario(scenarioKey);
+        
+        // Update prompt version from environment if set
+        if (process.env.PROMPT_VERSION) {
+            this.promptVersion = process.env.PROMPT_VERSION;
+        }
+        
+        // Emit progress events if callback provided
+        const emitProgress = (step, description, details, extraData) => {
+            if (this.progressCallback) {
+                this.progressCallback({ 
+                    step, 
+                    description, 
+                    details: extraData || details,
+                    ...(extraData && { originalDetails: details })
+                });
+            }
+        };
+
+        try {
+            // Initialize
+            emitProgress(1, 'Initializing world simulation database...', 'Setting up multi-circle environment');
+            await this.initializeWorldDatabase();
+            
+            // Create world users
+            emitProgress(2, 'Creating world users...', `Setting up ${scenarioConfig.users.length} users across multiple circles`);
+            await this.createWorldUsers(scenarioConfig.users);
+            
+            // Create world circles
+            emitProgress(3, 'Setting up care circles...', `Creating ${scenarioConfig.circles.length} interconnected circles`);
+            await this.createWorldCircles(scenarioConfig.circles);
+            
+            // Add members to circles
+            await this.addMembersToCircles();
+            
+            // Re-enable foreign key constraints after all data is created
+            await this.db.run('PRAGMA foreign_keys = ON');
+
+            // Run conversations across circles
+            emitProgress(4, 'Starting world conversations...', `Running conversations across ${scenarioConfig.circles.length} circles`);
+            await this.runWorldConversations(scenarioConfig);
+            
+            console.log(`\n✅ WORLD SIMULATION COMPLETE: ${scenarioConfig.name || scenarioKey}`);
+        } catch (error) {
+            console.error(`[WorldSimulator] Error running scenario: ${error.message}`);
+            throw error;
+        }
+    }
+
+    /**
+     * Run a world scenario with role inversions (original method, kept for backward compatibility)
      */
     async runWorldScenario(scenarioKey) {
         const scenario = WORLD_SCENARIOS[scenarioKey];
@@ -301,26 +423,8 @@ export class WorldSimulator {
             throw new Error(`World scenario '${scenarioKey}' not found`);
         }
 
-        console.log(`\n🌍 WORLD SIMULATION: ${scenario.name}`);
-        console.log(`📋 Description: ${scenario.description}`);
-        console.log(`👥 Users: ${scenario.users.length} | 🔄 Turns: ${scenario.turns}\n`);
-
-        // Initialize world database
-        await this.initializeWorldDatabase();
-        
-        // Create world users
-        await this.createWorldUsers(scenario.users);
-        
-        // Create world circles
-        await this.createWorldCircles(scenario.circles);
-        
-        // Add members to circles
-        await this.addMembersToCircles();
-
-        // Run conversations across circles
-        await this.runWorldConversations(scenario);
-
-        console.log(`\n✅ WORLD SIMULATION COMPLETE: ${scenario.name}`);
+        // Use runScenario for consistency
+        await this.runScenario(scenario, scenarioKey);
     }
 
     /**
@@ -328,7 +432,7 @@ export class WorldSimulator {
      * Updated to use ConversationRunner for realistic conversations
      */
     async runWorldConversations(scenario) {
-        // Set SIMULATION_MODE to ensure proper behavior
+        // Set SIMULATION_MODE to ensure handlers use the simulation database
         process.env.SIMULATION_MODE = 'true';
         
         // For each circle, run a proper conversation using ConversationRunner
@@ -336,8 +440,24 @@ export class WorldSimulator {
             console.log(`\n🌍 Starting conversation for circle: ${circle.name}`);
             
             // Find all users in this circle
+            // Match by circleId from scenario (e.g., 'alice_circle') or by worldCircleId
+            // The scenario defines circleId like 'alice_circle', but we create circles with names like 'Alice Circle'
+            // We need to match: 'alice_circle' -> 'Alice Circle' -> worldCircleId
             const circleUsers = this.worldUsers.filter(u => 
-                u.circles.some(c => c.circleId === circle.worldCircleId)
+                u.circles.some(c => {
+                    // Try exact match with worldCircleId first
+                    if (c.circleId === circle.worldCircleId) return true;
+                    // Try matching by name - convert 'Alice Circle' to 'alice_circle'
+                    const circleNameNormalized = circle.name.toLowerCase().replace(/\s+/g, '_');
+                    if (c.circleId === circleNameNormalized) return true;
+                    // Try matching by removing 'Circle' suffix (e.g., 'Alice Circle' -> 'alice')
+                    const nameWithoutCircle = circle.name.replace(/\s+Circle/i, '').toLowerCase();
+                    if (c.circleId === `${nameWithoutCircle}_circle` || c.circleId === nameWithoutCircle) return true;
+                    // Also try reverse: if circleId is 'alice_circle', check if circle name contains 'alice'
+                    const circleIdBase = c.circleId.replace('_circle', '').replace('Circle', '');
+                    if (circle.name.toLowerCase().includes(circleIdBase)) return true;
+                    return false;
+                })
             );
             
             if (circleUsers.length === 0) {
@@ -348,7 +468,21 @@ export class WorldSimulator {
             // Create SyntheticUser objects for this circle
             const syntheticUsers = [];
             for (const worldUser of circleUsers) {
-                const userCircleConfig = worldUser.circles.find(c => c.circleId === circle.worldCircleId);
+                // Find the user's circle config - use the same matching logic
+                const userCircleConfig = worldUser.circles.find(c => {
+                    // Try exact match with worldCircleId first
+                    if (c.circleId === circle.worldCircleId) return true;
+                    // Try matching by name - convert 'Alice Circle' to 'alice_circle'
+                    const circleNameNormalized = circle.name.toLowerCase().replace(/\s+/g, '_');
+                    if (c.circleId === circleNameNormalized) return true;
+                    // Try matching by removing 'Circle' suffix (e.g., 'Alice Circle' -> 'alice')
+                    const nameWithoutCircle = circle.name.replace(/\s+Circle/i, '').toLowerCase();
+                    if (c.circleId === `${nameWithoutCircle}_circle` || c.circleId === nameWithoutCircle) return true;
+                    // Also try reverse: if circleId is 'alice_circle', check if circle name contains 'alice'
+                    const circleIdBase = c.circleId.replace('_circle', '').replace('Circle', '');
+                    if (circle.name.toLowerCase().includes(circleIdBase)) return true;
+                    return false;
+                });
                 if (!userCircleConfig) continue;
                 
                 // Get persona data - try to find matching persona in regular personas
@@ -386,14 +520,21 @@ export class WorldSimulator {
             }
             
             // Create conversation runner for this circle
-            const conversationId = `${this.worldId}_${circle.worldCircleId}`;
+            // Use circle.worldCircleId directly as conversationId to match the circle users belong to
+            const conversationId = circle.worldCircleId;
+            this.conversationIds.push(conversationId); // Track for training pipeline
+            
             const runner = new ConversationRunner(
                 this.db,
                 conversationId,
                 this.autoFeedback,
                 this.logResults,
-                { scenario: scenario.name, scenarioKey: scenario.key },
-                this.promptVersion
+                { 
+                    scenario: scenario.name || scenario.key, 
+                    scenarioKey: scenario.key || this.scenarioId,
+                    isWorld: true // Mark as world simulation
+                },
+                this.promptVersion // Pass prompt version for feedback tracking
             );
             
             // Run conversation based on number of users
@@ -432,7 +573,11 @@ export class WorldSimulator {
         this.feedbackCollectors.clear();
         
         if (this.db) {
-            await this.db.close();
+            try {
+                await this.db.close();
+            } catch (error) {
+                console.warn(`[WorldSimulator] Error closing database: ${error.message}`);
+            }
         }
     }
 }

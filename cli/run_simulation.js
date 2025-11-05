@@ -439,6 +439,13 @@ async function runWorldSimulation(selectedScenario, turnsOverride) {
     } finally {
         await worldSim.cleanup();
         delete process.env.SIMULATION_MODE;
+        
+        // Exit if skipFeedback flag is set (non-interactive mode)
+        const args = process.argv.slice(2);
+        if (args.includes('--skip-feedback')) {
+            // Force immediate exit
+            process.exit(0);
+        }
     }
 }
 

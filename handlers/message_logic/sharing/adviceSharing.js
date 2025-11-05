@@ -29,7 +29,10 @@ export async function handleAdviceSharing(userId, circleId, analysis) {
 
     console.log(`[AdviceSharing] Detected advice from '${userId}' for '${targetMember.username}'. Mediating.`);
     const currentUser = await findUserById(userId);
-    const patient = await findUserById((await findCircleByPatientId(circleId)).primary_patient_id);
+    const { findCircleById } = await import('../../../db/index.js');
+    const circle = await findCircleById(circleId);
+    if (!circle) return null;
+    const patient = await findUserById(circle.primary_patient_id);
 
     // Generate a natural language message for the target user's agent to deliver.
     const contextualMessage = await generateSharingSummaryOrProbe(currentUser.username, targetMember.username, analysis.sharingSuggestion.content_to_share);

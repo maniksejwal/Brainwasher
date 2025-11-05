@@ -456,20 +456,46 @@ export class TrainingPipeline {
     }
     
     /**
+     * Get scenario config from appropriate source (world or regular)
+     * Returns both the config and whether it's a world scenario
+     * @private
+     */
+    async _getScenarioConfig(scenarioKey) {
+        const { WORLD_SCENARIOS } = await import('../world_simulation/world_scenarios.js');
+        const { SCENARIOS } = await import('../simulation/scenarios.js');
+        
+        // Check world scenarios first
+        if (WORLD_SCENARIOS[scenarioKey]) {
+            return { config: WORLD_SCENARIOS[scenarioKey], isWorld: true };
+        }
+        
+        // Check regular scenarios
+        if (SCENARIOS[scenarioKey]) {
+            return { config: SCENARIOS[scenarioKey], isWorld: false };
+        }
+        
+        throw new Error(`Scenario ${scenarioKey} not found in WORLD_SCENARIOS or SCENARIOS`);
+    }
+
+    /**
      * Run Thompson Sampling test for a prompt
      * @private
      */
     async _runThompsonSamplingTest(thompsonSampling, versions, scenarios, promptData) {
-        const { SimulationDriver } = await import('../simulation/simulator.js');
-        const simulator = new SimulationDriver();
-        
         const results = {
             versionResults: {},
             totalRuns: 0
         };
         
+        // Set simulation mode for all simulations
+        const originalSimulationMode = process.env.SIMULATION_MODE;
+        process.env.SIMULATION_MODE = 'true';
+        
         // Run simulations for each scenario, using Thompson Sampling to select versions
         for (const scenario of scenarios) {
+            // Get scenario config and type
+            const { config: scenarioConfig, isWorld: isWorldScenario } = await this._getScenarioConfig(scenario);
+            
             // Select version using Thompson Sampling
             const selectedVersion = thompsonSampling.selectVersion();
             
@@ -477,15 +503,18 @@ export class TrainingPipeline {
             const originalEnv = process.env.PROMPT_VERSION;
             process.env.PROMPT_VERSION = selectedVersion === 'current' ? null : selectedVersion;
             
+            // Create appropriate simulator for this scenario
+            let simulator;
+            if (isWorldScenario) {
+                const { WorldSimulator } = await import('../world_simulation/world_simulator.js');
+                simulator = new WorldSimulator();
+            } else {
+                const { SimulationDriver } = await import('../simulation/simulator.js');
+                simulator = new SimulationDriver();
+            }
+            
             try {
                 const startTime = Date.now();
-                
-                // Run simulation (scenario is a string key, need to get the scenario config)
-                const { SCENARIOS } = await import('../simulation/scenarios.js');
-                const scenarioConfig = SCENARIOS[scenario];
-                if (!scenarioConfig) {
-                    throw new Error(`Scenario ${scenario} not found`);
-                }
                 
                 await simulator.runScenario(scenarioConfig, scenario);
                 
@@ -494,13 +523,24 @@ export class TrainingPipeline {
                 // Get score from feedback (simulation stores feedback in database)
                 // Query feedback table for this conversation
                 const db = simulator.db;
+                
+                // For world simulations, we need to query all conversation IDs
+                let conversationIds = [simulator.conversationId];
+                if (simulator.conversationIds && simulator.conversationIds.length > 0) {
+                    // World simulation has multiple circles = multiple conversation IDs
+                    conversationIds = simulator.conversationIds;
+                }
+                
+                // Query feedback for all conversation IDs in this simulation
+                const placeholders = conversationIds.map(() => '?').join(',');
                 const feedback = await db.all(`
                     SELECT score, goal_adherence_score, goal_history_score, goal_conversation_score
                     FROM feedback
-                    WHERE conversation_id = ? AND (prompt_version = ? OR prompt_version IS NULL)
+                    WHERE conversation_id IN (${placeholders}) 
+                    AND (prompt_version = ? OR prompt_version IS NULL)
                     ORDER BY timestamp DESC
-                    LIMIT 10
-                `, [simulator.conversationId, selectedVersion === 'current' ? null : selectedVersion]);
+                    LIMIT 50
+                `, [...conversationIds, selectedVersion === 'current' ? null : selectedVersion]);
                 
                 // Calculate average score from feedback
                 const avgScore = feedback.length > 0 
@@ -532,6 +572,11 @@ export class TrainingPipeline {
                 }
                 results.totalRuns++;
                 
+                // Cleanup simulator
+                if (simulator.cleanup) {
+                    await simulator.cleanup();
+                }
+                
             } catch (error) {
                 console.warn(`[TrainingPipeline] Simulation failed for ${scenario}:`, error.message);
                 // Update as failure
@@ -544,6 +589,13 @@ export class TrainingPipeline {
                     delete process.env.PROMPT_VERSION;
                 }
             }
+        }
+        
+        // Restore original simulation mode
+        if (originalSimulationMode !== undefined) {
+            process.env.SIMULATION_MODE = originalSimulationMode;
+        } else {
+            delete process.env.SIMULATION_MODE;
         }
         
         // Calculate final scores

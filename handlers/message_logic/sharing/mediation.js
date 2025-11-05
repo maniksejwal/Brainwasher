@@ -21,7 +21,10 @@ export async function handleMediationRequest(userId, circleId, analysis) {
 
     const members = await getCircleMembers(circleId);
     const currentUser = await findUserById(userId);
-    const patient = await findUserById((await findCircleByPatientId(circleId)).primary_patient_id);
+    const { findCircleById } = await import('../../../db/index.js');
+    const circle = await findCircleById(circleId);
+    if (!circle) return null;
+    const patient = await findUserById(circle.primary_patient_id);
     
     const targetUsername = analysis.sharingSuggestion.target;
     const targetMember = members.find(m => m.username.toLowerCase() === targetUsername.toLowerCase());

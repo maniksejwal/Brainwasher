@@ -6,6 +6,7 @@ let currentDbPath = null;
 
 // This function manages the singleton database connection.
 export async function getDb() {
+    // Use simulation database when in simulation mode (for both regular and world simulations)
     const dbPath = process.env.SIMULATION_MODE === 'true' 
         ? './care_circle_simulation.db' 
         : './care_circle.db';

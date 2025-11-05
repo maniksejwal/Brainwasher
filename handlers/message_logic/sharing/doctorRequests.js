@@ -19,7 +19,10 @@ export async function handleDoctorRequest(userId, circleId, analysis) {
     }
 
     const currentUser = await findUserById(userId);
-    const patient = await findUserById((await findCircleByPatientId(circleId)).primary_patient_id);
+    const { findCircleById } = await import('../../../db/index.js');
+    const circle = await findCircleById(circleId);
+    if (!circle) return null;
+    const patient = await findUserById(circle.primary_patient_id);
     
     console.log(`[DoctorRequest] User '${currentUser.username}' requesting doctor consultation`);
 

@@ -38,19 +38,35 @@ export class SimulationAI {
 
         try {
             // Determine circle ID from context
-            let circleId = userId; // Default to user ID for single-user scenarios
+            // Use explicit circleId if provided, otherwise infer from context
+            let circleId = multiUserContext?.circleId;
             
-            if (multiUserContext) {
-                const { patientUser } = multiUserContext;
-                circleId = patientUser?.userId || userId;
+            if (!circleId) {
+                // Fallback to inferring from context
+                circleId = userId; // Default to user ID for single-user scenarios
+                
+                if (multiUserContext) {
+                    const { patientUser } = multiUserContext;
+                    circleId = patientUser?.userId || userId;
+                }
             }
             
             console.log(`[SimulationAI] Calling system: ${userId} -> ${circleId}`);
             
             // Check if this is a command - handle separately for simulations
             if (message.startsWith('/')) {
-                const { getMemberInfo } = await import('../../db/index.js');
-                const memberInfo = await getMemberInfo(userId, circleId);
+                // Use simulation database if available, otherwise fall back to production
+                let memberInfo;
+                if (this.simulationDb) {
+                    memberInfo = await this.simulationDb.get(
+                        'SELECT * FROM care_circle_members WHERE user_id = ? AND circle_id = ?',
+                        [userId, circleId]
+                    );
+                } else {
+                    const { getMemberInfo } = await import('../../db/index.js');
+                    memberInfo = await getMemberInfo(userId, circleId);
+                }
+                
                 if (!memberInfo) {
                     throw new Error(`User ${userId} is not a member of circle ${circleId}`);
                 }
@@ -78,8 +94,19 @@ export class SimulationAI {
             await new Promise(resolve => setTimeout(resolve, 100));
             
             // Get user role from database
-            const { getMemberInfo } = await import('../../db/index.js');
-            const memberInfo = await getMemberInfo(userId, circleId);
+            // Use simulation database if available, otherwise fall back to production
+            let memberInfo;
+            if (this.simulationDb) {
+                // Query simulation database directly
+                memberInfo = await this.simulationDb.get(
+                    'SELECT * FROM care_circle_members WHERE user_id = ? AND circle_id = ?',
+                    [userId, circleId]
+                );
+            } else {
+                const { getMemberInfo } = await import('../../db/index.js');
+                memberInfo = await getMemberInfo(userId, circleId);
+            }
+            
             if (!memberInfo) {
                 throw new Error(`User ${userId} is not a member of circle ${circleId}`);
             }

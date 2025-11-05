@@ -10,7 +10,8 @@ import {
     addMessage, 
     updateUserState, 
     findUserById, 
-    findCircleByPatientId, 
+    findCircleByPatientId,
+    findCircleById, 
     addEscalation,
     getRecentMessages,
     getUserState,
@@ -76,8 +77,8 @@ async function performCompanionAnalysis(userId, role, message, circleId) {
     const factHistory = await getFactHistory(circleId, 'all', 10);
     const recentEscalations = await getUnreadEscalationsForCircle(circleId);
     const speaker = await findUserById(userId);
-    const circle = await findCircleByPatientId(circleId);
-    const patient = await findUserById(circle?.primary_patient_id);
+    const circle = await findCircleById(circleId);
+    const patient = circle ? await findUserById(circle.primary_patient_id) : null;
     
     const behavioralModels = {
         stages_of_change: STAGES_OF_CHANGE,
@@ -191,8 +192,13 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         details: 'Storing message and analysis'
     });
     
-    const currentCircle = await findCircleByPatientId(circleId);
-    const patientUsername = (await findUserById(currentCircle.primary_patient_id)).username;
+    const currentCircle = await findCircleById(circleId);
+    if (!currentCircle) {
+        console.warn(`[AIAnalysisHandler] Circle not found: ${circleId}`);
+        return null;
+    }
+    const patient = await findUserById(currentCircle.primary_patient_id);
+    const patientUsername = patient ? patient.username : 'unknown';
 
     // Persist the original message to the database with the *final, enriched* analysis.
     // Add safety defaults to prevent database constraint errors

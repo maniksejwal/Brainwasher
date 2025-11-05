@@ -22,6 +22,11 @@ export async function findCircleByPatientId(patientId) {
     return db.get('SELECT * FROM care_circles WHERE primary_patient_id = ?', [patientId]);
 }
 
+export async function findCircleById(circleId) {
+    const db = await getDb();
+    return db.get('SELECT * FROM care_circles WHERE circle_id = ?', [circleId]);
+}
+
 export async function findCircleByPatientUsername(patientUsername) {
     const db = await getDb();
     const patient = await findUserByUsername(patientUsername);
