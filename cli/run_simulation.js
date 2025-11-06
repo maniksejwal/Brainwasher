@@ -15,8 +15,7 @@
 import { SimulationDriver } from '../training/simulation/simulator.js';
 import { WorldSimulator } from '../training/world_simulation/world_simulator.js';
 import { PERSONAS } from '../training/simulation/personas.js';
-import { SCENARIOS, getRandomScenario } from '../training/simulation/scenarios.js';
-import { WORLD_SCENARIOS, getRandomWorldScenario } from '../training/world_simulation/world_scenarios.js';
+import { SCENARIOS, getRandomScenario, isWorldScenario as isWorldScenarioHelper, getWorldScenarios } from '../training/simulation/scenarios.js';
 import { getScenarioCategories, displayScenariosByCategory, displayPersonasByCategory } from '../training/simulation/scenario_categories.js';
 import { displayWorldScenariosByCategory } from '../training/world_simulation/world_scenarios.js';
 import { getDb } from '../db/connection.js';
@@ -139,24 +138,16 @@ async function runSimulation() {
         console.log(chalk.green(`🎲 Random scenario selected: ${selectedScenario.name}`));
         isWorldScenario = false;
     } else {
-        // Check both regular and world scenarios
+        // Check unified SCENARIOS
         if (SCENARIOS[scenarioKey]) {
-            selectedScenario = { key: scenarioKey, ...SCENARIOS[scenarioKey], isWorld: false };
-            isWorldScenario = false;
-        } else if (WORLD_SCENARIOS[scenarioKey]) {
-            selectedScenario = { ...WORLD_SCENARIOS[scenarioKey], isWorld: true };
-            isWorldScenario = true;
+            selectedScenario = { key: scenarioKey, ...SCENARIOS[scenarioKey] };
+            isWorldScenario = isWorldScenarioHelper(selectedScenario);
+            selectedScenario.isWorld = isWorldScenario;
         } else {
             console.error(chalk.red(`❌ Scenario '${scenarioKey}' not found. Use --list to see available scenarios.`));
             process.exit(1);
         }
         console.log(chalk.green(`🎯 Scenario from CLI: ${selectedScenario.name}${isWorldScenario ? ' (World Simulation)' : ''}`));
-    }
-    
-    // Auto-detect world scenario if not explicitly set
-    if (!isWorldScenario && checkIsWorldScenario(selectedScenario)) {
-        isWorldScenario = true;
-        selectedScenario.isWorld = true;
     }
     
     // Route to appropriate simulator
@@ -349,9 +340,9 @@ async function runSimulation() {
 /**
  * Check if scenario is a world scenario (has circles array and users with circles property)
  */
+// Legacy function - kept for backward compatibility, but now uses unified helper
 function checkIsWorldScenario(scenario) {
-    return scenario && Array.isArray(scenario.circles) && 
-           scenario.users && scenario.users.some(u => Array.isArray(u.circles));
+    return isWorldScenarioHelper(scenario);
 }
 
 /**

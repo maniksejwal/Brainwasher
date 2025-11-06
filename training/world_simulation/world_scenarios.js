@@ -1,9 +1,13 @@
 /**
  * @fileoverview World Simulation Scenarios
  * Multi-care circle scenarios with role inversions and complex family dynamics
+ * 
+ * NOTE: World scenarios are now part of the unified SCENARIOS in scenarios/index.js
+ * This file exports the definitions and provides backward-compatibility exports.
  */
 
-export const WORLD_SCENARIOS = {
+// World scenario definitions (imported by scenarios/index.js)
+export const WORLD_SCENARIOS_DEFINITIONS = {
     // ========== ROLE INVERSION SCENARIOS ==========
     patient_caregiver_swap: {
         key: 'patient_caregiver_swap',
@@ -230,6 +234,10 @@ export const WORLD_SCENARIOS = {
         }
     }
 };
+
+// Backward-compatibility export: WORLD_SCENARIOS is just an alias for WORLD_SCENARIOS_DEFINITIONS
+// (World scenarios are merged into unified SCENARIOS in scenarios/index.js)
+export const WORLD_SCENARIOS = WORLD_SCENARIOS_DEFINITIONS;
 
 /**
  * Get world scenarios by category

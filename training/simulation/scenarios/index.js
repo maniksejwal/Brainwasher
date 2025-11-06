@@ -28,8 +28,10 @@ import { PSYCHOLOGY_SCENARIOS } from './psychology_scenarios.js';
 import { LIFESTYLE_SCENARIOS } from './lifestyle_scenarios.js';
 import { BEHAVIOR_CHANGE_SCENARIOS } from './behavior_change_scenarios.js';
 import { HOSPITAL_SCENARIOS } from '../hospital_scenarios.js';
+// Import world scenario definitions directly to avoid circular dependency
+import { WORLD_SCENARIOS_DEFINITIONS } from '../../world_simulation/world_scenarios.js';
 
-// Export all scenarios as a single merged object
+// Export all scenarios as a single merged object (regular + world scenarios)
 export const SCENARIOS = {
     ...BASIC_SCENARIOS,
     ...AVOIDANCE_SCENARIOS,
@@ -55,7 +57,9 @@ export const SCENARIOS = {
     ...PSYCHOLOGY_SCENARIOS,
     ...LIFESTYLE_SCENARIOS,
     ...BEHAVIOR_CHANGE_SCENARIOS,
-    ...HOSPITAL_SCENARIOS
+    ...HOSPITAL_SCENARIOS,
+    // World scenarios (multi-care circle scenarios)
+    ...WORLD_SCENARIOS_DEFINITIONS
 };
 
 // Export individual groups for selective import
@@ -85,11 +89,30 @@ export { LIFESTYLE_SCENARIOS };
 export { BEHAVIOR_CHANGE_SCENARIOS };
 export { HOSPITAL_SCENARIOS };
 
+// Helper function to check if a scenario is a world scenario (has circles field)
+export function isWorldScenario(scenario) {
+    return scenario.circles !== undefined && Array.isArray(scenario.circles);
+}
+
 // Helper functions for scenario management
 export function getScenariosByCategory(category) {
     return Object.entries(SCENARIOS)
         .filter(([_, scenario]) => scenario.category === category)
         .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
+}
+
+// Get only world scenarios
+export function getWorldScenarios() {
+    return Object.fromEntries(
+        Object.entries(SCENARIOS).filter(([_, scenario]) => isWorldScenario(scenario))
+    );
+}
+
+// Get only regular scenarios (non-world)
+export function getRegularScenarios() {
+    return Object.fromEntries(
+        Object.entries(SCENARIOS).filter(([_, scenario]) => !isWorldScenario(scenario))
+    );
 }
 
 export function getScenariosByComplexity(minComplexity, maxComplexity) {

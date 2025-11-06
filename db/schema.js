@@ -113,6 +113,39 @@ export async function initializeDatabase() {
         );
     `);
     console.log('[Database] Initialized.');
+    
+    // Migrate existing tables to add missing columns
+    await migrateDatabase(db);
+}
+
+/**
+ * Migrate existing database tables to add missing columns
+ */
+async function migrateDatabase(db) {
+    try {
+        // Check and add trigger_type to future_plans if missing
+        const futurePlansInfo = await db.all('PRAGMA table_info(future_plans)');
+        const hasTriggerType = futurePlansInfo.some(col => col.name === 'trigger_type');
+        if (!hasTriggerType && futurePlansInfo.length > 0) {
+            console.log('[Migration] Adding trigger_type columns to future_plans...');
+            await db.run('ALTER TABLE future_plans ADD COLUMN trigger_type TEXT');
+            await db.run('ALTER TABLE future_plans ADD COLUMN trigger_value TEXT');
+            await db.run('ALTER TABLE future_plans ADD COLUMN trigger_details TEXT');
+        }
+        
+        // Check and add trigger_type to scheduled_messages if missing
+        const scheduledMessagesInfo = await db.all('PRAGMA table_info(scheduled_messages)');
+        const hasScheduledTriggerType = scheduledMessagesInfo.some(col => col.name === 'trigger_type');
+        if (!hasScheduledTriggerType && scheduledMessagesInfo.length > 0) {
+            console.log('[Migration] Adding trigger_type columns to scheduled_messages...');
+            await db.run('ALTER TABLE scheduled_messages ADD COLUMN trigger_type TEXT');
+            await db.run('ALTER TABLE scheduled_messages ADD COLUMN trigger_value TEXT');
+            await db.run('ALTER TABLE scheduled_messages ADD COLUMN trigger_details TEXT');
+            await db.run('ALTER TABLE scheduled_messages ADD COLUMN trigger_condition TEXT');
+        }
+    } catch (error) {
+        console.warn('[Schema Migration] Error migrating database:', error.message);
+    }
 }
 
 export async function clearDatabase() {

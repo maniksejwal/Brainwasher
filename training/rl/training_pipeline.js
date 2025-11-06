@@ -456,25 +456,19 @@ export class TrainingPipeline {
     }
     
     /**
-     * Get scenario config from appropriate source (world or regular)
-     * Returns both the config and whether it's a world scenario
+     * Get scenario config from unified SCENARIOS
+     * Returns both the config and whether it's a world scenario (based on circles field)
      * @private
      */
     async _getScenarioConfig(scenarioKey) {
-        const { WORLD_SCENARIOS } = await import('../world_simulation/world_scenarios.js');
-        const { SCENARIOS } = await import('../simulation/scenarios.js');
+        const { SCENARIOS, isWorldScenario } = await import('../simulation/scenarios.js');
         
-        // Check world scenarios first
-        if (WORLD_SCENARIOS[scenarioKey]) {
-            return { config: WORLD_SCENARIOS[scenarioKey], isWorld: true };
+        const config = SCENARIOS[scenarioKey];
+        if (!config) {
+            throw new Error(`Scenario ${scenarioKey} not found in SCENARIOS`);
         }
         
-        // Check regular scenarios
-        if (SCENARIOS[scenarioKey]) {
-            return { config: SCENARIOS[scenarioKey], isWorld: false };
-        }
-        
-        throw new Error(`Scenario ${scenarioKey} not found in WORLD_SCENARIOS or SCENARIOS`);
+        return { config, isWorld: isWorldScenario(config) };
     }
 
     /**

@@ -16,8 +16,11 @@ import {
     getScenariosByCategory, 
     getScenariosByComplexity, 
     getRandomScenario,
-    getScenarioGroups 
+    getScenarioGroups,
+    isWorldScenario,
+    getWorldScenarios,
+    getRegularScenarios
 } from './scenarios/index.js';
 
 // Re-export helper functions
-export { getScenariosByCategory, getScenariosByComplexity, getRandomScenario, getScenarioGroups };
+export { getScenariosByCategory, getScenariosByComplexity, getRandomScenario, getScenarioGroups, isWorldScenario, getWorldScenarios, getRegularScenarios };

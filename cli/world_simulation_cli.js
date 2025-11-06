@@ -6,8 +6,8 @@
  */
 
 import { WorldSimulator } from '../training/world_simulation/world_simulator.js';
+import { SCENARIOS, getWorldScenarios, isWorldScenario } from '../training/simulation/scenarios.js';
 import { 
-    WORLD_SCENARIOS, 
     getWorldScenariosByCategory, 
     getRandomWorldScenario,
     displayWorldScenariosByCategory
@@ -104,9 +104,9 @@ class WorldSimulationCLI {
     }
 
     async runScenario(scenarioKey) {
-        const scenario = WORLD_SCENARIOS[scenarioKey];
-        if (!scenario) {
-            console.log(chalk.red(`❌ Scenario '${scenarioKey}' not found`));
+        const scenario = SCENARIOS[scenarioKey];
+        if (!scenario || !isWorldScenario(scenario)) {
+            console.log(chalk.red(`❌ World scenario '${scenarioKey}' not found`));
             return;
         }
 
@@ -152,11 +152,12 @@ class WorldSimulationCLI {
             return;
         }
 
-        // Check if scenario exists
-        if (!WORLD_SCENARIOS[scenarioArg]) {
-            console.log(`❌ Scenario '${scenarioArg}' not found`);
-            console.log('Available scenarios:');
-            Object.keys(WORLD_SCENARIOS).forEach(key => {
+        // Check if scenario exists and is a world scenario
+        const worldScenarios = getWorldScenarios();
+        if (!worldScenarios[scenarioArg]) {
+            console.log(`❌ World scenario '${scenarioArg}' not found`);
+            console.log('Available world scenarios:');
+            Object.keys(worldScenarios).forEach(key => {
                 console.log(`  - ${key}`);
             });
             return;

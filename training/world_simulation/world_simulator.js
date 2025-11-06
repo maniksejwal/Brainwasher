@@ -13,7 +13,7 @@
 
 import { open } from 'sqlite';
 import sqlite3 from 'sqlite3';
-import { WORLD_SCENARIOS } from './world_scenarios.js';
+import { SCENARIOS } from '../simulation/scenarios.js';
 import { WORLD_PERSONAS } from './world_personas.js';
 import { ConversationRunner } from '../simulation/conversation_runner.js';
 import { SimulationFeedback } from '../simulation/simulation_feedback.js';
@@ -418,7 +418,7 @@ export class WorldSimulator {
      * Run a world scenario with role inversions (original method, kept for backward compatibility)
      */
     async runWorldScenario(scenarioKey) {
-        const scenario = WORLD_SCENARIOS[scenarioKey];
+        const scenario = SCENARIOS[scenarioKey];
         if (!scenario) {
             throw new Error(`World scenario '${scenarioKey}' not found`);
         }
