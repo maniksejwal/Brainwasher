@@ -16,6 +16,9 @@ export class NetworkVisualization {
         this.showHardware = true;
         this.width = 1200;
         this.height = 600;
+        this.nodeSelection = null;
+        this.circleSelection = null;
+        this.nodeIndex = new Map();
     }
 
     /**
@@ -65,6 +68,7 @@ export class NetworkVisualization {
         this.nodes = data.nodes || [];
         this.edges = data.edges || [];
         this.circles = data.circles || [];
+        this.nodeIndex = new Map(this.nodes.map(node => [node.id, node]));
 
         this.render();
     }
@@ -94,7 +98,9 @@ export class NetworkVisualization {
             .attr('fill-opacity', 0.1)
             .attr('stroke', (d) => d.color || '#4285F4')
             .attr('stroke-width', 2)
-            .attr('stroke-dasharray', '5,5');
+            .attr('stroke-dasharray', '5,5')
+            .attr('data-default-stroke', (d) => d.color || '#4285F4')
+            .attr('data-default-stroke-width', 2);
 
         circleGroups.append('text')
             .attr('x', (d) => d.x || 0)
@@ -157,7 +163,9 @@ export class NetworkVisualization {
                     .attr('r', 20)
                     .attr('fill', '#4285F4')
                     .attr('stroke', '#fff')
-                    .attr('stroke-width', 2);
+                    .attr('stroke-width', 2)
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 2);
             } else if (d.type === 'companion') {
                 group.append('rect')
                     .attr('width', 40)
@@ -167,13 +175,17 @@ export class NetworkVisualization {
                     .attr('fill', '#34A853')
                     .attr('stroke', '#fff')
                     .attr('stroke-width', 2)
-                    .attr('rx', 4);
+                    .attr('rx', 4)
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 2);
             } else if (d.type === 'coordinator') {
                 group.append('polygon')
                     .attr('points', '-15,-15 15,-15 0,15')
                     .attr('fill', '#FBBC04')
                     .attr('stroke', '#fff')
-                    .attr('stroke-width', 2);
+                    .attr('stroke-width', 2)
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 2);
             } else if (d.type === 'handler' || d.type === 'agent') {
                 group.append('rect')
                     .attr('width', 30)
@@ -183,7 +195,9 @@ export class NetworkVisualization {
                     .attr('fill', d.type === 'handler' ? '#EA4335' : '#9C27B0')
                     .attr('stroke', '#fff')
                     .attr('stroke-width', 1)
-                    .attr('rx', 2);
+                    .attr('rx', 2)
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 1);
             }
 
             // Node label
@@ -208,6 +222,9 @@ export class NetworkVisualization {
         nodeGroups.on('click', (event, d) => {
             this.showNodeDetails(d);
         });
+
+        this.nodeSelection = nodeGroups;
+        this.circleSelection = circleGroups;
     }
 
     /**
@@ -367,16 +384,76 @@ export class NetworkVisualization {
         const targetNode = this.g.selectAll('.node')
             .filter((d) => d.id === toNode.id);
         
-        const originalStroke = targetNode.select('circle,rect,polygon').attr('stroke-width');
-        targetNode.select('circle,rect,polygon')
+        const shape = targetNode.select('circle,rect,polygon');
+        const originalStroke = shape.attr('data-default-stroke') || '#fff';
+        const originalWidth = parseFloat(shape.attr('data-default-stroke-width') || 2);
+        shape
             .transition()
             .duration(200)
             .attr('stroke-width', 4)
             .attr('stroke', '#4285F4')
             .transition()
             .duration(300)
-            .attr('stroke-width', originalStroke || 2)
-            .attr('stroke', '#fff');
+            .attr('stroke-width', originalWidth)
+            .attr('stroke', originalStroke);
+    }
+
+    highlightUser(userId, color = '#1a73e8') {
+        const baseIds = [
+            `user_${userId}`,
+            `companion_${userId}`
+        ];
+        this._pulseNodes(baseIds, color);
+    }
+
+    highlightAgent(userId, color = '#9c27b0') {
+        const agentIds = [
+            `companion_${userId}`,
+            `coordinator_${userId}`,
+            `handler_input_${userId}`,
+            `agent_clinical_${userId}`
+        ];
+        this._pulseNodes(agentIds, color);
+    }
+
+    highlightCircle(circleId, color = '#34a853') {
+        if (!this.circleSelection) return;
+        this.circleSelection
+            .filter((d) => d.id === circleId || d.name?.toLowerCase() === circleId?.toLowerCase())
+            .select('circle')
+            .transition()
+            .duration(200)
+            .attr('stroke', color)
+            .attr('stroke-width', 4)
+            .transition()
+            .duration(400)
+            .attr('stroke', function() {
+                return d3.select(this).attr('data-default-stroke') || '#4285F4';
+            })
+            .attr('stroke-width', function() {
+                return parseFloat(d3.select(this).attr('data-default-stroke-width') || 2);
+            });
+    }
+
+    _pulseNodes(nodeIds = [], color = '#1a73e8') {
+        if (!this.nodeSelection) return;
+        nodeIds.forEach(nodeId => {
+            const node = this.nodeSelection.filter(d => d.id === nodeId);
+            if (node.empty()) return;
+            const shape = node.select('circle,rect,polygon');
+            if (shape.empty()) return;
+            const defaultStroke = shape.attr('data-default-stroke') || '#fff';
+            const defaultWidth = parseFloat(shape.attr('data-default-stroke-width') || 2);
+            shape
+                .transition()
+                .duration(150)
+                .attr('stroke', color)
+                .attr('stroke-width', defaultWidth + 2)
+                .transition()
+                .duration(400)
+                .attr('stroke', defaultStroke)
+                .attr('stroke-width', defaultWidth);
+        });
     }
 }
 

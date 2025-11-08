@@ -60,6 +60,7 @@ export class SyntheticUser {
      */
     _buildMessagePrompt(lastAgentMessage, goal, turn, multiUserContext) {
         let prompt = `This is conversation turn ${turn + 1}.\n`;
+        prompt += `You are speaking to your assigned care agent (the assistant who supports you). Direct questions, requests, and updates should be addressed to your care agent (using first person “I” and second person “you”). If you want another circle member to receive information, say so explicitly so the agent can relay it.\n`;
         
         if (goal) {
             prompt += `Your current goal: ${goal}\n`;
@@ -123,15 +124,17 @@ export class SyntheticUser {
                     prompt += `\n⚠️ The conversation has been repeating. Change the topic to something new related to your health needs.`;
                 } else {
                     prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
+                    prompt += `\nSpeak to your care agent (use “you” to refer to the care agent). Reference other circle members in third person (e.g., “Robert”, “my dad”).`;
                 }
             } else {
                 prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
+                prompt += `\nSpeak to your care agent (use “you” for the care agent). Mention other circle members in third person.`;
             }
         } else {
             if (multiUserContext) {
-                prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
+                prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences max). Avoid monologues. Use simple, everyday language. Always address the care agent directly (use “you” for the care agent), and mention other circle members in third person.`;
             } else {
-                prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
+                prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences max). Avoid monologues. Use simple, everyday language. Address the care agent directly, and mention other circle members in third person.`;
             }
         }
 

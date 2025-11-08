@@ -15,6 +15,12 @@ let personaNameToUserId = {};
 let lastSpeakerByRole = {};
 let lastRoleSpoken = null;
 let simulationInsightCounts = {};
+let parsedMessages = [];
+let networkInitialized = false;
+let circleNameToId = {};
+let userCircleMap = {};
+let currentCircleName = null;
+let eventLogContainer = null;
 
 export function initSimulationUI(api, state) {
     const runButton = document.getElementById('run-simulation');
@@ -42,28 +48,32 @@ export function initSimulationUI(api, state) {
     }
     
     // Handle simulation type change
+    const updateNetworkVisibility = () => {
+        if (!networkContainer) return;
+        if (showNetworkCheckbox?.checked && networkViz?.nodes?.length) {
+            networkContainer.style.display = 'block';
+        } else {
+            networkContainer.style.display = 'none';
+        }
+    };
+    
     if (simulationTypeSelect) {
         simulationTypeSelect.addEventListener('change', (e) => {
-            if (e.target.value === 'world') {
-                regularControls.style.display = 'none';
-                worldControls.style.display = 'block';
+            const isWorld = e.target.value === 'world';
+            regularControls.style.display = isWorld ? 'none' : 'block';
+            worldControls.style.display = isWorld ? 'block' : 'none';
+            if (isWorld) {
                 loadWorldScenarios(api);
-            } else {
-                regularControls.style.display = 'block';
-                worldControls.style.display = 'none';
-                if (networkContainer) networkContainer.style.display = 'none';
+                if (showNetworkCheckbox) showNetworkCheckbox.checked = true;
             }
+            updateNetworkVisibility();
         });
     }
     
     // Handle network visibility toggle
     if (showNetworkCheckbox) {
-        showNetworkCheckbox.addEventListener('change', (e) => {
-            if (e.target.checked && simulationTypeSelect?.value === 'world') {
-                if (networkContainer) networkContainer.style.display = 'block';
-            } else {
-                if (networkContainer) networkContainer.style.display = 'none';
-            }
+        showNetworkCheckbox.addEventListener('change', () => {
+            updateNetworkVisibility();
         });
     }
     
@@ -114,13 +124,32 @@ export function initSimulationUI(api, state) {
         lastSpeakerByRole = {};
         lastRoleSpoken = null;
         simulationInsightCounts = {};
+        circleNameToId = {};
+        userCircleMap = {};
+        currentCircleName = null;
+        eventLogContainer = document.getElementById('network-event-log');
+        if (eventLogContainer) {
+            eventLogContainer.innerHTML = '';
+        }
+        if (networkContainer) {
+            networkContainer.style.display = 'none';
+        }
+        if (networkViz) {
+            networkViz.update({ nodes: [], edges: [], circles: [] });
+        }
         
         const startDiv = document.createElement('div');
         startDiv.style.cssText = 'padding: 16px; background: var(--blue-50); border-radius: 4px;';
         startDiv.innerHTML = `🔬 Starting ${simType === 'world' ? 'world' : ''} simulation...`;
         resultsDiv.appendChild(startDiv);
         
+        if (showNetworkCheckbox?.checked && scenario && scenario !== 'random') {
+            initializeNetworkVisualization(scenario);
+        }
+
         runButton.disabled = true;
+        const originalButtonLabel = runButton.textContent;
+        runButton.textContent = '⏳ Running...';
         
         try {
             if (simType === 'world') {
@@ -167,9 +196,7 @@ export function initSimulationUI(api, state) {
                     resultsDiv.scrollTop = resultsDiv.scrollHeight;
                 });
             }
-            
-            runButton.disabled = false;
-            
+
             // Add completion message
             const completeDiv = document.createElement('div');
             completeDiv.style.cssText = 'padding: 12px; background: var(--green-50); border-radius: 4px; margin-top: 16px;';
@@ -179,20 +206,14 @@ export function initSimulationUI(api, state) {
             renderSimulationInsights(resultsDiv);
             renderFeedbackPrompt(resultsDiv, collectFeedback, scenario, simType);
 
-            if (simType === 'world' && showNetworkCheckbox?.checked) {
-                initializeNetworkVisualization(scenario);
-            }
-
         } catch (error) {
-            runButton.disabled = false;
             resultsDiv.innerHTML += `<div style="color: red; padding: 16px; margin-top: 8px;">❌ Error: ${error.message}</div>`;
+        } finally {
+            runButton.disabled = false;
+            runButton.textContent = originalButtonLabel;
         }
     });
 }
-
-// Track parsed messages for visualization
-let parsedMessages = [];
-let networkInitialized = false;
 
 /**
  * Parse simulation output to extract messages and update visualization
@@ -200,19 +221,51 @@ let networkInitialized = false;
 function parseSimulationOutput(output, scenarioKey, simType) {
     if (!output) return;
 
+    if (!networkInitialized && scenarioKey && scenarioKey !== 'random') {
+        initializeNetworkVisualization(scenarioKey);
+    }
+
     const lines = output.split('\n');
 
     for (const rawLine of lines) {
         const line = rawLine.trim();
         if (!line) continue;
 
-        // Initialize network once when world simulation begins producing output
-        if (simType === 'world' && !networkInitialized && (
-            line.includes('Starting conversation for circle') ||
-            line.includes('WORLD SIMULATION CLI') ||
-            line.includes('WORLD SIMULATION COMPLETE')
-        )) {
-            initializeNetworkVisualization(scenarioKey);
+        if (line.includes('Starting conversation for circle')) {
+            const circleName = line.split(':').slice(1).join(':').trim();
+            currentCircleName = circleName;
+            logSimulationEvent('circle', {
+                circle: currentCircleName,
+                actor: 'Conversation start',
+                message: 'Conversation flow initialized'
+            });
+            const circleId = circleNameToId[currentCircleName?.toLowerCase?.()] || null;
+            if (circleId) {
+                networkViz?.highlightCircle(circleId);
+            }
+            continue;
+        }
+
+        if (line.startsWith('[Orchestrator] Future plan executed')) {
+            logSimulationEvent('orchestrator', {
+                circle: currentCircleName,
+                actor: 'Future plan',
+                message: line.replace('[Orchestrator] ', '')
+            });
+            const circleId = circleNameToId[currentCircleName?.toLowerCase?.()] || null;
+            if (circleId) {
+                networkViz?.highlightCircle(circleId, '#ea4335');
+            }
+            continue;
+        }
+
+        if (line.startsWith('[RescheduleHandler]')) {
+            logSimulationEvent('reschedule', {
+                circle: currentCircleName,
+                actor: 'Schedule update',
+                message: line.replace('[RescheduleHandler] ', '')
+            });
+            continue;
         }
 
         // ROLE (Persona Name): message
@@ -245,7 +298,10 @@ function parseSimulationOutput(output, scenarioKey, simType) {
 
             const userId = lastSpeakerByRole[baseRole];
             if (userId && message) {
-                parsedMessages.push({ role: `${baseRole}_agent`, userId, message, timestamp: Date.now() });
+                parsedMessages.push({
+                    role: `${baseRole}_agent`,
+                    userId, message, timestamp: Date.now()
+                });
                 animateMessageFlow('agent', userId, message);
             }
             continue;
@@ -277,11 +333,11 @@ function parseSimulationOutput(output, scenarioKey, simType) {
  * Initialize network visualization from scenario
  */
 function initializeNetworkVisualization(scenarioKey) {
-    if (!networkViz || !document.getElementById('show-network')?.checked) return;
+    if (!networkViz || !scenarioKey) return;
     
     window.api.getScenarios().then(data => {
         const scenario = data.scenarios[scenarioKey];
-        if (!scenario || !scenario.circles) return;
+        if (!scenario) return;
         
         const nodes = [];
         const edges = [];
@@ -291,15 +347,59 @@ function initializeNetworkVisualization(scenarioKey) {
         personaNameToUserId = {};
         lastSpeakerByRole = {};
         lastRoleSpoken = null;
+        circleNameToId = {};
+        userCircleMap = {};
         
+        const availableCircles = Array.isArray(scenario.circles) && scenario.circles.length
+            ? scenario.circles
+            : [{
+                name: scenario.name || scenarioKey,
+                primaryPatientId: scenario.users?.find(u => u.role === 'patient')?.username || scenario.users?.[0]?.username || scenarioKey,
+                members: scenario.users?.map(user => user.username) || []
+            }];
+
+        const resolvedCircles = availableCircles.map((circle, idx) => {
+            const circleId = circle.circleId || circle.id || (circle.name ? circle.name.toLowerCase().replace(/\s+/g, '_') : `circle_${idx}`);
+            const angle = (idx * 2 * Math.PI) / Math.max(availableCircles.length, 1);
+            const radius = 200;
+            if (circleId) {
+                circleNameToId[circleId.toLowerCase()] = circleId;
+            }
+            circleNameToId[(circle.name || circleId || '').toLowerCase()] = circleId;
+            return {
+                id: circleId,
+                name: circle.name || `Circle ${idx + 1}`,
+                patientId: circle.primaryPatientId,
+                members: circle.members || [],
+                color: ['#4285F4', '#34A853', '#FBBC04', '#EA4335'][idx % 4],
+                x: 400 + radius * Math.cos(angle),
+                y: 300 + radius * Math.sin(angle),
+                radius: 150
+            };
+        });
+
         // Create user nodes
-        scenario.users?.forEach((user, idx) => {
+        scenario.users?.forEach((user) => {
+            const defaultCircleIds = resolvedCircles.map(circle => circle.id);
+            const userCircles = Array.isArray(user.circles) && user.circles.length
+                ? user.circles.map(c => {
+                    const base = typeof c === 'string' ? c : (c.circleId || c.circleName || c.name);
+                    return circleNameToId[base?.toLowerCase?.()] || base;
+                }).filter(Boolean)
+                : (defaultCircleIds.length ? [defaultCircleIds[0]] : []);
+
+            userCircleMap[user.username] = userCircles;
+
             nodes.push({
                 id: `user_${user.username}`,
                 type: 'user',
                 label: user.username,
-                circleIds: user.circles?.map(c => c.circleId) || []
+                circleIds: userCircleMap[user.username]
             });
+
+            if (user.role) {
+                lastSpeakerByRole[user.role.toLowerCase()] = user.username;
+            }
 
             const personaKey = user.persona || user.personaKey;
             const personaData = personaKey ? personas[personaKey] : null;
@@ -327,8 +427,8 @@ function initializeNetworkVisualization(scenarioKey) {
             });
             
             edges.push({
-                from: `user_${user.username}`,
-                to: `companion_${user.username}`,
+                source: `user_${user.username}`,
+                target: `companion_${user.username}`,
                 type: 'has'
             });
             
@@ -353,30 +453,19 @@ function initializeNetworkVisualization(scenarioKey) {
                 label: 'Clinical Agent'
             });
             
-            edges.push({ from: companionId, to: `handler_input_${user.username}`, type: 'contains' });
-            edges.push({ from: companionId, to: `coordinator_${user.username}`, type: 'contains' });
-            edges.push({ from: `coordinator_${user.username}`, to: `agent_clinical_${user.username}`, type: 'contains' });
+            edges.push({ source: companionId, target: `handler_input_${user.username}`, type: 'contains' });
+            edges.push({ source: companionId, target: `coordinator_${user.username}`, type: 'contains' });
+            edges.push({ source: `coordinator_${user.username}`, target: `agent_clinical_${user.username}`, type: 'contains' });
         });
         
-        // Create circle backgrounds
-        scenario.circles.forEach((circle, idx) => {
-            const angle = (idx * 2 * Math.PI) / scenario.circles.length;
-            const radius = 200;
-            circles.push({
-                id: circle.name?.toLowerCase().replace(/\s+/g, '_') || `circle_${idx}`,
-                name: circle.name || `Circle ${idx + 1}`,
-                patientId: circle.primaryPatientId,
-                members: circle.members || [],
-                color: ['#4285F4', '#34A853', '#FBBC04', '#EA4335'][idx % 4],
-                x: 400 + radius * Math.cos(angle),
-                y: 300 + radius * Math.sin(angle),
-                radius: 150
-            });
-        });
+        resolvedCircles.forEach(circle => circles.push(circle));
         
         networkViz.update({ nodes, edges, circles });
         const container = document.getElementById('network-visualization-container');
-        if (container) container.style.display = 'block';
+        const showNetworkEl = document.getElementById('show-network');
+        if (container && showNetworkEl?.checked) {
+            container.style.display = 'block';
+        }
         networkInitialized = true;
     }).catch(err => {
         console.error('[SimUI] Failed to load scenario for network:', err);
@@ -396,6 +485,25 @@ function animateMessageFlow(role, userId, message) {
     const toNodeId = isAgent ? `user_${baseId}` : `companion_${baseId}`;
 
     networkViz.animateMessage(fromNodeId, toNodeId, message.substring(0, 80));
+    if (isAgent) {
+        networkViz.highlightAgent(baseId);
+        logSimulationEvent('agent', {
+            circle: currentCircleName,
+            actor: `${baseId} Agent`,
+            message
+        });
+    } else {
+        networkViz.highlightUser(baseId);
+        const circlesForUser = userCircleMap[baseId];
+        if (Array.isArray(circlesForUser)) {
+            circlesForUser.forEach(circleId => networkViz.highlightCircle(circleId));
+        }
+        logSimulationEvent('user', {
+            circle: currentCircleName,
+            actor: baseId,
+            message
+        });
+    }
 }
 
 function resolveUserId(name, role = '') {
@@ -510,6 +618,64 @@ function renderSimulationInsights(resultsDiv) {
 
     container.appendChild(list);
     resultsDiv.appendChild(container);
+}
+
+function logSimulationEvent(type, payload) {
+    if (!eventLogContainer) return;
+    const escapeHtml = (value) => {
+        if (!value) return '';
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    };
+
+    const entry = document.createElement('div');
+    entry.style.cssText = 'background: white; border-radius: 6px; padding: 10px 12px; border-left: 3px solid var(--gray-200); box-shadow: 0 1px 2px rgba(0,0,0,0.04);';
+
+    const iconMap = {
+        user: '🧑',
+        agent: '🤖',
+        orchestrator: '🛠️',
+        reschedule: '♻️',
+        circle: '🟢'
+    };
+
+    const badgeColor = {
+        user: '#1a73e8',
+        agent: '#9c27b0',
+        orchestrator: '#ea4335',
+        reschedule: '#fbbc04',
+        circle: '#34a853'
+    };
+
+    const icon = iconMap[type] || 'ℹ️';
+    const accent = badgeColor[type] || '#5f6368';
+
+    const circleLabel = payload?.circle ? `<span style="color:${accent}; font-weight:600;">[${escapeHtml(payload.circle)}]</span>` : '';
+    const actor = payload?.actor ? `<strong>${escapeHtml(payload.actor)}</strong>` : '';
+    const message = payload?.message ? `<div style="margin-top:4px; color: var(--gray-700);">${escapeHtml(payload.message)}</div>` : '';
+
+    entry.innerHTML = `
+        <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:16px;">${icon}</span>
+            <div style="flex:1; min-width:0;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                    <span style="color:${accent}; font-weight:600; text-transform:uppercase; font-size:11px; letter-spacing:0.05em;">${type}</span>
+                    <span style="font-size:11px; color: var(--gray-500);">${escapeHtml(new Date().toLocaleTimeString())}</span>
+                </div>
+                <div style="margin-top:4px; display:flex; flex-direction:column; gap:2px;">
+                    <div style="font-size:12px; color: var(--gray-800);">${circleLabel} ${actor}</div>
+                    ${message}
+                </div>
+            </div>
+        </div>
+    `;
+
+    eventLogContainer.appendChild(entry);
+    eventLogContainer.scrollTop = eventLogContainer.scrollHeight;
 }
 
 async function loadWorldScenarios(api) {
