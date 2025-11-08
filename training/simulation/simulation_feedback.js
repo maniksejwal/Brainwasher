@@ -21,7 +21,7 @@ export class SimulationFeedback {
         this.scorer = new SimulationScorer(dbConnection, scenarioContext);
         this.analyzer = new SimulationAnalyzer();
         this.reporter = new SimulationReporter(dbConnection);
-        this.conversationAnalyzer = new ConversationAnalyzer();
+        this.conversationAnalyzer = new ConversationAnalyzer(scenarioContext);
     }
 
     /**
@@ -104,6 +104,29 @@ export class SimulationFeedback {
             
             // Store conversation analysis in database
             await this.reporter.storeConversationAnalysis(conversationId, conversationAnalysis);
+
+            if (conversationAnalysis?.speakerBalance?.starvationFlags?.length) {
+                const summary = conversationAnalysis.speakerBalance.starvationFlags
+                    .map(flag => `${flag.role}: ${(flag.actualShare * 100).toFixed(1)}% vs ${(flag.expectedShare * 100).toFixed(1)}% expected`)
+                    .join('; ');
+                await this.reporter.storeAdvice(
+                    conversationId,
+                    'system',
+                    'conversation_starvation',
+                    `Speaker starvation detected: ${summary}`,
+                    'high'
+                );
+            }
+
+            if (conversationAnalysis?.notificationCoverage?.missing) {
+                await this.reporter.storeAdvice(
+                    conversationId,
+                    'system',
+                    'missing_notifications',
+                    'Scenario expected orchestrator notifications but none were sent.',
+                    'high'
+                );
+            }
             
             // Generate conversation-level recommendations
             const conversationRecommendations = this._generateConversationRecommendations(conversationAnalysis);
@@ -115,6 +138,9 @@ export class SimulationFeedback {
             console.log(`  🎯 Engagement Quality: ${((conversationAnalysis.engagementQuality?.overallScore || 0) * 100).toFixed(1)}%`);
             if (conversationAnalysis.futurePlanning) {
                 console.log(`  🔮 Future Planning: ${conversationAnalysis.futurePlanning.totalPlans || 0} plans, ${((conversationAnalysis.futurePlanning.executionRate || 0) * 100).toFixed(1)}% executed`);
+            }
+            if (conversationAnalysis.starvationPenalty) {
+                console.log(`  ⚠️ Starvation Penalty: ${conversationAnalysis.starvationPenalty}`);
             }
             console.log(`  💡 Recommendations: ${conversationRecommendations.length} generated`);
             

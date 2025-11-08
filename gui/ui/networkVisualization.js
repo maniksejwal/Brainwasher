@@ -1,6 +1,9 @@
 /**
- * @fileoverview Network Visualization for World Simulations
- * Uses D3.js to visualize multi-care circle relationships, companions, and message flow
+ * @fileoverview Network Visualization for Simulations
+ * Privacy circles (user + agentic framework) within care circles
+ * - Privacy circle = user + handler→coordinator→agent subgraph
+ * - Care circle = 3+ privacy circles (patient, caregiver, doctor roles)
+ * - Orchestrator sits between privacy circles
  */
 
 export class NetworkVisualization {
@@ -10,15 +13,24 @@ export class NetworkVisualization {
         this.simulation = null;
         this.nodes = [];
         this.edges = [];
-        this.circles = [];
+        this.careCircles = []; // Care circles (shaded areas covering multiple privacy circles)
+        this.privacyCircles = []; // Privacy circles (user + agentic framework)
         this.showLogs = true;
         this.showPrompts = true;
         this.showHardware = true;
-        this.width = 1200;
-        this.height = 600;
+        this.width = 1400;
+        this.height = 720;
         this.nodeSelection = null;
-        this.circleSelection = null;
+        this.careCircleSelection = null;
+        this.privacyCircleSelection = null;
         this.nodeIndex = new Map();
+        this.userColors = {}; // Map username to color
+        this.linkSelection = null;
+        this.userMessageGroups = new Map();
+        this.userMessageHistory = new Map();
+        this.nodePromptHistory = new Map();
+        this.userCompanionMap = new Map();
+        this.tooltip = null;
     }
 
     /**
@@ -34,22 +46,51 @@ export class NetworkVisualization {
         // Clear existing content
         container.innerHTML = '';
 
+        const bounds = container.getBoundingClientRect();
+        if (bounds.width) {
+            this.width = Math.max(bounds.width, this.width);
+        }
+        if (bounds.height) {
+            this.height = Math.max(bounds.height, this.height);
+        }
+
+        if (!this.tooltip) {
+            this.tooltip = d3.select('body')
+                .append('div')
+                .attr('class', 'network-tooltip')
+                .style('position', 'fixed')
+                .style('padding', '10px 14px')
+                .style('border-radius', '8px')
+                .style('background', 'rgba(32,33,36,0.92)')
+                .style('color', '#fff')
+                .style('font-size', '12px')
+                .style('line-height', '1.5')
+                .style('box-shadow', '0 6px 18px rgba(0,0,0,0.2)')
+                .style('pointer-events', 'none')
+                .style('z-index', 9999)
+                .style('display', 'none');
+        }
+
         // Create SVG
         this.svg = d3.select(`#${this.containerId}`)
             .append('svg')
             .attr('width', this.width)
             .attr('height', this.height);
 
-        // Add zoom behavior
+        // Add zoom behavior (keyboard/button only, not scroll)
         const zoom = d3.zoom()
-            .scaleExtent([0.1, 4])
+            .scaleExtent([0.5, 3])
+            .filter((event) => {
+                // Disable scroll zoom, allow drag pan and button zoom
+                return event.type !== 'wheel';
+            })
             .on('zoom', (event) => {
                 this.svg.select('g').attr('transform', event.transform);
             });
 
         this.svg.call(zoom);
 
-        // Create main group for zooming
+        // Create main group for zooming/panning
         const g = this.svg.append('g');
 
         // Store reference to group
@@ -58,7 +99,7 @@ export class NetworkVisualization {
 
     /**
      * Update visualization with new data
-     * @param {object} data - Network data { nodes, edges, circles }
+     * @param {object} data - Network data { nodes, edges, careCircles, privacyCircles }
      */
     update(data) {
         if (!this.svg || !this.g) {
@@ -67,8 +108,28 @@ export class NetworkVisualization {
 
         this.nodes = data.nodes || [];
         this.edges = data.edges || [];
-        this.circles = data.circles || [];
+        this.careCircles = data.careCircles || [];
+        this.privacyCircles = data.privacyCircles || [];
+        this.userColors = data.userColors || {};
         this.nodeIndex = new Map(this.nodes.map(node => [node.id, node]));
+        this.userCompanionMap = new Map();
+        this.nodes.forEach(node => {
+            if (!node.username) return;
+            const username = node.username;
+            if (!this.userCompanionMap.has(username)) {
+                this.userCompanionMap.set(username, { coordinatorId: null, components: [], componentNodes: new Map() });
+            }
+            const entry = this.userCompanionMap.get(username);
+            if (node.type === 'companion_coordinator') {
+                entry.coordinatorId = node.id;
+                entry.componentNodes.set('companionCoordinator', node.id);
+            } else if (node.type === 'companion_handler' || node.type === 'companion_agent') {
+                entry.components.push(node.id);
+                if (node.componentId) {
+                    entry.componentNodes.set(node.componentId, node.id);
+                }
+            }
+        });
 
         this.render();
     }
@@ -78,61 +139,160 @@ export class NetworkVisualization {
      */
     render() {
         const g = this.g;
-        const self = this; // Store reference for use in callbacks
+        const self = this;
 
         // Clear existing elements
         g.selectAll('*').remove();
+        this.userMessageGroups.clear();
+        this.userMessageHistory.clear();
+        this.nodePromptHistory.clear();
 
-        // Draw circle backgrounds (Venn diagram style)
-        const circleGroups = g.selectAll('.circle-bg')
-            .data(this.circles)
-            .enter()
-            .append('g')
-            .attr('class', 'circle-bg');
-
-        circleGroups.append('circle')
-            .attr('r', (d) => d.radius || 150)
-            .attr('cx', (d) => d.x || 0)
-            .attr('cy', (d) => d.y || 0)
-            .attr('fill', (d) => d.color || '#4285F4')
-            .attr('fill-opacity', 0.1)
-            .attr('stroke', (d) => d.color || '#4285F4')
-            .attr('stroke-width', 2)
-            .attr('stroke-dasharray', '5,5')
-            .attr('data-default-stroke', (d) => d.color || '#4285F4')
-            .attr('data-default-stroke-width', 2);
-
-        circleGroups.append('text')
-            .attr('x', (d) => d.x || 0)
-            .attr('y', (d) => (d.y || 0) - (d.radius || 150) - 10)
-            .attr('text-anchor', 'middle')
-            .attr('font-size', '14px')
-            .attr('font-weight', 'bold')
-            .attr('fill', (d) => d.color || '#4285F4')
-            .text((d) => d.name || d.id);
-
-        // Draw edges
+        // Draw edges first (so they appear behind nodes)
         const links = g.selectAll('.link')
             .data(this.edges)
             .enter()
             .append('line')
             .attr('class', 'link')
-            .attr('stroke', (d) => {
-                if (d.type === 'has') return '#666';
-                if (d.type === 'contains') return '#999';
-                if (d.type === 'message') return '#4285F4';
-                return '#ccc';
-            })
-            .attr('stroke-width', (d) => d.type === 'message' ? 2 : 1)
-            .attr('stroke-opacity', 0.6)
-            .attr('stroke-dasharray', (d) => d.type === 'message' ? '5,5' : 'none');
+            .attr('stroke', '#999')
+            .attr('stroke-width', 1.5)
+            .attr('stroke-opacity', 0.4)
+            .attr('data-default-stroke', '#999')
+            .attr('data-default-stroke-width', 1.5)
+            .attr('data-default-opacity', 0.4)
+            .attr('data-link-id', d => `${(d.source?.id || d.source)}__${(d.target?.id || d.target)}`);
+
+        this.linkSelection = links;
 
         // Create force simulation
         this.simulation = d3.forceSimulation(this.nodes)
-            .force('link', d3.forceLink(this.edges).id(d => d.id).distance(100))
-            .force('charge', d3.forceManyBody().strength(-300))
+            .force('link', d3.forceLink(this.edges).id(d => d.id).distance(60))
+            .force('charge', d3.forceManyBody().strength(-200))
             .force('center', d3.forceCenter(this.width / 2, this.height / 2))
-            .force('collision', d3.forceCollide().radius(30));
+            .force('collision', d3.forceCollide().radius(25));
+
+        // Draw nodes
+        const nodeGroups = g.selectAll('.node')
+            .data(this.nodes)
+            .enter()
+            .append('g')
+            .attr('class', 'node')
+            .call(this.drag());
+
+        // Node shapes - all use user's color (no type-based coloring)
+        nodeGroups.each(function(d) {
+            const group = d3.select(this);
+            const nodeColor = d.color || '#4285F4';
+            const type = d.type;
+
+            if (type === 'user') {
+                group.append('circle')
+                    .attr('r', 20)
+                    .attr('fill', nodeColor)
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 2.5)
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 2.5);
+            } else if (type === 'companion_coordinator') {
+                const size = 18;
+                const points = [];
+                for (let i = 0; i < 6; i++) {
+                    const angle = (Math.PI / 3) * i;
+                    points.push([
+                        size * Math.cos(angle),
+                        size * Math.sin(angle)
+                    ]);
+                }
+                group.append('polygon')
+                    .attr('points', points.map(p => p.join(',')).join(' '))
+                    .attr('fill', nodeColor)
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 2)
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 2);
+                const abbrev = buildAbbreviation(d.label, 3);
+                group.append('text')
+                    .attr('text-anchor', 'middle')
+                    .attr('dy', 4)
+                    .attr('font-size', '10px')
+                    .attr('fill', '#fff')
+                    .attr('font-weight', '600')
+                    .text(abbrev);
+            } else if (type === 'companion_handler') {
+                group.append('rect')
+                    .attr('width', 22)
+                    .attr('height', 22)
+                    .attr('x', -11)
+                    .attr('y', -11)
+                    .attr('fill', nodeColor)
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 1.5)
+                    .attr('rx', 5)
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 1.5);
+                const abbrev = buildAbbreviation(d.label, 2);
+                group.append('text')
+                    .attr('text-anchor', 'middle')
+                    .attr('dy', 4)
+                    .attr('font-size', '10px')
+                    .attr('fill', '#fff')
+                    .attr('font-weight', '600')
+                    .text(abbrev);
+            } else if (type === 'companion_agent') {
+                group.append('rect')
+                    .attr('width', 20)
+                    .attr('height', 20)
+                    .attr('x', -10)
+                    .attr('y', -10)
+                    .attr('fill', nodeColor)
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 1.5)
+                    .attr('transform', 'rotate(45)')
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 1.5);
+                const abbrev = buildAbbreviation(d.label, 2);
+                group.append('text')
+                    .attr('text-anchor', 'middle')
+                    .attr('dy', 4)
+                    .attr('font-size', '10px')
+                    .attr('fill', '#fff')
+                    .attr('font-weight', '600')
+                    .text(abbrev);
+            } else if (type === 'orchestrator') {
+                const size = 18;
+                const points = [];
+                for (let i = 0; i < 6; i++) {
+                    const angle = (Math.PI / 3) * i;
+                    points.push([
+                        size * Math.cos(angle),
+                        size * Math.sin(angle)
+                    ]);
+                }
+                group.append('polygon')
+                    .attr('points', points.map(p => p.join(',')).join(' '))
+                    .attr('fill', '#666')
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 2)
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 2);
+            } else {
+                group.append('circle')
+                    .attr('r', 16)
+                    .attr('fill', nodeColor)
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 2)
+                    .attr('data-default-stroke', '#fff')
+                    .attr('data-default-stroke-width', 2);
+            }
+
+            group.append('text')
+                .attr('dy', 32)
+                .attr('text-anchor', 'middle')
+                .attr('font-size', '12px')
+                .attr('fill', '#333')
+                .text(d.label || d.id);
+
+            group.append('title').text(d.label || d.id);
+        });
 
         // Update positions on tick
         this.simulation.on('tick', () => {
@@ -144,87 +304,275 @@ export class NetworkVisualization {
 
             nodeGroups
                 .attr('transform', d => `translate(${d.x},${d.y})`);
+
+            self._updateMessagePositions();
         });
 
-        // Draw nodes
-        const nodeGroups = g.selectAll('.node')
-            .data(this.nodes)
-            .enter()
-            .append('g')
-            .attr('class', 'node')
-            .call(this.drag());
-
-        // Node shapes based on type
-        nodeGroups.each(function(d) {
-            const group = d3.select(this);
-            
-            if (d.type === 'user') {
-                group.append('circle')
-                    .attr('r', 20)
-                    .attr('fill', '#4285F4')
-                    .attr('stroke', '#fff')
-                    .attr('stroke-width', 2)
-                    .attr('data-default-stroke', '#fff')
-                    .attr('data-default-stroke-width', 2);
-            } else if (d.type === 'companion') {
-                group.append('rect')
-                    .attr('width', 40)
-                    .attr('height', 40)
-                    .attr('x', -20)
-                    .attr('y', -20)
-                    .attr('fill', '#34A853')
-                    .attr('stroke', '#fff')
-                    .attr('stroke-width', 2)
-                    .attr('rx', 4)
-                    .attr('data-default-stroke', '#fff')
-                    .attr('data-default-stroke-width', 2);
-            } else if (d.type === 'coordinator') {
-                group.append('polygon')
-                    .attr('points', '-15,-15 15,-15 0,15')
-                    .attr('fill', '#FBBC04')
-                    .attr('stroke', '#fff')
-                    .attr('stroke-width', 2)
-                    .attr('data-default-stroke', '#fff')
-                    .attr('data-default-stroke-width', 2);
-            } else if (d.type === 'handler' || d.type === 'agent') {
-                group.append('rect')
-                    .attr('width', 30)
-                    .attr('height', 30)
-                    .attr('x', -15)
-                    .attr('y', -15)
-                    .attr('fill', d.type === 'handler' ? '#EA4335' : '#9C27B0')
-                    .attr('stroke', '#fff')
-                    .attr('stroke-width', 1)
-                    .attr('rx', 2)
-                    .attr('data-default-stroke', '#fff')
-                    .attr('data-default-stroke-width', 1);
-            }
-
-            // Node label
-            group.append('text')
-                .attr('dy', 35)
-                .attr('text-anchor', 'middle')
-                .attr('font-size', '11px')
-                .attr('fill', '#333')
-                .text(d.label || d.id);
-
-            // Hardware info tooltip (if enabled)
-            if (d.hardware && self.showHardware) {
-                group.append('title')
-                    .text(() => {
-                        const hw = d.hardware;
-                        return `Model: ${hw.model || 'N/A'}\nAPI: ${hw.apiStatus || 'N/A'}\nLatency: ${hw.latency || 'N/A'}ms`;
-                    });
-            }
+        // After simulation settles, draw boundaries
+        this.simulation.on('end', () => {
+            this.drawBoundaries();
         });
 
-        // Add click handlers for node details
+        // Interaction handlers
+        if (this.linkSelection) {
+            this.linkSelection.on('click', (event, d) => {
+                event.stopPropagation();
+                const sourceId = d.source?.id || d.source;
+                const targetId = d.target?.id || d.target;
+                this._displayBubbleForNodeId(sourceId, { force: true });
+                this._displayBubbleForNodeId(targetId, { force: true });
+            });
+        }
+
         nodeGroups.on('click', (event, d) => {
-            this.showNodeDetails(d);
+            event.stopPropagation();
+            if (d.type === 'user') {
+                this._displayUserBubble(d);
+            } else {
+                this._displayBubbleForNodeId(d.id);
+            }
         });
+
+        nodeGroups
+            .on('mouseenter', (event, d) => this._handleNodeHover(event, d))
+            .on('mousemove', (event) => this._moveTooltip(event))
+            .on('mouseleave', () => this._hideTooltip());
 
         this.nodeSelection = nodeGroups;
-        this.circleSelection = circleGroups;
+    }
+
+    toggleLogs(show) {
+        this.showLogs = !!show;
+        this.userMessageGroups.forEach((_, nodeId) => {
+            this._renderUserMessage(nodeId);
+        });
+    }
+
+    togglePrompts(show) {
+        this.showPrompts = !!show;
+        if (!show) {
+            this._hideTooltip();
+        }
+    }
+
+    toggleHardware(show) {
+        this.showHardware = !!show;
+    }
+
+    animateMessage(fromNodeId, toNodeId, message, context = {}) {
+        if (!this.svg || !this.g) return;
+
+        const fromNode = this.nodes.find(n => n.id === fromNodeId);
+        const toNode = this.nodes.find(n => n.id === toNodeId);
+
+        if (!fromNode || !toNode) {
+            if (this.simulation) {
+                this.simulation.on('tick', () => {
+                    const from = this.nodes.find(n => n.id === fromNodeId);
+                    const to = this.nodes.find(n => n.id === toNodeId);
+                    if (from && to) {
+                        this._createMessageAnimation(from, to, message, context);
+                    }
+                });
+            }
+            return;
+        }
+
+        this._createMessageAnimation(fromNode, toNode, message, context);
+    }
+
+    _createMessageAnimation(fromNode, toNode, message, context = {}) {
+        const messageColor = (fromNode.type === 'agent' || fromNode.type === 'coordinator' || fromNode.type === 'handler')
+            ? '#9c27b0'
+            : '#1a73e8';
+
+        const transition = d3.transition()
+            .duration(1600)
+            .ease(d3.easeLinear);
+
+        const messageCircle = this.g.append('circle')
+            .attr('r', 7)
+            .attr('fill', messageColor)
+            .attr('stroke', '#fff')
+            .attr('stroke-width', 2)
+            .attr('opacity', 0.95)
+            .attr('cx', fromNode.x)
+            .attr('cy', fromNode.y);
+
+        const messageLabel = this.g.append('text')
+            .attr('font-size', '12px')
+            .attr('fill', messageColor)
+            .attr('text-anchor', 'middle')
+            .text(message.length > 50 ? `${message.substring(0, 50)}…` : message)
+            .attr('opacity', 0)
+            .attr('x', fromNode.x)
+            .attr('y', fromNode.y - 18);
+
+        messageCircle
+            .transition(transition)
+            .attr('cx', toNode.x)
+            .attr('cy', toNode.y)
+            .on('end', () => {
+                messageCircle.remove();
+                messageLabel.remove();
+            });
+
+        messageLabel
+            .transition(transition)
+            .attr('x', toNode.x)
+            .attr('y', toNode.y - 18)
+            .attr('opacity', 0.9)
+            .transition()
+            .duration(600)
+            .attr('opacity', 0);
+
+        const pathEdges = [];
+        const username = context.username || fromNode.username || toNode.username;
+        const coordinatorId = username ? this.getCoordinatorNodeId(username) : null;
+
+        if (username && coordinatorId) {
+            const userNodeId = `user_${username}`;
+            if (fromNode.id === userNodeId && toNode.id !== coordinatorId) {
+                pathEdges.push([userNodeId, coordinatorId]);
+            } else if (toNode.id === userNodeId && fromNode.id !== coordinatorId) {
+                pathEdges.push([coordinatorId, userNodeId]);
+            } else {
+                pathEdges.push([userNodeId, coordinatorId]);
+            }
+
+            if (context.componentId && context.componentId !== 'companionCoordinator') {
+                const companionEntry = this.userCompanionMap.get(username);
+                const componentId = companionEntry?.componentNodes?.get(context.componentId);
+                if (componentId) {
+                    pathEdges.push([coordinatorId, componentId]);
+                }
+            }
+        }
+
+        pathEdges.push([fromNode.id, toNode.id]);
+
+        const seenEdges = new Set();
+        pathEdges.forEach(([sourceId, targetId]) => {
+            if (!sourceId || !targetId) return;
+            const key = `${sourceId}__${targetId}`;
+            if (seenEdges.has(key)) return;
+            seenEdges.add(key);
+            this._highlightEdge(sourceId, targetId, messageColor, 1600);
+        });
+
+        this._pulseNodes([fromNode.id, toNode.id], messageColor);
+
+        this._recordNodeMessage(fromNode.id, {
+            direction: 'outgoing',
+            counterpart: toNode.id,
+            message,
+            timestamp: Date.now(),
+            context
+        });
+        this._recordNodeMessage(toNode.id, {
+            direction: 'incoming',
+            counterpart: fromNode.id,
+            message,
+            timestamp: Date.now(),
+            context
+        });
+
+        if (username) {
+            const userNode = this.nodes.find(n => n.id === `user_${username}`);
+            if (userNode) {
+                this._showUserMessage(userNode, message, {
+                    sender: fromNode,
+                    receiver: toNode,
+                    color: messageColor,
+                    ...context
+                });
+            }
+        }
+    }
+
+    /**
+     * Draw privacy circle and care circle boundaries after layout settles
+     */
+    drawBoundaries() {
+        const g = this.g;
+
+        // Draw care circle backgrounds first (larger shaded areas)
+        const careCircleGroups = g.selectAll('.care-circle-bg')
+            .data(this.careCircles)
+            .enter()
+            .insert('g', ':first-child')
+            .attr('class', 'care-circle-bg');
+
+        careCircleGroups.each((d) => {
+            const members = d.members || [];
+            const memberNodes = this.nodes.filter(n => members.includes(n.username));
+            if (memberNodes.length === 0) return;
+
+            // Calculate bounding box
+            const xs = memberNodes.map(n => n.x);
+            const ys = memberNodes.map(n => n.y);
+            const centerX = d3.mean(xs);
+            const centerY = d3.mean(ys);
+            const radius = Math.max(
+                ...memberNodes.map(n => Math.sqrt((n.x - centerX)**2 + (n.y - centerY)**2))
+            ) + 80;
+
+            d3.select(this).append('circle')
+                .attr('cx', centerX)
+                .attr('cy', centerY)
+                .attr('r', radius)
+                .attr('fill', d.color || '#e8f4f8')
+                .attr('fill-opacity', 0.15)
+                .attr('stroke', d.color || '#4285F4')
+                .attr('stroke-width', 2)
+                .attr('stroke-dasharray', '8,4')
+                .attr('stroke-opacity', 0.4);
+
+            d3.select(this).append('text')
+                .attr('x', centerX)
+                .attr('y', centerY - radius - 12)
+                .attr('text-anchor', 'middle')
+                .attr('font-size', '13px')
+                .attr('font-weight', '600')
+                .attr('fill', d.color || '#4285F4')
+                .text(d.name || 'Care Circle');
+        });
+
+        this.careCircleSelection = careCircleGroups;
+
+        // Draw privacy circle boundaries (smaller circles around user + agentic framework)
+        const privacyCircleGroups = g.selectAll('.privacy-circle-bg')
+            .data(this.privacyCircles)
+            .enter()
+            .insert('g', '.node')
+            .attr('class', 'privacy-circle-bg');
+
+        privacyCircleGroups.each((d) => {
+            const nodeIds = d.nodeIds || [];
+            const privacyNodes = this.nodes.filter(n => nodeIds.includes(n.id));
+            if (privacyNodes.length === 0) return;
+
+            // Calculate bounding circle
+            const xs = privacyNodes.map(n => n.x);
+            const ys = privacyNodes.map(n => n.y);
+            const centerX = d3.mean(xs);
+            const centerY = d3.mean(ys);
+            const radius = Math.max(
+                ...privacyNodes.map(n => Math.sqrt((n.x - centerX)**2 + (n.y - centerY)**2))
+            ) + 35;
+
+            d3.select(this).append('circle')
+                .attr('cx', centerX)
+                .attr('cy', centerY)
+                .attr('r', radius)
+                .attr('fill', 'none')
+                .attr('stroke', d.color || '#999')
+                .attr('stroke-width', 1.5)
+                .attr('stroke-dasharray', '4,2')
+                .attr('stroke-opacity', 0.5);
+        });
+
+        this.privacyCircleSelection = privacyCircleGroups;
     }
 
     /**
@@ -271,7 +619,7 @@ export class NetworkVisualization {
         if (node.hardware && this.showHardware) {
             html += `<div style="margin-top: 16px;"><strong>Hardware:</strong>`;
             html += `<ul style="margin: 8px 0; padding-left: 20px;">`;
-            html += `<li>Model: ${node.hardware.model || 'N/A'}</li>`;
+            html += `<li>Model: ${node.hardware.model || 'N/A'}</li>`
             html += `<li>API Status: ${node.hardware.apiStatus || 'N/A'}</li>`;
             html += `<li>Latency: ${node.hardware.latency || 'N/A'}ms</li>`;
             html += `</ul></div>`;
@@ -282,143 +630,218 @@ export class NetworkVisualization {
         modal.innerHTML = html;
     }
 
-    /**
-     * Toggle visibility of logs
-     */
-    toggleLogs(show) {
-        this.showLogs = show;
-        // Re-render if needed
+    _highlightEdge(fromId, toId, color = '#1a73e8', duration = 1500) {
+        if (!this.linkSelection) return;
+        const matches = this.linkSelection.filter((d) => this._edgeMatches(d, fromId, toId));
+        if (matches.empty()) return;
+
+        matches.each(function() {
+            const link = d3.select(this);
+            const originalStroke = link.attr('data-default-stroke') || '#999';
+            const originalWidth = parseFloat(link.attr('data-default-stroke-width') || 1.5);
+            const originalOpacity = parseFloat(link.attr('data-default-opacity') || 0.4);
+            link.interrupt();
+            link
+                .transition()
+                .duration(150)
+                .attr('stroke', color)
+                .attr('stroke-width', originalWidth + 2)
+                .attr('stroke-opacity', 0.9)
+                .transition()
+                .duration(duration)
+                .attr('stroke', originalStroke)
+                .attr('stroke-width', originalWidth)
+                .attr('stroke-opacity', originalOpacity);
+        });
     }
 
-    /**
-     * Toggle visibility of prompts
-     */
-    togglePrompts(show) {
-        this.showPrompts = show;
-        // Re-render if needed
+    _edgeMatches(edge, fromId, toId) {
+        if (!edge) return false;
+        const sourceId = edge.source?.id || edge.source;
+        const targetId = edge.target?.id || edge.target;
+        if (!sourceId || !targetId) return false;
+        return (sourceId === fromId && targetId === toId) || (sourceId === toId && targetId === fromId);
     }
 
-    /**
-     * Toggle visibility of hardware info
-     */
-    toggleHardware(show) {
-        this.showHardware = show;
-        this.render(); // Re-render to update tooltips
-    }
-
-    /**
-     * Animate message flow between nodes with improved visualization
-     */
-    animateMessage(fromNodeId, toNodeId, message) {
-        if (!this.svg || !this.g) return;
-
-        const fromNode = this.nodes.find(n => n.id === fromNodeId);
-        const toNode = this.nodes.find(n => n.id === toNodeId);
-
-        if (!fromNode || !toNode) {
-            // Wait for simulation to update positions
-            if (this.simulation) {
-                this.simulation.on('tick', () => {
-                    const from = this.nodes.find(n => n.id === fromNodeId);
-                    const to = this.nodes.find(n => n.id === toNodeId);
-                    if (from && to) {
-                        this._createMessageAnimation(from, to, message);
-                    }
-                });
-            }
-            return;
+    _updateMessagePositions() {
+        if (this.userMessageGroups) {
+            this.userMessageGroups.forEach((entry) => {
+                this._updateBubbleTransform(entry);
+            });
         }
 
-        this._createMessageAnimation(fromNode, toNode, message);
     }
 
-    /**
-     * Create animated message flow visualization
-     */
-    _createMessageAnimation(fromNode, toNode, message) {
-        // Create animated circle that travels along the edge
-        const messageCircle = this.g.append('circle')
-            .attr('r', 6)
-            .attr('fill', '#4285F4')
-            .attr('stroke', '#fff')
-            .attr('stroke-width', 2)
-            .attr('opacity', 0.9);
+    _updateBubbleTransform(entry) {
+        if (!entry || !entry.group) return;
+        const anchorId = entry.anchorNodeId;
+        if (!anchorId) return;
+        const anchorNode = this.nodeIndex.get(anchorId);
+        if (!anchorNode) return;
+        const offset = entry.offset || { x: 0, y: 0 };
+        entry.group.attr('transform', `translate(${(anchorNode.x || 0) + offset.x}, ${(anchorNode.y || 0) + offset.y})`);
+    }
 
-        // Create message label
-        const messageLabel = this.g.append('text')
-            .attr('font-size', '10px')
-            .attr('fill', '#4285F4')
-            .attr('text-anchor', 'middle')
-            .text(message.substring(0, 30) + (message.length > 30 ? '...' : ''))
-            .attr('opacity', 0);
+    _attachBubbleDrag(entry) {
+        if (!entry || !entry.group || entry.dragAttached) return;
+        const self = this;
+        entry.offset = entry.offset || { x: 0, y: 0 };
+        entry.group.call(
+            d3.drag()
+                .on('start', function() {
+                    d3.select(this).raise();
+                })
+                .on('drag', function(event) {
+                    entry.offset.x += event.dx;
+                    entry.offset.y += event.dy;
+                    self._updateBubbleTransform(entry);
+                })
+        );
+        entry.dragAttached = true;
+    }
 
-        // Animate circle along path
-        const t = d3.transition()
-            .duration(1500)
-            .ease(d3.easeLinear);
-
-        messageCircle
-            .attr('cx', fromNode.x)
-            .attr('cy', fromNode.y)
-            .transition(t)
-            .attr('cx', toNode.x)
-            .attr('cy', toNode.y)
-            .on('end', () => {
-                messageCircle.remove();
-                messageLabel.remove();
+    _attachBubbleResize(entry, rootNode) {
+        if (!rootNode || typeof ResizeObserver === 'undefined') return;
+        if (entry.resizeObserver && entry.resizeObserverTarget === rootNode) {
+            return;
+        }
+        if (entry.resizeObserver) {
+            entry.resizeObserver.disconnect();
+        }
+        const observer = new ResizeObserver((entries) => {
+            entries.forEach((resizeEntry) => {
+                const { width, height } = resizeEntry.contentRect;
+                const boundedWidth = Math.max(240, Math.min(width, 680));
+                const boundedHeight = Math.max(180, Math.min(height, 520));
+                if (Math.abs(boundedWidth - entry.width) > 1 || Math.abs(boundedHeight - entry.height) > 1) {
+                    entry.width = boundedWidth;
+                    entry.height = boundedHeight;
+                    entry.fo
+                        .attr('width', entry.width)
+                        .attr('height', entry.height)
+                        .attr('x', -entry.width / 2)
+                        .attr('y', -(entry.height + 32));
+                    this._updateBubbleTransform(entry);
+                }
             });
+        });
+        observer.observe(rootNode);
+        entry.resizeObserver = observer;
+        entry.resizeObserverTarget = rootNode;
+    }
 
-        // Animate label
-        messageLabel
-            .attr('x', fromNode.x)
-            .attr('y', fromNode.y - 15)
-            .transition(t)
-            .attr('x', toNode.x)
-            .attr('y', toNode.y - 15)
-            .attr('opacity', 0.8)
-            .transition()
-            .duration(500)
-            .attr('opacity', 0);
+    _showUserMessage(userNode, message, context = {}) {
+        if (!userNode) return;
+        const nodeId = userNode.id;
+        if (!this.userMessageHistory.has(nodeId)) {
+            this.userMessageHistory.set(nodeId, []);
+        }
+        const history = this.userMessageHistory.get(nodeId);
+        const header = context.sender ? `${this._formatNodeLabel(context.sender)} → ${this._formatNodeLabel(context.receiver)}` : userNode.label || userNode.id;
+        history.unshift({ message, timestamp: Date.now(), context: { ...context, header } });
+        if (history.length > 30) {
+            history.pop();
+        }
 
-        // Highlight target node briefly
-        const targetNode = this.g.selectAll('.node')
-            .filter((d) => d.id === toNode.id);
-        
-        const shape = targetNode.select('circle,rect,polygon');
-        const originalStroke = shape.attr('data-default-stroke') || '#fff';
-        const originalWidth = parseFloat(shape.attr('data-default-stroke-width') || 2);
-        shape
-            .transition()
-            .duration(200)
-            .attr('stroke-width', 4)
-            .attr('stroke', '#4285F4')
-            .transition()
-            .duration(300)
-            .attr('stroke-width', originalWidth)
-            .attr('stroke', originalStroke);
+        const entry = this._getUserEntry(nodeId, true);
+        if (entry.visible) {
+            this._renderUserMessage(nodeId);
+        }
+
+        this._updateBubbleTransform(entry);
+    }
+
+    _showOrchestratorMessage(message, { color = '#ea4335', circleName = '', targets = [] } = {}) {
+        if (!message) return;
+        const orchestratorNode = this.nodeIndex.get('orchestrator') || this.nodes.find(n => n.id === 'orchestrator');
+        if (!orchestratorNode) return;
+
+        const receiverLabel = targets?.length ? targets.join(', ') : 'Care circles';
+        const context = {
+            color,
+            circleName,
+            targets,
+            sender: orchestratorNode,
+            receiver: { id: receiverLabel, label: receiverLabel, type: 'targets' },
+            direction: 'orchestrator_broadcast'
+        };
+
+        this._recordNodeMessage('orchestrator', {
+            direction: 'outgoing',
+            counterpart: targets,
+            message,
+            timestamp: Date.now(),
+            context
+        });
+        this._showUserMessage(orchestratorNode, message, context);
+    }
+
+    animateOrchestratorAction({ targetUsers = [], message = '', actionType = 'escalation', circleName = '' } = {}) {
+        const orchestratorNode = this.nodes.find((n) => n.id === 'orchestrator');
+        if (!orchestratorNode) return;
+
+        const color = actionType === 'escalation' ? '#ea4335' : '#1a73e8';
+        this._pulseNodes(['orchestrator'], color);
+
+        targetUsers.forEach((username) => {
+            if (!username) return;
+            const coordinatorId = this.getCoordinatorNodeId?.(username);
+            if (coordinatorId) {
+                this._highlightEdge('orchestrator', coordinatorId, color, 1800);
+            }
+        });
+
+        this._showOrchestratorMessage(message, { color, circleName, targets: targetUsers });
+    }
+
+    _formatNodeLabel(node) {
+        if (!node) return 'Message';
+        const baseLabel = node.label || node.type || node.id;
+        const username = node.username || node.id?.replace(/^(user|handler|coordinator|agent)_/, '');
+        if (node.type === 'user') {
+            return baseLabel;
+        }
+        return `${baseLabel} · ${username}`;
+    }
+
+    _escapeHtml(text = '') {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     highlightUser(userId, color = '#1a73e8') {
-        const baseIds = [
-            `user_${userId}`,
-            `companion_${userId}`
-        ];
+        const baseIds = [`user_${userId}`];
         this._pulseNodes(baseIds, color);
     }
 
     highlightAgent(userId, color = '#9c27b0') {
-        const agentIds = [
-            `companion_${userId}`,
-            `coordinator_${userId}`,
-            `handler_input_${userId}`,
-            `agent_clinical_${userId}`
-        ];
-        this._pulseNodes(agentIds, color);
+        const entry = this.userCompanionMap.get(userId);
+        if (!entry) return;
+        const nodeIds = [];
+        if (entry.coordinatorId) {
+            nodeIds.push(entry.coordinatorId);
+        }
+        if (entry.components && entry.components.length) {
+            nodeIds.push(...entry.components);
+        }
+        this._pulseNodes(nodeIds, color);
+    }
+
+    getUserColor(username) {
+        return this.userColors ? this.userColors[username] : undefined;
+    }
+
+    getCoordinatorNodeId(username) {
+        return this.userCompanionMap.get(username)?.coordinatorId || null;
     }
 
     highlightCircle(circleId, color = '#34a853') {
-        if (!this.circleSelection) return;
-        this.circleSelection
+        if (!this.careCircleSelection) return;
+        this.careCircleSelection
             .filter((d) => d.id === circleId || d.name?.toLowerCase() === circleId?.toLowerCase())
             .select('circle')
             .transition()
@@ -427,12 +850,8 @@ export class NetworkVisualization {
             .attr('stroke-width', 4)
             .transition()
             .duration(400)
-            .attr('stroke', function() {
-                return d3.select(this).attr('data-default-stroke') || '#4285F4';
-            })
-            .attr('stroke-width', function() {
-                return parseFloat(d3.select(this).attr('data-default-stroke-width') || 2);
-            });
+            .attr('stroke', (d) => d.color || '#4285F4')
+            .attr('stroke-width', 2);
     }
 
     _pulseNodes(nodeIds = [], color = '#1a73e8') {
@@ -455,7 +874,248 @@ export class NetworkVisualization {
                 .attr('stroke-width', defaultWidth);
         });
     }
+
+    _recordNodeMessage(nodeId, record) {
+        if (!nodeId) return;
+        if (!this.nodePromptHistory.has(nodeId)) {
+            this.nodePromptHistory.set(nodeId, []);
+        }
+        const history = this.nodePromptHistory.get(nodeId);
+        history.unshift(record);
+        if (history.length > 20) {
+            history.pop();
+        }
+    }
+
+    _getUserEntry(nodeId, createIfMissing = false) {
+        let entry = this.userMessageGroups.get(nodeId);
+        if (!entry && createIfMissing) {
+            const group = this.g.append('g')
+                .attr('class', 'user-bubble')
+                .style('pointer-events', 'none')
+                .style('display', 'none');
+            const fo = group.append('foreignObject')
+                .attr('width', 320)
+                .attr('height', 220)
+                .attr('x', -160)
+                .attr('y', -260);
+            entry = {
+                group,
+                fo,
+                width: 320,
+                height: 220,
+                collapsed: false,
+                history: [],
+                visible: false,
+                offset: { x: 0, y: 0 },
+                anchorNodeId: nodeId,
+                resizeObserver: null,
+                resizeObserverTarget: null
+            };
+            this.userMessageGroups.set(nodeId, entry);
+            this._attachBubbleDrag(entry);
+        } else if (entry) {
+            entry.anchorNodeId = entry.anchorNodeId || nodeId;
+            entry.offset = entry.offset || { x: 0, y: 0 };
+        }
+        return entry;
+    }
+
+    _renderUserMessage(nodeId) {
+        const entry = this.userMessageGroups.get(nodeId);
+        if (!entry) return;
+        const history = this.userMessageHistory.get(nodeId) || [];
+        entry.history = history;
+        if (!this.showLogs || !entry.visible) {
+            entry.group.style('display', 'none');
+            entry.group.style('pointer-events', 'none');
+            return;
+        }
+        entry.group.style('display', null);
+        entry.group.style('pointer-events', 'auto');
+
+        const latestContext = history[0]?.context || {};
+        const header = latestContext.header || history[0]?.header || 'Conversation';
+        const nodeMeta = this.nodeIndex.get(nodeId);
+        const isUserBubble = nodeMeta?.type === 'user' || nodeId === 'orchestrator';
+
+        const bodyItems = history.map(item => {
+            const time = new Date(item.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const directionLabel = item.context?.direction === 'agent_to_user' ? 'Agent → User' : item.context?.direction === 'user_to_agent' ? 'User → Agent' : '';
+            const safeMessage = this._escapeHtml(item.message).replace(/\n/g, '<br>');
+            return `
+                <div style="padding: 8px 0; border-bottom: 1px solid rgba(0,0,0,0.05);">
+                    <div style="font-size: 11px; color: #5f6368; display: flex; justify-content: space-between;">
+                        <span>${directionLabel}</span>
+                        <span>${time}</span>
+                    </div>
+                    <div style="margin-top: 4px; color: #1f1f1f; font-size: 13px; line-height: 1.55;">${safeMessage}</div>
+                </div>`;
+        }).join('') || '<div style="padding: 12px; color: #5f6368;">No messages yet.</div>';
+
+        const bodyDisplay = entry.collapsed ? 'none' : 'block';
+        const toggleLabel = entry.collapsed ? 'Expand' : 'Minimize';
+
+        entry.fo
+            .attr('width', entry.width)
+            .attr('height', entry.height)
+            .attr('x', -entry.width / 2)
+            .attr('y', -(entry.height + 32))
+            .html(`
+                <div class="bubble-root" style="width:100%; height:100%; min-width:240px; min-height:180px; max-width:680px; max-height:520px; resize: both; overflow: hidden; border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.18); font-family: 'Segoe UI', sans-serif; background: rgba(255,255,255,0.98); display: flex; flex-direction: column;">
+                    <div class="bubble-header" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; border-bottom: 1px solid rgba(0,0,0,0.06); background: #f8f9fa; border-top-left-radius: 12px; border-top-right-radius: 12px; gap: 8px;">
+                        <div style="font-weight: 600; font-size: 13px; color: #1f1f1f; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${this._escapeHtml(header)}</div>
+                        <div style="display: flex; gap: 6px; align-items: center;">
+                            ${isUserBubble ? `<button class="bubble-toggle" style="font-size: 11px; padding: 4px 10px; border: 1px solid #dadce0; background: white; border-radius: 999px; cursor: pointer;">${toggleLabel}</button>` : ''}
+                            <button class="bubble-close" style="font-size: 12px; padding: 4px 8px; border: 1px solid #dadce0; background: white; border-radius: 999px; cursor: pointer;">✕</button>
+                        </div>
+                    </div>
+                    <div class="bubble-body" style="display: ${bodyDisplay}; padding: 12px 16px; overflow-y: auto; flex: 1;">
+                        ${bodyItems}
+                    </div>
+                </div>
+            `);
+
+        const foNode = entry.fo.node();
+        const rootNode = foNode?.querySelector('.bubble-root');
+        this._attachBubbleResize(entry, rootNode);
+        const toggleBtn = isUserBubble ? foNode?.querySelector('.bubble-toggle') : null;
+        const closeBtn = foNode?.querySelector('.bubble-close');
+
+        if (toggleBtn) {
+            toggleBtn.onclick = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                entry.collapsed = !entry.collapsed;
+                this._renderUserMessage(nodeId);
+            };
+        }
+
+        if (closeBtn) {
+            closeBtn.onclick = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                entry.visible = false;
+                entry.group.style('display', 'none');
+                entry.group.style('pointer-events', 'none');
+            };
+        }
+
+        this._updateMessagePositions();
+    }
+
+    _showUserMessage(userNode, message, context = {}) {
+        if (!userNode) return;
+        const nodeId = userNode.id;
+        if (!this.userMessageHistory.has(nodeId)) {
+            this.userMessageHistory.set(nodeId, []);
+        }
+        const history = this.userMessageHistory.get(nodeId);
+        const header = context.sender ? `${this._formatNodeLabel(context.sender)} → ${this._formatNodeLabel(context.receiver)}` : userNode.label || userNode.id;
+        history.unshift({ message, timestamp: Date.now(), context: { ...context, header } });
+        if (history.length > 30) {
+            history.pop();
+        }
+
+        const entry = this._getUserEntry(nodeId, true);
+        if (entry.visible) {
+            this._renderUserMessage(nodeId);
+        }
+        this._updateBubbleTransform(entry);
+    }
+
+    _displayUserBubble(userNode, options = {}) {
+        if (!userNode) return;
+        const { force = false } = options;
+        const nodeId = userNode.id;
+        if (!this.userMessageHistory.has(nodeId)) {
+            this.userMessageHistory.set(nodeId, []);
+        }
+        const entry = this._getUserEntry(nodeId, true);
+        entry.anchorNodeId = nodeId;
+        if (!force && entry.visible) {
+            entry.visible = false;
+            entry.group.style('display', 'none');
+            entry.group.style('pointer-events', 'none');
+            return;
+        }
+
+        entry.collapsed = false;
+        entry.visible = true;
+        entry.group.style('display', null);
+        entry.group.style('pointer-events', 'auto');
+        this._renderUserMessage(nodeId);
+        this._updateBubbleTransform(entry);
+    }
+
+    _displayBubbleForNodeId(nodeId, options = {}) {
+        if (!nodeId) return;
+        const resolvedUserId = this._resolveUserNodeId(nodeId);
+        if (!resolvedUserId) return;
+        const userNode = this.nodeIndex.get(resolvedUserId);
+        if (userNode) {
+            this._displayUserBubble(userNode, options);
+        }
+    }
+
+    _resolveUserNodeId(nodeId) {
+        if (!nodeId) return null;
+        if (nodeId.startsWith('user_')) {
+            return nodeId;
+        }
+        const meta = this.nodeIndex.get(nodeId);
+        if (meta && meta.username) {
+            return `user_${meta.username}`;
+        }
+        return null;
+    }
+
+    _handleNodeHover(event, node) {
+        if (!this.showPrompts || !this.tooltip) return;
+        const history = this.nodePromptHistory.get(node.id);
+        if (!history || !history.length) return;
+        const topEntries = history.slice(0, 5).map(item => {
+            const time = new Date(item.timestamp || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const counter = Array.isArray(item.counterpart) ? item.counterpart.join(', ') : item.counterpart;
+            return `
+                <div style="margin-bottom: 6px;">
+                    <div style="font-size: 11px; color: rgba(255,255,255,0.7);">${time}${counter ? ` · ${this._escapeHtml(String(counter))}` : ''}</div>
+                    <div style="margin-top: 2px; font-size: 12px;">${this._escapeHtml(item.message)}</div>
+                </div>`;
+        }).join('');
+
+        this.tooltip
+            .style('display', 'block')
+            .html(topEntries || '<div style="font-size: 12px;">No prompts yet.</div>');
+
+        this._moveTooltip(event);
+    }
+
+    _moveTooltip(event) {
+        if (!this.tooltip || this.tooltip.style('display') === 'none') return;
+        const { clientX, clientY } = event;
+        const offset = 16;
+        this.tooltip
+            .style('left', `${clientX + offset}px`)
+            .style('top', `${clientY + offset}px`);
+    }
+
+    _hideTooltip() {
+        if (this.tooltip) {
+            this.tooltip.style('display', 'none');
+        }
+    }
+}
+
+function buildAbbreviation(label = '', maxLength = 2) {
+    if (!label) return '';
+    const letters = label
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(word => word[0])
+        .join('')
+        .toUpperCase();
+    return letters.slice(0, Math.max(1, maxLength));
 }
 
 export default NetworkVisualization;
-

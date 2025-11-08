@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Care Circle</title>
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/themes/light.css">
+    <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/shoelace.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
 </head>
 <body>
@@ -142,18 +144,20 @@
                     </div>
                     
                     <button id="run-simulation" class="primary" style="width: 100%;">🔬 Run Simulation</button>
-                    <div id="network-visualization-container" style="display: none; margin-top: 16px; padding: 16px; background: white; border-radius: 8px; border: 1px solid var(--gray-300);">
-                        <div style="margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; gap: 16px;">
-                            <h4 style="margin: 0; flex: 1;">Network Visualization</h4>
-                            <div style="display: flex; gap: 16px; font-size: 12px; color: var(--gray-700);">
-                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-logs" checked> Show Event Log</label>
+                    <div id="network-visualization-container" style="display: none; margin-top: 16px; padding: 20px; background: white; border-radius: 12px; border: 1px solid var(--gray-300);">
+                        <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; gap: 20px;">
+                            <h4 style="margin: 0; flex: 1; font-size: 18px;">Network Visualization</h4>
+                            <div style="display: flex; gap: 20px; font-size: 13px; color: var(--gray-700); flex-wrap: wrap;">
+                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-messages" checked> Show Messages</label>
+                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-event-log"> Show Event Log</label>
                                 <label style="cursor: pointer;"><input type="checkbox" id="toggle-prompts" checked> Show Prompts</label>
                                 <label style="cursor: pointer;"><input type="checkbox" id="toggle-hardware" checked> Show Hardware Info</label>
                             </div>
                         </div>
-                        <div style="display: flex; gap: 16px; align-items: stretch;">
-                            <div id="network-canvas" style="flex: 2; min-height: 600px; border: 1px solid var(--gray-200); border-radius: 4px; position: relative; overflow: hidden;"></div>
-                            <div id="network-event-log" style="flex: 1; max-height: 600px; overflow-y: auto; border: 1px solid var(--gray-200); border-radius: 4px; background: var(--gray-50); padding: 12px; font-size: 12px; display: flex; flex-direction: column; gap: 8px;"></div>
+                        <div id="care-circle-legend" style="display: none; margin-bottom: 16px; gap: 12px; flex-wrap: wrap;"></div>
+                        <div style="display: flex; gap: 20px; align-items: stretch; min-height: 720px;">
+                            <div id="network-canvas" style="flex: 2.5; min-height: 720px; border: 1px solid var(--gray-200); border-radius: 8px; position: relative; overflow: hidden;"></div>
+                            <div id="network-event-log" style="flex: 1; max-height: 720px; overflow-y: auto; border: 1px solid var(--gray-200); border-radius: 8px; background: var(--gray-50); padding: 14px; font-size: 13px; line-height: 1.6; display: none; flex-direction: column; gap: 10px;"></div>
                         </div>
                     </div>
                     <div id="simulation-results" style="margin-top: 16px;"></div>

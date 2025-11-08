@@ -82,6 +82,9 @@ header {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 100;
 }
 
 .header-left h2 {
@@ -185,8 +188,23 @@ input:focus {
 /* Content Area */
 .content {
     flex: 1;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
     display: flex;
+}
+
+.network-tooltip {
+    position: fixed;
+    background: rgba(32, 33, 36, 0.92);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+    pointer-events: none;
+    z-index: 1000;
+    display: none;
 }
 
 .view {

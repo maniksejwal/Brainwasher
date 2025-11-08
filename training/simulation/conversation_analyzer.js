@@ -6,7 +6,8 @@
 import { URGENCY_LEVELS, DENIAL_PATTERNS, GENERIC_RESPONSES } from '../../constants.js';
 
 export class ConversationAnalyzer {
-    constructor() {
+    constructor(scenarioContext = null) {
+        this.scenarioContext = scenarioContext;
         this.patterns = {
             repetitiveResponses: [],
             escalationPatterns: [],
@@ -64,6 +65,12 @@ export class ConversationAnalyzer {
             // Recommendations
             recommendations: []
         };
+
+        analysis.speakerBalance = this._analyzeSpeakerDistribution(conversationHistory);
+        analysis.notificationCoverage = this._analyzeNotificationCoverage(conversationHistory);
+        analysis.starvationPenalty =
+            (analysis.speakerBalance?.penalty || 0) +
+            (analysis.notificationCoverage?.penalty || 0);
 
         // Generate recommendations based on analysis
         analysis.recommendations = this._generateConversationRecommendations(analysis);
@@ -165,6 +172,114 @@ export class ConversationAnalyzer {
         });
         
         return goalProgress;
+    }
+
+    _analyzeSpeakerDistribution(conversationHistory) {
+        const counts = {};
+        const perSpeaker = [];
+
+        conversationHistory.forEach((message) => {
+            const userContent = message.userMessage || (message.role === 'user' ? message.content : '');
+            if (!userContent) return;
+            const role = this._normalizeSpeakerRole(message.userRole || message.role || 'unknown');
+            counts[role] = (counts[role] || 0) + 1;
+            perSpeaker.push({ role, content: userContent });
+        });
+
+        const scenarioRoles = (this.scenarioContext?.users || []).reduce((acc, user) => {
+            const normalized = this._normalizeSpeakerRole(user.role || 'unknown');
+            acc[normalized] = (acc[normalized] || 0) + 1;
+            return acc;
+        }, {});
+
+        const roleSet = new Set([
+            ...Object.keys(counts),
+            ...Object.keys(scenarioRoles)
+        ]);
+        roleSet.delete('unknown');
+
+        if (!roleSet.size) {
+            return {
+                counts: {},
+                ratios: {},
+                expected: {},
+                starvationFlags: [],
+                totalUserTurns: 0,
+                penalty: 0
+            };
+        }
+
+        const ratios = {};
+        const totalTurns = Object.values(counts).reduce((sum, value) => sum + value, 0);
+        roleSet.forEach((role) => {
+            ratios[role] = totalTurns > 0 ? (counts[role] || 0) / totalTurns : 0;
+        });
+
+        const expected = this._calculateExpectedSpeakerRatios(roleSet, scenarioRoles, counts);
+        const starvationFlags = [];
+        const tolerance = 0.6;
+
+        roleSet.forEach((role) => {
+            const expectedShare = expected[role] ?? 0;
+            if (expectedShare <= 0) return;
+            const actualShare = ratios[role] || 0;
+            if (totalTurns >= 3 && actualShare < expectedShare * tolerance) {
+                starvationFlags.push({
+                    role,
+                    expectedShare,
+                    actualShare,
+                    missingTurns: Math.max(Math.round(expectedShare * totalTurns) - (counts[role] || 0), 1)
+                });
+            }
+        });
+
+        const penalty = starvationFlags.length ? -1 * starvationFlags.length : 0;
+
+        return {
+            counts,
+            perSpeaker,
+            ratios,
+            expected,
+            starvationFlags,
+            totalUserTurns: totalTurns,
+            penalty,
+            dominantRole: Object.entries(ratios)
+                .sort((a, b) => b[1] - a[1])[0]?.[0] || null
+        };
+    }
+
+    _analyzeNotificationCoverage(conversationHistory) {
+        const requiresNotifications = this._scenarioRequiresNotifications();
+        let notificationEvents = 0;
+
+        conversationHistory.forEach((message) => {
+            const action = message.orchestratorAction || message.action || null;
+            if (!action) return;
+
+            if (typeof action === 'string') {
+                if (/notify|notification|alert|broadcast|update caregiver|update doctor/i.test(action)) {
+                    notificationEvents += 1;
+                }
+                return;
+            }
+
+            const type = action.type || '';
+            const description = action.description || action.message || '';
+            if (/notification|alert|broadcast|reminder/i.test(type) ||
+                /notify|alert|update|check-in|remind/i.test(description)) {
+                notificationEvents += 1;
+            }
+        });
+
+        const missing = requiresNotifications && notificationEvents === 0;
+        const penalty = missing ? -1 : 0;
+
+        return {
+            requiresNotifications,
+            notificationEvents,
+            missing,
+            penalty
+        };
     }
 
     /**
@@ -669,6 +784,52 @@ export class ConversationAnalyzer {
     /**
      * Generate conversation-level recommendations
      */
+    _calculateExpectedSpeakerRatios(roleSet, scenarioRoles, observedCounts) {
+        const weightLookup = { patient: 3, caregiver: 2, doctor: 1, other: 1 };
+        let totalWeight = 0;
+        const expected = {};
+
+        roleSet.forEach((role) => {
+            const scenarioCount = scenarioRoles[role] || 0;
+            const observedCount = observedCounts[role] || 0;
+            const baselineParticipants = Math.max(scenarioCount, observedCount ? 1 : 0);
+            const roleWeight = (weightLookup[role] || 1) * (baselineParticipants || 1);
+            expected[role] = roleWeight;
+            totalWeight += roleWeight;
+        });
+
+        if (!totalWeight) {
+            roleSet.forEach((role) => {
+                expected[role] = 1 / roleSet.size;
+            });
+            return expected;
+        }
+
+        roleSet.forEach((role) => {
+            expected[role] = expected[role] / totalWeight;
+        });
+
+        return expected;
+    }
+
+    _normalizeSpeakerRole(role = 'unknown') {
+        const normalized = String(role || '').toLowerCase();
+        if (normalized.includes('patient')) return 'patient';
+        if (normalized.includes('caregiver') || normalized.includes('family') || normalized.includes('relative')) return 'caregiver';
+        if (normalized.includes('doctor') || normalized.includes('physician') || normalized.includes('specialist')) return 'doctor';
+        if (normalized.includes('nurse')) return 'caregiver';
+        return normalized || 'other';
+    }
+
+    _scenarioRequiresNotifications() {
+        if (!this.scenarioContext) return false;
+        if (this.scenarioContext.requiresNotifications === true) return true;
+        const agentInstruction = (this.scenarioContext.instructions?.agent || '').toLowerCase();
+        const description = (this.scenarioContext.description || '').toLowerCase();
+        const keywords = ['notify', 'notification', 'alert', 'reach out', 'update', 'broadcast', 'check-in'];
+        return keywords.some(keyword => agentInstruction.includes(keyword) || description.includes(keyword));
+    }
+
     _generateConversationRecommendations(analysis) {
         const recommendations = [];
         
@@ -726,6 +887,29 @@ export class ConversationAnalyzer {
                 impact: 'Enhances user satisfaction and conversation effectiveness'
             });
         }
+
+        if (analysis.speakerBalance?.starvationFlags?.length) {
+            const affectedRoles = analysis.speakerBalance.starvationFlags
+                .map(flag => `${flag.role} (${(flag.actualShare * 100).toFixed(1)}% vs ${(flag.expectedShare * 100).toFixed(1)}% expected)`)
+                .join(', ');
+            recommendations.push({
+                category: 'speaker_balance',
+                priority: 'high',
+                issue: `Conversation imbalance detected: ${affectedRoles}`,
+                suggestion: 'Adjust orchestration to invite underrepresented roles and avoid starving caregivers/patients of turns.',
+                impact: 'Ensures equitable participation and reduces starvation risk.'
+            });
+        }
+
+        if (analysis.notificationCoverage?.missing) {
+            recommendations.push({
+                category: 'notifications',
+                priority: 'high',
+                issue: 'Scenario expected notifications but none were sent.',
+                suggestion: 'Trigger caregiver/doctor updates or alerts when monitoring scenarios call for them.',
+                impact: 'Prevents information starvation for remote participants.'
+            });
+        }
         
         return recommendations;
     }
@@ -750,6 +934,9 @@ export class ConversationAnalyzer {
             engagementQuality: { overallScore: 0, factors: {} },
             trustBuilding: { overallScore: 0, indicators: {} },
             informationGathering: { questionRate: 0, relevanceRate: 0, informationRate: 0, followUpRate: 0 },
+            speakerBalance: { counts: {}, ratios: {}, expected: {}, starvationFlags: [], totalUserTurns: 0, penalty: 0 },
+            notificationCoverage: { requiresNotifications: false, notificationEvents: 0, missing: false, penalty: 0 },
+            starvationPenalty: 0,
             recommendations: []
         };
     }
@@ -769,9 +956,11 @@ export class ConversationAnalyzer {
             const normalized = { ...msg };
             if (msg.role === 'user') {
                 normalized.userMessage = msg.content || msg.message || '';
-                normalized.userRole = msg.userRole || 'patient';
+                normalized.userRole = msg.userRole || msg.role || 'patient';
+                normalized.agentResponse = normalized.agentResponse ?? null;
             } else if (msg.role === 'agent' || msg.role === 'assistant') {
                 normalized.agentResponse = msg.content || msg.message || '';
+                normalized.userRole = normalized.userRole || msg.userRole;
             }
             
             return normalized;
@@ -795,6 +984,7 @@ export class ConversationAnalyzer {
             if (msg.role === 'user') {
                 normalized.userMessage = msg.content || '';
                 normalized.agentResponse = null;
+                normalized.userRole = msg.userRole || msg.role || 'patient';
             } else if (msg.role === 'agent' || msg.role === 'assistant') {
                 // Find previous user message to pair with this agent response
                 let prevUserIndex = index - 1;
@@ -804,6 +994,8 @@ export class ConversationAnalyzer {
                 
                 normalized.agentResponse = msg.content || '';
                 normalized.userMessage = conversationHistory[prevUserIndex]?.content || '';
+                normalized.userRole = conversationHistory[prevUserIndex]?.userRole ||
+                    conversationHistory[prevUserIndex]?.role || 'patient';
             }
             
             return normalized;

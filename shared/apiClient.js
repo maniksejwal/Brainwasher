@@ -177,6 +177,36 @@ export class ApiClient {
         }
     }
 
+    async getCompanionComponents(options = {}) {
+        const { refresh = false } = options;
+        try {
+            const query = refresh ? '?refresh=true' : '';
+            const response = await fetch(`${this.baseUrl}/api/companion-components${query}`);
+
+            if (!response.ok) {
+                throw new Error(`Failed to load companion components: ${response.status}`);
+            }
+
+            return await response.json();
+        } catch (error) {
+            console.error('[ApiClient] Companion components error:', error.message);
+            return { companion: { handlers: [], agents: [], prompts: [] }, orchestrator: { id: 'orchestrator', label: 'Orchestrator' } };
+        }
+    }
+
+    async getPrompts(limit = 100) {
+        try {
+            const response = await fetch(`${this.baseUrl}/api/prompts?limit=${encodeURIComponent(limit)}`);
+            if (!response.ok) {
+                throw new Error(`Failed to load prompts: ${response.status}`);
+            }
+            return await response.json();
+        } catch (error) {
+            console.error('[ApiClient] Prompts fetch error:', error.message);
+            return { prompts: [] };
+        }
+    }
+
     /**
      * Run simulation
      */

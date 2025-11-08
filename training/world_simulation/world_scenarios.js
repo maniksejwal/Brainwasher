@@ -232,6 +232,113 @@ export const WORLD_SCENARIOS_DEFINITIONS = {
             husband: 'You are the husband caught between your wife and children.',
             agent: 'ASSESS: Does the agent handle blended family dynamics sensitively? Does it recognize step-relationship complexities?'
         }
+    },
+
+    // ========== COMPLEX MULTI-CARE CIRCLE SCENARIO ==========
+    complex_family_medical_crisis: {
+        key: 'complex_family_medical_crisis',
+        name: '🏥👨‍👩‍👧‍👦 Complex Family Medical Crisis',
+        description: 'Multi-generational family with overlapping medical conditions, privacy concerns, and escalations involving 2 doctors',
+        category: 'complex_multi_circle',
+        complexity: 8,
+        turns: 20,
+        users: [
+            // PATIENT/CAREGIVERS (dual roles)
+            {
+                username: 'sarah',
+                persona: 'burned_out_caregiver', // Primary caregiver but also has health issues
+                circles: [
+                    { circleId: 'sarah_circle', role: 'patient', relationship: 'self' },
+                    { circleId: 'mom_circle', role: 'caregiver', relationship: 'daughter' },
+                    { circleId: 'teen_circle', role: 'caregiver', relationship: 'mother' }
+                ]
+            },
+            {
+                username: 'mom_helen',
+                persona: 'denial_prone', // Elderly mother with heart condition
+                circles: [
+                    { circleId: 'mom_circle', role: 'patient', relationship: 'self' },
+                    { circleId: 'sarah_circle', role: 'caregiver', relationship: 'mother' }
+                ]
+            },
+            {
+                username: 'teen_alex',
+                persona: 'anxious_patient', // Teenager with anxiety, also helps with grandma
+                circles: [
+                    { circleId: 'teen_circle', role: 'patient', relationship: 'self' },
+                    { circleId: 'mom_circle', role: 'caregiver', relationship: 'grandchild' }
+                ]
+            },
+            
+            // EXCLUSIVE CAREGIVERS
+            {
+                username: 'nurse_maria',
+                persona: 'engaged_caregiver', // Professional home health aide
+                circles: [
+                    { circleId: 'mom_circle', role: 'caregiver', relationship: 'home_health_aide' },
+                    { circleId: 'sarah_circle', role: 'caregiver', relationship: 'professional_support' }
+                ]
+            },
+            {
+                username: 'husband_mike',
+                persona: 'overprotective_spouse', // Sarah's husband, supports family
+                circles: [
+                    { circleId: 'sarah_circle', role: 'caregiver', relationship: 'spouse' },
+                    { circleId: 'teen_circle', role: 'caregiver', relationship: 'father' }
+                ]
+            },
+            
+            // DOCTORS
+            {
+                username: 'dr_cardio',
+                persona: 'empathetic_doctor', // Cardiologist for mom
+                circles: [
+                    { circleId: 'mom_circle', role: 'doctor', relationship: 'cardiologist' }
+                ]
+            },
+            {
+                username: 'dr_family',
+                persona: 'empathetic_doctor', // Family doctor for Sarah and teen
+                circles: [
+                    { circleId: 'sarah_circle', role: 'doctor', relationship: 'family_physician' },
+                    { circleId: 'teen_circle', role: 'doctor', relationship: 'family_physician' }
+                ]
+            }
+        ],
+        circles: [
+            {
+                name: 'Helen (Mom) Circle',
+                primaryPatientId: 'mom_helen_world_',
+                members: ['mom_helen', 'sarah', 'teen_alex', 'nurse_maria', 'dr_cardio']
+            },
+            {
+                name: 'Sarah Circle', 
+                primaryPatientId: 'sarah_world_',
+                members: ['sarah', 'mom_helen', 'husband_mike', 'nurse_maria', 'dr_family']
+            },
+            {
+                name: 'Alex (Teen) Circle',
+                primaryPatientId: 'teen_alex_world_',
+                members: ['teen_alex', 'sarah', 'husband_mike', 'dr_family']
+            }
+        ],
+        instructions: {
+            sarah: 'You are Sarah, a 45-year-old daughter caring for your 72-year-old mother Helen (heart condition) while managing your own stress-related health issues and supporting your anxious teenager Alex. You feel overwhelmed and burned out. You sometimes hide your own symptoms to focus on others. You have privacy concerns about sharing family medical information.',
+            
+            mom_helen: 'You are Helen, a 72-year-old mother with a serious heart condition. You tend to minimize your symptoms and resist medical care. You worry about being a burden on Sarah but also want to help with your grandchild Alex. You sometimes give conflicting information about your medications.',
+            
+            teen_alex: 'You are Alex, a 16-year-old with anxiety and panic attacks. You love your grandmother Helen and want to help care for her, but your own mental health struggles sometimes interfere. You are worried about both your mom Sarah (who seems stressed) and grandma Helen (who seems sicker than she admits).',
+            
+            nurse_maria: 'You are Maria, a professional home health aide. You see concerning patterns in the family dynamics and medical compliance. You need to balance professional boundaries with genuine care. You notice that Helen is not taking medications properly and Sarah is showing signs of caregiver burnout.',
+            
+            husband_mike: 'You are Mike, Sarah\'s husband and Alex\'s father. You are protective of your family but sometimes feel excluded from medical decisions. You are concerned about Sarah\'s health and stress levels, and you want to support Alex through their anxiety while also helping with Helen\'s care.',
+            
+            dr_cardio: 'You are Dr. Rodriguez, Helen\'s cardiologist. You are concerned about her medication adherence and the family\'s ability to manage her complex care needs. You need to balance patient autonomy with safety concerns, and you may need to escalate care or involve other specialists.',
+            
+            dr_family: 'You are Dr. Kim, the family physician for Sarah and Alex. You are seeing signs of caregiver stress in Sarah and worsening anxiety in Alex. You need to coordinate care across the family while respecting privacy boundaries. You may need to refer to specialists or recommend family counseling.',
+            
+            agent: 'ASSESS: Does the agent navigate complex multi-generational care dynamics? Does it handle privacy concerns appropriately when family members are in multiple circles? Does it recognize escalation needs across different medical conditions? Does it facilitate communication between doctors and coordinate care plans? Does it balance individual patient needs with family dynamics?'
+        }
     }
 };
 
@@ -274,7 +381,8 @@ export function displayWorldScenariosByCategory(showNumbers = false) {
         'role_inversion': '🔄 Role Inversion Scenarios',
         'family_network': '👨‍👩‍👧‍👦 Family Network Scenarios',
         'generational': '🥪 Generational Care Scenarios',
-        'blended_family': '👨‍👩‍👧‍👦 Blended Family Scenarios'
+        'blended_family': '👨‍👩‍👧‍👦 Blended Family Scenarios',
+        'complex_multi_circle': '🏥👨‍👩‍👧‍👦 Complex Multi-Circle Scenarios'
     };
 
     for (const [categoryKey, scenarios] of Object.entries(categories)) {

@@ -8,8 +8,9 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
+import fs from 'fs/promises';
 // FIX: Import the correct function
-import { initializeDatabase, getUnreadEscalationsForUser, getDb } from './db/index.js';
+import { initializeDatabase, getUnreadEscalationsForUser, getDb, getAllPromptVersions } from './db/index.js';
 import { handleLogin, handleMessage, handleCommand, events } from './orchestrator.js';
 import config from './config.js';
 
@@ -25,6 +26,15 @@ const clients = {};
 // Log buffer for GUI (circular buffer, last 200 entries)
 const logBuffer = [];
 const MAX_LOGS = 200;
+
+const ANSI_ESCAPE_REGEX = /\u001b\[[0-9;]*m/g;
+
+function sanitizeCLIOutput(text = '') {
+    return text
+        .replace(ANSI_ESCAPE_REGEX, '')
+        .replace(/\r/g, '')
+        .replace(/\u0007/g, '');
+}
 
 // Override console.log to capture logs
 const originalLog = console.log;
@@ -117,6 +127,18 @@ app.get('/doctor/escalations/unread/:userId', async (req, res) => {
     const { userId } = req.params;
     const escalations = await getUnreadEscalationsForUser(userId);
     res.status(200).json(escalations);
+});
+
+app.get('/api/prompts', async (req, res) => {
+    try {
+        const limit = Number.parseInt(req.query.limit, 10);
+        const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.min(limit, 500) : 100;
+        const prompts = await getAllPromptVersions(safeLimit);
+        res.json({ prompts });
+    } catch (error) {
+        console.error('[Server] Error fetching prompts:', error.message);
+        res.status(500).json({ error: 'Failed to load prompts' });
+    }
 });
 
 app.post('/login', async (req, res) => {
@@ -260,6 +282,135 @@ app.get('/api/scenarios', async (req, res) => {
     } catch (error) {
         console.error('[Server] Error loading scenarios:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+let companionManifestCache = null;
+
+function formatComponentLabel(id) {
+    return id
+        .split('/')
+        .map(segment => segment
+            .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+            .replace(/[_-]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .replace(/\b\w/g, char => char.toUpperCase()))
+        .join(' ');
+}
+
+async function collectJsModulesRecursive(baseDir, options = {}) {
+    const {
+        relativeTo = baseDir,
+        recursive = true,
+        filter = () => true,
+        labelFormatter
+    } = options;
+
+    const results = [];
+    try {
+        const entries = await fs.readdir(baseDir, { withFileTypes: true });
+        for (const entry of entries) {
+            if (entry.name.startsWith('.')) continue;
+            const entryPath = path.join(baseDir, entry.name);
+            if (entry.isDirectory()) {
+                if (recursive) {
+                    const subResults = await collectJsModulesRecursive(entryPath, options);
+                    results.push(...subResults);
+                }
+                continue;
+            }
+
+            if (!entry.name.endsWith('.js')) continue;
+            const relativePath = path.relative(relativeTo, entryPath).replace(/\\/g, '/');
+            if (!filter(relativePath)) continue;
+
+            const id = relativePath.replace(/\.js$/, '');
+            const label = labelFormatter ? labelFormatter(id) : formatComponentLabel(id);
+            results.push({ id, label });
+        }
+    } catch (error) {
+        console.error(`[Server] Failed to read modules from ${baseDir}:`, error.message);
+    }
+    return results;
+}
+
+async function buildComponentManifest({ refresh = false } = {}) {
+    if (refresh) {
+        companionManifestCache = null;
+    }
+    if (companionManifestCache) {
+        return companionManifestCache;
+    }
+
+    const companionsDir = path.join(__dirname, 'companions');
+    const promptsDir = path.join(__dirname, 'prompts');
+
+    const [companionHandlers, companionAgents, companionPrompts] = await Promise.all([
+        collectJsModulesRecursive(path.join(companionsDir, 'handlers'), {
+            relativeTo: path.join(companionsDir, 'handlers'),
+            filter: (relativePath) => !relativePath.endsWith('index.js')
+        }),
+        collectJsModulesRecursive(path.join(companionsDir, 'agents'), {
+            relativeTo: path.join(companionsDir, 'agents'),
+            filter: (relativePath) => !relativePath.endsWith('index.js')
+        }),
+        (async () => {
+            try {
+                const entries = await fs.readdir(promptsDir, { withFileTypes: true });
+                return entries
+                    .filter(entry => entry.isFile() && entry.name.startsWith('companion_') && entry.name.endsWith('.js'))
+                    .map(entry => {
+                        const id = entry.name.replace(/\.js$/, '');
+                        const label = id
+                            .replace(/^companion[_-]?/i, '')
+                            .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+                            .replace(/[_-]/g, ' ')
+                            .trim()
+                            .replace(/\b\w/g, char => char.toUpperCase());
+                        return { id, label };
+                    });
+            } catch (error) {
+                console.error('[Server] Failed to read companion prompts:', error.message);
+                return [];
+            }
+        })(),
+    ]);
+
+    const dedupe = (items = []) => {
+        const seen = new Set();
+        return items.filter(item => {
+            if (seen.has(item.id)) return false;
+            seen.add(item.id);
+            return true;
+        });
+    };
+
+    const manifest = {
+        companion: {
+            coordinator: { id: 'companions/CompanionCoordinator', label: 'Companion Coordinator' },
+            handlers: dedupe(companionHandlers),
+            agents: dedupe(companionAgents),
+            prompts: companionPrompts
+        },
+        orchestrator: {
+            id: 'orchestrator',
+            label: 'Orchestrator'
+        }
+    };
+
+    companionManifestCache = manifest;
+    return manifest;
+}
+
+app.get('/api/companion-components', async (req, res) => {
+    try {
+        const refresh = req.query.refresh === 'true' || req.query.refresh === '1';
+        const manifest = await buildComponentManifest({ refresh });
+        res.json(manifest);
+    } catch (error) {
+        console.error('[Server] Error building companion manifest:', error.message);
+        res.status(500).json({ error: 'Failed to load companion components' });
     }
 });
 
@@ -534,9 +685,8 @@ function executeCLICommand(command, args, res, timeoutMs = 300000) {
     let stderr = '';
 
     childProcess.stdout.on('data', (data) => {
-        const chunk = data.toString();
+        const chunk = sanitizeCLIOutput(data.toString());
         stdout += chunk;
-        console.log(`[CLI stdout ${command}] chunk length: ${chunk.length}`);
         ensureHeaders();
         if (!res.writableEnded) {
             res.write(JSON.stringify({ type: 'stdout', data: chunk }) + '\n');
@@ -544,9 +694,8 @@ function executeCLICommand(command, args, res, timeoutMs = 300000) {
     });
 
     childProcess.stderr.on('data', (data) => {
-        const chunk = data.toString();
+        const chunk = sanitizeCLIOutput(data.toString());
         stderr += chunk;
-        console.log(`[CLI stderr ${command}] chunk length: ${chunk.length}`);
         ensureHeaders();
         if (!res.writableEnded) {
             res.write(JSON.stringify({ type: 'stderr', data: chunk }) + '\n');
