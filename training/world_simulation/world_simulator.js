@@ -38,6 +38,20 @@ export class WorldSimulator {
         this.conversationRunners = new Map(); // Track conversation runners per circle
         this.feedbackCollectors = new Map(); // Track feedback collectors per circle
         this.progressCallback = options.progressCallback || null;
+        this.turnOverride = null;
+    }
+
+    _makeWorldCircleId(circleConfig, index = 0) {
+        const baseName = circleConfig.name || `Circle ${index + 1}`;
+        const normalized = baseName
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '') || `circle_${index + 1}`;
+        return {
+            id: `${normalized}_world_${this.runId}`,
+            displayName: baseName,
+            slug: normalized
+        };
     }
 
     /**
@@ -68,8 +82,8 @@ export class WorldSimulator {
             );
             CREATE TABLE IF NOT EXISTS care_circles ( 
                 circle_id TEXT PRIMARY KEY, 
-                primary_patient_id TEXT NOT NULL, 
-                created_at INTEGER NOT NULL, 
+                primary_patient_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
                 FOREIGN KEY (primary_patient_id) REFERENCES users(user_id) 
             );
             CREATE TABLE IF NOT EXISTS care_circle_members ( 
@@ -257,8 +271,9 @@ export class WorldSimulator {
      * Also creates circles in standard tables for ConversationRunner
      */
     async createWorldCircles(circleConfigs) {
-        for (const config of circleConfigs) {
-            const worldCircleId = `${config.name}_world_${this.runId}`;
+        for (let index = 0; index < circleConfigs.length; index += 1) {
+            const config = circleConfigs[index];
+            const { id: worldCircleId, displayName, slug } = this._makeWorldCircleId(config, index);
             
             // Find the actual user ID (may be prefixed with world_ or just username)
             // Try exact match first, then username match, then prefix match
@@ -293,7 +308,8 @@ export class WorldSimulator {
             
             this.circles.push({
                 worldCircleId,
-                name: config.name,
+                slug,
+                name: displayName,
                 primaryPatientId: patientId,
                 members: config.members
             });
@@ -363,9 +379,15 @@ export class WorldSimulator {
      * Run scenario (matching SimulationDriver interface for training pipeline)
      * This allows world scenarios to be used in training iterations
      */
-    async runScenario(scenarioConfig, scenarioKey) {
+    async runScenario(scenarioConfig, scenarioKey, options = {}) {
         // Set scenario ID and update conversation ID
         this.setScenario(scenarioKey);
+        const requestedTurns = options.turns ? parseInt(options.turns, 10) : null;
+        if (requestedTurns && !Number.isNaN(requestedTurns) && requestedTurns > 0) {
+            this.turnOverride = requestedTurns;
+        } else {
+            this.turnOverride = null;
+        }
         
         // Update prompt version from environment if set
         if (process.env.PROMPT_VERSION) {
@@ -406,6 +428,7 @@ export class WorldSimulator {
             // Run conversations across circles
             emitProgress(4, 'Starting world conversations...', `Running conversations across ${scenarioConfig.circles.length} circles`);
             await this.runWorldConversations(scenarioConfig);
+            this.turnOverride = null;
             
             console.log(`\n✅ WORLD SIMULATION COMPLETE: ${scenarioConfig.name || scenarioKey}`);
         } catch (error) {
@@ -417,14 +440,14 @@ export class WorldSimulator {
     /**
      * Run a world scenario with role inversions (original method, kept for backward compatibility)
      */
-    async runWorldScenario(scenarioKey) {
+    async runWorldScenario(scenarioKey, options = {}) {
         const scenario = SCENARIOS[scenarioKey];
         if (!scenario) {
             throw new Error(`World scenario '${scenarioKey}' not found`);
         }
 
         // Use runScenario for consistency
-        await this.runScenario(scenario, scenarioKey);
+        await this.runScenario(scenario, scenarioKey, options);
     }
 
     /**
@@ -434,10 +457,12 @@ export class WorldSimulator {
     async runWorldConversations(scenario) {
         // Set SIMULATION_MODE to ensure handlers use the simulation database
         process.env.SIMULATION_MODE = 'true';
-        
+        const totalTurns = this.turnOverride || scenario.turns || 6;
+
         // For each circle, run a proper conversation using ConversationRunner
         for (const circle of this.circles) {
             console.log(`\n🌍 Starting conversation for circle: ${circle.name}`);
+            const circleSlug = circle.slug;
             
             // Find all users in this circle
             // Match by circleId from scenario (e.g., 'alice_circle') or by worldCircleId
@@ -447,10 +472,9 @@ export class WorldSimulator {
                 u.circles.some(c => {
                     // Try exact match with worldCircleId first
                     if (c.circleId === circle.worldCircleId) return true;
-                    // Try matching by name - convert 'Alice Circle' to 'alice_circle'
-                    const circleNameNormalized = circle.name.toLowerCase().replace(/\s+/g, '_');
-                    if (c.circleId === circleNameNormalized) return true;
-                    // Try matching by removing 'Circle' suffix (e.g., 'Alice Circle' -> 'alice')
+                    // Try matching by slug
+                    if (c.circleId === circleSlug) return true;
+                    // Try matching by display name normalization
                     const nameWithoutCircle = circle.name.replace(/\s+Circle/i, '').toLowerCase();
                     if (c.circleId === `${nameWithoutCircle}_circle` || c.circleId === nameWithoutCircle) return true;
                     // Also try reverse: if circleId is 'alice_circle', check if circle name contains 'alice'
@@ -470,15 +494,10 @@ export class WorldSimulator {
             for (const worldUser of circleUsers) {
                 // Find the user's circle config - use the same matching logic
                 const userCircleConfig = worldUser.circles.find(c => {
-                    // Try exact match with worldCircleId first
                     if (c.circleId === circle.worldCircleId) return true;
-                    // Try matching by name - convert 'Alice Circle' to 'alice_circle'
-                    const circleNameNormalized = circle.name.toLowerCase().replace(/\s+/g, '_');
-                    if (c.circleId === circleNameNormalized) return true;
-                    // Try matching by removing 'Circle' suffix (e.g., 'Alice Circle' -> 'alice')
+                    if (c.circleId === circleSlug) return true;
                     const nameWithoutCircle = circle.name.replace(/\s+Circle/i, '').toLowerCase();
                     if (c.circleId === `${nameWithoutCircle}_circle` || c.circleId === nameWithoutCircle) return true;
-                    // Also try reverse: if circleId is 'alice_circle', check if circle name contains 'alice'
                     const circleIdBase = c.circleId.replace('_circle', '').replace('Circle', '');
                     if (circle.name.toLowerCase().includes(circleIdBase)) return true;
                     return false;
@@ -543,19 +562,23 @@ export class WorldSimulator {
                     // Single user conversation
                     await runner.runSingleUserConversation(
                         syntheticUsers[0],
-                        scenario.turns
+                        totalTurns
                     );
                 } else {
                     // Multi-user conversation
                     await runner.runMultiUserConversation(
                         syntheticUsers,
-                        scenario.turns
+                        totalTurns
                     );
                 }
                 
                 console.log(`\n✅ Completed conversation for circle: ${circle.name}`);
             } catch (error) {
                 console.error(`❌ Error in conversation for circle ${circle.name}:`, error.message);
+                if (error?.stack) {
+                    console.error(error.stack);
+                }
+                throw error;
             }
         }
     }

@@ -4,6 +4,7 @@
  */
 
 import { URGENCY_LEVELS, TIME_CONTEXTS, SYMPTOM_URGENCY, DENIAL_PATTERNS, GENERIC_RESPONSES } from '../../constants.js';
+import { SCORING_WEIGHTS } from './scoring_constants.js';
 import { smartUrgencyAssessor } from './smart_urgency_assessor.js';
 import { ConversationQualityAssessor } from './llm_scorer.js';
 
@@ -96,10 +97,8 @@ export class SimulationScorer {
 
         // 6. LLM-based conversation quality assessment
         try {
-            const qualityScore = await this.conversationAssessor.scoreResponse(userMessage, agentResponse, 0, []);
-            if (qualityScore.score !== 0) {
-                scores.push({ score: qualityScore.score, reason: qualityScore.reason });
-            }
+            const qualityScore = await this.conversationAssessor.scoreResponse(userMessage, agentResponse, 0, conversationHistory);
+            this._applyLLMInsights(qualityScore, scores, issues);
         } catch (error) {
             console.warn(`[SimulationScorer] Conversation assessment failed: ${error.message}`);
         }
@@ -193,6 +192,50 @@ export class SimulationScorer {
         }
 
         return 0;
+    }
+
+    _applyLLMInsights(qualityScore, scores, issues) {
+        if (!qualityScore) return;
+
+        const details = qualityScore.details || {};
+        if (Number.isFinite(qualityScore.score) && qualityScore.score !== 0) {
+            scores.push({
+                score: qualityScore.score,
+                reason: `[LLM] ${qualityScore.reason || 'Conversation quality assessment'}`
+            });
+        }
+
+        if (Number.isFinite(details.information_gathering)) {
+            if (details.information_gathering <= -1) {
+                scores.push({ score: SCORING_WEIGHTS.NO_PROBING_QUESTION, reason: '[LLM] Insufficient probing / information gathering' });
+                issues.push({
+                    category: 'information_gathering',
+                    severity: 'high',
+                    description: 'LLM detected lack of meaningful probing questions',
+                    suggestion: 'Ask open, specific questions to gather actionable details'
+                });
+            } else if (details.information_gathering >= 1) {
+                scores.push({ score: SCORING_WEIGHTS.SPECIFIC_QUESTION, reason: '[LLM] Strong probing questions detected' });
+            }
+        }
+
+        if (Number.isFinite(details.conversation_quality) && details.conversation_quality <= -1) {
+            issues.push({
+                category: 'conversation_quality',
+                severity: 'medium',
+                description: 'LLM flagged the response as vague or generic',
+                suggestion: 'Provide concrete guidance and tailor advice to the user context'
+            });
+            scores.push({ score: SCORING_WEIGHTS.GENERIC_RESPONSE, reason: '[LLM] Response was generic or vague' });
+        }
+
+        if (Number.isFinite(details.empathy_solutions)) {
+            if (details.empathy_solutions <= -1) {
+                scores.push({ score: SCORING_WEIGHTS.BRIEFNESS_ISSUE, reason: '[LLM] Poor empathy/solution balance' });
+            } else if (details.empathy_solutions >= 1) {
+                scores.push({ score: SCORING_WEIGHTS.WELL_BALANCED, reason: '[LLM] Balanced empathy and solutions' });
+            }
+        }
     }
 
     /**

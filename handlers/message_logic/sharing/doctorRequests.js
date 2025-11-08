@@ -4,7 +4,7 @@
  * This should trigger immediate escalation to the doctor.
  */
 
-import { addEscalation, findUserById, findCircleByPatientId } from '../../../db/index.js';
+import { addEscalation, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
 import { events } from '../../../orchestrator.js';
 import { getAgentName } from '../../utils/agentIdentity.js';
 
@@ -19,7 +19,6 @@ export async function handleDoctorRequest(userId, circleId, analysis) {
     }
 
     const currentUser = await findUserById(userId);
-    const { findCircleById } = await import('../../../db/index.js');
     const circle = await findCircleById(circleId);
     if (!circle) return null;
     const patient = await findUserById(circle.primary_patient_id);

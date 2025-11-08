@@ -25,7 +25,9 @@ import chalk from 'chalk';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
-const skipFeedback = args.includes('--skip-feedback');
+// Skip feedback by default if not in interactive mode (no TTY) or if flag is set
+const isInteractive = process.stdin.isTTY && process.stdout.isTTY;
+const skipFeedback = args.includes('--skip-feedback') || !isInteractive || args.includes('--from-dashboard');
 const fromDashboard = args.includes('--from-dashboard');
 
 // Parse flags

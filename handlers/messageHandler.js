@@ -4,7 +4,7 @@
  * This module follows a clear "chain of thought" to process incoming messages.
  */
 
-import { getMemberInfo, findUserById, findCircleByPatientId, getCircleMembers, addMessage, getRecentMessages } from '../db/index.js';
+import { getMemberInfo, findUserById, findCircleByPatientId, findCircleById, getCircleMembers, addMessage, getRecentMessages, updateUserState } from '../db/index.js';
 import { performAiAnalysis } from './message_logic/aiAnalysisHandler.js';
 import { handleFactProcessing } from './message_logic/conflictHandler.js';
 import { handleSharingAndEscalation } from './message_logic/sharing/index.js';
@@ -36,11 +36,9 @@ export async function handleMessage(userId, circleId, message) {
         console.log(`[MessageHandler] Doctor '${userId}' is broadcasting a message to circle '${circleId}'.`);
         const members = await getCircleMembers(circleId);
         const targetUserIds = members.map(m => m.user_id).filter(id => id !== userId);
-        const { findCircleById } = await import('../db/index.js');
         const circle = await findCircleById(circleId);
         if (!circle) {
-            console.error(`[MessageHandler] ERROR: Circle '${circleId}' not found.`);
-            return;
+            throw new Error(`Circle '${circleId}' not found when handling message for ${userId}`);
         }
         const patient = await findUserById(circle.primary_patient_id);
 
@@ -143,7 +141,6 @@ export async function handleMessage(userId, circleId, message) {
     
     // Step 5.5: Update behavioral state if state_update is present
     if (analysis.state_update) {
-        const { updateUserState } = await import('../db/index.js');
         await updateUserState(userId, circleId, analysis.state_update);
     }
     

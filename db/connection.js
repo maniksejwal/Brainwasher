@@ -18,6 +18,7 @@ export async function getDb() {
             await db.close();
         }
         currentDbPath = dbPath;
+        console.log(`[DB] Opening connection: ${dbPath}`);
         db = await open({
             filename: dbPath,
             driver: sqlite3.Database

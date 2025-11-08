@@ -294,6 +294,16 @@ export class SimulationDriver {
             [circleId, patientId]
         );
 
+        // Track circle membership on synthetic user objects for downstream consumers
+        const assignCircle = (userId) => {
+            const synthetic = this.syntheticUsers.find(u => u.userId === userId);
+            if (synthetic) {
+                synthetic.circleId = circleId;
+            }
+        };
+
+        assignCircle(patientId);
+
         // Add caregivers (matching real schema)
         for (const caregiverId of caregiverIds) {
             const memberRole = this.syntheticUsers.find(u => u.userId === caregiverId)?.role || 'caregiver';
@@ -302,6 +312,8 @@ export class SimulationDriver {
                  VALUES (?, ?, ?, 'FULL')`,
                 [circleId, caregiverId, memberRole]
             );
+
+            assignCircle(caregiverId);
         }
 
         console.log(`[Simulator] Created care circle: ${circleId}`);

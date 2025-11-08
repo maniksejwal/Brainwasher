@@ -4,7 +4,7 @@
  * This creates a mediated conversation where the AI helps facilitate communication.
  */
 
-import { getCircleMembers, findUserById, findCircleByPatientId } from '../../../db/index.js';
+import { getCircleMembers, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
 import { generateMediatedClarification } from '../../../agents/index.js';
 import { events } from '../../../orchestrator.js';
 import { getAgentName } from '../../utils/agentIdentity.js';
@@ -21,7 +21,6 @@ export async function handleMediationRequest(userId, circleId, analysis) {
 
     const members = await getCircleMembers(circleId);
     const currentUser = await findUserById(userId);
-    const { findCircleById } = await import('../../../db/index.js');
     const circle = await findCircleById(circleId);
     if (!circle) return null;
     const patient = await findUserById(circle.primary_patient_id);

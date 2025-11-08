@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Care Circle</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
 </head>
 <body>
     <!-- Login Screen -->
@@ -63,6 +64,8 @@
                     <button class="tab active" data-tab="my-feedback">My Feedback</button>
                     <button class="tab" data-tab="conversations">Conversations</button>
                     <button class="tab" data-tab="simulations">Simulations</button>
+                    <button class="tab" data-tab="training">Training</button>
+                    <button class="tab" data-tab="prompts">Prompts</button>
                     <button class="tab" data-tab="analysis">Analysis</button>
                     <button class="tab" data-tab="logs">Server Logs</button>
                 </div>
@@ -80,43 +83,100 @@
                         <h4 style="margin: 0 0 8px 0;">📚 How Simulations Work</h4>
                         <p style="font-size: 13px; color: var(--gray-700); margin: 0;">
                             Simulations create synthetic users with realistic personas (anxious, forgetful, in denial, etc.) 
-                            and run conversations to test the AI agent. Each simulation automatically generates feedback 
-                            on response quality, escalation handling, and empathy. View results in the "Feedback" tab.
+                            and run conversations to test the AI agent. Supports both regular scenarios (single care circle) 
+                            and world simulations (multi-care circle dynamics with role inversions). Each simulation automatically 
+                            generates feedback on response quality, escalation handling, and empathy. View results in the "My Feedback" tab.
                         </p>
                     </div>
                     
                     <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 4px; font-weight: 500;">Scenario Type:</label>
-                        <select id="scenario-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
-                            <option value="">Loading scenarios from server...</option>
+                        <label style="display: block; margin-bottom: 4px; font-weight: 500;">Simulation Type:</label>
+                        <select id="simulation-type" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px; margin-bottom: 8px;">
+                            <option value="regular">Regular Simulation</option>
+                            <option value="world">World Simulation (Multi-Circle)</option>
                         </select>
                     </div>
                     
+                    <div id="regular-simulation-controls">
+                        <div style="margin-bottom: 16px;">
+                            <label style="display: block; margin-bottom: 4px; font-weight: 500;">Scenario Type:</label>
+                            <select id="scenario-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                                <option value="">Loading scenarios from server...</option>
+                            </select>
+                        </div>
+                        
+                        <div style="margin-bottom: 16px;">
+                            <label style="display: block; margin-bottom: 4px; font-weight: 500;">Conversation Length:</label>
+                            <select id="turns-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                                <option value="random" selected>Random (3-20 turns)</option>
+                                <option value="3">3 turns</option>
+                                <option value="5">5 turns</option>
+                                <option value="10">10 turns</option>
+                                <option value="15">15 turns</option>
+                                <option value="20">20 turns</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div id="world-simulation-controls" style="display: none;">
+                        <div style="margin-bottom: 16px;">
+                            <label style="display: block; margin-bottom: 4px; font-weight: 500;">World Scenario:</label>
+                            <select id="world-scenario-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                                <option value="">Loading world scenarios...</option>
+                            </select>
+                        </div>
+                        <div style="margin-bottom: 16px;">
+                            <label>
+                                <input type="checkbox" id="show-network" checked> Show Network Visualization
+                            </label>
+                        </div>
+                    </div>
+
                     <div style="margin-bottom: 16px;">
-                        <label style="display: block; margin-bottom: 4px; font-weight: 500;">Conversation Length:</label>
-                        <select id="turns-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
-                            <option value="random" selected>Random (3-20 turns)</option>
-                            <option value="3">3 turns</option>
-                            <option value="5">5 turns</option>
-                            <option value="10">10 turns</option>
-                            <option value="15">15 turns</option>
-                            <option value="20">20 turns</option>
-                        </select>
+                        <label>
+                            <input type="checkbox" id="collect-feedback"> Collect feedback after run (GUI form)
+                        </label>
+                        <div style="font-size: 12px; color: var(--gray-600); margin-top: 4px;">
+                            Feedback is captured via the dashboard form without blocking the CLI stream.
+                        </div>
                     </div>
                     
                     <button id="run-simulation" class="primary" style="width: 100%;">🔬 Run Simulation</button>
                     <div id="simulation-results" style="margin-top: 16px;"></div>
                     
+                    <div id="network-visualization-container" style="display: none; margin-top: 16px; padding: 16px; background: white; border-radius: 8px; border: 1px solid var(--gray-300);">
+                        <div style="margin-bottom: 16px;">
+                            <h4>Network Visualization</h4>
+                            <div style="margin-bottom: 8px;">
+                                <label><input type="checkbox" id="toggle-logs" checked> Show Logs</label>
+                                <label style="margin-left: 16px;"><input type="checkbox" id="toggle-prompts" checked> Show Prompts</label>
+                                <label style="margin-left: 16px;"><input type="checkbox" id="toggle-hardware" checked> Show Hardware Info</label>
+                            </div>
+                        </div>
+                        <div id="network-canvas" style="width: 100%; height: 600px; border: 1px solid var(--gray-200); border-radius: 4px;"></div>
+                    </div>
+                    
                     <div id="simulation-summary" style="display: none; margin-top: 16px; padding: 16px; background: var(--gray-50); border-radius: 8px;">
                         <h4 style="margin: 0 0 12px 0;">📊 Simulation Complete</h4>
                         <div id="simulation-stats"></div>
-                        <!-- Feedback button removed - use inline feedback above -->
                     </div>
                 </div>
 
                 <div id="analysis" class="tab-content scrollable-content">
                     <button id="generate-analysis" class="primary">Generate Analysis</button>
                     <div id="analysis-results"></div>
+                </div>
+
+                <div id="training" class="tab-content scrollable-content">
+                    <div id="training-dashboard"></div>
+                    <div id="training-metrics" style="margin-top: 16px; padding: 16px; background: var(--gray-50); border-radius: 8px; display: none;">
+                        <h4 style="margin: 0 0 12px 0;">📈 Training Metrics</h4>
+                        <div id="training-metrics-bars" style="display: flex; flex-direction: column; gap: 12px;"></div>
+                    </div>
+                </div>
+
+                <div id="prompts" class="tab-content scrollable-content">
+                    <div id="prompt-comparison"></div>
                 </div>
 
                 <div id="logs" class="tab-content scrollable-content">
@@ -264,9 +324,33 @@
                 <div style="margin: 8px 0;"><strong>Ctrl+F</strong> - Quick feedback</div>
             </div>
             
+            <h4>World Simulations</h4>
+            <p style="font-size: 14px; color: #666;">
+                World simulations test multi-care circle dynamics where users can be both patients and caregivers:
+            </p>
+            <ul style="font-size: 14px; color: #666; margin-left: 20px;">
+                <li>Role inversions: Patient becomes caregiver, caregiver becomes patient</li>
+                <li>Family networks: Multiple overlapping care circles</li>
+                <li>Complex dynamics: Testing how agents handle multi-circle relationships</li>
+                <li>Visualization: Network view shows all circles, users, and companions</li>
+            </ul>
+            
+            <h4>Training & Analysis</h4>
+            <p style="font-size: 14px; color: #666;">
+                Use the Training & Feedback tab to:
+            </p>
+            <ul style="font-size: 14px; color: #666; margin-left: 20px;">
+                <li>Run training cycles to optimize prompts</li>
+                <li>Analyze feedback patterns and performance</li>
+                <li>Compare prompt versions side-by-side</li>
+                <li>View detailed training logs and metrics</li>
+            </ul>
+            
             <h4>Terminology</h4>
+            <p><strong>Circle:</strong> A patient's care team (caregivers + doctors)</p>
             <p><strong>Interaction:</strong> Single message exchange (your message + agent response)</p>
             <p><strong>Conversation:</strong> Full chat session (multiple interactions grouped together)</p>
+            <p><strong>World Simulation:</strong> Multi-care circle simulation with overlapping users and role inversions</p>
         </div>
     </div>
 

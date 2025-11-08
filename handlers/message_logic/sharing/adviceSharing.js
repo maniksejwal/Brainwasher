@@ -4,7 +4,7 @@
  * Instead of escalating, it mediates the advice to the target user's agent.
  */
 
-import { getCircleMembers, findUserById, findCircleByPatientId } from '../../../db/index.js';
+import { getCircleMembers, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
 import { generateSharingSummaryOrProbe } from '../../../agents/index.js';
 import { events } from '../../../orchestrator.js';
 import { getAgentName } from '../../utils/agentIdentity.js';
@@ -29,7 +29,6 @@ export async function handleAdviceSharing(userId, circleId, analysis) {
 
     console.log(`[AdviceSharing] Detected advice from '${userId}' for '${targetMember.username}'. Mediating.`);
     const currentUser = await findUserById(userId);
-    const { findCircleById } = await import('../../../db/index.js');
     const circle = await findCircleById(circleId);
     if (!circle) return null;
     const patient = await findUserById(circle.primary_patient_id);

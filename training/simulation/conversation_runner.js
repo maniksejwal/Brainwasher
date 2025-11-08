@@ -97,8 +97,9 @@ export class ConversationRunner {
             // Get AI response (real or fallback)
             // Pass conversationId as circleId so SimulationAI uses the correct circle
             const startTime = Date.now();
+            const circleId = user.circleId || this.conversationId;
             const agentResult = await this.aiIntegration.getAgentResponse(user.userId, userMessage, {
-                circleId: this.conversationId // Explicitly pass circleId
+                circleId
             });
             const latency = Date.now() - startTime;
 
@@ -314,6 +315,7 @@ export class ConversationRunner {
             // Get AI response for the active user
             // Pass conversationId as circleId so SimulationAI uses the correct circle
             const startTime = Date.now();
+            const circleId = activeUser.circleId || this.conversationId;
             const agentResult = await this.aiIntegration.getAgentResponse(activeUser.userId, userMessage, {
                 activeUser,
                 allUsers: users,
@@ -321,7 +323,7 @@ export class ConversationRunner {
                 caregiverUsers,
                 doctorUsers,
                 conversationContext,
-                circleId: this.conversationId // Explicitly pass circleId
+                circleId
             });
             const latency = Date.now() - startTime;
 

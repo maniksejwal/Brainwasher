@@ -11,6 +11,7 @@ import {
     cancelFuturePlan,
     cancelScheduledMessage
 } from '../../db/queries_future_plans.js';
+import { getRecentMessages } from '../../db/index.js';
 
 /**
  * Check if future plans should be rescheduled
@@ -77,7 +78,6 @@ export async function rescheduleAffectedPlans(userId, circleId, reason) {
         case 'consent_changed':
             // Reschedule plans that depend on consent (e.g., plans to share information)
             // For now, defer plans by 2 turns to allow consent to stabilize
-            const { getRecentMessages } = await import('../../db/index.js');
             const history = await getRecentMessages(circleId, 100);
             const currentTurn = history.filter(m => m.user_id === userId).length;
             

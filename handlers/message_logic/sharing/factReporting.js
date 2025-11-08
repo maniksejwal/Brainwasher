@@ -4,7 +4,7 @@
  * This should trigger either escalation to doctor or consent request for sharing.
  */
 
-import { addEscalation, getImpliedConsent, getCircleMembers, findUserById, findCircleByPatientId } from '../../../db/index.js';
+import { addEscalation, getImpliedConsent, getCircleMembers, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
 import { generateSharingRequest, generateSharingSummaryOrProbe } from '../../../agents/index.js';
 import { createSharingConsentAction } from '../../../state_manager.js';
 import { events } from '../../../orchestrator.js';
@@ -50,7 +50,6 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
         }
     }
 
-    const { findCircleById } = await import('../../../db/index.js');
     const circle = await findCircleById(circleId);
     if (!circle) return null;
     const patient = await findUserById(circle.primary_patient_id);

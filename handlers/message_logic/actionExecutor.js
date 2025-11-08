@@ -7,12 +7,11 @@
  */
 
 import { events } from '../../orchestrator.js';
-import { addEscalation, findUserByUsername, findUserById, findCircleByPatientId, addMessage } from '../../db/index.js';
+import { addEscalation, findUserByUsername, findUserById, findCircleByPatientId, addMessage, findCircleById } from '../../db/index.js';
 import { generateSharingSummaryOrProbe } from '../../agents/index.js';
 import { getAgentName } from '../utils/agentIdentity.js';
 
 export async function executeResolvedAction(actionResult, userId, circleId) {
-    const { findCircleById } = await import('../../db/index.js');
     const currentCircle = await findCircleById(circleId);
     if (!currentCircle) return; // Should not happen
     const patientUsername = (await findUserById(currentCircle.primary_patient_id)).username;

@@ -1,7 +1,7 @@
 // This file is the central event emitter and dispatcher.
 import { EventEmitter } from 'events';
 // FIX: Update import path to the new db package index
-import { clearDatabase } from './db/index.js';
+import { clearDatabase, findUserById, findCircleByPatientId, getCircleMembers, addEscalation } from './db/index.js';
 
 // Import the new handlers
 import { handleLogin } from './handlers/loginHandler.js';
@@ -18,11 +18,8 @@ events.on('clear_db', clearDatabase);
 events.on('future_plan_executed', async (planData) => {
     console.log(`[Orchestrator] Future plan executed: ${planData.planType} - ${planData.description}`);
     
-    const { findUserById, findCircleByPatientId, getCircleMembers } = await import('./db/index.js');
-    const { events: eventEmitter } = await import('./orchestrator.js');
-    
     try {
-        // Get user and circle info
+        // Get user and circle info (using static imports from top of file)
         const user = await findUserById(planData.userId);
         const circle = await findCircleByPatientId(planData.circleId);
         const members = await getCircleMembers(planData.circleId);
@@ -31,7 +28,7 @@ events.on('future_plan_executed', async (planData) => {
         switch (planData.planType) {
             case 'question':
                 // Ask the user a question from the plan description
-                eventEmitter.emit('broadcast', {
+                events.emit('broadcast', {
                     targetUsers: [planData.userId],
                     message: planData.description,
                     from: 'agent',
@@ -42,7 +39,7 @@ events.on('future_plan_executed', async (planData) => {
                 
             case 'follow_up':
                 // Send a follow-up message
-                eventEmitter.emit('broadcast', {
+                events.emit('broadcast', {
                     targetUsers: [planData.userId],
                     message: planData.description,
                     from: 'agent',
@@ -53,7 +50,7 @@ events.on('future_plan_executed', async (planData) => {
                 
             case 'reminder':
                 // Send a reminder
-                eventEmitter.emit('broadcast', {
+                events.emit('broadcast', {
                     targetUsers: [planData.userId],
                     message: `Reminder: ${planData.description}`,
                     from: 'agent',
@@ -63,15 +60,14 @@ events.on('future_plan_executed', async (planData) => {
                 break;
                 
             case 'escalation':
-                // Trigger an escalation
-                const { addEscalation } = await import('./db/index.js');
+                // Trigger an escalation (using static import from top of file)
                 await addEscalation(planData.circleId, 'INFO', planData.description);
-                eventEmitter.emit('escalate', { circleId: planData.circleId });
+                events.emit('escalate', { circleId: planData.circleId });
                 break;
                 
             default:
                 // Generic plan execution - send message from description
-                eventEmitter.emit('broadcast', {
+                events.emit('broadcast', {
                     targetUsers: [planData.userId],
                     message: planData.description,
                     from: 'agent',

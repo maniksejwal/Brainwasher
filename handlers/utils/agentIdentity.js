@@ -3,7 +3,7 @@
  * Utility functions for determining agent identity and names based on user context.
  */
 
-import { findCircleByPatientId } from '../../db/index.js';
+import { findCircleById } from '../../db/index.js';
 
 /**
  * Determines the appropriate agent name based on user context
@@ -12,7 +12,10 @@ import { findCircleByPatientId } from '../../db/index.js';
  * @returns {Promise<string>} - 'PersonalAgent' or 'CareAgent'
  */
 export async function getAgentName(userId, circleId) {
-    const currentCircle = await findCircleByPatientId(circleId);
+    const currentCircle = await findCircleById(circleId);
+    if (!currentCircle) {
+        throw new Error(`Circle '${circleId}' not found while determining agent identity for ${userId}`);
+    }
     return userId === currentCircle.primary_patient_id ? 'PersonalAgent' : 'CareAgent';
 }
 

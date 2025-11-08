@@ -13,6 +13,8 @@ import { setupFeedbackModal } from './ui/feedback.js';
 import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs } from './ui/dataLoaders.js';
 // Old simulationUI.js removed - using simulationUI_new.js instead
 import { generateAndShowAnalysis } from './ui/analysisUI.js';
+import initTrainingDashboard from './ui/trainingDashboard.js';
+import initPromptComparison from './ui/promptComparison.js';
 
 // Create shared API client
 const api = new ApiClient(config.ORCHESTRATOR_URL);
@@ -67,6 +69,10 @@ document.getElementById('login-btn').addEventListener('click', async () => {
         // Load scenarios for simulation tab
         // Initialize new fresh simulation UI
         initSimulationUI(api, state);
+        
+        // Initialize training and prompt comparison dashboards
+        initTrainingDashboard();
+        initPromptComparison();
     } catch (error) {
         alert(MESSAGES.LOGIN_FAILED(error.message));
     }
@@ -212,6 +218,10 @@ document.querySelectorAll('.tab').forEach(tab => {
             loadConversationsData(api, state.userId);
         } else if (tabName === 'logs') {
             loadServerLogs(api);
+        } else if (tabName === 'training') {
+            // Training dashboard is already initialized
+        } else if (tabName === 'prompts') {
+            // Prompt comparison is already initialized
         }
     });
 });

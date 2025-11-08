@@ -26,11 +26,41 @@ class WorldSimulationCLI {
 
         // Check for command-line arguments
         const args = process.argv.slice(2);
-        const scenarioArg = args.find(arg => arg.startsWith('--scenario='))?.split('=')[1];
+        let scenarioArg = args.find(arg => arg.startsWith('--scenario='))?.split('=')[1];
+        let turnsArg = args.find(arg => arg.startsWith('--turns='))?.split('=')[1];
+        let skipFeedbackFlag = true;
+        if (args.includes('--with-feedback')) {
+            skipFeedbackFlag = false;
+        }
+        if (args.includes('--skip-feedback')) {
+            skipFeedbackFlag = true;
+        }
+
+        if (!scenarioArg) {
+            const scenarioIndex = args.indexOf('--scenario');
+            if (scenarioIndex !== -1 && args[scenarioIndex + 1]) {
+                scenarioArg = args[scenarioIndex + 1];
+            }
+        }
+
+        if (!turnsArg) {
+            const turnsIndex = args.indexOf('--turns');
+            if (turnsIndex !== -1 && args[turnsIndex + 1]) {
+                turnsArg = args[turnsIndex + 1];
+            }
+        }
         
         if (scenarioArg) {
             // Run scenario directly from command line
-            await this.runScenarioFromArgs(scenarioArg);
+            try {
+                await this.runScenarioFromArgs(scenarioArg, { turns: turnsArg, skipFeedback: skipFeedbackFlag });
+            } catch (error) {
+                console.error(chalk.red('\n❌ World simulation failed:'), error.message);
+                if (error?.stack) {
+                    console.error(error.stack);
+                }
+                process.exit(1);
+            }
             return;
         }
 
@@ -139,16 +169,16 @@ class WorldSimulationCLI {
         }
     }
 
-    async runRandomScenario() {
+    async runRandomScenario(options = {}) {
         const randomScenario = getRandomWorldScenario();
         console.log(`\n🎲 Running Random Scenario: ${randomScenario.name}`);
-        await this.runScenario(randomScenario.key);
+        await this.runScenario(randomScenario.key, options);
     }
 
-    async runScenarioFromArgs(scenarioArg) {
+    async runScenarioFromArgs(scenarioArg, options = {}) {
         // Handle special cases
         if (scenarioArg.toLowerCase() === 'random') {
-            await this.runRandomScenario();
+            await this.runRandomScenario(options);
             return;
         }
 
@@ -163,7 +193,7 @@ class WorldSimulationCLI {
             return;
         }
 
-        await this.runScenario(scenarioArg);
+        await this.runScenario(scenarioArg, options);
     }
 
     async listScenarios() {

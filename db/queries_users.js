@@ -19,7 +19,12 @@ export async function findUserById(userId) {
 
 export async function findCircleByPatientId(patientId) {
     const db = await getDb();
-    return db.get('SELECT * FROM care_circles WHERE primary_patient_id = ?', [patientId]);
+    const circle = await db.get('SELECT * FROM care_circles WHERE primary_patient_id = ?', [patientId]);
+    if (circle) {
+        return circle;
+    }
+    // Fallback: caller may have provided a circle_id instead of patient_id
+    return db.get('SELECT * FROM care_circles WHERE circle_id = ?', [patientId]);
 }
 
 export async function findCircleById(circleId) {

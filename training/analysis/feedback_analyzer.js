@@ -123,7 +123,7 @@ class FeedbackAnalyzer {
             }
 
             return {
-                ...log,
+            ...log,
                 feedback: matchedFeedback,
                 // Add mapping metadata
                 _mapping: {
