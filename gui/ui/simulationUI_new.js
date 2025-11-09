@@ -305,9 +305,9 @@ function parseSimulationOutput(output, scenarioKey, simType) {
                 tryInitializeNetworkByName(scenarioName);
                 continue;
             }
-            if (/^Random scenario selected:/i.test(line)) {
-                const scenarioName = line.replace(/^Random scenario selected:/i, '').trim();
-                tryInitializeNetworkByName(scenarioName);
+            const randomMatch = line.match(/Random scenario selected:\s*(.+)$/i);
+            if (randomMatch) {
+                tryInitializeNetworkByName(randomMatch[1].trim());
                 continue;
             }
         }
@@ -471,6 +471,56 @@ function initializeNetworkVisualization(scenarioKey) {
             edges.push({ source, target, kind });
         };
 
+        const rawUsers = Array.isArray(scenario.users) ? scenario.users.filter(Boolean) : [];
+        const usedUsernames = new Set();
+        const processedUsers = rawUsers.map((user, idx) => {
+            const baseName = user.username || user.userId || user.name || user.personaKey || `${user.role || 'participant'}_${idx + 1}`;
+            const normalizedBase = normalizeName(String(baseName || 'participant')) || `participant_${idx + 1}`;
+            let candidate = (baseName || `participant_${idx + 1}`).toString().trim() || `participant_${idx + 1}`;
+            if (!candidate) {
+                candidate = `participant_${idx + 1}`;
+            }
+            let finalName = candidate;
+            let suffix = 2;
+            while (usedUsernames.has(finalName)) {
+                finalName = `${candidate}_${suffix++}`;
+            }
+            usedUsernames.add(finalName);
+            return { ...user, username: finalName, _normalizedUsername: normalizedBase };
+        });
+
+        const userLookup = new Map();
+        const registerLookup = (key, user) => {
+            if (!key || !user) return;
+            userLookup.set(String(key), user);
+            userLookup.set(normalizeName(String(key)), user);
+        };
+        processedUsers.forEach(user => {
+            registerLookup(user.username, user);
+            registerLookup(user._normalizedUsername, user);
+            registerLookup(user.userId, user);
+            registerLookup(user.persona || user.personaKey, user);
+            if (user.role) {
+                registerLookup(`${user.role}_${user.persona || user.personaKey || ''}`, user);
+            }
+        });
+
+        const resolveMemberUser = (member) => {
+            if (!member) return null;
+            if (typeof member === 'string') {
+                return userLookup.get(member) || userLookup.get(normalizeName(member));
+            }
+            if (typeof member === 'object') {
+                const candidates = [member.username, member.userId, member.persona, member.personaKey, member.name, member.id];
+                for (const key of candidates) {
+                    if (!key) continue;
+                    const found = userLookup.get(key) || userLookup.get(normalizeName(String(key)));
+                    if (found) return found;
+                }
+            }
+            return null;
+        };
+
         personaNameToUserId = {};
         lastSpeakerByRole = {};
         lastRoleSpoken = null;
@@ -481,15 +531,11 @@ function initializeNetworkVisualization(scenarioKey) {
         // Determine care circles
         const availableCircles = Array.isArray(scenario.circles) && scenario.circles.length
             ? scenario.circles
-            : [{
-                name: scenario.name || scenarioKey,
-                primaryPatientId: scenario.users?.find(u => u.role === 'patient')?.username || scenario.users?.[0]?.username || scenarioKey,
-                members: scenario.users?.map(user => user.username) || []
-            }];
+            : [];
 
         // Assign colors to users
         const colors = ['#4285F4', '#34A853', '#FBBC04', '#EA4335', '#9C27B0', '#FF6D00', '#00ACC1', '#7CB342'];
-        scenario.users?.forEach((user, idx) => {
+        processedUsers.forEach((user, idx) => {
             userColors[user.username] = colors[idx % colors.length];
         });
 
@@ -500,7 +546,37 @@ function initializeNetworkVisualization(scenarioKey) {
                 circleNameToId[circleId.toLowerCase()] = circleId;
             }
             circleNameToId[(circle.name || circleId || '').toLowerCase()] = circleId;
-            const circleMembers = (circle.members || []).map(member => typeof member === 'string' ? member : member.username).filter(Boolean);
+
+            const circleMembersRaw = Array.isArray(circle.members) ? circle.members : [];
+            const resolvedMemberUsers = [];
+            const unresolvedMembers = [];
+            circleMembersRaw.forEach(member => {
+                let resolved = null;
+                if (typeof member === 'string') {
+                    resolved = resolveMemberUser(member);
+                } else if (member && typeof member === 'object') {
+                    const candidateKeys = [member.username, member.userId, member.persona, member.personaKey, member.name, member.id];
+                    for (const key of candidateKeys) {
+                        if (!key) continue;
+                        resolved = resolveMemberUser(key);
+                        if (resolved) break;
+                    }
+                    if (!resolved) {
+                        resolved = resolveMemberUser(member);
+                    }
+                }
+                if (resolved) {
+                    resolvedMemberUsers.push(resolved);
+                } else if (member) {
+                    unresolvedMembers.push(member);
+                }
+            });
+
+            if (unresolvedMembers.length) {
+                console.warn('[SimUI] Circle members unresolved', circle.name || circleId, unresolvedMembers);
+            }
+
+            const circleMembers = resolvedMemberUsers.map(user => user.username);
             const normalizedName = normalizeName(circle.name || circleId || `circle_${idx}`);
             circleMembersMap[circleId?.toLowerCase?.() || normalizedName] = circleMembers;
             circleMembersMap[normalizedName] = circleMembers;
@@ -509,13 +585,37 @@ function initializeNetworkVisualization(scenarioKey) {
                 id: circleId,
                 name: circle.name || `Circle ${idx + 1}`,
                 patientId: circle.primaryPatientId,
-                members: circle.members || [],
+                members: resolvedMemberUsers.map(user => ({
+                    username: user.username,
+                    role: user.role,
+                    persona: user.persona || user.personaKey
+                })),
                 color: colors[idx % colors.length]
             });
         });
 
+        if (!careCircles.length && processedUsers.length) {
+            const fallbackCircleId = normalizeName(scenario.name || scenarioKey || 'circle');
+            const fallbackMembers = processedUsers.map(user => user.username);
+            circleNameToId[fallbackCircleId] = fallbackCircleId;
+            circleMembersMap[fallbackCircleId] = fallbackMembers;
+            const fallbackNameKey = normalizeName(scenario.name || fallbackCircleId);
+            circleMembersMap[fallbackNameKey] = fallbackMembers;
+            careCircles.push({
+                id: fallbackCircleId,
+                name: scenario.name || 'Scenario Circle',
+                patientId: processedUsers.find(u => u.role === 'patient')?.username || fallbackMembers[0],
+                members: processedUsers.map(user => ({
+                    username: user.username,
+                    role: user.role,
+                    persona: user.persona || user.personaKey
+                })),
+                color: colors[0]
+            });
+        }
+
         // Create nodes for each user (privacy circle = user + agentic framework)
-        scenario.users?.forEach((user) => {
+        processedUsers.forEach((user) => {
             const userColor = userColors[user.username];
             const username = user.username;
 
