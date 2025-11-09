@@ -24,6 +24,26 @@ let eventLogContainer = null;
 let circleMembersMap = {};
 let companionComponentsPromise = null;
 let companionManifest = null;
+let showNetworkToggle = null;
+let networkContainerRef = null;
+let updateNetworkVisibility = () => {};
+let structureInfoContainer = null;
+let userColorMap = {};
+let scenarioLookupByName = {};
+let activeScenarioKey = null;
+
+function buildScenarioLookup(data) {
+    const lookup = {};
+    const scenarios = data?.scenarios || {};
+    Object.entries(scenarios).forEach(([key, scenario]) => {
+        if (!scenario) return;
+        const name = scenario.name || key;
+        lookup[key] = key;
+        lookup[name] = key;
+        lookup[normalizeName(name)] = key;
+    });
+    scenarioLookupByName = lookup;
+}
 
 export function initSimulationUI(api, state) {
     const runButton = document.getElementById('run-simulation');
@@ -34,8 +54,9 @@ export function initSimulationUI(api, state) {
     const regularControls = document.getElementById('regular-simulation-controls');
     const worldControls = document.getElementById('world-simulation-controls');
     const worldScenarioSelect = document.getElementById('world-scenario-select');
-    const networkContainer = document.getElementById('network-visualization-container');
-    const showNetworkCheckbox = document.getElementById('show-network');
+    networkContainerRef = document.getElementById('network-visualization-container');
+    showNetworkToggle = document.getElementById('show-network');
+    structureInfoContainer = document.getElementById('network-structure-info');
     
     if (!runButton || !scenarioSelect || !turnsSelect || !resultsDiv) {
         console.error('[SimUI] Required elements not found');
@@ -51,12 +72,12 @@ export function initSimulationUI(api, state) {
     }
     
     // Handle simulation type change
-    const updateNetworkVisibility = () => {
-        if (!networkContainer) return;
-        if (showNetworkCheckbox?.checked && networkViz?.nodes?.length) {
-            networkContainer.style.display = 'block';
-        } else {
-            networkContainer.style.display = 'none';
+    updateNetworkVisibility = () => {
+        if (!networkContainerRef) return;
+        const shouldShow = showNetworkToggle?.checked && networkInitialized;
+        networkContainerRef.style.display = shouldShow ? 'block' : 'none';
+        if (structureInfoContainer) {
+            structureInfoContainer.style.display = shouldShow && structureInfoContainer.innerHTML ? 'flex' : 'none';
         }
     };
     
@@ -67,15 +88,15 @@ export function initSimulationUI(api, state) {
             worldControls.style.display = isWorld ? 'block' : 'none';
             if (isWorld) {
                 loadWorldScenarios(api);
-                if (showNetworkCheckbox) showNetworkCheckbox.checked = true;
+                if (showNetworkToggle) showNetworkToggle.checked = true;
             }
             updateNetworkVisibility();
         });
     }
     
     // Handle network visibility toggle
-    if (showNetworkCheckbox) {
-        showNetworkCheckbox.addEventListener('change', () => {
+    if (showNetworkToggle) {
+        showNetworkToggle.addEventListener('change', () => {
             updateNetworkVisibility();
         });
     }
@@ -156,10 +177,16 @@ export function initSimulationUI(api, state) {
         if (eventLogContainer) {
             eventLogContainer.innerHTML = '';
         }
+        if (structureInfoContainer) {
+            structureInfoContainer.innerHTML = '';
+            structureInfoContainer.style.display = 'none';
+            structureInfoContainer.style.flexDirection = '';
+            structureInfoContainer.style.gap = '';
+        }
         applyMessageVisibility(Boolean(toggleMessages?.checked));
         applyEventLogVisibility(Boolean(toggleEventLog?.checked));
-        if (networkContainer) {
-            networkContainer.style.display = 'none';
+        if (networkContainerRef) {
+            networkContainerRef.style.display = 'none';
         }
         if (networkViz) {
             networkViz.update({ nodes: [], edges: [], circles: [] });
@@ -170,7 +197,7 @@ export function initSimulationUI(api, state) {
         startDiv.innerHTML = `🔬 Starting ${simType === 'world' ? 'world' : ''} simulation...`;
         resultsDiv.appendChild(startDiv);
         
-        if (showNetworkCheckbox?.checked && scenario && scenario !== 'random') {
+        if (showNetworkToggle?.checked && scenario && scenario !== 'random') {
             initializeNetworkVisualization(scenario);
         }
 
@@ -245,11 +272,19 @@ export function initSimulationUI(api, state) {
 /**
  * Parse simulation output to extract messages and update visualization
  */
+function tryInitializeNetworkByName(scenarioName) {
+    if (networkInitialized) return;
+    const key = scenarioLookupByName[scenarioName] || scenarioLookupByName[normalizeName(scenarioName || '')];
+    if (key && showNetworkToggle?.checked) {
+        initializeNetworkVisualization(key);
+    }
+}
+
 function parseSimulationOutput(output, scenarioKey, simType) {
     if (!output) return;
 
     // Initialize network visualization for both regular and world simulations
-    if (!networkInitialized && scenarioKey && scenarioKey !== 'random') {
+    if (!networkInitialized && scenarioKey && scenarioKey !== 'random' && showNetworkToggle?.checked) {
         initializeNetworkVisualization(scenarioKey);
     }
 
@@ -258,6 +293,24 @@ function parseSimulationOutput(output, scenarioKey, simType) {
     for (const rawLine of lines) {
         const line = rawLine.trim();
         if (!line) continue;
+
+        if (!networkInitialized && showNetworkToggle?.checked) {
+            if (line.startsWith('🧪 SIMULATION:')) {
+                const scenarioName = line.replace('🧪 SIMULATION:', '').trim();
+                tryInitializeNetworkByName(scenarioName);
+                continue;
+            }
+            if (line.startsWith('📋 Scenario:')) {
+                const scenarioName = line.replace('📋 Scenario:', '').trim();
+                tryInitializeNetworkByName(scenarioName);
+                continue;
+            }
+            if (/^Random scenario selected:/i.test(line)) {
+                const scenarioName = line.replace(/^Random scenario selected:/i, '').trim();
+                tryInitializeNetworkByName(scenarioName);
+                continue;
+            }
+        }
 
         if (line.includes('Starting conversation for circle')) {
             const circleName = line.split(':').slice(1).join(':').trim();
@@ -398,6 +451,8 @@ function initializeNetworkVisualization(scenarioKey) {
     }).then(data => {
         const scenario = data.scenarios[scenarioKey];
         if (!scenario) return;
+        activeScenarioKey = scenarioKey;
+        buildScenarioLookup(data);
         
         const nodes = [];
         const edges = [];
@@ -407,6 +462,14 @@ function initializeNetworkVisualization(scenarioKey) {
         const personas = data.personas || {};
         const companionHandlers = (companionManifest?.companion?.handlers || []).map(item => ({ ...item }));
         const companionAgents = (companionManifest?.companion?.agents || []).map(item => ({ ...item }));
+        const edgeSet = new Set();
+        const addEdge = (source, target, kind) => {
+            if (!source || !target) return;
+            const key = `${source}__${target}`;
+            if (edgeSet.has(key)) return;
+            edgeSet.add(key);
+            edges.push({ source, target, kind });
+        };
 
         personaNameToUserId = {};
         lastSpeakerByRole = {};
@@ -506,7 +569,8 @@ function initializeNetworkVisualization(scenarioKey) {
                 color: userColor
             });
 
-            edges.push({ source: `user_${username}`, target: coordinatorId });
+            addEdge(`user_${username}`, coordinatorId, 'user_to_coordinator');
+            addEdge(coordinatorId, `user_${username}`, 'coordinator_to_user');
 
             const handlerNodeIds = companionHandlers.map((component) => {
                 const nodeId = makeCompanionNodeId('handler', component.id, username);
@@ -518,7 +582,9 @@ function initializeNetworkVisualization(scenarioKey) {
                     color: userColor,
                     componentId: component.id
                 });
-                edges.push({ source: coordinatorId, target: nodeId });
+                addEdge(coordinatorId, nodeId, 'coordinator_to_handler');
+                addEdge(nodeId, coordinatorId, 'handler_to_coordinator');
+                addEdge(`user_${username}`, nodeId, 'user_to_handler');
                 return nodeId;
             });
 
@@ -532,7 +598,8 @@ function initializeNetworkVisualization(scenarioKey) {
                     color: userColor,
                     componentId: component.id
                 });
-                edges.push({ source: coordinatorId, target: nodeId });
+                addEdge(coordinatorId, nodeId, 'coordinator_to_agent');
+                addEdge(nodeId, coordinatorId, 'agent_to_coordinator');
                 return nodeId;
             });
 
@@ -547,7 +614,8 @@ function initializeNetworkVisualization(scenarioKey) {
                 ],
                 color: userColor
             });
-            edges.push({ source: 'orchestrator', target: coordinatorId });
+            addEdge('orchestrator', coordinatorId, 'orchestrator_to_coordinator');
+            addEdge(coordinatorId, 'orchestrator', 'coordinator_to_orchestrator');
         });
 
         // Add orchestrator node (sits between privacy circles)
@@ -559,14 +627,13 @@ function initializeNetworkVisualization(scenarioKey) {
         });
 
         // Orchestrator sits outside privacy circles; shading not applied
+        userColorMap = { ...userColors };
         
         networkViz.update({ nodes, edges, careCircles, privacyCircles, userColors });
         renderCareCircleLegend(careCircles, userColors);
-        const container = document.getElementById('network-visualization-container');
-        if (container) {
-            container.style.display = 'block';
-        }
+        renderNetworkStructureInfo(careCircles, nodes, userColors);
         networkInitialized = true;
+        updateNetworkVisibility();
     }).catch(err => {
         console.error('[SimUI] Failed to load scenario for network:', err);
     });
@@ -575,7 +642,7 @@ function initializeNetworkVisualization(scenarioKey) {
 /**
  * Animate message flow between nodes
  */
-function animateMessageFlow(role, userId, message) {
+function animateMessageFlow(role, userId, message, options = {}) {
     if (!networkViz || !userId) return;
 
     const normalizedRole = role.toLowerCase();
@@ -586,20 +653,32 @@ function animateMessageFlow(role, userId, message) {
     const fromNodeId = isAgent ? (coordinatorId || `agent_${baseId}`) : `user_${baseId}`;
     const toNodeId = isAgent ? `user_${baseId}` : defaultAgentTarget;
     const color = networkViz.getUserColor?.(baseId) || '#1a73e8';
+    const actorLabel = baseId.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    const eventType = isAgent
+        ? 'agent'
+        : normalizedRole.includes('doctor')
+            ? 'doctor'
+            : normalizedRole.includes('caregiver')
+                ? 'caregiver'
+                : normalizedRole.includes('patient')
+                    ? 'patient'
+                    : 'user';
+    const componentId = options?.componentId || null;
+    const direction = isAgent ? 'agent_to_user' : options?.direction || 'user_to_agent';
 
     networkViz.animateMessage(fromNodeId, toNodeId, message.substring(0, 280), {
         role: normalizedRole,
         userId: baseId,
         username: baseId,
-        componentId: isAgent ? 'companionCoordinator' : null,
-        direction: isAgent ? 'agent_to_user' : 'user_to_agent',
+        componentId: isAgent ? (componentId || 'companionCoordinator') : componentId,
+        direction,
         counterpart: isAgent ? `user_${baseId}` : networkViz.getCoordinatorNodeId?.(baseId)
     });
     if (isAgent) {
         networkViz.highlightAgent(baseId);
         logSimulationEvent('agent', {
             circle: currentCircleName,
-            actor: `${baseId} Companion`,
+            actor: `${actorLabel} Companion`,
             message,
             color
         });
@@ -609,9 +688,9 @@ function animateMessageFlow(role, userId, message) {
         if (Array.isArray(circlesForUser)) {
             circlesForUser.forEach(circleId => networkViz.highlightCircle(circleId));
         }
-        logSimulationEvent('user', {
+        logSimulationEvent(eventType, {
             circle: currentCircleName,
-            actor: baseId,
+            actor: actorLabel,
             message,
             color
         });
@@ -685,6 +764,118 @@ function renderCareCircleLegend(careCircles = [], userColors = {}) {
     legend.style.display = 'flex';
     legend.style.flexWrap = 'wrap';
     legend.innerHTML = cards;
+}
+
+function renderNetworkStructureInfo(careCircles = [], nodes = [], userColors = {}) {
+    if (!structureInfoContainer) return;
+
+    const escapeHtml = (value = '') => String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+    if (!Array.isArray(nodes) || !nodes.length) {
+        structureInfoContainer.innerHTML = '';
+        structureInfoContainer.style.display = 'none';
+        structureInfoContainer.style.flexDirection = '';
+        structureInfoContainer.style.gap = '';
+        return;
+    }
+
+    structureInfoContainer.style.display = 'flex';
+    structureInfoContainer.style.flexDirection = 'column';
+    structureInfoContainer.style.gap = '12px';
+
+    const pill = (label, color = '#4285F4') => `
+        <span style="
+            display:inline-flex;
+            align-items:center;
+            padding:2px 8px;
+            border-radius:999px;
+            background:${color}1a;
+            color:${color};
+            font-size:11px;
+            font-weight:600;
+        ">${escapeHtml(label)}</span>
+    `;
+
+    const perUser = new Map();
+    nodes.forEach(node => {
+        const username = node.username || (node.id?.startsWith('user_') ? node.id.replace(/^user_/, '') : null);
+        if (!username) return;
+        if (!perUser.has(username)) {
+            perUser.set(username, {
+                color: userColors[username] || node.color || '#4285F4',
+                coordinator: null,
+                handlers: [],
+                agents: []
+            });
+        }
+        const entry = perUser.get(username);
+        if (node.type === 'companion_coordinator') {
+            entry.coordinator = node.label || 'Coordinator';
+        } else if (node.type === 'companion_handler') {
+            entry.handlers.push(node.label || node.id);
+        } else if (node.type === 'companion_agent') {
+            entry.agents.push(node.label || node.id);
+        }
+    });
+
+    const renderUserSummary = (username) => {
+        const entry = perUser.get(username);
+        if (!entry) return '';
+        const color = entry.color || '#4285F4';
+        const userLabel = username.replace(/_/g, ' ');
+        const coordinatorRow = `
+            <div style="font-size:11px; color:var(--gray-700);">
+                <strong>Coordinator:</strong> ${entry.coordinator ? pill(entry.coordinator, color) : '<span style="color:var(--gray-500);">None detected</span>'}
+            </div>
+        `;
+        const handlerRow = `
+            <div style="font-size:11px; color:var(--gray-700);">
+                <strong>Handlers:</strong> ${entry.handlers.length ? entry.handlers.map(name => pill(name, color)).join(' ') : '<span style="color:var(--gray-500);">None detected</span>'}
+            </div>
+        `;
+        const agentRow = `
+            <div style="font-size:11px; color:var(--gray-700);">
+                <strong>Agents:</strong> ${entry.agents.length ? entry.agents.map(name => pill(name, color)).join(' ') : '<span style="color:var(--gray-500);">None detected</span>'}
+            </div>
+        `;
+
+        return `
+            <div style="display:flex; flex-direction:column; gap:4px; padding:6px 8px; border-radius:6px; background:var(--gray-50);">
+                <div style="font-weight:600; font-size:12px; color:${color};">${pill(userLabel, color)}</div>
+                ${coordinatorRow}
+                ${handlerRow}
+                ${agentRow}
+            </div>
+        `;
+    };
+
+    const circleSections = Array.isArray(careCircles) && careCircles.length
+        ? careCircles.map(circle => {
+            const members = (circle.members || []).map(member => typeof member === 'string' ? member : member.username).filter(Boolean);
+            const memberRows = members.map(renderUserSummary).filter(Boolean).join('') ||
+                `<div style="font-size:11px; color:var(--gray-600);">No companion components yet.</div>`;
+            return `
+                <div style="display:flex; flex-direction:column; gap:6px;">
+                    <div style="font-weight:600; color:var(--gray-800);">${escapeHtml(circle.name || circle.id)}</div>
+                    <div style="display:flex; flex-direction:column; gap:6px; padding-left:8px;">
+                        ${memberRows}
+                    </div>
+                </div>
+            `;
+        }).join('')
+        : Array.from(perUser.keys()).map(renderUserSummary).filter(Boolean).join('');
+
+    structureInfoContainer.innerHTML = `
+        <div style="font-weight:600; color:var(--gray-700);">Care circle membership</div>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+            ${circleSections}
+        </div>
+    `;
 }
 
 function ensureComponentManifest(forceRefresh = false) {
@@ -825,6 +1016,9 @@ function logSimulationEvent(type, payload) {
 
     const iconMap = {
         user: '🧑',
+        patient: '🧑',
+        caregiver: '🧑‍🤝‍🧑',
+        doctor: '🩺',
         agent: '🤖',
         orchestrator: '🛠️',
         reschedule: '♻️',
@@ -833,6 +1027,9 @@ function logSimulationEvent(type, payload) {
 
     const badgeColor = {
         user: '#1a73e8',
+        patient: '#1a73e8',
+        caregiver: '#34a853',
+        doctor: '#fbbc04',
         agent: '#9c27b0',
         orchestrator: '#ea4335',
         reschedule: '#fbbc04',
@@ -872,6 +1069,7 @@ async function loadWorldScenarios(api) {
     
     try {
         const data = await api.getScenarios();
+        buildScenarioLookup(data);
         select.innerHTML = '';
         
         // Filter for world scenarios (those with circles property)
@@ -901,6 +1099,7 @@ async function loadScenarios(api) {
     
     try {
         const data = await api.getScenarios();
+        buildScenarioLookup(data);
         select.innerHTML = '';
         
         // Add truly random as first and default option

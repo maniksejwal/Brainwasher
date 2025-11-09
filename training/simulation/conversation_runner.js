@@ -215,7 +215,10 @@ export class ConversationRunner {
             console.log(`  Turn ${turn + 1}/${turns}:`);
 
             // Select active user based on realistic conversation dynamics
-            let activeUser = this.conversationEngine.selectNextSpeaker(turn, users, conversationHistory);
+            let activeUser = this.conversationEngine.selectNextSpeaker(turn, users, conversationHistory, this.scenarioContext);
+            if (!activeUser) {
+                activeUser = patientUser || caregiverUsers[0] || doctorUsers[0] || users[0];
+            }
             
             // Skip users who have recently responded to notifications to avoid duplication
             const client = simulationClientManager.getClient(activeUser.userId);
@@ -353,7 +356,8 @@ export class ConversationRunner {
             conversationHistory.push({
                 role: 'agent',
                 content: agentResult.agent_response,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                userRole: `${activeUser.role}_agent`
             });
 
             // Check for early termination due to repetitive patterns
@@ -391,7 +395,7 @@ export class ConversationRunner {
         console.log(`\n  Multi-user conversation complete (${totalExchanges} total exchanges)\n`);
 
         // Collect conversation-level feedback
-        const conversationAnalysis = await this._collectConversationFeedback(users, this.conversationHistory);
+        const conversationAnalysis = await this._collectConversationFeedback(users, conversationHistory);
         
         // Report events that occurred during conversation
         if (this.eventHandler.hasEscalation()) {

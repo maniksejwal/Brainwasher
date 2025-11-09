@@ -5,7 +5,7 @@
 
 import { open } from 'sqlite';
 import sqlite3 from 'sqlite3';
-import { getPersona } from './personas.js';
+import { getPersona, getRandomPersona } from './personas.js';
 import { SyntheticUser } from './synthetic_user.js';
 import { simulationClientManager } from './simulation_client.js';
 import { escalationNotificationSystem } from './escalation_notification_system.js';
@@ -244,16 +244,27 @@ export class SimulationDriver {
         for (const config of userConfigs) {
             // userId may be missing in scenario configs - generate fallback
             const userId = config.userId || `sim_${config.role}_${Date.now()}`;
-            const { role, personaKey, personaOptions } = config;
-            
+            const { role, personaKey, persona, personaOptions } = config;
+            const normalizedRole = typeof role === 'string' ? role.toLowerCase() : '';
+            const supportedRoles = ['patient', 'caregiver', 'doctor'];
+            const personaCategory = supportedRoles.includes(normalizedRole) ? normalizedRole : 'patient';
+            if (!supportedRoles.includes(normalizedRole)) {
+                console.warn(`[Simulator] Unknown or missing role "${role}". Defaulting persona category to 'patient'.`);
+            }
+ 
             // Support multiple persona options: if personaOptions array exists, randomly select one
-            let selectedPersonaKey = personaKey;
+            let selectedPersonaKey = personaKey || persona;
             if (personaOptions && Array.isArray(personaOptions) && personaOptions.length > 0) {
                 // Randomly select from options
                 selectedPersonaKey = personaOptions[Math.floor(Math.random() * personaOptions.length)];
             }
-            
-            const personaData = getPersona(role, selectedPersonaKey);
+
+            if (!selectedPersonaKey) {
+                console.warn(`[Simulator] No personaKey provided for role ${role}. Falling back to random ${personaCategory} persona.`);
+                selectedPersonaKey = getRandomPersona(personaCategory).key;
+            }
+
+            const personaData = getPersona(personaCategory, selectedPersonaKey);
             
             // Create run-specific user ID to prevent contamination
             const runSpecificUserId = `${userId}_run_${this.runId}`;

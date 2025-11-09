@@ -5,32 +5,44 @@
 
 export class RealisticConversationEngine {
     constructor() {
-        this.conversationState = {
-            patientNeedsHelp: false,
-            caregiverConcerned: false,
-            doctorAsked: false,
-            crisisLevel: 0, // 0 = normal, 1 = concern, 2 = urgent, 3 = crisis
-            lastSpeakerRole: null,
-            conversationMomentum: 'patient_led', // patient_led, caregiver_led, doctor_led, crisis_mode
-            topicsDiscussed: new Set(),
-            emotionalTension: 0
+        this.roleTargets = {
+            patient: 0.55,
+            caregiver: 0.3,
+            doctor: 0.1,
+            other: 0.05
         };
+        this.reset();
     }
 
     /**
      * Determine who should speak next based on realistic conversation dynamics
      */
-    selectNextSpeaker(turn, users, conversationHistory) {
+    selectNextSpeaker(turn, users, conversationHistory, scenarioContext = null) {
         const { patientUser, caregiverUsers, doctorUsers } = this._categorizeUsers(users);
         
         // Update conversation state based on recent messages
         this._updateConversationState(conversationHistory);
+        this._updateRoleTargets(users, scenarioContext);
         
         // Determine conversation momentum
         this._updateConversationMomentum(conversationHistory);
         
         // Select speaker based on realistic scenarios
-        return this._selectSpeakerByContext(patientUser, caregiverUsers, doctorUsers, turn);
+        const speaker = this._selectSpeakerByContext(patientUser, caregiverUsers, doctorUsers, turn) ||
+            patientUser || caregiverUsers[0] || doctorUsers[0] || users[0];
+
+        if (speaker) {
+            this._recordSpeakerChoice(speaker.role);
+            this.conversationState.lastSpeakerRole = speaker.role;
+            if (speaker.role === 'doctor') {
+                this.conversationState.doctorAsked = false;
+                if (this.conversationState.conversationMomentum === 'doctor_led') {
+                    this.conversationState.conversationMomentum = 'patient_led';
+                }
+            }
+        }
+
+        return speaker;
     }
 
     /**
@@ -179,22 +191,19 @@ export class RealisticConversationEngine {
             return patientUser;
         } else {
             // Let orchestrator decide who speaks next based on context
-            // This is more realistic - conversations don't follow rigid patterns
             const availableUsers = [patientUser, ...caregiverUsers, ...doctorUsers].filter(Boolean);
-            
-            // Simple random selection weighted by role importance
-            // Reduced caregiver frequency to make them less intrusive
-            const weights = {
-                patient: 0.7,
-                caregiver: 0.2, 
-                doctor: 0.1
-            };
-            
-            const random = Math.random();
+            const weightsByUserId = this._computeAdaptiveWeights(availableUsers);
+            const totalWeight = availableUsers.reduce((sum, user) => sum + (weightsByUserId[user.userId] || 0), 0);
+
+            if (totalWeight <= 0) {
+                return patientUser || caregiverUsers[0] || doctorUsers[0];
+            }
+
+            const random = Math.random() * totalWeight;
             let cumulativeWeight = 0;
-            
+
             for (const user of availableUsers) {
-                cumulativeWeight += weights[user.role] || 0.1;
+                cumulativeWeight += weightsByUserId[user.userId] || 0;
                 if (random <= cumulativeWeight) {
                     return user;
                 }
@@ -245,6 +254,89 @@ export class RealisticConversationEngine {
         }
     }
 
+    _updateRoleTargets(users, scenarioContext) {
+        if (scenarioContext?.speakerTargets) {
+            this.roleTargets = {
+                patient: scenarioContext.speakerTargets.patient ?? 0.55,
+                caregiver: scenarioContext.speakerTargets.caregiver ?? 0.3,
+                doctor: scenarioContext.speakerTargets.doctor ?? 0.1,
+                other: scenarioContext.speakerTargets.other ?? 0.05
+            };
+            this._normalizeTargets();
+            return;
+        }
+
+        const hasCaregiver = users.some(user => this._normalizeRole(user.role) === 'caregiver');
+        const hasDoctor = users.some(user => this._normalizeRole(user.role) === 'doctor');
+
+        const baseTargets = {
+            patient: 0.55,
+            caregiver: hasCaregiver ? 0.3 : 0,
+            doctor: hasDoctor ? 0.1 : 0,
+            other: 0.05
+        };
+
+        if (!hasCaregiver) {
+            baseTargets.patient += 0.15;
+        }
+        if (!hasDoctor) {
+            baseTargets.patient += 0.1;
+            baseTargets.caregiver += 0.05;
+        }
+
+        this.roleTargets = baseTargets;
+        this._normalizeTargets();
+    }
+
+    _normalizeTargets() {
+        const total = Object.values(this.roleTargets).reduce((sum, value) => sum + value, 0) || 1;
+        Object.keys(this.roleTargets).forEach(key => {
+            this.roleTargets[key] = Math.max(this.roleTargets[key] / total, 0);
+        });
+    }
+
+    _recordSpeakerChoice(role = 'other') {
+        const normalized = this._normalizeRole(role);
+        if (!this.conversationState.roleTurnCounts) {
+            this.conversationState.roleTurnCounts = { patient: 0, caregiver: 0, doctor: 0, other: 0 };
+        }
+        this.conversationState.roleTurnCounts[normalized] = (this.conversationState.roleTurnCounts[normalized] || 0) + 1;
+    }
+
+    _normalizeRole(role = 'other') {
+        const normalized = String(role || '').toLowerCase();
+        if (normalized.includes('patient')) return 'patient';
+        if (normalized.includes('caregiver') || normalized.includes('family') || normalized.includes('relative')) return 'caregiver';
+        if (normalized.includes('doctor') || normalized.includes('physician') || normalized.includes('specialist')) return 'doctor';
+        return 'other';
+    }
+
+    _computeAdaptiveWeights(availableUsers) {
+        const counts = this.conversationState.roleTurnCounts || { patient: 0, caregiver: 0, doctor: 0, other: 0 };
+        const totalTurns = Object.values(counts).reduce((sum, value) => sum + value, 0) || 1;
+        const weights = {};
+
+        availableUsers.forEach(user => {
+            const role = this._normalizeRole(user.role);
+            const target = this.roleTargets[role] ?? 0.1;
+            const actual = (counts[role] || 0) / totalTurns;
+            const shortfall = Math.max(target - actual, 0);
+            let weight = target + shortfall * 1.5;
+
+            if (role === 'doctor') {
+                weight *= 0.35;
+            }
+
+            if (this.conversationState.lastSpeakerRole === role) {
+                weight *= role === 'patient' ? 0.8 : 0.25;
+            }
+
+            weights[user.userId] = Math.max(weight, 0.05);
+        });
+
+        return weights;
+    }
+
     /**
      * Get conversation context for message generation
      */
@@ -271,7 +363,13 @@ export class RealisticConversationEngine {
             lastSpeakerRole: null,
             conversationMomentum: 'patient_led',
             topicsDiscussed: new Set(),
-            emotionalTension: 0
+            emotionalTension: 0,
+            roleTurnCounts: {
+                patient: 0,
+                caregiver: 0,
+                doctor: 0,
+                other: 0
+            }
         };
     }
 }

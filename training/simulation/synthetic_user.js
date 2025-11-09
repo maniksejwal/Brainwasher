@@ -110,6 +110,12 @@ export class SyntheticUser {
             }
             
             prompt += `\nYou are speaking as a ${this.role}. Consider your role, the conversation context, and respond appropriately to the situation.\n`;
+            if (this.role === 'caregiver' && patientUser) {
+                prompt += `When you speak, centre the update on ${patientUser.persona.name}. Share observations, needs, or coordination requests about them.\n`;
+            }
+            if (this.role === 'doctor') {
+                prompt += `As a doctor, respond only when clinical guidance is needed, keep messages concise, and reference the patient by name when giving instructions.\n`;
+            }
         }
         
         if (lastAgentMessage) {

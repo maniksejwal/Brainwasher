@@ -31,6 +31,8 @@ export class NetworkVisualization {
         this.nodePromptHistory = new Map();
         this.userCompanionMap = new Map();
         this.tooltip = null;
+        this.markerCache = new Map();
+        this.defs = null;
     }
 
     /**
@@ -45,6 +47,7 @@ export class NetworkVisualization {
 
         // Clear existing content
         container.innerHTML = '';
+        this.markerCache.clear();
 
         const bounds = container.getBoundingClientRect();
         if (bounds.width) {
@@ -76,6 +79,9 @@ export class NetworkVisualization {
             .append('svg')
             .attr('width', this.width)
             .attr('height', this.height);
+
+        this.defs = this.svg.append('defs');
+        this._ensureMarker('#999999');
 
         // Add zoom behavior (keyboard/button only, not scroll)
         const zoom = d3.zoom()
@@ -147,6 +153,8 @@ export class NetworkVisualization {
         this.userMessageHistory.clear();
         this.nodePromptHistory.clear();
 
+        const defaultMarker = this._ensureMarker('#999999');
+
         // Draw edges first (so they appear behind nodes)
         const links = g.selectAll('.link')
             .data(this.edges)
@@ -155,10 +163,13 @@ export class NetworkVisualization {
             .attr('class', 'link')
             .attr('stroke', '#999')
             .attr('stroke-width', 1.5)
-            .attr('stroke-opacity', 0.4)
+            .attr('stroke-opacity', 0.45)
+            .attr('marker-end', defaultMarker)
             .attr('data-default-stroke', '#999')
             .attr('data-default-stroke-width', 1.5)
-            .attr('data-default-opacity', 0.4)
+            .attr('data-default-opacity', 0.45)
+            .attr('data-default-marker', defaultMarker)
+            .attr('data-kind', d => d.kind || '')
             .attr('data-link-id', d => `${(d.source?.id || d.source)}__${(d.target?.id || d.target)}`);
 
         this.linkSelection = links;
@@ -382,12 +393,14 @@ export class NetworkVisualization {
     }
 
     _createMessageAnimation(fromNode, toNode, message, context = {}) {
-        const messageColor = (fromNode.type === 'agent' || fromNode.type === 'coordinator' || fromNode.type === 'handler')
+        const messageColor = context.color || ((fromNode.type === 'agent' || fromNode.type === 'companion_agent' || fromNode.type === 'companion_handler' || fromNode.type === 'companion_coordinator')
             ? '#9c27b0'
-            : '#1a73e8';
+            : '#1a73e8');
+
+        const travelDuration = context?.travelDuration || 850;
 
         const transition = d3.transition()
-            .duration(1600)
+            .duration(travelDuration)
             .ease(d3.easeLinear);
 
         const messageCircle = this.g.append('circle')
@@ -423,30 +436,57 @@ export class NetworkVisualization {
             .attr('y', toNode.y - 18)
             .attr('opacity', 0.9)
             .transition()
-            .duration(600)
+            .duration(280)
             .attr('opacity', 0);
 
         const pathEdges = [];
         const username = context.username || fromNode.username || toNode.username;
         const coordinatorId = username ? this.getCoordinatorNodeId(username) : null;
+        const userNodeId = username ? `user_${username}` : null;
+        const companionEntry = username ? this.userCompanionMap.get(username) : null;
+        const componentNodeId = context.componentId && companionEntry
+            ? companionEntry.componentNodes?.get(context.componentId)
+            : null;
 
-        if (username && coordinatorId) {
-            const userNodeId = `user_${username}`;
-            if (fromNode.id === userNodeId && toNode.id !== coordinatorId) {
-                pathEdges.push([userNodeId, coordinatorId]);
-            } else if (toNode.id === userNodeId && fromNode.id !== coordinatorId) {
-                pathEdges.push([coordinatorId, userNodeId]);
-            } else {
-                pathEdges.push([userNodeId, coordinatorId]);
-            }
-
-            if (context.componentId && context.componentId !== 'companionCoordinator') {
-                const companionEntry = this.userCompanionMap.get(username);
-                const componentId = companionEntry?.componentNodes?.get(context.componentId);
-                if (componentId) {
-                    pathEdges.push([coordinatorId, componentId]);
+        switch (context.direction) {
+            case 'user_to_handler':
+            case 'user_to_coordinator':
+            case 'user_to_agent':
+                if (userNodeId && coordinatorId) {
+                    pathEdges.push([userNodeId, coordinatorId]);
                 }
-            }
+                if (componentNodeId && coordinatorId) {
+                    pathEdges.push([coordinatorId, componentNodeId]);
+                }
+                if (coordinatorId) {
+                    pathEdges.push([coordinatorId, 'orchestrator']);
+                }
+                break;
+            case 'agent_to_user':
+                if (componentNodeId && coordinatorId) {
+                    pathEdges.push([componentNodeId, coordinatorId]);
+                }
+                if (coordinatorId && userNodeId) {
+                    pathEdges.push([coordinatorId, userNodeId]);
+                }
+                break;
+            case 'orchestrator_to_coordinator':
+                if (coordinatorId) {
+                    pathEdges.push(['orchestrator', coordinatorId]);
+                }
+                break;
+            case 'coordinator_to_orchestrator':
+                if (coordinatorId) {
+                    pathEdges.push([coordinatorId, 'orchestrator']);
+                }
+                break;
+            case 'coordinator_to_user':
+                if (coordinatorId && userNodeId) {
+                    pathEdges.push([coordinatorId, userNodeId]);
+                }
+                break;
+            default:
+                break;
         }
 
         pathEdges.push([fromNode.id, toNode.id]);
@@ -457,7 +497,7 @@ export class NetworkVisualization {
             const key = `${sourceId}__${targetId}`;
             if (seenEdges.has(key)) return;
             seenEdges.add(key);
-            this._highlightEdge(sourceId, targetId, messageColor, 1600);
+            this._highlightEdge(sourceId, targetId, messageColor, travelDuration);
         });
 
         this._pulseNodes([fromNode.id, toNode.id], messageColor);
@@ -630,28 +670,58 @@ export class NetworkVisualization {
         modal.innerHTML = html;
     }
 
-    _highlightEdge(fromId, toId, color = '#1a73e8', duration = 1500) {
+    _ensureMarker(color = '#999999') {
+        if (!this.defs) return null;
+        const normalized = String(color).toLowerCase().replace(/[^a-z0-9]/g, '') || 'default';
+        const markerId = `network-arrow-${normalized}`;
+        if (!this.markerCache.has(markerId)) {
+            const marker = this.defs.append('marker')
+                .attr('id', markerId)
+                .attr('viewBox', '0 -4 8 8')
+                .attr('refX', 9)
+                .attr('refY', 0)
+                .attr('markerWidth', 8)
+                .attr('markerHeight', 8)
+                .attr('orient', 'auto')
+                .attr('markerUnits', 'userSpaceOnUse');
+
+            marker.append('path')
+                .attr('d', 'M0,-4 L8,0 L0,4')
+                .attr('fill', color)
+                .attr('stroke', 'none');
+
+            this.markerCache.set(markerId, `url(#${markerId})`);
+        }
+        return this.markerCache.get(markerId);
+    }
+
+    _highlightEdge(fromId, toId, color = '#1a73e8', duration = 900) {
         if (!this.linkSelection) return;
         const matches = this.linkSelection.filter((d) => this._edgeMatches(d, fromId, toId));
         if (matches.empty()) return;
+        const self = this;
 
         matches.each(function() {
             const link = d3.select(this);
             const originalStroke = link.attr('data-default-stroke') || '#999';
             const originalWidth = parseFloat(link.attr('data-default-stroke-width') || 1.5);
             const originalOpacity = parseFloat(link.attr('data-default-opacity') || 0.4);
+            const defaultMarker = link.attr('data-default-marker') || self._ensureMarker('#999999');
+            const highlightMarker = self._ensureMarker(color);
             link.interrupt();
             link
                 .transition()
-                .duration(150)
+                .duration(120)
                 .attr('stroke', color)
                 .attr('stroke-width', originalWidth + 2)
-                .attr('stroke-opacity', 0.9)
+                .attr('stroke-opacity', 0.95)
+                .attr('marker-end', highlightMarker)
                 .transition()
                 .duration(duration)
                 .attr('stroke', originalStroke)
                 .attr('stroke-width', originalWidth)
-                .attr('stroke-opacity', originalOpacity);
+                .attr('stroke-opacity', originalOpacity)
+                .attr('marker-end', defaultMarker);
         });
     }
 
@@ -660,7 +730,7 @@ export class NetworkVisualization {
         const sourceId = edge.source?.id || edge.source;
         const targetId = edge.target?.id || edge.target;
         if (!sourceId || !targetId) return false;
-        return (sourceId === fromId && targetId === toId) || (sourceId === toId && targetId === fromId);
+        return sourceId === fromId && targetId === toId;
     }
 
     _updateMessagePositions() {
@@ -783,11 +853,31 @@ export class NetworkVisualization {
         const color = actionType === 'escalation' ? '#ea4335' : '#1a73e8';
         this._pulseNodes(['orchestrator'], color);
 
-        targetUsers.forEach((username) => {
+        targetUsers.forEach((username, index) => {
             if (!username) return;
             const coordinatorId = this.getCoordinatorNodeId?.(username);
             if (coordinatorId) {
-                this._highlightEdge('orchestrator', coordinatorId, color, 1800);
+                const delay = index * 120;
+                const userNodeId = `user_${username}`;
+
+                const sendToCoordinator = () => {
+                    this.animateMessage('orchestrator', coordinatorId, message, {
+                        username,
+                        direction: 'orchestrator_to_coordinator',
+                        travelDuration: 650
+                    });
+                };
+
+                const sendToUser = () => {
+                    this.animateMessage(coordinatorId, userNodeId, message, {
+                        username,
+                        direction: 'coordinator_to_user',
+                        travelDuration: 650
+                    });
+                };
+
+                setTimeout(sendToCoordinator, delay);
+                setTimeout(sendToUser, delay + 140);
             }
         });
 

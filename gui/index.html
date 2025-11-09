@@ -127,11 +127,6 @@
                                 <option value="">Loading world scenarios...</option>
                             </select>
                         </div>
-                        <div style="margin-bottom: 16px;">
-                            <label>
-                                <input type="checkbox" id="show-network" checked> Show Network Visualization
-                            </label>
-                        </div>
                     </div>
 
                     <div style="margin-bottom: 16px;">
@@ -141,6 +136,11 @@
                         <div style="font-size: 12px; color: var(--gray-600); margin-top: 4px;">
                             Feedback is captured via the dashboard form without blocking the CLI stream.
                         </div>
+                    </div>
+                    <div style="margin-bottom: 16px;">
+                        <label>
+                            <input type="checkbox" id="show-network" checked> Show Network Visualization
+                        </label>
                     </div>
                     
                     <button id="run-simulation" class="primary" style="width: 100%;">🔬 Run Simulation</button>
@@ -154,6 +154,7 @@
                                 <label style="cursor: pointer;"><input type="checkbox" id="toggle-hardware" checked> Show Hardware Info</label>
                             </div>
                         </div>
+                        <div id="network-structure-info" style="display: none; margin-bottom: 16px; padding: 12px; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; font-size: 12px; color: var(--gray-800);"></div>
                         <div id="care-circle-legend" style="display: none; margin-bottom: 16px; gap: 12px; flex-wrap: wrap;"></div>
                         <div style="display: flex; gap: 20px; align-items: stretch; min-height: 720px;">
                             <div id="network-canvas" style="flex: 2.5; min-height: 720px; border: 1px solid var(--gray-200); border-radius: 8px; position: relative; overflow: hidden;"></div>
