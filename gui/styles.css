@@ -461,6 +461,52 @@ input:focus {
     font-size: 14px;
 }
 
+.network-placeholder {
+    display: none;
+    border: 1px dashed var(--gray-300);
+    border-radius: 8px;
+    padding: 32px;
+    background: var(--gray-50);
+    margin-bottom: 16px;
+}
+
+.network-placeholder.visible {
+    display: flex;
+}
+
+.network-placeholder-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    color: var(--gray-700);
+    text-align: center;
+}
+
+.network-placeholder-spinner {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 4px solid rgba(66, 133, 244, 0.2);
+    border-top-color: var(--primary-color);
+    animation: network-placeholder-spin 1s linear infinite;
+}
+
+.network-placeholder-text {
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+@keyframes network-placeholder-spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* Utility */
 .loading {
     color: var(--gray-700);

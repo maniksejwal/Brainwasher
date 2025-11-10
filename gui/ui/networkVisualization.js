@@ -103,6 +103,41 @@ export class NetworkVisualization {
         this.g = g;
     }
 
+    reset() {
+        if (this.simulation) {
+            this.simulation.stop();
+            this.simulation = null;
+        }
+        this.nodes = [];
+        this.edges = [];
+        this.careCircles = [];
+        this.privacyCircles = [];
+        this.userColors = {};
+        this.nodeIndex.clear();
+        this.userCompanionMap.clear();
+        this.markerCache.clear();
+        this.linkSelection = null;
+
+        this.userMessageGroups.forEach(entry => {
+            entry.group?.remove();
+        });
+        this.userMessageGroups.clear();
+        this.userMessageHistory.clear();
+        this.nodePromptHistory.clear();
+
+        if (this.svg) {
+            this.svg.remove();
+            this.svg = null;
+            this.g = null;
+            this.defs = null;
+        }
+
+        const container = document.getElementById(this.containerId);
+        if (container) {
+            container.innerHTML = '';
+        }
+    }
+
     /**
      * Update visualization with new data
      * @param {object} data - Network data { nodes, edges, careCircles, privacyCircles }
@@ -447,6 +482,7 @@ export class NetworkVisualization {
         const componentNodeId = context.componentId && companionEntry
             ? companionEntry.componentNodes?.get(context.componentId)
             : null;
+        const companionComponents = companionEntry?.components || [];
 
         switch (context.direction) {
             case 'user_to_handler':
@@ -457,6 +493,10 @@ export class NetworkVisualization {
                 }
                 if (componentNodeId && coordinatorId) {
                     pathEdges.push([coordinatorId, componentNodeId]);
+                } else if (companionComponents.length && coordinatorId) {
+                    companionComponents.forEach(component => {
+                        pathEdges.push([coordinatorId, component]);
+                    });
                 }
                 if (coordinatorId) {
                     pathEdges.push([coordinatorId, 'orchestrator']);
@@ -465,6 +505,10 @@ export class NetworkVisualization {
             case 'agent_to_user':
                 if (componentNodeId && coordinatorId) {
                     pathEdges.push([componentNodeId, coordinatorId]);
+                } else if (companionComponents.length && coordinatorId) {
+                    companionComponents.forEach(component => {
+                        pathEdges.push([component, coordinatorId]);
+                    });
                 }
                 if (coordinatorId && userNodeId) {
                     pathEdges.push([coordinatorId, userNodeId]);
@@ -473,6 +517,11 @@ export class NetworkVisualization {
             case 'orchestrator_to_coordinator':
                 if (coordinatorId) {
                     pathEdges.push(['orchestrator', coordinatorId]);
+                    if (companionComponents.length) {
+                        companionComponents.forEach(component => {
+                            pathEdges.push([coordinatorId, component]);
+                        });
+                    }
                 }
                 break;
             case 'coordinator_to_orchestrator':
@@ -671,7 +720,13 @@ export class NetworkVisualization {
     }
 
     _ensureMarker(color = '#999999') {
-        if (!this.defs) return null;
+        if (!this.svg) return null;
+        if (!this.defs || this.defs.empty()) {
+            this.defs = this.svg.insert('defs', ':first-child');
+        }
+        if (!this.defs || this.defs.empty()) {
+            return null;
+        }
         const normalized = String(color).toLowerCase().replace(/[^a-z0-9]/g, '') || 'default';
         const markerId = `network-arrow-${normalized}`;
         if (!this.markerCache.has(markerId)) {
@@ -859,6 +914,8 @@ export class NetworkVisualization {
             if (coordinatorId) {
                 const delay = index * 120;
                 const userNodeId = `user_${username}`;
+                const companionEntry = this.userCompanionMap.get(username);
+                const componentIds = companionEntry?.components || [];
 
                 const sendToCoordinator = () => {
                     this.animateMessage('orchestrator', coordinatorId, message, {
@@ -878,6 +935,14 @@ export class NetworkVisualization {
 
                 setTimeout(sendToCoordinator, delay);
                 setTimeout(sendToUser, delay + 140);
+
+                if (componentIds.length) {
+                    componentIds.forEach((componentId, componentIndex) => {
+                        setTimeout(() => {
+                            this._highlightEdge(coordinatorId, componentId, color, 650);
+                        }, delay + 100 + componentIndex * 60);
+                    });
+                }
             }
         });
 
