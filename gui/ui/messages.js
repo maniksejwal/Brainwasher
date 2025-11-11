@@ -6,6 +6,9 @@ import { MESSAGES } from '../config/messages.js';
 
 export function displayMessage(data) {
     const container = document.getElementById('messages');
+    if (window && window.localStorage && window.localStorage.getItem('DEBUG_GUI')) {
+        console.log('[GUI] SSE message:', data);
+    }
     const div = document.createElement('div');
     div.className = 'message agent';
     

@@ -4,7 +4,7 @@
  * This module follows a clear "chain of thought" to process incoming messages.
  */
 
-import { getMemberInfo, findUserById, findCircleByPatientId, findCircleById, getCircleMembers, addMessage, getRecentMessages, updateUserState } from '../db/index.js';
+import { getMemberInfo, findUserById, findCircleByPatientId, findCircleById, getCircleMembers, addMessage, getRecentMessages, updateUserState, addPendingAction } from '../db/index.js';
 import { performAiAnalysis } from './message_logic/aiAnalysisHandler.js';
 import { handleFactProcessing } from './message_logic/conflictHandler.js';
 import { handleSharingAndEscalation } from './message_logic/sharing/index.js';
@@ -14,6 +14,9 @@ import { handleFuturePlanning } from './message_logic/futurePlanningHandler.js';
 import { checkIfShouldReschedule, rescheduleAffectedPlans } from './message_logic/rescheduleHandler.js';
 import { events } from '../orchestrator.js';
 import { logger as trainingLogger, metrics as metricsCollector } from '../training/index.js';
+import { getAgentName } from './utils/agentIdentity.js';
+import { generateDelegatedProbe } from '../agents/index.js';
+import { randomUUID } from 'crypto';
 
 // Lazy initialization of topic shift handler
 let topicShiftHandler = null;
@@ -31,35 +34,130 @@ export async function handleMessage(userId, circleId, message) {
         return;
     }
 
-    // A doctor's message follows a simple, direct broadcast path.
+    // A doctor's message requires targeted delivery that respects privacy.
     if (memberInfo.role === 'doctor') {
-        console.log(`[MessageHandler] Doctor '${userId}' is broadcasting a message to circle '${circleId}'.`);
         const members = await getCircleMembers(circleId);
-        const targetUserIds = members.map(m => m.user_id).filter(id => id !== userId);
         const circle = await findCircleById(circleId);
         if (!circle) {
             throw new Error(`Circle '${circleId}' not found when handling message for ${userId}`);
         }
-        const patient = await findUserById(circle.primary_patient_id);
 
-        await addMessage(circleId, userId, memberInfo.role, message, 'PRIVATE', 'NONE');
+        const patient = await findUserById(circle.primary_patient_id);
+        const doctorRecord = members.find(m => m.user_id === userId);
+        const doctorDisplayName = doctorRecord?.username || 'doctor';
+
+        const { recipients, privacyLevel } = determineDoctorRecipients(
+            message,
+            members,
+            userId,
+            circle.primary_patient_id
+        );
+
+        if (!recipients || recipients.length === 0) {
+            console.warn(`[MessageHandler] Doctor message from '${doctorDisplayName}' had no eligible recipients.`);
+            return {
+                reply: 'No eligible recipients identified; your message was not delivered.',
+                intent: 'DOCTOR_NO_RECIPIENTS',
+                criticality: 'NONE',
+                privacyLevel: 'PRIVATE',
+                facts: {}
+            };
+        }
+
+        const targetUserIds = recipients.map(r => r.user_id);
+        const recipientNames = recipients.map(r => r.username);
+
+        await addMessage(circleId, userId, memberInfo.role, message, privacyLevel, 'NONE');
+
+        console.log(`[MessageHandler] Doctor '${doctorDisplayName}' instruction targeting [${recipientNames.join(', ')}] with privacy=${privacyLevel}.`);
+
+        const sanitizedInstruction = sanitizeDoctorInstruction(message);
+        const askTopic = sanitizedInstruction || message;
+        const successfulRecipients = [];
+        const failedRecipients = [];
+
+        for (const recipient of recipients) {
+            let probe = null;
+            try {
+                probe = await generateDelegatedProbe(recipient.username, askTopic);
+            } catch (error) {
+                console.error(`[MessageHandler] Failed to generate delegated probe for ${recipient.username}:`, error);
+                probe = buildFallbackProbe(recipient.username, askTopic);
+                failedRecipients.push(recipient.username);
+            }
+
+            if (!probe) {
+                continue;
+            }
+
+            const pendingDetails = {
+                topic: askTopic,
+                original_instruction: message,
+                target_user_id: recipient.user_id,
+                target_username: recipient.username,
+                full_question: probe,
+                requested_by: userId
+            };
+
+            const pendingActionId = randomUUID();
+            await addPendingAction(
+                pendingActionId,
+                circleId,
+                recipient.user_id,
+                'delegated_probe_response',
+                { ...pendingDetails, action_type: 'delegated_probe_response' }
+            );
+
+            const agentName = await getAgentName(recipient.user_id, circleId);
+            events.emit('broadcast', {
+                targetUsers: [recipient.user_id],
+                message: probe,
+                from: agentName,
+                circleId,
+                patientUsername: patient?.username ?? doctorDisplayName,
+                visibility: privacyLevel,
+                recipients: [recipient.username],
+                doctorInstruction: {
+                    instruction: message,
+                    pendingActionId,
+                    requestedBy: doctorDisplayName
+                }
+            });
+
+            successfulRecipients.push({ username: recipient.username, question: probe });
+        }
+
+        const summaryParts = [];
+        if (successfulRecipients.length > 0) {
+            const detail = successfulRecipients
+                .map(({ username, question }) => `${username}: "${question}"`)
+                .join('; ');
+            summaryParts.push(`Questions sent → ${detail}`);
+        }
+        if (failedRecipients.length > 0) {
+            summaryParts.push(`⚠️ Could not reach: ${failedRecipients.join(', ')}`);
+        }
+
+        const summaryReply = summaryParts.length > 0
+            ? summaryParts.join(' | ')
+            : 'No eligible recipients identified for your instruction.';
+
         events.emit('broadcast', {
-            targetUsers: targetUserIds,
-            message: message,
-            from: 'doctor',
+            targetUsers: [userId],
+            reply: summaryReply,
+            from: 'system',
             circleId,
-            patientUsername: patient.username
+            patientUsername: patient?.username ?? doctorDisplayName
         });
         
         // Training log (fire-and-forget, non-blocking)
         metricsCollector.recordMessageLength(userId, message.length, message.length);
         
-        // Return a proper response object for doctor messages
         return {
-            reply: `Doctor message broadcasted: "${message}"`,
-            intent: 'DOCTOR_BROADCAST',
+            reply: summaryReply,
+            intent: 'DOCTOR_MESSAGE',
             criticality: 'NONE',
-            privacyLevel: 'PRIVATE',
+            privacyLevel,
             facts: {}
         };
     }
@@ -82,6 +180,16 @@ export async function handleMessage(userId, circleId, message) {
     // Step 2: Perform the full AI analysis, including entity resolution.
     // This will use Companion system or unified agent based on config
     const analysis = await performAiAnalysis(userId, memberInfo.role, message, circleId);
+    if (process.env.DEBUG_CLI) {
+        console.log('[MessageHandler] Analysis summary:', {
+            system_used: analysis?.system_used,
+            intent: analysis?.intent,
+            hasReply: Boolean(analysis?.reply),
+            replyPreview: analysis?.reply ? analysis.reply.slice(0, 80) : null,
+            hasSharingSuggestion: Boolean(analysis?.sharingSuggestion),
+            sharingSuggestion: analysis?.sharingSuggestion || null
+        });
+    }
     
     // Step 3: Process pending future plans and scheduled messages for current turn (PRODUCTION)
     // Get current turn from conversation history (used for both future planning and execution)
@@ -143,6 +251,27 @@ export async function handleMessage(userId, circleId, message) {
     if (analysis.state_update) {
         await updateUserState(userId, circleId, analysis.state_update);
     }
+
+    // Ensure the originating user receives the conversational reply.
+    if (analysis?.reply) {
+        const circle = await findCircleById(circleId);
+        const patient = circle ? await findUserById(circle.primary_patient_id) : null;
+        const agentName = await getAgentName(userId, circleId);
+        if (process.env.DEBUG_CLI) {
+            console.log(`[MessageHandler] Emitting primary reply to ${userId} from ${agentName}. Preview="${analysis.reply.slice(0, 80)}"`);
+        }
+        events.emit('broadcast', {
+            targetUsers: [userId],
+            reply: analysis.reply,
+            from: agentName,
+            circleId,
+            patientUsername: patient?.username ?? userId
+        });
+    } else {
+        if (process.env.DEBUG_CLI) {
+            console.warn('[MessageHandler] Analysis produced no reply text; user may not receive feedback.');
+        }
+    }
     
     // Training log (fire-and-forget, non-blocking) - happens after main flow completes
     const latencyMs = Date.now() - startTime;
@@ -163,5 +292,101 @@ export async function handleMessage(userId, circleId, message) {
     
     // Return the analysis for simulations to use
     return analysis;
+}
+
+function determineDoctorRecipients(message = '', members = [], doctorId, patientId) {
+    const normalizedMessage = String(message || '');
+    const otherMembers = members.filter(member => member.user_id !== doctorId);
+    const normalizedMap = new Map();
+    otherMembers.forEach(member => {
+        const key = (member.username || '').trim().toLowerCase();
+        if (key) {
+            normalizedMap.set(key, member);
+        }
+    });
+
+    const recipientsMap = new Map();
+    const mentionRegex = /@([a-z0-9._-]+)/gi;
+    let match;
+    let explicitGlobalMention = false;
+    while ((match = mentionRegex.exec(normalizedMessage)) !== null) {
+        const token = match[1].toLowerCase();
+        if (token === 'all' || token === 'everyone' || token === 'team' || token === 'careteam') {
+            explicitGlobalMention = true;
+            break;
+        }
+        const member = normalizedMap.get(token);
+        if (member) {
+            recipientsMap.set(member.user_id, member);
+        }
+    }
+
+    if (explicitGlobalMention) {
+        return {
+            recipients: otherMembers,
+            privacyLevel: 'PUBLIC'
+        };
+    }
+
+    const lowerMessage = normalizedMessage.toLowerCase();
+    const addMembersByRole = (role) => {
+        otherMembers
+            .filter(member => member.role === role)
+            .forEach(member => recipientsMap.set(member.user_id, member));
+    };
+
+    if (/\bcaregivers?\b/.test(lowerMessage) || /\bfamily\b/.test(lowerMessage) || /\bparents?\b/.test(lowerMessage)) {
+        addMembersByRole('caregiver');
+    }
+
+    if (/\bpatients?\b/.test(lowerMessage) || /\bpatient\b/.test(lowerMessage)) {
+        const patientMember = otherMembers.find(member => member.user_id === patientId);
+        if (patientMember) {
+            recipientsMap.set(patientMember.user_id, patientMember);
+        }
+    }
+
+    // Always prefer explicit mentions over keyword defaults.
+    if (recipientsMap.size === 0) {
+        const patientMember = otherMembers.find(member => member.user_id === patientId);
+        if (patientMember) {
+            recipientsMap.set(patientMember.user_id, patientMember);
+        }
+    }
+
+    const recipients = Array.from(recipientsMap.values());
+    if (recipients.length === 0) {
+        return {
+            recipients,
+            privacyLevel: 'PRIVATE'
+        };
+    }
+
+    const allOthersCount = otherMembers.length;
+    let privacyLevel = 'PRIVATE';
+    if (recipients.length === allOthersCount && allOthersCount > 1) {
+        privacyLevel = 'PUBLIC';
+    } else if (recipients.length > 1) {
+        privacyLevel = 'LIMITED';
+    } else if (recipients[0].user_id !== patientId) {
+        privacyLevel = 'LIMITED';
+    }
+
+    return {
+        recipients,
+        privacyLevel
+    };
+}
+
+function sanitizeDoctorInstruction(text = '') {
+    return text.replace(/@\w+/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function buildFallbackProbe(username, instruction) {
+    const trimmed = instruction?.trim();
+    if (!trimmed) {
+        return `Hi ${username}, could you share how you're feeling right now?`;
+    }
+    return `Hi ${username}, ${trimmed}. Could you tell me more?`;
 }
 

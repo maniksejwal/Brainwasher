@@ -29,12 +29,17 @@ ${chalk.bold.green('Patient Commands:')}
   ${chalk.yellow('/care <username> as <relationship>')} - Add a caregiver to YOUR circle
   ${chalk.yellow('/doc <username>')}                   - Add a doctor to YOUR circle
   ${chalk.yellow('/consent <username> <level>')}       - Set consent level (NONE/MEDIUM/FULL) for a member
+  ${chalk.italic('Natural instructions:')}
+     ${chalk.gray('- @username to directly reference someone (e.g. "@caregiver can you check on meds tonight?")')}
+     ${chalk.gray('- Ask your agent to message someone by name/role; it will rephrase and send politely')}
 `;
 
 const caregiverCommands = `
 ${chalk.bold.blue('Caregiver Commands:')}
   ${chalk.yellow('/consent <username> <level>')} - Set your consent level in this circle
-  ${chalk.italic('(Talk naturally - your agent will help coordinate care)')}
+  ${chalk.italic('Natural interactions:')}
+     ${chalk.gray('- Reference @patient or other caregivers; your agent relays appropriate questions')}
+     ${chalk.gray('- Describe concerns naturally (e.g. "Can someone remind patient about the evening pill?")')}
 `;
 
 const doctorCommands = `
@@ -43,6 +48,11 @@ ${chalk.bold.magenta('Doctor Commands:')}
   ${chalk.yellow('/log "note"')}                  - Log a confidential note in the patient's record
   ${chalk.yellow('/order "test/medication"')}     - Log a confidential order request
   ${chalk.yellow('/agent ask <username> "topic"')} - Have your agent ask a question on your behalf
+  ${chalk.italic('Natural instructions:')}
+     ${chalk.gray('- Mention @patient, @caregiver, or @username to target recipients')}
+     ${chalk.gray('- State what you need asked (e.g. "Please ask @caregiver if the wound dressing was changed today")')}
+     ${chalk.gray('- The system rephrases and delivers via the appropriate agent, tracking responses')}
+     ${chalk.gray('- Want precision? Use /agent ask <username> "topic" to force a specific prompt')}
 `;
 
 function getWelcomeMessage(isNewUser, username, roles) {
@@ -159,7 +169,7 @@ export function displayContextSwitch(data) {
     
     // Show role-specific reminder
     if (data.newRole === 'doctor') {
-        console.log(chalk.italic.gray('💡 Remember: Use /log for private notes, /order for prescriptions\n'));
+        console.log(chalk.italic.gray('💡 Remember: Use /log for private notes, /order for prescriptions, and type natural instructions to have agents follow up for you.\n'));
     } else if (data.newRole === 'caregiver') {
         console.log(chalk.italic.gray('💡 Remember: Talk naturally - your agent coordinates with the patient\'s agent\n'));
     } else if (data.newRole === 'patient') {

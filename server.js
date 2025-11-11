@@ -73,15 +73,27 @@ app.get('/events/:userId', (req, res) => {
     });
 });
 
-function broadcast(targetUsers, data) {
+function broadcast(targetUsers = [], data) {
+    if (!Array.isArray(targetUsers) || targetUsers.length === 0) {
+        console.warn('[Server] broadcast invoked with no target users. Payload:', data);
+        return;
+    }
     targetUsers.forEach(userId => {
         if (clients[userId]) {
             clients[userId].write(`data: ${JSON.stringify(data)}\n\n`);
+        } else {
+            console.warn(`[Server] No SSE client connection for user ${userId}. Message dropped.`);
         }
     });
 }
 
 events.on('broadcast', (payload) => {
+    try {
+        const preview = payload.reply || payload.message || '';
+        console.log(`[Server] Broadcasting to ${Array.isArray(payload.targetUsers) ? payload.targetUsers.join(', ') : '<none>'} | from=${payload.from || 'unknown'} | preview="${preview ? String(preview).slice(0, 60) : ''}"`);
+    } catch (err) {
+        console.warn('[Server] Failed to log broadcast payload:', err?.message || err);
+    }
     broadcast(payload.targetUsers, { type: 'message', ...payload });
 });
 

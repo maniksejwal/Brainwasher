@@ -6,13 +6,14 @@
 
 import EventSource from 'eventsource';
 import chalk from 'chalk';
-import config from '../config.js';
+import config from '../../config.js';
 import { state, updateUserState } from './state.js';
 import { showLoginMessage, updatePrompt, clearLine, displayMessage, displayEscalations, displayContextSwitch } from './ui.js';
-import ApiClient from '../shared/apiClient.js';
+import ApiClient from '../../shared/apiClient.js';
 
 // Create shared API client instance
 const api = new ApiClient(config.ORCHESTRATOR_URL);
+const DEBUG_CLI = ['1', 'true', 'yes', 'on'].includes(String(process.env.DEBUG_CLI || '').toLowerCase());
 
 export async function login() {
     try {
@@ -40,6 +41,9 @@ export function connectToEventSource() {
     es.on('message', async (e) => {
         const data = JSON.parse(e.data);
         clearLine();
+        if (DEBUG_CLI) {
+            console.log(chalk.gray(`[CLI] SSE message: ${JSON.stringify(data)}`));
+        }
 
         if (data.type === 'message') {
             displayMessage(data);

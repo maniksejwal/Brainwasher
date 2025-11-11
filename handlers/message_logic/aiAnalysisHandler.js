@@ -67,93 +67,157 @@ async function performCompanionAnalysis(userId, role, message, circleId) {
         details: 'Coordinating specialized handlers'
     });
     
-    const { coordinateCompanions } = await import('../../companions/CompanionCoordinator.js');
-    const { STAGES_OF_CHANGE, COPING_STYLES } = await import('../../behavioral_models.js');
-    
-    // Gather rich context (like unified agent does)
-    const history = await getRecentMessages(circleId, 20);
-    const members = await getCircleMembers(circleId);
-    const currentState = await getUserState(userId, circleId);
-    const factHistory = await getFactHistory(circleId, 'all', 10);
-    const recentEscalations = await getUnreadEscalationsForCircle(circleId);
-    const speaker = await findUserById(userId);
-    const circle = await findCircleById(circleId);
-    const patient = circle ? await findUserById(circle.primary_patient_id) : null;
-    
-    const behavioralModels = {
-        stages_of_change: STAGES_OF_CHANGE,
-        coping_styles: COPING_STYLES
-    };
-    
-    // Format care circle members as string (like unified agent)
-    const careCircleMembers = members.map(m => m.username).join(', ');
-    
-    // Prepare rich context for Companion handlers
-    const conversationContext = {
-        history,
-        historyText: history.map(h => `${h.user_id}: ${h.message}`),
-        members,
-        careCircleMembers,
-        currentState,
-        factHistory,
-        recentEscalations,
-        speaker: speaker ? { username: speaker.username, userId: speaker.user_id } : null,
-        patient: patient ? { username: patient.username, userId: patient.user_id } : null,
-        hasMedicalContent: /pain|symptom|medication|diagnosis|treatment/i.test(message),
-        hasCriticalContent: /emergency|urgent|critical|severe/i.test(message),
-        circleId,
-        behavioralModels,
-        userAge: currentState?.age || null // For elderly fall detection
-    };
-    
-    // Coordinate companions
-    const companionResult = await coordinateCompanions(userId, role, message, circleId, conversationContext);
-    
-    // Convert Companion result to unified analysis format
-    let analysis = {
-        intent: companionResult.intent || 'ASKING_QUESTION',
-        reply: companionResult.reply || 'I understand.',
-        privacyLevel: companionResult.privacyLevel || 'PRIVATE',
-        criticality: companionResult.criticality || 'NONE',
-        facts: companionResult.facts || {},
-        mentioned_usernames: companionResult.mentioned_usernames || [],
-        sharingSuggestion: companionResult.sharingSuggestion || null,
-        state_update: companionResult.state_update || null, // Include state update if generated
-        future_plan: companionResult.future_plan || null, // Include future planning from Companion (now generated!)
-        system_used: 'companion' // Track which system was used
-    };
-    
-    // Extract mentioned_usernames from inputUnderstanding if not already set
-    if (!analysis.mentioned_usernames || analysis.mentioned_usernames.length === 0) {
-        const inputResult = conversationContext.inputUnderstanding?.result || 
-                           companionResult.inputUnderstanding?.result ||
-                           conversationContext.inputUnderstanding;
-        if (inputResult?.mentionedUsernames || inputResult?.mentioned_usernames) {
-            analysis.mentioned_usernames = inputResult.mentionedUsernames || inputResult.mentioned_usernames || [];
+    try {
+        const { coordinateCompanions } = await import('../../companions/CompanionCoordinator.js');
+        const { STAGES_OF_CHANGE, COPING_STYLES } = await import('../../behavioral_models.js');
+        
+        // Gather rich context (like unified agent does)
+        const history = await getRecentMessages(circleId, 20);
+        const members = await getCircleMembers(circleId);
+        const currentState = await getUserState(userId, circleId);
+        const factHistory = await getFactHistory(circleId, 'all', 10);
+        const recentEscalations = await getUnreadEscalationsForCircle(circleId);
+        const speaker = await findUserById(userId);
+        const circle = await findCircleById(circleId);
+        const patient = circle ? await findUserById(circle.primary_patient_id) : null;
+        
+        const behavioralModels = {
+            stages_of_change: STAGES_OF_CHANGE,
+            coping_styles: COPING_STYLES
+        };
+        
+        // Format care circle members as string (like unified agent)
+        const careCircleMembers = members.map(m => m.username).join(', ');
+        
+        // Prepare rich context for Companion handlers
+        const conversationContext = {
+            history,
+            historyText: history.map(h => `${h.user_id}: ${h.message}`),
+            members,
+            careCircleMembers,
+            currentState,
+            factHistory,
+            recentEscalations,
+            speaker: speaker ? { username: speaker.username, userId: speaker.user_id } : null,
+            patient: patient ? { username: patient.username, userId: patient.user_id } : null,
+            hasMedicalContent: /pain|symptom|medication|diagnosis|treatment/i.test(message),
+            hasCriticalContent: /emergency|urgent|critical|severe/i.test(message),
+            circleId,
+            behavioralModels,
+            userAge: currentState?.age || null // For elderly fall detection
+        };
+        
+        // Coordinate companions
+        events.emit('analysis_progress', {
+            userId,
+            step: 2,
+            description: 'Understanding your message…',
+            details: 'Running Companion handlers for context'
+        });
+        const companionResult = await coordinateCompanions(userId, role, message, circleId, conversationContext);
+        if (process.env.DEBUG_CLI) {
+            console.log('[AIAnalysisHandler] Companion raw result:', {
+                keys: Object.keys(companionResult || {}),
+                replyPreview: companionResult?.reply ? companionResult.reply.slice(0, 120) : null,
+                intent: companionResult?.intent,
+                criticality: companionResult?.criticality
+            });
         }
+        
+        events.emit('analysis_progress', {
+            userId,
+            step: 3,
+            description: 'Synthesizing recommendations…',
+            details: 'Aggregating handler responses'
+        });
+        
+        // Convert Companion result to unified analysis format
+        let analysis = {
+            intent: companionResult.intent || 'ASKING_QUESTION',
+            reply: companionResult.reply || 'I understand.',
+            privacyLevel: companionResult.privacyLevel || 'PRIVATE',
+            criticality: companionResult.criticality || 'NONE',
+            facts: companionResult.facts || {},
+            mentioned_usernames: companionResult.mentioned_usernames || [],
+            sharingSuggestion: companionResult.sharingSuggestion || null,
+            state_update: companionResult.state_update || null, // Include state update if generated
+            future_plan: companionResult.future_plan || null, // Include future planning from Companion (now generated!)
+            system_used: 'companion' // Track which system was used
+        };
+        
+        // Extract mentioned_usernames from inputUnderstanding if not already set
+        if (!analysis.mentioned_usernames || analysis.mentioned_usernames.length === 0) {
+            const inputResult = conversationContext.inputUnderstanding?.result || 
+                               companionResult.inputUnderstanding?.result ||
+                               conversationContext.inputUnderstanding;
+            if (inputResult?.mentionedUsernames || inputResult?.mentioned_usernames) {
+                analysis.mentioned_usernames = inputResult.mentionedUsernames || inputResult.mentioned_usernames || [];
+            }
+        }
+        
+        events.emit('analysis_progress', {
+            userId,
+            step: 4,
+            description: 'Resolving mentions…',
+            details: analysis.mentioned_usernames?.length
+                ? `Processing: ${analysis.mentioned_usernames.join(', ')}`
+                : 'Checking for referenced participants'
+        });
+        
+        // Entity resolution and context enrichment
+        if (analysis.mentioned_usernames && analysis.mentioned_usernames.length > 0) {
+            analysis = await resolveEntitiesAndEnrichContext(message, analysis, circleId);
+        }
+        
+        events.emit('analysis_progress', {
+            userId,
+            step: 5,
+            description: 'Finalizing response…',
+            details: 'Preparing reply for delivery'
+        });
+        if (process.env.DEBUG_CLI) {
+            console.log('[AIAnalysisHandler] Companion analysis summary:', {
+                system_used: 'companion',
+                replyPreview: analysis.reply ? analysis.reply.slice(0, 120) : null,
+                intent: analysis.intent,
+                criticality: analysis.criticality,
+                privacyLevel: analysis.privacyLevel
+            });
+        }
+        
+        return analysis;
+    } catch (error) {
+        console.error('[AIAnalysisHandler] Companion analysis error:', error);
+        events.emit('analysis_progress', {
+            userId,
+            step: 5,
+            description: 'Companion analysis fallback…',
+            details: 'Reverting to default response'
+        });
+        throw error;
+    } finally {
+        events.emit('analysis_progress', { userId, complete: true });
     }
-    
-    // Entity resolution and context enrichment
-    if (analysis.mentioned_usernames && analysis.mentioned_usernames.length > 0) {
-        analysis = await resolveEntitiesAndEnrichContext(message, analysis, circleId);
-    }
-    
-    return analysis;
 }
 
 export async function performAiAnalysis(userId, role, message, circleId) {
     // Check if we should use Companion system or unified agent
-    const config = await import('../../config.js');
-    const useCompanions = config.default.USE_COMPANIONS;
+    const configModule = await import('../../config.js');
+    const cfg = configModule.default;
+    const useCompanions = cfg.USE_COMPANIONS;
     
     // A/B testing: randomly assign to Companion or unified based on ratio
     let useCompanion = useCompanions;
-    if (!useCompanions && config.default.COMPANION_AB_TEST_ENABLED) {
-        useCompanion = Math.random() < config.default.COMPANION_AB_TEST_RATIO;
+    if (!useCompanions && cfg.COMPANION_AB_TEST_ENABLED) {
+        useCompanion = Math.random() < cfg.COMPANION_AB_TEST_RATIO;
     }
     
     if (useCompanion) {
-        return await performCompanionAnalysis(userId, role, message, circleId);
+        try {
+            return await performCompanionAnalysis(userId, role, message, circleId);
+        } catch (error) {
+            console.warn('[AIAnalysisHandler] Companion system failed, falling back to unified agent:', error?.message || error);
+        }
     }
     
     // Step 1: Initial Analysis (Unified Agent)
@@ -247,6 +311,15 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         details: 'Response ready',
         complete: true
     });
+    if (process.env.DEBUG_CLI) {
+        console.log('[AIAnalysisHandler] Broadcasting reply', {
+            userId,
+            circleId,
+            system_used: analysis?.system_used,
+            hasReply: Boolean(analysis?.reply),
+            replyPreview: analysis?.reply ? analysis.reply.slice(0, 120) : null
+        });
+    }
 
     return analysis;
 }
