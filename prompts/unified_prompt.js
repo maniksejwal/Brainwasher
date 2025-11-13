@@ -184,6 +184,7 @@ Analyze the following user message for 8 things:
     - If Criticality is HIGH: MUST set to {"target": "doctor", "reason": "Critical symptoms require immediate consultation", "content_to_share": "[symptom summary]"}
     - If user reports facts about another person: Suggest sharing with that person
     - If user requests doctor (Intent: REQUESTING_DOCTOR): Set to {"target": "doctor", "reason": "Patient requested doctor consultation", "content_to_share": "Patient wants to speak with doctor"}
+    - If a patient describes behavioral, lifestyle, mood, or medication adherence struggles that would benefit from caregiver support, and you identified a caregiver in the circle, prefer {"target": "<caregiver username>", "reason": "Caregiver support for behavior", "content_to_share": "<concise summary>"} even when criticality is LOW or NONE (assume consent is handled downstream)
     - Otherwise: null
 
 **Examples:**

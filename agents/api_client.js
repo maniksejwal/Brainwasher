@@ -10,11 +10,39 @@ import OpenAI from 'openai';
 import config from '../config.js';
 import { parseJsonWithFixes } from '../utils/jsonParser.js';
 
+const PROVIDERS = Object.freeze({
+    OLLAMA: 'ollama',
+    OPENAI: 'openai',
+    GEMINI: 'gemini',
+});
+
+const RESPONSE_MESSAGES = Object.freeze({
+    GENERIC_FAILURE: 'I hit an issue reaching our language models. Please try again soon.',
+    MODEL_UNAVAILABLE: modelName => `I couldn't reach ${modelName}. Please make sure it's available and try again.`,
+    NETWORK_FAILURE: 'I lost connection to our language service. Please check the network and try again.',
+});
+
 let geminiClients = [];
 let openAIClient;
 let failedKeys = new Set(); // Track failed API keys
 let requestCounter = 0; // For load balancing
-let useOnlyOpenAI = true; // Flag to skip round-robin and use only OpenAI (default to true due to Gemini issues)
+let useOnlyOpenAI = config.USE_ONLY_OPENAI ?? false; // Flag to skip round-robin and use only OpenAI (set via config)
+const providerState = {
+    ollamaFailed: false,
+};
+const providerLogs = {
+    success: [],
+    failure: [],
+};
+
+function trackProviderOutcome(type, model, status, detail = '') {
+    const entry = `${type}:${model}${detail ? ` (${detail})` : ''}`;
+    if (status === 'success') {
+        providerLogs.success.push(entry);
+    } else {
+        providerLogs.failure.push(entry);
+    }
+}
 
 // Initialize OpenAI client
 if (config.CHAT_GPT_KEY) {
@@ -46,8 +74,80 @@ if (config.GEMINI_API_KEYS && config.GEMINI_API_KEYS.length > 0) {
     }
 }
 
-if (geminiClients.length === 0 && !openAIClient) {
-    console.error("\n[Agent] FATAL ERROR: No valid API keys found for OpenAI or Gemini.");
+if (geminiClients.length === 0 && !openAIClient && !config.OLLAMA_API_BASE_URL) {
+    console.error("\n[Agent] FATAL ERROR: No valid API providers configured (Ollama, OpenAI, Gemini).");
+}
+
+function isOllamaAvailable() {
+    return Boolean(config.OLLAMA_API_BASE_URL) && !providerState.ollamaFailed;
+}
+
+const OPENAI_MODELS = new Set(
+    [
+        config.OPENAI_MODEL,
+        config.OPENAI_MODEL_GPT4,
+        config.OPENAI_MODEL_GPT4_TURBO,
+        config.OPENAI_MODEL_GPT4O,
+        config.OPENAI_MODEL_GPT4O_MINI,
+        config.OPENAI_MODEL_GPT5,
+    ].filter(Boolean)
+);
+
+function normalizeModelForProvider(providerType, desiredModel) {
+    switch (providerType) {
+        case PROVIDERS.OPENAI:
+            return OPENAI_MODELS.has(desiredModel) ? desiredModel : config.OPENAI_MODEL;
+        case PROVIDERS.GEMINI:
+            return desiredModel?.toLowerCase().includes('gemini')
+                ? desiredModel
+                : config.GEMINI_MODEL;
+        case PROVIDERS.OLLAMA:
+            return desiredModel?.toLowerCase().startsWith('gpt-')
+                ? (config.OLLAMA_DEFAULT_MODEL || config.DEFAULT_MODEL)
+                : desiredModel;
+        default:
+            return desiredModel;
+    }
+}
+
+async function callOllama(prompt, temperature, maxTokens, model) {
+    if (!config.OLLAMA_API_BASE_URL) {
+        throw new Error('[Agent] Ollama base URL not configured');
+    }
+
+    const requestBody = {
+        model: model || config.OLLAMA_DEFAULT_MODEL || config.DEFAULT_MODEL,
+        prompt,
+        stream: false,
+    };
+
+    if (typeof temperature === 'number') {
+        requestBody.temperature = temperature;
+    }
+
+    if (typeof maxTokens === 'number') {
+        requestBody.max_tokens = maxTokens;
+    }
+
+    const response = await fetch(`${config.OLLAMA_API_BASE_URL}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody),
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        const error = new Error(`[Agent] Ollama request failed (${response.status}): ${errorText || response.statusText}`);
+        error.status = response.status;
+        throw error;
+    }
+
+    const data = await response.json();
+    if (typeof data?.response !== 'string') {
+        throw new Error('[Agent] Ollama response missing "response" field');
+    }
+
+    return data;
 }
 
 // Get next available provider (round-robin between Gemini and OpenAI, or OpenAI only)
@@ -55,22 +155,26 @@ function getNextProvider(useCase = 'basic_responses') {
     // If useOnlyOpenAI flag is set, return OpenAI only
     if (useOnlyOpenAI) {
         if (openAIClient && !failedKeys.has(config.CHAT_GPT_KEY)) {
-            return { type: 'openai', client: openAIClient };
+            return { type: PROVIDERS.OPENAI, client: openAIClient };
         }
         return null;
     }
     
     const availableProviders = [];
     
+    if (isOllamaAvailable()) {
+        availableProviders.push({ type: PROVIDERS.OLLAMA });
+    }
+    
     // Add Gemini clients that haven't failed
     const workingGeminiClients = geminiClients.filter(gc => !failedKeys.has(gc.apiKey));
     if (workingGeminiClients.length > 0) {
-        availableProviders.push({ type: 'gemini', clients: workingGeminiClients });
+        availableProviders.push({ type: PROVIDERS.GEMINI, clients: workingGeminiClients });
     }
     
     // Add OpenAI if available and not failed
     if (openAIClient && !failedKeys.has(config.CHAT_GPT_KEY)) {
-        availableProviders.push({ type: 'openai', client: openAIClient });
+        availableProviders.push({ type: PROVIDERS.OPENAI, client: openAIClient });
     }
     
     if (availableProviders.length === 0) {
@@ -118,112 +222,143 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
     const fullPrompt = `${history.join('\n')}\n\n${prompt}`;
     const maxRetries = 3;
     let lastError = null;
+    providerState.ollamaFailed = false;
+    providerLogs.success = [];
+    providerLogs.failure = [];
 
     // Select appropriate model based on use case
     const modelSelection = selectModelForUseCase(useCase, expectJson, prompt.length);
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        const provider = getNextProvider();
-        if (!provider) {
-            console.error("[Agent] No available API providers");
-            return createFallbackResponse("I'm having some trouble processing that right now.");
-        }
+    try {
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            const provider = getNextProvider();
+            if (!provider) {
+                console.error('[Agent] No available API providers');
+                return createFallbackResponse(RESPONSE_MESSAGES.GENERIC_FAILURE);
+            }
 
-        try {
-            let text;
-            let apiKey;
-            let modelToUse = modelSelection.preferredModel;
-            
-            if (provider.type === 'openai') {
-                // Use model from model selection
-                const requestBody = {
-                    model: modelToUse,
-                    messages: [{ role: 'user', content: fullPrompt }],
-                    temperature: temperature,
-                    max_tokens: maxTokens
-                };
+            const providerType = provider.type;
+            const baseModel = modelSelection.preferredModel || config.OLLAMA_DEFAULT_MODEL || config.DEFAULT_MODEL;
+            const modelForAttempt = normalizeModelForProvider(providerType, baseModel);
+
+            try {
+                let text;
+                switch (providerType) {
+                    case PROVIDERS.OLLAMA: {
+                        const ollamaResult = await callOllama(fullPrompt, temperature, maxTokens, modelForAttempt);
+                        text = ollamaResult.response;
+                        providerState.ollamaFailed = false;
+                        trackProviderOutcome(PROVIDERS.OLLAMA, modelForAttempt, 'success');
+                        break;
+                    }
+                    case PROVIDERS.OPENAI: {
+                        const requestBody = {
+                            model: modelForAttempt,
+                            messages: [{ role: 'user', content: fullPrompt }],
+                            temperature,
+                            max_tokens: maxTokens,
+                        };
+                        if (expectJson) {
+                            requestBody.response_format = { type: 'json_object' };
+                        }
+                        const completion = await provider.client.chat.completions.create(requestBody);
+                        text = completion.choices[0].message.content;
+                        trackProviderOutcome(PROVIDERS.OPENAI, modelForAttempt, 'success');
+                        break;
+                    }
+                    case PROVIDERS.GEMINI: {
+                        const geminiClientsForAttempt = provider.clients || [];
+                        if (geminiClientsForAttempt.length === 0) {
+                            throw new Error('[Agent] No Gemini clients available');
+                        }
+                        const geminiClient = geminiClientsForAttempt[attempt % geminiClientsForAttempt.length];
+                        const generationConfig = {
+                            temperature,
+                            maxOutputTokens: maxTokens,
+                        };
+                        const result = await geminiClient.client.generateContent(fullPrompt, generationConfig);
+                        const response = await result.response;
+                        text = response.text();
+                        trackProviderOutcome(`${PROVIDERS.GEMINI}#${geminiClient.index}`, modelForAttempt, 'success');
+                        break;
+                    }
+                    default:
+                        throw new Error(`[Agent] Unsupported provider type: ${providerType}`);
+                }
+
                 if (expectJson) {
-                    requestBody.response_format = { type: "json_object" };
+                    const parsedResponse = parseJsonResponse(text, attempt, maxRetries);
+                    if (parsedResponse) {
+                        logProviderSummary();
+                        return parsedResponse;
+                    }
+                    if (attempt < maxRetries) {
+                        continue;
+                    }
+                    console.warn('[Agent] All JSON parsing attempts failed, returning raw text for handler processing');
+                    logProviderSummary();
+                    return {
+                        reply: text,
+                        modelUsed: modelForAttempt,
+                        modelProvider: providerType,
+                        _parsingFailed: true,
+                    };
                 }
-                const completion = await provider.client.chat.completions.create(requestBody);
-                text = completion.choices[0].message.content;
-                apiKey = config.CHAT_GPT_KEY;
-                
-            } else if (provider.type === 'gemini') {
-                // Round-robin between available Gemini clients
-                const geminiClient = provider.clients[attempt % provider.clients.length];
-                const generationConfig = {
-                    temperature: temperature,
-                    maxOutputTokens: maxTokens
-                };
-                
-                const result = await geminiClient.client.generateContent(fullPrompt, generationConfig);
-                const response = await result.response;
-                text = response.text();
-                apiKey = geminiClient.apiKey;
-                console.log(`[Agent] ✅ Gemini request successful (attempt ${attempt}, client ${geminiClient.index})`);
-            }
 
-            // Process the response
-            if (expectJson) {
-                const parsedResponse = parseJsonResponse(text, attempt, maxRetries);
-                if (parsedResponse) {
-                    // Success - don't log errors if retry succeeded
-                    return parsedResponse;
-                }
-                // If parsing failed and we have retries left, continue to retry (don't log yet)
-                if (attempt < maxRetries) {
-                    // Suppress log - will only log if all retries fail
-                    continue;
-                }
-                // Last attempt failed - log only now
-                console.warn(`[Agent] All JSON parsing attempts failed, returning raw text for handler processing`);
-                return { 
-                    reply: text, 
-                    modelUsed: modelToUse,
-                    modelProvider: provider.type,
-                    _parsingFailed: true // Flag to indicate parsing failed
+                logProviderSummary();
+                return {
+                    reply: text,
+                    modelUsed: modelForAttempt,
+                    modelProvider: providerType,
                 };
-            }
-            
-            return { 
-                reply: text, 
-                modelUsed: modelToUse,
-                modelProvider: provider.type
-            };
+            } catch (error) {
+                lastError = error;
+                const briefMessage = (error.message || String(error)).split('\n')[0];
+                trackProviderOutcome(providerType, modelForAttempt, 'failure', briefMessage);
 
-        } catch (error) {
-            lastError = error;
-            
-            // Mark this API key as failed if it's a key-specific error
-            if (provider.type === 'openai') {
-                if (isKeyFailureError(error)) {
-                    failedKeys.add(config.CHAT_GPT_KEY);
-                    console.warn(`[Agent] ❌ OpenAI failed: ${error.message.split('.')[0]}`);
+                switch (providerType) {
+                    case PROVIDERS.OPENAI:
+                        if (isKeyFailureError(error)) {
+                            failedKeys.add(config.CHAT_GPT_KEY);
+                        }
+                        break;
+                    case PROVIDERS.GEMINI: {
+                        const geminiClientsForAttempt = provider.clients || [];
+                        if (geminiClientsForAttempt.length === 0) {
+                            break;
+                        }
+                        const geminiClient = geminiClientsForAttempt[attempt % geminiClientsForAttempt.length];
+                        if (isKeyFailureError(error)) {
+                            failedKeys.add(geminiClient.apiKey);
+                        }
+                        break;
+                    }
+                    case PROVIDERS.OLLAMA:
+                        providerState.ollamaFailed = true;
+                        break;
+                    default:
+                        break;
                 }
-            } else if (provider.type === 'gemini') {
-                const geminiClient = provider.clients[attempt % provider.clients.length];
-                if (isKeyFailureError(error)) {
-                    failedKeys.add(geminiClient.apiKey);
-                    console.warn(`[Agent] ❌ Gemini ${geminiClient.index} failed: ${error.message.split('.')[0]}`);
+
+                const shouldRetry = shouldRetryError(error, attempt, maxRetries, providerType);
+
+                if (shouldRetry) {
+                    const delay = calculateRetryDelay(attempt);
+                    console.warn(`[Agent] Retry ${attempt}/${maxRetries} in ${Math.round(delay / 1000)}s`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                    break;
                 }
-            }
-            
-            const shouldRetry = shouldRetryError(error, attempt, maxRetries);
-            
-            if (shouldRetry) {
-                const delay = calculateRetryDelay(attempt);
-                console.warn(`[Agent] Retry ${attempt}/${maxRetries} in ${Math.round(delay/1000)}s`);
-                await new Promise(resolve => setTimeout(resolve, delay));
-            } else {
-                break;
             }
         }
-    }
 
-    const errorMessage = lastError?.message || String(lastError) || 'Unknown error';
-    console.error(`[Agent] All retries failed: ${errorMessage.split('.')[0]}`);
-    return createFallbackResponse("I'm having some trouble processing that right now.");
+        const errorMessage = lastError?.message || String(lastError) || 'Unknown error';
+        logProviderSummary();
+        console.error(`[Agent] All retries failed: ${errorMessage.split('.')[0]}`);
+        return createFallbackResponse(RESPONSE_MESSAGES.GENERIC_FAILURE, lastError);
+    } finally {
+        providerState.ollamaFailed = false;
+    }
 }
 
 function parseJsonResponse(text, attempt, maxRetries) {
@@ -258,11 +393,18 @@ function isKeyFailureError(error) {
     return false;
 }
 
-function shouldRetryError(error, attempt, maxRetries) {
+function shouldRetryError(error, attempt, maxRetries, providerType = PROVIDERS.OPENAI) {
     if (attempt >= maxRetries) return false;
     
     const status = error.status || (error.response ? error.response.status : 500);
     const errorMessage = error.message?.toLowerCase() || '';
+    
+    if (providerType === 'ollama') {
+        if (status >= 500 || status === 408) {
+            return true;
+        }
+        return errorMessage.includes('timeout') || errorMessage.includes('network');
+    }
     
     // Don't retry if it's a key failure
     if (isKeyFailureError(error)) {
@@ -289,7 +431,21 @@ function calculateRetryDelay(attempt) {
     return baseDelay + jitter;
 }
 
-function createFallbackResponse(reply) {
+function createFallbackResponse(defaultReply, error = null) {
+    logProviderSummary();
+    let reply = defaultReply;
+
+    if (error) {
+        const message = (error.message || String(error)).toLowerCase();
+        if (message.includes('does not exist') && message.includes('model')) {
+            const modelMatch = message.match(/model [`'"]?([\w:.\-]+)[`'"]?/);
+            const modelName = modelMatch ? modelMatch[1] : 'the requested model';
+            reply = RESPONSE_MESSAGES.MODEL_UNAVAILABLE(modelName);
+        } else if (message.includes('fetch failed') || message.includes('network')) {
+            reply = RESPONSE_MESSAGES.NETWORK_FAILURE;
+        }
+    }
+
     return {
         intent: 'ASKING_QUESTION',
         state_update: null,
@@ -306,21 +462,31 @@ function createFallbackResponse(reply) {
 export function getApiStats() {
     const workingGeminiClients = geminiClients.filter(gc => !failedKeys.has(gc.apiKey));
     const workingOpenAI = openAIClient && !failedKeys.has(config.CHAT_GPT_KEY);
+    const workingOllama = isOllamaAvailable() ? 1 : 0;
+    
+    let nextProviderType = 'none';
+    const previewProvider = getNextProvider();
+    if (previewProvider) {
+        nextProviderType = previewProvider.type;
+        requestCounter = Math.max(0, requestCounter - 1);
+    }
     
     return {
         totalRequests: requestCounter,
         workingProviders: {
+            ollama: workingOllama,
             gemini: workingGeminiClients.length,
             openai: workingOpenAI ? 1 : 0
         },
         failedKeys: Array.from(failedKeys),
-        nextProvider: getNextProvider()?.type || 'none'
+        nextProvider: nextProviderType
     };
 }
 
 // Reset failed keys (useful for testing or when keys are renewed)
 export function resetFailedKeys() {
     failedKeys.clear();
+    providerState.ollamaFailed = false;
     console.log('[Agent] Failed keys reset - all providers available again');
 }
 
@@ -350,5 +516,16 @@ export function setUseOnlyOpenAI(onlyOpenAI = true) {
 
 export function isUsingOnlyOpenAI() {
     return useOnlyOpenAI;
+}
+
+function logProviderSummary() {
+    if (providerLogs.success.length > 0) {
+        console.info(`[Agent] Providers succeeded: ${providerLogs.success.join(', ')}`);
+    }
+    if (providerLogs.failure.length > 0) {
+        console.warn(`[Agent] Providers failed: ${providerLogs.failure.join(', ')}`);
+    }
+    providerLogs.success = [];
+    providerLogs.failure = [];
 }
 

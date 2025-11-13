@@ -64,14 +64,6 @@ export function shouldUseBlankTurn(userMessage, historyAnalysis, conversationHis
 }
 
 /**
- * Get blank turn response
- */
-export function getBlankTurnResponse() {
-    const blankTurns = ['Hmm', 'I see', 'Continue', 'Go on', 'Tell me more', 'Okay'];
-    return blankTurns[Math.floor(Math.random() * blankTurns.length)];
-}
-
-/**
  * Check if response avoids yes/no questions
  */
 export function hasYesNoQuestion(response) {
@@ -94,11 +86,11 @@ export function validateAndAdjustResponse(response, userMessage, historyAnalysis
     let adjustedResponse = response;
     
     // Check for blank turn opportunity
-    if (options.allowBlankTurns && shouldUseBlankTurn(userMessage, historyAnalysis, conversationHistory)) {
-        adjustedResponse = getBlankTurnResponse();
-        adjustments.push('blank_turn');
-        return { response: adjustedResponse, adjustments };
-    }
+    // if (options.allowBlankTurns && shouldUseBlankTurn(userMessage, historyAnalysis, conversationHistory)) {
+    //     adjustedResponse = getBlankTurnResponse();
+    //     adjustments.push('blank_turn');
+    //     return { response: adjustedResponse, adjustments };
+    // }
     
     // Check verbosity
     if (isTooVerbose(adjustedResponse)) {

@@ -1,10 +1,43 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+function sanitizeString(value, defaultValue = '') {
+    if (typeof value !== 'string') return defaultValue;
+    const trimmed = value.trim();
+    if (!trimmed) return defaultValue;
+    return trimmed.replace(/^['"]+/, '').replace(/['"]+$/, '');
+}
+
+function toBoolean(value, defaultValue = false) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value !== 'string') return defaultValue;
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'y'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n'].includes(normalized)) return false;
+    return defaultValue;
+}
+
+const DEFAULT_MODEL_FALLBACK = 'gpt-3.5-turbo';
+
+const envConfig = {
+    OLLAMA_API_BASE_URL: sanitizeString(process.env.OLLAMA_API_BASE_URL, process.env.OLLAMA_API_BASE_URL || ''),
+    OLLAMA_DEFAULT_MODEL: sanitizeString(process.env.OLLAMA_DEFAULT_MODEL, process.env.OLLAMA_DEFAULT_MODEL || ''),
+    DEFAULT_MODEL: sanitizeString(process.env.DEFAULT_MODEL, DEFAULT_MODEL_FALLBACK),
+    FALLBACK_MODEL: sanitizeString(process.env.FALLBACK_MODEL, DEFAULT_MODEL_FALLBACK),
+    BASIC_RESPONSES_MODEL: sanitizeString(process.env.BASIC_RESPONSES_MODEL, DEFAULT_MODEL_FALLBACK),
+    CONVERSATIONAL_AGENT_MODEL: sanitizeString(process.env.CONVERSATIONAL_AGENT_MODEL, DEFAULT_MODEL_FALLBACK),
+    ESCALATION_MODEL: sanitizeString(process.env.ESCALATION_MODEL, DEFAULT_MODEL_FALLBACK),
+    CRITICAL_ANALYSIS_MODEL: sanitizeString(process.env.CRITICAL_ANALYSIS_MODEL, DEFAULT_MODEL_FALLBACK),
+    SYNTHETIC_USER_MODEL: sanitizeString(process.env.SYNTHETIC_USER_MODEL, DEFAULT_MODEL_FALLBACK),
+    USE_ONLY_OPENAI: toBoolean(process.env.USE_ONLY_OPENAI, false),
+};
+
 const config = {
     GEMINI_API_KEYS: [process.env.GEMINI_API_KEY_0, process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1, process.env.GEMINI_API_KEY_2].filter(Boolean),
-	CHAT_GPT_KEY: process.env.CHAT_GPT_KEY,
-	
+    CHAT_GPT_KEY: process.env.CHAT_GPT_KEY,
+    OLLAMA_API_BASE_URL: envConfig.OLLAMA_API_BASE_URL,
+    OLLAMA_DEFAULT_MODEL: envConfig.OLLAMA_DEFAULT_MODEL,
+    
     // Model Configuration - Simple and Clear
     OPENAI_MODEL: 'gpt-3.5-turbo',                    // Free tier - DEFAULT
     OPENAI_MODEL_GPT4: 'gpt-4',                      // Paid
@@ -20,30 +53,30 @@ const config = {
     GEMINI_MODEL_PRO_VISION: 'gemini-pro-vision',    // Free tier
     
     // HARDCODED PREFERENCES - Free Tier Only
-    USE_FREE_TIER_ONLY: true,                         // Set to false to use paid models
-    DEFAULT_MODEL: 'gpt-3.5-turbo',                  // What to use when free tier only
-    FALLBACK_MODEL: 'gpt-3.5-turbo',                // Fallback when primary fails
+    USE_FREE_TIER_ONLY: false,                         // Set to false to use paid models
+    DEFAULT_MODEL: envConfig.DEFAULT_MODEL,                  // What to use when free tier only
+    FALLBACK_MODEL: envConfig.FALLBACK_MODEL,                // Fallback when primary fails
     
     // Simple Model Selection - Just Lists
-    FREE_MODELS: ['gpt-3.5-turbo', 'gemini-1.5-flash-latest', 'gemini-pro'],
+    FREE_MODELS: ['mistral:latest', 'gpt-3.5-turbo', 'gemini-1.5-flash-latest', 'gemini-pro'],
     PAID_MODELS: ['gpt-4', 'gpt-4-turbo-preview', 'gpt-4o', 'gpt-4o-mini', 'gpt-5'],
     
     // Use Case Mapping - Simple Constants
-    BASIC_RESPONSES_MODEL: 'gpt-3.5-turbo',
-    CONVERSATIONAL_AGENT_MODEL: 'gpt-3.5-turbo',      // Changed to free tier
-    ESCALATION_MODEL: 'gpt-3.5-turbo',               // Changed to free tier
-    CRITICAL_ANALYSIS_MODEL: 'gpt-3.5-turbo',        // Changed to free tier
-    SYNTHETIC_USER_MODEL: 'gpt-3.5-turbo',
+    BASIC_RESPONSES_MODEL: envConfig.BASIC_RESPONSES_MODEL,
+    CONVERSATIONAL_AGENT_MODEL: envConfig.CONVERSATIONAL_AGENT_MODEL,      // Changed to free tier
+    ESCALATION_MODEL: envConfig.ESCALATION_MODEL,               // Changed to free tier
+    CRITICAL_ANALYSIS_MODEL: envConfig.CRITICAL_ANALYSIS_MODEL,        // Changed to free tier
+    SYNTHETIC_USER_MODEL: envConfig.SYNTHETIC_USER_MODEL,
     
     // Memory Configuration
     MAX_SESSION_MEMORY: 20,
     MAX_CONVERSATION_HISTORY: 50,
     
     // Load Balancer - Simple Settings
-    USE_LOAD_BALANCER: true,
+    USE_LOAD_BALANCER: false,
     MAX_RETRIES: 3,
     RETRY_DELAY: 1000,
-    USE_ONLY_OPENAI: true,                           // Skip Gemini due to reliability issues
+    USE_ONLY_OPENAI: envConfig.USE_ONLY_OPENAI,                           // Skip Gemini due to reliability issues
     
     // Companion System Configuration
     USE_COMPANIONS: true,                            // Use Companion system (false = use unified agent)

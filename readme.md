@@ -31,10 +31,15 @@ npm install
 ```
 
 ### Set Up API Keys
-Create a file named `.env` in the root of the project. Open it and add your API keys. The system defaults to OpenAI if `CHAT_GPT_KEY` is present.
+Create a file named `.env` in the root of the project. Open it and add your API keys. The system now defaults to the hosted Ollama endpoint while still supporting OpenAI/Gemini keys when provided.
 
 ```env
 # .env file
+OLLAMA_API_BASE_URL="http://10.6.0.62:8001"
+OLLAMA_DEFAULT_MODEL="mistral:latest"
+DEFAULT_MODEL="mistral:latest"
+FALLBACK_MODEL="mistral:latest"
+USE_ONLY_OPENAI=false
 CHAT_GPT_KEY="sk-..."
 GEMINI_API_KEY_1="YOUR_GEMINI_KEY_HERE"
 ```

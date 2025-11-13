@@ -179,7 +179,22 @@ export async function handleMessage(userId, circleId, message) {
 
     // Step 2: Perform the full AI analysis, including entity resolution.
     // This will use Companion system or unified agent based on config
-    const analysis = await performAiAnalysis(userId, memberInfo.role, message, circleId);
+    let analysis;
+    try {
+        analysis = await performAiAnalysis(userId, memberInfo.role, message, circleId);
+    } catch (error) {
+        const errorReply = formatAnalysisErrorMessage(error);
+        await broadcastErrorReply(userId, circleId, errorReply);
+        console.error(`[MessageHandler] AI analysis failed for user ${userId} in circle ${circleId}:`, error);
+        return {
+            reply: errorReply,
+            intent: 'ERROR',
+            criticality: 'NONE',
+            privacyLevel: 'PRIVATE',
+            facts: {},
+            system_used: 'error'
+        };
+    }
     if (process.env.DEBUG_CLI) {
         console.log('[MessageHandler] Analysis summary:', {
             system_used: analysis?.system_used,
@@ -257,9 +272,6 @@ export async function handleMessage(userId, circleId, message) {
         const circle = await findCircleById(circleId);
         const patient = circle ? await findUserById(circle.primary_patient_id) : null;
         const agentName = await getAgentName(userId, circleId);
-        if (process.env.DEBUG_CLI) {
-            console.log(`[MessageHandler] Emitting primary reply to ${userId} from ${agentName}. Preview="${analysis.reply.slice(0, 80)}"`);
-        }
         events.emit('broadcast', {
             targetUsers: [userId],
             reply: analysis.reply,
@@ -388,5 +400,33 @@ function buildFallbackProbe(username, instruction) {
         return `Hi ${username}, could you share how you're feeling right now?`;
     }
     return `Hi ${username}, ${trimmed}. Could you tell me more?`;
+}
+
+async function broadcastErrorReply(userId, circleId, reply) {
+    const circle = await findCircleById(circleId);
+    const patient = circle ? await findUserById(circle.primary_patient_id) : null;
+    const agentName = await getAgentName(userId, circleId);
+    events.emit('broadcast', {
+        targetUsers: [userId],
+        reply,
+        from: agentName,
+        circleId,
+        patientUsername: patient?.username ?? userId
+    });
+}
+
+function formatAnalysisErrorMessage(error) {
+    if (!error) {
+        return 'The AI service returned an unknown error. Please try again shortly.';
+    }
+
+    if (typeof error === 'string') {
+        return `LLM error: ${error}`;
+    }
+
+    const provider = error.modelProvider || error.provider || error._modelProvider || 'LLM provider';
+    const model = error.modelUsed || error.model || error._modelUsed || 'model';
+    const details = error.message || error.toString() || 'no additional details';
+    return `Unable to reach ${provider}:${model}. Details: ${details}`;
 }
 

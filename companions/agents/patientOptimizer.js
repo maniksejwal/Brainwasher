@@ -6,7 +6,7 @@
 import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { loadPrompt } from '../utils/promptLoader.js';
-import { validateAndAdjustResponse, shouldUseBlankTurn, getBlankTurnResponse } from '../utils/responseStyleValidator.js';
+import { validateAndAdjustResponse, shouldUseBlankTurn } from '../utils/responseStyleValidator.js';
 
 /**
  * Process patient optimization
@@ -34,9 +34,9 @@ export async function processPatientOptimization(userId, role, message, circleId
     ).join('\n') || 'No recent history';
     
     // Check if blank turn should be used
-    if (shouldUseBlankTurn(message, historyAnalysis, conversationHistory)) {
-        return { reply: getBlankTurnResponse() };
-    }
+    // if (shouldUseBlankTurn(message, historyAnalysis, conversationHistory)) {
+    //     return { reply: getBlankTurnResponse() };
+    // }
     
     // Build repetition guidance and topic shift instructions
     let repetitionGuidance = '';

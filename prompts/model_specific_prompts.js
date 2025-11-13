@@ -126,6 +126,8 @@ export function getPromptForModel(modelName) {
         return PROMPT_GPT4_TURBO;
     } else if (model.includes('gpt-5')) {
         return PROMPT_GPT5;
+    } else if (model.includes('mistral') || model.includes('llama')) {
+        return PROMPT_GPT4;
     } else if (model.includes('gemini')) {
         return PROMPT_GEMINI;
     } else {
@@ -146,21 +148,24 @@ export function getModelSpecificInstructions(modelName, useCase) {
             'gpt-4': 'Provide detailed escalation with context and reasoning.',
             'gpt-4-turbo': 'Offer comprehensive escalation with multiple options and analysis.',
             'gpt-5': 'Provide expert-level escalation with advanced clinical insights.',
-            'gemini': 'Escalate with factual, evidence-based recommendations.'
+            'gemini': 'Escalate with factual, evidence-based recommendations.',
+            'mistral:latest': 'Escalate with clear, structured guidance and actionable next steps.'
         },
         'empathy': {
             'gpt-3.5-turbo': 'Show empathy with simple, direct language.',
             'gpt-4': 'Demonstrate nuanced empathy with appropriate depth.',
             'gpt-4-turbo': 'Provide sophisticated emotional support with psychological insights.',
             'gpt-5': 'Offer therapeutic-level empathy with advanced psychological understanding.',
-            'gemini': 'Show empathy with factual, supportive language.'
+            'gemini': 'Show empathy with factual, supportive language.',
+            'mistral:latest': 'Balance warmth with clarity; validate feelings while gathering key details.'
         },
         'misconception': {
             'gpt-3.5-turbo': 'Correct misconceptions simply and clearly.',
             'gpt-4': 'Address misconceptions with detailed explanations.',
             'gpt-4-turbo': 'Provide comprehensive correction with multiple perspectives.',
             'gpt-5': 'Offer expert-level correction with advanced knowledge.',
-            'gemini': 'Correct with evidence-based, factual information.'
+            'gemini': 'Correct with evidence-based, factual information.',
+            'mistral:latest': 'Correct gently with structured explanations and practical examples.'
         }
     };
     
