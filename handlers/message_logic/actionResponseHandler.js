@@ -31,6 +31,11 @@ export async function handlePendingActionResponse(userId, circleId, message) {
         return false; // Indicates no pending action was handled
     }
     
+    // Ensure userResponse is set for delegated probe responses (fallback if not set in state_manager)
+    if (actionResult.details?.action_type === 'delegated_probe_response') {
+        actionResult.userResponse = actionResult.userResponse || message;
+    }
+    
     // Delegate the execution of the action to the shared executor module.
     await executeResolvedAction(actionResult, userId, circleId);
     

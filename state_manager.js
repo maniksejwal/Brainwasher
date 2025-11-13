@@ -44,6 +44,68 @@ export async function handleUserResponseToAction(userId, circleId, message) {
         return null;
     }
 
+    // Check for delegated probe responses FIRST - they should match very leniently
+    // Each user should only have their own delegated probes (assigned to their user_id)
+    const delegatedProbes = pendingActions.filter(a => a.action_type === 'delegated_probe_response');
+    if (delegatedProbes.length > 0) {
+        let matchedAction = null;
+        
+        // For delegated probes, accept ANY non-empty response - very lenient matching
+        // This ensures short responses like "fight", "fights", "yes", etc. are always accepted
+        if (message.trim().length > 0) {
+            if (delegatedProbes.length === 1) {
+                // If only one delegated probe, accept it immediately
+                matchedAction = delegatedProbes[0];
+            } else {
+                // If multiple (shouldn't happen but handle it), try LLM matching first
+                try {
+                    const matchResult = await matchResponseToAction(message, delegatedProbes);
+                    if (matchResult && matchResult.matched_action_id) {
+                        matchedAction = pendingActions.find(a => a.action_id === matchResult.matched_action_id);
+                    }
+                } catch (error) {
+                    console.error('[StateManager] Error in LLM matching for delegated probes:', error);
+                }
+                // If LLM matching fails or returns nothing, accept the first one
+                if (!matchedAction) {
+                    matchedAction = delegatedProbes[0];
+                }
+            }
+        }
+        
+        if (matchedAction) {
+            await removePendingAction(matchedAction.action_id);
+            
+            // Generate acknowledgment using companion system (lighter than full analysis)
+            let acknowledgmentReply = "Thank you for your response.";
+            try {
+                const { performCompanionAnalysis } = await import('./handlers/message_logic/aiAnalysisHandler.js');
+                const { getMemberInfo } = await import('./db/index.js');
+                const memberInfo = await getMemberInfo(userId, circleId);
+                const analysis = await performCompanionAnalysis(
+                    userId, 
+                    memberInfo?.role || 'patient', 
+                    `User responded: "${message}". Generate a brief, natural acknowledgment (1 sentence max, no probing question).`, 
+                    circleId
+                );
+                if (analysis && analysis.reply) {
+                    acknowledgmentReply = analysis.reply;
+                }
+            } catch (error) {
+                console.error('[StateManager] Error generating acknowledgment:', error);
+                // Fallback to default message
+            }
+            
+            return {
+                action: 'execute',
+                details: { ...matchedAction, ...matchedAction.details },
+                reply: acknowledgmentReply,
+                userResponse: message // Store the actual user response for notification
+            };
+        }
+    }
+
+    // For non-delegated probe actions, use normal matching
     const matchResult = await matchResponseToAction(message, pendingActions);
 
     if (!matchResult || !matchResult.matched_action_id) {

@@ -9,6 +9,7 @@
 import { events } from '../../orchestrator.js';
 import { addEscalation, findUserByUsername, findUserById, findCircleByPatientId, addMessage, findCircleById } from '../../db/index.js';
 import { generateSharingSummaryOrProbe } from '../../agents/index.js';
+import { summarizeReplyForDoctor } from '../../agents/doctorAgent.js';
 import { getAgentName } from '../utils/agentIdentity.js';
 
 export async function executeResolvedAction(actionResult, userId, circleId) {
@@ -55,6 +56,29 @@ export async function executeResolvedAction(actionResult, userId, circleId) {
                         patientUsername 
                     });
                 }
+            }
+        }
+        else if (details.action_type === 'delegated_probe_response') {
+            // Handle response to delegated probe - send notification to requester
+            const { requested_by, topic, target_username, original_instruction } = details;
+            const requesterInfo = await findUserById(requested_by);
+            const responderInfo = await findUserById(userId);
+            
+            if (requesterInfo && responderInfo) {
+                // Get the user's response from the action result
+                const userResponse = actionResult.userResponse || actionResult.reply || 'No response provided';
+                
+                // Summarize the response for the requester
+                const summary = await summarizeReplyForDoctor(topic || original_instruction, userResponse);
+                
+                const agentName = await getAgentName(requested_by, circleId);
+                events.emit('broadcast', {
+                    targetUsers: [requested_by],
+                    reply: `Response from ${responderInfo.username} regarding "${topic || original_instruction}": ${summary}`,
+                    from: agentName,
+                    circleId,
+                    patientUsername
+                });
             }
         }
     }

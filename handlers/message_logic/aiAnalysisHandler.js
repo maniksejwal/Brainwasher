@@ -58,7 +58,7 @@ async function resolveEntitiesAndEnrichContext(message, analysis, circleId) {
 /**
  * Perform analysis using Companion system
  */
-async function performCompanionAnalysis(userId, role, message, circleId) {
+export async function performCompanionAnalysis(userId, role, message, circleId) {
     console.log(`[AIAnalysisHandler] Using Companion system...`);
     events.emit('analysis_progress', { 
         userId, 
