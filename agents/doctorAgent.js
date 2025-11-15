@@ -33,10 +33,46 @@ export async function generateDelegatedProbe(targetUser, topic) {
 }
 
 // FIX: Added the missing function to summarize a user's reply for the doctor.
-export async function summarizeReplyForDoctor(topic, response) {
+// Now includes conversation history with recency bias
+export async function summarizeReplyForDoctor(topic, response, circleId = null, userId = null) {
+    let conversationHistory = '';
+    let chiefComplaint = '';
+    
+    // If circleId and userId are provided, fetch conversation history with recency bias
+    if (circleId && userId) {
+        const { getRecentMessages } = await import('../db/index.js');
+        const recentMessages = await getRecentMessages(circleId, 20); // Get last 20 messages
+        
+        if (recentMessages && recentMessages.length > 0) {
+            // Apply recency bias: weight recent messages more heavily
+            // Recent messages (last 5) get full weight, older messages get reduced weight
+            const weightedMessages = recentMessages.map((msg, index) => {
+                const recencyWeight = index < 5 ? 1.0 : Math.max(0.3, 1.0 - (index - 5) * 0.1);
+                return { ...msg, weight: recencyWeight };
+            });
+            
+            // Format conversation history with timestamps and recency indicators
+            const historyLines = weightedMessages.map((msg, index) => {
+                const recency = index < 5 ? '[RECENT]' : index < 10 ? '[RECENT CONTEXT]' : '[HISTORICAL]';
+                return `${recency} ${msg.user_id}: ${msg.message}`;
+            });
+            
+            conversationHistory = historyLines.join('\n');
+            
+            // Extract chief complaint from older messages (messages 10-20, if available)
+            if (recentMessages.length > 10) {
+                const olderMessages = recentMessages.slice(10, 20);
+                const olderContext = olderMessages.map(msg => msg.message).join(' ');
+                chiefComplaint = olderContext.length > 200 ? olderContext.substring(0, 200) + '...' : olderContext;
+            }
+        }
+    }
+    
     const prompt = PROMPT_SUMMARIZE_FOR_DOCTOR
         .replace('{{TOPIC}}', topic)
-        .replace('{{RESPONSE}}', response);
+        .replace('{{RESPONSE}}', response)
+        .replace('{{CONVERSATION_HISTORY}}', conversationHistory || 'No recent conversation history available.')
+        .replace('{{CHIEF_COMPLAINT}}', chiefComplaint || 'No historical context available.');
         
     const result = await makeApiCall(prompt, [], false);
     return result.reply;

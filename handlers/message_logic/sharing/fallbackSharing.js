@@ -26,9 +26,50 @@ export async function handleFallbackSharing(userId, circleId, analysis) {
     // If target is doctor, use tiered escalation system
     if (analysis.sharingSuggestion.target === 'doctor' && analysis.criticality !== 'HIGH') {
         // HIGH criticality is handled by criticalEvents.js
-        // For MEDIUM/LOW, use tiered escalation
-        const confidence = 0.6; // Default confidence - could be improved based on analysis
-        return await handleTieredEscalation(userId, 'patient', analysis.message || '', circleId, analysis, confidence);
+        // For MEDIUM/LOW, check consent before escalating
+        
+        // Get patient's consent level for doctor
+        // Consent is stored in the patient's PERSONAL circle, not the current circle
+        const { getMemberInfo } = await import('../../../db/index.js');
+        const currentCircle = await findCircleByPatientId(circleId);
+        const patientId = currentCircle.primary_patient_id;
+        
+        // Check patient's consent for doctor in patient's personal circle
+        const patientPersonalCircle = await findCircleByPatientId(patientId);
+        let patientConsentForDoctor = 'none';
+        if (patientPersonalCircle) {
+            const doctorInPatientCircle = await getCircleMembers(patientPersonalCircle.circle_id);
+            const doctorMember = doctorInPatientCircle.find(m => m.role === 'doctor');
+            if (doctorMember) {
+                const doctorMemberInfo = await getMemberInfo(doctorMember.user_id, patientPersonalCircle.circle_id);
+                patientConsentForDoctor = doctorMemberInfo?.consent_level || 'none';
+            }
+        }
+        
+        // If responder is caregiver, also check caregiver's consent for doctor
+        const responderMemberInfo = await getMemberInfo(userId, circleId);
+        let responderConsentForDoctor = 'none';
+        if (responderMemberInfo && responderMemberInfo.role === 'caregiver') {
+            // Check what consent the caregiver has granted to doctor in their own circle
+            const responderCircle = await findCircleByPatientId(userId);
+            if (responderCircle) {
+                const doctorInResponderCircle = await getCircleMembers(responderCircle.circle_id);
+                const doctorMember = doctorInResponderCircle.find(m => m.role === 'doctor');
+                if (doctorMember) {
+                    const doctorMemberInfo = await getMemberInfo(doctorMember.user_id, responderCircle.circle_id);
+                    responderConsentForDoctor = doctorMemberInfo?.consent_level || 'none';
+                }
+            }
+        }
+        
+        // Check if we can escalate based on consent
+        // FULL consent from either patient or responder allows escalation
+        // Otherwise, force Tier 1 (permission request) by using low confidence
+        const confidence = (patientConsentForDoctor.toLowerCase() === 'full' || responderConsentForDoctor.toLowerCase() === 'full') 
+            ? 0.6  // Full consent - normal confidence, will route to appropriate tier
+            : 0.3; // No full consent - low confidence forces Tier 1 (permission request)
+        
+        return await handleTieredEscalation(userId, responderMemberInfo?.role || 'patient', analysis.message || '', circleId, analysis, confidence);
     }
 
     const members = await getCircleMembers(circleId);

@@ -11,6 +11,8 @@ import { addEscalation, findUserByUsername, findUserById, findCircleByPatientId,
 import { generateSharingSummaryOrProbe } from '../../agents/index.js';
 import { summarizeReplyForDoctor } from '../../agents/doctorAgent.js';
 import { getAgentName } from '../utils/agentIdentity.js';
+import { checkSharingPermission, prioritizeContent } from '../utils/sensitiveContentFilter.js';
+import { getMemberInfo } from '../../db/index.js';
 
 export async function executeResolvedAction(actionResult, userId, circleId) {
     const currentCircle = await findCircleById(circleId);
@@ -68,17 +70,52 @@ export async function executeResolvedAction(actionResult, userId, circleId) {
                 // Get the user's response from the action result
                 const userResponse = actionResult.userResponse || actionResult.reply || 'No response provided';
                 
-                // Summarize the response for the requester
-                const summary = await summarizeReplyForDoctor(topic || original_instruction, userResponse);
+                // Check consent level - get the consent that the responder has set for the requester
+                // The responder (userId) is sharing their own information with the requester (requested_by)
+                // We need to check what consent level the responder has granted to the requester
+                // This is stored in the requester's member record in the responder's personal circle
+                const { findCircleByPatientId } = await import('../../db/index.js');
+                const responderCircle = await findCircleByPatientId(userId);
+                let consentLevel = 'NONE';
                 
-                const agentName = await getAgentName(requested_by, circleId);
-                events.emit('broadcast', {
-                    targetUsers: [requested_by],
-                    reply: `Response from ${responderInfo.username} regarding "${topic || original_instruction}": ${summary}`,
-                    from: agentName,
-                    circleId,
-                    patientUsername
-                });
+                if (responderCircle) {
+                    // Check what consent the responder has granted to the requester in their own circle
+                    const requesterInResponderCircle = await getMemberInfo(requested_by, responderCircle.circle_id);
+                    const rawConsent = requesterInResponderCircle?.consent_level || 'none';
+                    // Normalize to uppercase for checkSharingPermission
+                    consentLevel = rawConsent.toUpperCase();
+                }
+                
+                // Check if we can share this content based on sensitivity and consent
+                const sharingCheck = await checkSharingPermission(userResponse, consentLevel);
+                
+                if (!sharingCheck.canShare) {
+                    // Cannot share due to consent - send filtered/prioritized content only
+                    const prioritized = await prioritizeContent(userResponse);
+                    const filteredSummary = await summarizeReplyForDoctor(topic || original_instruction, prioritized, circleId, userId);
+                    
+                    const agentName = await getAgentName(requested_by, circleId);
+                    events.emit('broadcast', {
+                        targetUsers: [requested_by],
+                        reply: `Response from ${responderInfo.username} regarding "${topic || original_instruction}": ${filteredSummary} [Note: Some sensitive content was filtered due to privacy settings]`,
+                        from: agentName,
+                        circleId,
+                        patientUsername
+                    });
+                } else {
+                    // Can share - use filtered content if available, otherwise original
+                    const contentToSummarize = sharingCheck.filteredContent || userResponse;
+                    const summary = await summarizeReplyForDoctor(topic || original_instruction, contentToSummarize, circleId, userId);
+                    
+                    const agentName = await getAgentName(requested_by, circleId);
+                    events.emit('broadcast', {
+                        targetUsers: [requested_by],
+                        reply: `Response from ${responderInfo.username} regarding "${topic || original_instruction}": ${summary}`,
+                        from: agentName,
+                        circleId,
+                        patientUsername
+                    });
+                }
             }
         }
     }
