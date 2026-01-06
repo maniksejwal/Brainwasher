@@ -39,7 +39,12 @@ class TrainingLogger {
         message_length: data.message?.length || 0,
         response_length: data.agentResponse?.length || 0,
         escalated: data.orchestratorAction?.type === 'ESCALATE',
-        shared: data.orchestratorAction?.type === 'SHARE'
+        shared: data.orchestratorAction?.type === 'SHARE',
+        // Agentic Communication Fields
+        intent: data.intent || null,
+        future_plan: data.future_plan ? JSON.stringify(data.future_plan) : null,
+        outcome_label: data.outcomeLabel || null, // 'positive', 'negative', or null
+        filter_reason: data.filterReason || null
       };
 
       await this._appendToLog(logEntry);
@@ -110,7 +115,7 @@ class TrainingLogger {
     try {
       const dir = path.dirname(this.logPath);
       await fs.mkdir(dir, { recursive: true });
-      
+
       // Check if file exists, create if not
       try {
         await fs.access(this.logPath);
@@ -131,7 +136,7 @@ class TrainingLogger {
       const content = await fs.readFile(this.logPath, 'utf8');
       const lines = content.trim().split('\n').filter(line => line);
       const entries = lines.map(line => JSON.parse(line));
-      
+
       if (filter) {
         return entries.filter(filter);
       }
@@ -147,7 +152,7 @@ class TrainingLogger {
    */
   async getStats() {
     const entries = await this.readLog();
-    
+
     return {
       total_interactions: entries.length,
       escalations: entries.filter(e => e.escalated).length,

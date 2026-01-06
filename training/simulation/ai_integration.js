@@ -23,7 +23,7 @@ export class SimulationAI {
         const originalConsoleLog = console.log;
         console.log = (...args) => {
             const message = args.join(' ');
-            if (message.includes('[AIAnalysisHandler]') || 
+            if (message.includes('[AIAnalysisHandler]') ||
                 message.includes('[SimulationAI]') ||
                 message.includes('Step 1:') ||
                 message.includes('Initial analysis complete') ||
@@ -40,19 +40,19 @@ export class SimulationAI {
             // Determine circle ID from context
             // Use explicit circleId if provided, otherwise infer from context
             let circleId = multiUserContext?.circleId;
-            
+
             if (!circleId) {
                 // Fallback to inferring from context
                 circleId = userId; // Default to user ID for single-user scenarios
-                
+
                 if (multiUserContext) {
                     const { patientUser } = multiUserContext;
                     circleId = patientUser?.userId || userId;
                 }
             }
-            
+
             console.log(`[SimulationAI] Calling system: ${userId} -> ${circleId}`);
-            
+
             // Check if this is a command - handle separately for simulations
             if (message.startsWith('/')) {
                 // Use simulation database if available, otherwise fall back to production
@@ -66,17 +66,17 @@ export class SimulationAI {
                     const { getMemberInfo } = await import('../../db/index.js');
                     memberInfo = await getMemberInfo(userId, circleId);
                 }
-                
+
                 if (!memberInfo) {
                     throw new Error(`User ${userId} is not a member of circle ${circleId}`);
                 }
-                
+
                 // Handle command in simulations
                 await handleCommand(userId, circleId, message);
-                
+
                 // Small delay after command handling
                 await new Promise(resolve => setTimeout(resolve, 1000));
-                
+
                 // Return command response
                 return {
                     agent_response: `Command processed: "${message}"`,
@@ -89,10 +89,10 @@ export class SimulationAI {
                     }
                 };
             }
-            
+
             // Small delay between API calls to avoid rate limits
             await new Promise(resolve => setTimeout(resolve, 100));
-            
+
             // Get user role from database
             // Use simulation database if available, otherwise fall back to production
             let memberInfo;
@@ -106,11 +106,11 @@ export class SimulationAI {
                 const { getMemberInfo } = await import('../../db/index.js');
                 memberInfo = await getMemberInfo(userId, circleId);
             }
-            
+
             if (!memberInfo) {
                 throw new Error(`User ${userId} is not a member of circle ${circleId}`);
             }
-            
+
             // Use the REAL system flow - call handleMessage which does everything:
             // 1. AI Analysis (performAiAnalysis)
             // 2. Escalation/Mediation (handleSharingAndEscalation) 
@@ -119,13 +119,13 @@ export class SimulationAI {
             // Use dynamic import to avoid circular dependency with getRecentMessages
             const { handleMessage } = await import('../../handlers/messageHandler.js');
             const analysis = await handleMessage(userId, circleId, message);
-            
+
             if (!analysis || !analysis.reply) {
                 throw new Error("AI analysis failed to generate response");
             }
-            
+
             console.log(`[SimulationAI] System responded: ${analysis.reply.substring(0, 100)}...`);
-            
+
             return {
                 agent_response: analysis.reply,
                 orchestrator_action: { type: ORCHESTRATOR_ACTIONS.NONE },
@@ -134,14 +134,15 @@ export class SimulationAI {
                     criticality: analysis.criticality,
                     privacyLevel: analysis.privacyLevel,
                     facts: analysis.facts || {}
-                }
+                },
+                future_plan: analysis.future_plan || null
             };
-            
+
         } catch (error) {
             // Restore original console.log
             console.log = originalConsoleLog;
             console.error(`[SimulationAI] System failed: ${error.message}`);
-            
+
             // If AI fails, this is a SYSTEM FAILURE - not a simulation issue
             throw new Error(`Simulation failed due to AI system error: ${error.message}`);
         }

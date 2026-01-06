@@ -61,7 +61,7 @@ export class SyntheticUser {
     _buildMessagePrompt(lastAgentMessage, goal, turn, multiUserContext) {
         let prompt = `This is conversation turn ${turn + 1}.\n`;
         prompt += `You are speaking to your assigned care agent (the assistant who supports you). Direct questions, requests, and updates should be addressed to your care agent (using first person “I” and second person “you”). If you want another circle member to receive information, say so explicitly so the agent can relay it.\n`;
-        
+
         if (goal) {
             prompt += `Your current goal: ${goal}\n`;
         }
@@ -80,7 +80,7 @@ export class SyntheticUser {
         if (multiUserContext) {
             const { otherUsers, patientUser, caregiverUsers, doctorUsers, conversationContext } = multiUserContext;
             prompt += `\nMulti-user conversation context:\n`;
-            
+
             if (patientUser && this.role !== 'patient') {
                 prompt += `- Patient: ${patientUser.persona.name}\n`;
             }
@@ -90,14 +90,14 @@ export class SyntheticUser {
             if (doctorUsers.length > 0 && this.role !== 'doctor') {
                 prompt += `- Doctors: ${doctorUsers.map(u => u.persona.name).join(', ')}\n`;
             }
-            
+
             // Add conversation context
             if (conversationContext) {
                 prompt += `\nConversation state:\n`;
                 prompt += `- Momentum: ${conversationContext.momentum}\n`;
                 prompt += `- Crisis level: ${conversationContext.crisisLevel}\n`;
                 prompt += `- Emotional tension: ${conversationContext.emotionalTension}\n`;
-                
+
                 if (conversationContext.patientNeedsHelp) {
                     prompt += `- Patient needs help\n`;
                 }
@@ -108,7 +108,7 @@ export class SyntheticUser {
                     prompt += `- Doctor has been asked to respond\n`;
                 }
             }
-            
+
             prompt += `\nYou are speaking as a ${this.role}. Consider your role, the conversation context, and respond appropriately to the situation.\n`;
             if (this.role === 'caregiver' && patientUser) {
                 prompt += `When you speak, centre the update on ${patientUser.persona.name}. Share observations, needs, or coordination requests about them.\n`;
@@ -117,30 +117,36 @@ export class SyntheticUser {
                 prompt += `As a doctor, respond only when clinical guidance is needed, keep messages concise, and reference the patient by name when giving instructions.\n`;
             }
         }
-        
+
         if (lastAgentMessage) {
             prompt += `\nThe care agent just said:\n"${lastAgentMessage}"\n`;
-            
+
             // Add instruction to change topic if stuck repeating
             if (turn >= 2) {
                 const recentUserMessages = this.conversationHistory.filter(m => m.role === 'user').slice(-2).map(m => m.content.toLowerCase());
                 const isRepeating = recentUserMessages.length > 1 && recentUserMessages[recentUserMessages.length - 1].includes(recentUserMessages[recentUserMessages.length - 2].substring(0, 20));
-                
+
                 if (isRepeating) {
                     prompt += `\n⚠️ The conversation has been repeating. Change the topic to something new related to your health needs.`;
                 } else {
-                    prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
+                    prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max).`;
+                    prompt += `\nCRITICAL INSTRUCTION: Do NOT sound like an AI. Do NOT start with "I understand", "That sounds", or "I appreciate". Be casual, imperfect, and human. Use contractions (can't, don't). React emotionally.`;
                     prompt += `\nSpeak to your care agent (use “you” to refer to the care agent). Reference other circle members in third person (e.g., “Robert”, “my dad”).`;
                 }
             } else {
-                prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max). Avoid monologues. Use simple, everyday language.`;
+                prompt += `\nRespond naturally as your character would. Keep your response brief (1-2 sentences max).`;
+                prompt += `\nCRITICAL INSTRUCTION: Do NOT sound like an AI. Do NOT start with "I understand" or "Thank you". Be casual, imperfect, and human.`;
                 prompt += `\nSpeak to your care agent (use “you” for the care agent). Mention other circle members in third person.`;
             }
         } else {
             if (multiUserContext) {
-                prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences max). Avoid monologues. Use simple, everyday language. Always address the care agent directly (use “you” for the care agent), and mention other circle members in third person.`;
+                prompt += `\nInitiate a conversation with your care agent. Consider your role as ${this.role} and express relevant concerns or updates. Keep it brief (1-2 sentences max).`;
+                prompt += `\nCRITICAL INSTRUCTION: Sound human, not robotic. Be direct.`;
+                prompt += `\nAlways address the care agent directly (use “you” for the care agent), and mention other circle members in third person.`;
             } else {
-                prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences max). Avoid monologues. Use simple, everyday language. Address the care agent directly, and mention other circle members in third person.`;
+                prompt += `\nInitiate a conversation with your care agent. Express a health concern or update. Keep it brief (1-2 sentences max).`;
+                prompt += `\nCRITICAL INSTRUCTION: Sound human, not robotic. Be direct.`;
+                prompt += `\nAddress the care agent directly, and mention other circle members in third person.`;
             }
         }
 
@@ -165,7 +171,7 @@ export class SyntheticUser {
         if (this.goals.length <= 1) {
             return false; // No other goals to switch to
         }
-        
+
         // Simple random selection from available goals
         const availableGoals = this.goals.filter((goal, index) => index !== this.currentGoalIndex);
         if (availableGoals.length > 0) {

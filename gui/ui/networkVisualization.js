@@ -83,18 +83,73 @@ export class NetworkVisualization {
         this.defs = this.svg.append('defs');
         this._ensureMarker('#999999');
 
-        // Add zoom behavior (keyboard/button only, not scroll)
+        // Add zoom behavior
         const zoom = d3.zoom()
-            .scaleExtent([0.5, 3])
-            .filter((event) => {
-                // Disable scroll zoom, allow drag pan and button zoom
-                return event.type !== 'wheel';
-            })
+            .scaleExtent([0.1, 4])
             .on('zoom', (event) => {
                 this.svg.select('g').attr('transform', event.transform);
             });
 
         this.svg.call(zoom);
+
+        // Add help overlay
+        const helpOverlay = d3.select(`#${this.containerId}`)
+            .append('div')
+            .attr('class', 'network-help-overlay')
+            .style('position', 'absolute')
+            .style('bottom', '10px')
+            .style('right', '10px')
+            .style('background', 'rgba(255, 255, 255, 0.9)')
+            .style('padding', '8px 12px')
+            .style('border-radius', '4px')
+            .style('font-size', '12px')
+            .style('color', '#555')
+            .style('pointer-events', 'none')
+            .style('box-shadow', '0 2px 5px rgba(0,0,0,0.1)')
+            .html('<strong>Controls:</strong> Scroll to Zoom • Drag to Pan')
+            .style('display', 'flex')
+            .style('flex-direction', 'column')
+            .style('gap', '8px')
+            .style('align-items', 'flex-end');
+
+        // Add Zoom Buttons Container
+        const zoomControls = helpOverlay.append('div')
+            .style('display', 'flex')
+            .style('gap', '5px')
+            .style('pointer-events', 'auto') // Enable clicks on buttons
+            .style('margin-top', '5px');
+
+        // Zoom In Button
+        zoomControls.append('button')
+            .text('+')
+            .style('width', '24px')
+            .style('height', '24px')
+            .style('cursor', 'pointer')
+            .style('background', '#fff')
+            .style('border', '1px solid #ccc')
+            .style('border-radius', '4px')
+            .style('font-weight', 'bold')
+            .style('color', '#333')
+            .on('click', (event) => {
+                event.stopPropagation();
+                this.svg.transition().duration(300).call(zoom.scaleBy, 1.3);
+            });
+
+        // Zoom Out Button
+        zoomControls.append('button')
+            .text('−')
+            .style('width', '24px')
+            .style('height', '24px')
+            .style('cursor', 'pointer')
+            .style('background', '#fff')
+            .style('border', '1px solid #ccc')
+            .style('border-radius', '4px')
+            .style('font-weight', 'bold')
+            .style('color', '#333')
+            .on('click', (event) => {
+                event.stopPropagation();
+                this.svg.transition().duration(300).call(zoom.scaleBy, 1 / 1.3);
+            });
 
         // Create main group for zooming/panning
         const g = this.svg.append('g');
@@ -225,7 +280,7 @@ export class NetworkVisualization {
             .call(this.drag());
 
         // Node shapes - all use user's color (no type-based coloring)
-        nodeGroups.each(function(d) {
+        nodeGroups.each(function (d) {
             const group = d3.select(this);
             const nodeColor = d.color || '#4285F4';
             const type = d.type;
@@ -603,7 +658,7 @@ export class NetworkVisualization {
             const centerX = d3.mean(xs);
             const centerY = d3.mean(ys);
             const radius = Math.max(
-                ...memberNodes.map(n => Math.sqrt((n.x - centerX)**2 + (n.y - centerY)**2))
+                ...memberNodes.map(n => Math.sqrt((n.x - centerX) ** 2 + (n.y - centerY) ** 2))
             ) + 80;
 
             d3.select(this).append('circle')
@@ -647,7 +702,7 @@ export class NetworkVisualization {
             const centerX = d3.mean(xs);
             const centerY = d3.mean(ys);
             const radius = Math.max(
-                ...privacyNodes.map(n => Math.sqrt((n.x - centerX)**2 + (n.y - centerY)**2))
+                ...privacyNodes.map(n => Math.sqrt((n.x - centerX) ** 2 + (n.y - centerY) ** 2))
             ) + 35;
 
             d3.select(this).append('circle')
@@ -700,11 +755,11 @@ export class NetworkVisualization {
 
         let html = `<h3>${node.label || node.id}</h3>`;
         html += `<p><strong>Type:</strong> ${node.type}</p>`;
-        
+
         if (node.circleIds) {
             html += `<p><strong>Circles:</strong> ${node.circleIds.join(', ')}</p>`;
         }
-        
+
         if (node.hardware && this.showHardware) {
             html += `<div style="margin-top: 16px;"><strong>Hardware:</strong>`;
             html += `<ul style="margin: 8px 0; padding-left: 20px;">`;
@@ -756,7 +811,7 @@ export class NetworkVisualization {
         if (matches.empty()) return;
         const self = this;
 
-        matches.each(function() {
+        matches.each(function () {
             const link = d3.select(this);
             const originalStroke = link.attr('data-default-stroke') || '#999';
             const originalWidth = parseFloat(link.attr('data-default-stroke-width') || 1.5);
@@ -813,10 +868,10 @@ export class NetworkVisualization {
         entry.offset = entry.offset || { x: 0, y: 0 };
         entry.group.call(
             d3.drag()
-                .on('start', function() {
+                .on('start', function () {
                     d3.select(this).raise();
                 })
-                .on('drag', function(event) {
+                .on('drag', function (event) {
                     entry.offset.x += event.dx;
                     entry.offset.y += event.dy;
                     self._updateBubbleTransform(entry);

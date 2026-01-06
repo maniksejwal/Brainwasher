@@ -27,7 +27,7 @@ export class ConversationRunner {
         this.aiIntegration = new SimulationAI(simulationDb);
         this.conversationEngine = new RealisticConversationEngine();
         this.eventHandler = new SimulationEventHandler();
-        
+
         if (autoFeedback) {
             this.feedbackCollector = new SimulationFeedback(conversationId, simulationDb, scenarioContext, promptVersion);
         }
@@ -38,7 +38,7 @@ export class ConversationRunner {
      */
     async runSingleUserConversation(user, turns, emitProgress = null, sessionMemory = []) {
         this.eventHandler.initialize();
-        
+
         console.log(`\n[ConversationRunner] Starting single-user conversation with ${user.userId} (${turns} turns max)`);
         console.log(`  Role: ${user.role}, Persona: ${user.persona.name}`);
         console.log('');
@@ -58,7 +58,7 @@ export class ConversationRunner {
             const lastAgentMsg = user.conversationHistory.length > 0
                 ? user.conversationHistory[user.conversationHistory.length - 1].content
                 : '';
-            
+
             const userMessage = await user.generateMessage({
                 lastAgentMessage: lastAgentMsg,
                 conversationTurn: turn
@@ -82,7 +82,7 @@ export class ConversationRunner {
                     this.scenarioContext,
                     user.persona?.traits // Pass persona traits for baseline
                 );
-                
+
                 // Diversity feedback is now suppressed - only used internally for scoring
                 // Removed console.log to reduce noise
                 // Only log significant deviations from persona baseline
@@ -119,11 +119,11 @@ export class ConversationRunner {
             // Check for critical failure and pause if needed
             if (feedbackData && feedbackData.criticalFailure) {
                 const failureReason = feedbackData.scores.find(s => s.score <= -2)?.reason || 'Unknown';
-                console.log(chalk.red.bold('🚨 [CRITICAL FAILURE]') + 
-                           chalk.yellow(` ${failureReason}`) + 
-                           chalk.white(` | ${this.conversationId} | Turn ${turn + 1}`) +
-                           chalk.gray(' | Paused for analysis'));
-                
+                console.log(chalk.red.bold('🚨 [CRITICAL FAILURE]') +
+                    chalk.yellow(` ${failureReason}`) +
+                    chalk.white(` | ${this.conversationId} | Turn ${turn + 1}`) +
+                    chalk.gray(' | Paused for analysis'));
+
                 // Emit critical failure event
                 if (emitProgress) {
                     emitProgress(4, `CRITICAL FAILURE`, 'Simulation paused due to critical failure', {
@@ -133,7 +133,7 @@ export class ConversationRunner {
                         turn: turn + 1
                     });
                 }
-                
+
                 break; // Stop the conversation
             }
 
@@ -151,17 +151,17 @@ export class ConversationRunner {
             // Process pending future plans and scheduled messages for this turn
             const { processPendingFutureItems, executePlan, sendScheduledMessage } = await import('../../handlers/message_logic/futurePlanningHandler.js');
             const pendingItems = await processPendingFutureItems(user.userId, this.conversationId, turn);
-            
+
             // Execute due future plans
             for (const plan of pendingItems.plans) {
                 await executePlan(plan);
             }
-            
+
             // Send due scheduled messages
             for (const scheduledMsg of pendingItems.messages) {
                 await sendScheduledMessage(scheduledMsg);
             }
-            
+
             // Add to conversation history
             conversationHistory.push({
                 role: 'user',
@@ -172,7 +172,7 @@ export class ConversationRunner {
                 orchestratorAction: agentResult.orchestrator_action,
                 futurePlan: agentResult.future_plan || null // Track future planning in conversation
             });
-            
+
             conversationHistory.push({
                 role: 'agent',
                 content: agentResult.agent_response,
@@ -186,7 +186,7 @@ export class ConversationRunner {
         }
 
         console.log(`\n  Single-user conversation complete (${user.conversationHistory.length / 2} exchanges)\n`);
-        
+
         // Return conversation history for session memory
         return { conversationHistory };
     }
@@ -198,7 +198,7 @@ export class ConversationRunner {
         const patientUser = users.find(u => u.role === 'patient');
         const caregiverUsers = users.filter(u => u.role === 'caregiver');
         const doctorUsers = users.filter(u => u.role === 'doctor');
-        
+
         console.log(`\n[ConversationRunner] Starting realistic multi-user conversation (${turns} turns max)`);
         console.log(`  Patient: ${patientUser?.persona.name || 'None'}`);
         console.log(`  Caregivers: ${caregiverUsers.map(u => u.persona.name).join(', ') || 'None'}`);
@@ -207,7 +207,7 @@ export class ConversationRunner {
 
         // Reset conversation engine for new conversation
         this.conversationEngine.reset();
-        
+
         // Build conversation history from session memory and current session
         const conversationHistory = [...sessionMemory];
 
@@ -219,7 +219,7 @@ export class ConversationRunner {
             if (!activeUser) {
                 activeUser = patientUser || caregiverUsers[0] || doctorUsers[0] || users[0];
             }
-            
+
             // Skip users who have recently responded to notifications to avoid duplication
             const client = simulationClientManager.getClient(activeUser.userId);
             if (client && client.hasRecentNotificationResponse) {
@@ -228,7 +228,7 @@ export class ConversationRunner {
                     const userClient = simulationClientManager.getClient(user.userId);
                     return !userClient || !userClient.hasRecentNotificationResponse;
                 });
-                
+
                 if (alternativeUsers.length > 0) {
                     // Select patient as priority, otherwise first available
                     activeUser = alternativeUsers.find(u => u.role === 'patient') || alternativeUsers[0];
@@ -249,10 +249,10 @@ export class ConversationRunner {
             const lastAgentMsg = activeUser.conversationHistory.length > 0
                 ? activeUser.conversationHistory[activeUser.conversationHistory.length - 1].content
                 : '';
-            
+
             // Get conversation context from the realistic engine
             const conversationContext = this.conversationEngine.getConversationContext();
-            
+
             const multiUserContext = {
                 otherUsers: users.filter(u => u.userId !== activeUser.userId),
                 patientUser,
@@ -260,7 +260,7 @@ export class ConversationRunner {
                 doctorUsers,
                 conversationContext
             };
-            
+
             const userMessage = await activeUser.generateMessage({
                 lastAgentMessage: lastAgentMsg,
                 conversationTurn: turn,
@@ -285,7 +285,7 @@ export class ConversationRunner {
                     this.scenarioContext,
                     activeUser.persona?.traits // Pass persona traits for baseline
                 );
-                
+
                 // Diversity feedback is now suppressed - only used internally for scoring
                 // Removed console.log to reduce noise
             } catch (error) {
@@ -351,7 +351,7 @@ export class ConversationRunner {
 
             // Record agent response for the active user
             activeUser.recordAgentResponse(agentResult.agent_response);
-            
+
             // Add agent response to conversation history
             conversationHistory.push({
                 role: 'agent',
@@ -378,9 +378,9 @@ export class ConversationRunner {
             // Define other users for notification handling
             const otherUsers = users.filter(u => u.userId !== activeUser.userId);
 
-        // Handle escalation/mediation responses from other users
-        // Note: This is now handled by simulation_client.js via event system
-        // await this._handleOtherUserResponses(otherUsers, activeUser, userMessage, agentResult, turn, conversationHistory);
+            // Handle escalation/mediation responses from other users
+            // Note: This is now handled by simulation_client.js via event system
+            // await this._handleOtherUserResponses(otherUsers, activeUser, userMessage, agentResult, turn, conversationHistory);
 
             // Log interaction
             if (this.logResults) {
@@ -396,20 +396,20 @@ export class ConversationRunner {
 
         // Collect conversation-level feedback
         const conversationAnalysis = await this._collectConversationFeedback(users, conversationHistory);
-        
+
         // Report events that occurred during conversation
         if (this.eventHandler.hasEscalation()) {
             console.log(`🚨 [ConversationRunner] ESCALATION DETECTED during conversation`);
             console.log(`   Escalations: ${this.eventHandler.getEscalations().length}`);
         }
-        
+
         if (this.eventHandler.wasCaregiverNotified()) {
             console.log(`📢 [ConversationRunner] CAREGIVER NOTIFIED during conversation`);
         }
-        
+
         // Cleanup event handler
         this.eventHandler.cleanup();
-        
+
         return {
             success: true,
             totalExchanges,
@@ -428,21 +428,21 @@ export class ConversationRunner {
             // Check if this user received any notifications
             const client = simulationClientManager.getClient(user.userId);
             if (!client) continue;
-            
+
             const notifications = client.getNotifications();
             if (notifications.length === 0) continue;
-            
+
             // Check if user should respond based on their role and notification type
             const shouldRespond = this._shouldUserRespond(user, notifications, activeUser, agentResult);
             if (!shouldRespond) continue;
-            
+
             // Generate response based on notification
             const response = await this._generateNotificationResponse(user, notifications, activeUser, agentResult);
             if (!response) continue;
-            
+
             // Display the response
             console.log(`    ${chalk.bold(`${user.role.toUpperCase()}`)}: ${response}`);
-            
+
             // Store the response in database
             try {
                 await addMessage(
@@ -456,17 +456,17 @@ export class ConversationRunner {
             } catch (error) {
                 console.warn(`[ConversationRunner] Failed to store ${user.role} response: ${error.message}`);
             }
-            
+
             // Record in user's conversation history
             user.recordAgentResponse(response);
-            
+
             // Add to conversation history
             conversationHistory.push({
                 role: user.role,
                 content: response,
                 turn: turn
             });
-            
+
             // Clear notifications after responding
             client.clearNotifications();
         }
@@ -477,24 +477,24 @@ export class ConversationRunner {
      */
     _shouldUserRespond(user, notifications, activeUser, agentResult) {
         // Only respond to actual notifications, not regular conversation
-        const actualNotifications = notifications.filter(n => 
-            n.type === 'escalation_notification' || 
-            n.type === 'conflict_notification' || 
+        const actualNotifications = notifications.filter(n =>
+            n.type === 'escalation_notification' ||
+            n.type === 'conflict_notification' ||
             n.type === 'mediation_notification'
         );
-        
+
         if (actualNotifications.length === 0) return false;
-        
+
         // Caregivers respond to escalation notifications
         if (user.role === 'caregiver') {
             return actualNotifications.some(n => n.type === 'escalation_notification');
         }
-        
+
         // Doctors respond to escalation notifications
         if (user.role === 'doctor') {
             return actualNotifications.some(n => n.type === 'escalation_notification');
         }
-        
+
         // Patients don't respond to notifications (they're the ones being helped)
         return false;
     }
@@ -503,18 +503,18 @@ export class ConversationRunner {
      * Generate response based on notifications received
      */
     async _generateNotificationResponse(user, notifications, activeUser, agentResult) {
-        const escalationNotifications = notifications.filter(n => 
-            n.type === 'escalation_notification' || 
+        const escalationNotifications = notifications.filter(n =>
+            n.type === 'escalation_notification' ||
             n.message.includes('escalated') ||
             n.message.includes('urgent')
         );
-        
+
         if (escalationNotifications.length === 0) return null;
-        
+
         // Generate context-aware response based on user's persona
         const persona = user.persona;
         const notification = escalationNotifications[0]; // Use first escalation notification
-        
+
         // Create a prompt for the user to respond to the escalation
         const responsePrompt = `You are a ${user.role} in a care circle. You just received this notification: "${notification.message}"
 
@@ -543,7 +543,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
                 allFeedback.push(...user.feedbackHistory);
             }
         });
-        
+
         // Perform conversation-level analysis
         console.log(`[ConversationRunner] Performing conversation-level analysis...`);
         const conversationAnalysis = await this.feedbackCollector.provideConversationFeedback(
@@ -551,7 +551,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             conversationHistory,
             allFeedback
         );
-        
+
         return conversationAnalysis;
     }
 
@@ -561,7 +561,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
      */
     async _generateFeedback(user, userMessage, agentResult, turn, emitProgress, multiUserContext = null) {
         let feedbackData = null;
-        
+
         if (this.autoFeedback && this.feedbackCollector) {
             const feedback = await this.feedbackCollector.provideFeedback(
                 this.conversationId, // Same conversation ID for all users
@@ -583,7 +583,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
                 overallScore: feedback.overallScore,
                 improvementSuggestions: feedback.improvementSuggestions
             };
-            
+
             // Store feedback in user's history for conversation analysis
             if (!user.feedbackHistory) {
                 user.feedbackHistory = [];
@@ -629,7 +629,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
     async _logInteraction(user, userMessage, agentResult, latency, turn) {
         // Extract system used from analysis if available
         const systemUsed = agentResult?.system_used || agentResult?.analysis?.system_used || 'unified';
-        
+
         await trainingLogger.logInteraction({
             conversationId: `${this.conversationId}_${user.userId}`,
             userId: user.userId,
@@ -643,7 +643,10 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             latencyMs: latency,
             simulation: true,
             persona: user.personaKey,
-            role: user.role
+            role: user.role,
+            // Agentic Communication Fields
+            intent: agentResult.state_vector?.intent || null,
+            future_plan: agentResult.future_plan || null
         });
 
         await metricsCollector.recordMessageLength(
@@ -659,7 +662,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
     async _logMultiUserInteraction(activeUser, allUsers, userMessage, agentResult, latency, turn) {
         // Extract system used from analysis if available
         const systemUsed = agentResult?.system_used || agentResult?.analysis?.system_used || 'unified';
-        
+
         await trainingLogger.logInteraction({
             conversationId: `${this.conversationId}_multi`,
             userId: activeUser.userId,
@@ -675,7 +678,10 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             persona: activeUser.personaKey,
             role: activeUser.role,
             multiUser: true,
-            allUsers: allUsers.map(u => ({ userId: u.userId, role: u.role, persona: u.personaKey }))
+            allUsers: allUsers.map(u => ({ userId: u.userId, role: u.role, persona: u.personaKey })),
+            // Agentic Communication Fields
+            intent: agentResult.state_vector?.intent || null,
+            future_plan: agentResult.future_plan || null
         });
 
         await metricsCollector.recordMessageLength(
@@ -702,14 +708,14 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             if (emitProgress) {
                 emitProgress(4, `Session ${session}/${totalSessions}`, `Running ${turnsPerSession} turns`);
             }
-            
+
             if (this.logResults) {
                 console.log(`\n  === SESSION ${session}/${totalSessions} ===`);
             }
 
             // Pass session memory to maintain context
             const sessionResult = await this.runSingleUserConversation(user, turnsPerSession, null, sessionMemory);
-            
+
             // TODO: increase memory!
             // Update session memory with this session's conversation
             if (sessionResult && sessionResult.conversationHistory) {
@@ -719,9 +725,9 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
                     sessionMemory = sessionMemory.slice(-config.MAX_SESSION_MEMORY);
                 }
             }
-            
+
             sessionCount++;
-            
+
             // Add session break
             if (session < totalSessions) {
                 if (this.logResults) {
@@ -746,7 +752,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             const patientUser = users.find(u => u.role === 'patient');
             const caregiverUsers = users.filter(u => u.role === 'caregiver');
             const doctorUsers = users.filter(u => u.role === 'doctor');
-            
+
             console.log(`  Patient: ${patientUser?.persona.name || 'Unknown'}`);
             console.log(`  Caregivers: ${caregiverUsers.map(u => u.persona.name).join(', ') || 'None'}`);
             console.log(`  Doctors: ${doctorUsers.map(u => u.persona.name).join(', ') || 'None'}`);
@@ -759,14 +765,14 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             if (emitProgress) {
                 emitProgress(4, `Session ${session}/${totalSessions}`, `Running ${turnsPerSession} turns`);
             }
-            
+
             if (this.logResults) {
                 console.log(`\n  === SESSION ${session}/${totalSessions} ===`);
             }
 
             // Run single session with session memory
             const sessionResult = await this.runMultiUserConversation(users, turnsPerSession, null, sessionMemory);
-            
+
             // Update session memory with this session's conversation
             if (sessionResult && sessionResult.conversationHistory) {
                 sessionMemory = sessionMemory.concat(sessionResult.conversationHistory);
@@ -775,7 +781,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
                     sessionMemory = sessionMemory.slice(-40);
                 }
             }
-            
+
             // Add session break
             if (session < totalSessions) {
                 if (this.logResults) {

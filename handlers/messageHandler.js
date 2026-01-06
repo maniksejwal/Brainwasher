@@ -17,6 +17,7 @@ import { logger as trainingLogger, metrics as metricsCollector } from '../traini
 import { handleDoctorMessage } from './message_logic/doctorMessageHandler.js';
 import { handleNonDoctorQuestion } from './message_logic/nonDoctorQuestionHandler.js';
 import { broadcastErrorReply, formatAnalysisErrorMessage } from './utils/errorHandling.js';
+import { getAgentName } from './utils/agentIdentity.js';
 
 // Lazy initialization of topic shift handler
 let topicShiftHandler = null;
@@ -26,7 +27,7 @@ export async function handleMessage(userId, circleId, message) {
     if (!topicShiftHandler) {
         topicShiftHandler = initializeTopicShiftHandler(events);
     }
-    
+
     const startTime = Date.now();
     const memberInfo = await getMemberInfo(userId, circleId);
     if (!memberInfo) {
@@ -41,12 +42,12 @@ export async function handleMessage(userId, circleId, message) {
         metricsCollector.recordMessageLength(userId, message.length, message.length);
         return result;
     }
-    
+
     // For patients and caregivers, follow the full "chain of thought".
-    
+
     // Step 1: Handle any pending user actions.
     const wasActionHandled = await handlePendingActionResponse(userId, circleId, message);
-    if (wasActionHandled) { 
+    if (wasActionHandled) {
         metricsCollector.recordResponseTime('action_response', Date.now() - startTime, true);
         return {
             reply: "Action handled successfully",
@@ -54,7 +55,7 @@ export async function handleMessage(userId, circleId, message) {
             criticality: 'NONE',
             privacyLevel: 'PRIVATE',
             facts: {}
-        }; 
+        };
     }
 
     // Step 1.5: Check if this is a question directed at another member (for non-doctors)
@@ -83,6 +84,20 @@ export async function handleMessage(userId, circleId, message) {
             system_used: 'error'
         };
     }
+
+    if (!analysis) {
+        console.error(`[MessageHandler] Critical Error: performAiAnalysis returned null/undefined for ${userId} in ${circleId}`);
+        const errorReply = "I encountered an internal error while analyzing your message.";
+        await broadcastErrorReply(userId, circleId, errorReply);
+        return {
+            reply: errorReply,
+            intent: 'ERROR',
+            criticality: 'NONE',
+            privacyLevel: 'PRIVATE',
+            facts: {},
+            system_used: 'error'
+        };
+    }
     if (process.env.DEBUG_CLI) {
         console.log('[MessageHandler] Analysis summary:', {
             system_used: analysis?.system_used,
@@ -93,12 +108,12 @@ export async function handleMessage(userId, circleId, message) {
             sharingSuggestion: analysis?.sharingSuggestion || null
         });
     }
-    
+
     // Step 3: Process pending future plans and scheduled messages for current turn (PRODUCTION)
     // Get current turn from conversation history (used for both future planning and execution)
     const conversationHistory = await getRecentMessages(circleId, 100);
     const currentTurn = conversationHistory.filter(m => m.user_id === userId).length;
-    
+
     // Prepare conversation context for progress triggers
     const conversationContext = {
         analysis,
@@ -106,50 +121,50 @@ export async function handleMessage(userId, circleId, message) {
         consentGranted: false, // Will be set by sharing handler if consent is granted
         currentTurn
     };
-    
+
     // Execute any due future plans and scheduled messages (including conversation progress triggers)
     const { processPendingFutureItems, executePlan, sendScheduledMessage } = await import('./message_logic/futurePlanningHandler.js');
     const pendingItems = await processPendingFutureItems(userId, circleId, currentTurn, conversationContext);
-    
+
     // Execute due future plans
     for (const plan of pendingItems.plans) {
         await executePlan(plan);
     }
-    
+
     // Send due scheduled messages
     for (const scheduledMsg of pendingItems.messages) {
         await sendScheduledMessage(scheduledMsg);
     }
-    
+
     // Step 3.5: Handle future planning (if present in analysis) - creates NEW plans
     if (analysis.future_plan) {
         await handleFuturePlanning(userId, circleId, analysis, currentTurn);
     }
-    
+
     // Step 4: Handle the core logic for sharing, advice, and escalations.
     const sharingResult = await handleSharingAndEscalation(userId, memberInfo.role, message, circleId, analysis);
-    
+
     // Update conversation context with consent status if sharing was handled
     if (sharingResult?.consentGranted) {
         conversationContext.consentGranted = true;
     }
-    
+
     // Step 4.5: Handle care circle probing questions (caregiver/patient cross-questioning)
     // This doesn't interfere with doctor commands - checks for active doctor delegations first
     const { handleCaregiverProbing, handlePatientProbingFromCaregiver } = await import('./message_logic/sharing/caregiverProbing.js');
     await handleCaregiverProbing(userId, memberInfo.role, message, circleId, analysis, currentTurn);
     await handlePatientProbingFromCaregiver(userId, memberInfo.role, message, circleId, analysis, currentTurn);
-    
+
     // Step 4.6: Reschedule future plans if conversation doesn't make sense or commands were run
     // Check if conversation context changed significantly (e.g., /clear, topic shift, user backtracking)
     const shouldReschedule = await checkIfShouldReschedule(userId, circleId, analysis, message);
     if (shouldReschedule.shouldReschedule) {
         await rescheduleAffectedPlans(userId, circleId, shouldReschedule.reason);
     }
-    
+
     // Step 5: Process facts and check for conflicts.
     await handleFactProcessing(userId, circleId, analysis);
-    
+
     // Step 5.5: Update behavioral state if state_update is present
     if (analysis.state_update) {
         await updateUserState(userId, circleId, analysis.state_update);
@@ -172,9 +187,26 @@ export async function handleMessage(userId, circleId, message) {
             console.warn('[MessageHandler] Analysis produced no reply text; user may not receive feedback.');
         }
     }
-    
+
     // Training log (fire-and-forget, non-blocking) - happens after main flow completes
     const latencyMs = Date.now() - startTime;
+
+    // Training log: Capture full agentic state (Intent, Plans, Actions)
+    // We log everything, including errors, to have a complete dataset.
+
+    // Detect implicit rewards (Gratitude/Positive Sentiment) early for RL
+    let outcomeLabel = null;
+    if (analysis?.intent === 'GRATITUDE' || analysis?.sentiment === 'POSITIVE' || message.match(/\b(thanks|thank you|helpful|good job)\b/i)) {
+        outcomeLabel = 'positive';
+        trainingLogger.logReward({
+            conversationId: `${circleId}_${userId}`,
+            actionId: 'previous_turn',
+            rewardType: 'user_feedback',
+            rewardValue: 1.0,
+            context: { trigger: 'implicit_gratitude', message: message }
+        }).catch(err => console.error('[MessageHandler] Failed to log valid reward:', err));
+    }
+
     trainingLogger.logInteraction({
         conversationId: `${circleId}_${userId}_${Date.now()}`,
         userId,
@@ -183,13 +215,17 @@ export async function handleMessage(userId, circleId, message) {
         orchestratorAction: sharingResult?.action || { type: 'NONE' },
         stateVector: analysis?.state_vector,
         promptVersion: 'unified_v1.0',
-        systemUsed: analysis?.system_used || 'unified', // Track Companion vs unified
-        latencyMs
-    }).catch(err => {}); // Silently fail
-    
+        systemUsed: analysis?.system_used || 'unified',
+        latencyMs,
+        // Agentic Communication Fields
+        intent: analysis?.intent || 'UNKNOWN',
+        future_plan: analysis?.future_plan || null,
+        outcomeLabel
+    }).catch(err => { }); // Silently fail
+
     metricsCollector.recordResponseTime('full_analysis', latencyMs, true);
     metricsCollector.recordMessageLength(userId, message.length, analysis?.agent_response?.length || 0);
-    
+
     // Return the analysis for simulations to use
     return analysis;
 }
