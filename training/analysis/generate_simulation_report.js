@@ -205,9 +205,26 @@ async function analyzeDB() {
         console.warn("Could not query simulation_flags table.");
     }
 
+    // Query actual personas from DB
+    let personas = [];
+    try {
+        personas = await db.all('SELECT DISTINCT role FROM care_circle_members WHERE role IS NOT NULL');
+    } catch (err) {
+        console.warn("Could not query personas from care_circle_members.");
+    }
+
+    // Query scenarios from simulation worlds/scenarios table if it exists
+    let scenarios = [];
+    try {
+        scenarios = await db.all('SELECT DISTINCT name, description FROM simulation_scenarios');
+    } catch (err) {
+        // Table might not exist, scenarios will be inferred from logs
+        console.warn("Could not query simulation_scenarios table.");
+    }
+
     await db.close();
 
-    return { feedback, detailedFeedback, flags };
+    return { feedback, detailedFeedback, flags, personas, scenarios };
 }
 
 function groupFlags(flags) {
@@ -242,13 +259,43 @@ function groupFlags(flags) {
     return groups;
 }
 
+function extractScenarioName(data) {
+    // Priority 1: If promptVersion contains a known scenario key from world_scenarios.js
+    // Known world scenarios: patient_caregiver_swap, family_network_care, sandwich_generation, blended_family_care, complex_family_medical_crisis
+    const worldScenarioKeys = ['patient_caregiver_swap', 'family_network_care', 'sandwich_generation', 'blended_family_care', 'complex_family_medical_crisis'];
+
+    for (const key of worldScenarioKeys) {
+        if (data.promptVersion.includes(key)) {
+            // Convert snake_case to Title Case
+            return key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+        }
+    }
+
+    // Priority 2: If promptVersion contains the scenario name (non-timestamped part)
+    // format: simulation_v<timestamp>_<scenario_name> or world_v<timestamp>
+    const pvMatch = data.promptVersion.match(/(?:simulation|world)_v\d+_(.+)/);
+    if (pvMatch) return pvMatch[1].replace(/_/g, ' ');
+
+    // Priority 3: If it's just "world_v<timestamp>", return "World"
+    if (data.promptVersion.match(/^world_v\d+$/)) return "World";
+
+    // Priority 4: From conversation_id or participants
+    const participants = Array.from(data.participants);
+    const mainUser = participants.find(p => p !== 'agent' && p !== 'model' && p !== 'unknown');
+    if (mainUser) return mainUser.replace(/_\d+$/, '').replace(/_/g, ' '); // remove trailing numbers
+
+    return data.promptVersion; // Fallback
+}
+
 function processTimeSeriesData(logStats, dbStats) {
     const timeSeries = [];
+    const aiTimeSeries = [];
+    const humanTimeSeries = [];
 
     for (const [convId, logData] of logStats.conversations) {
         const feedbackEntry = dbStats.feedback.find(f => f.conversation_id === convId);
 
-        timeSeries.push({
+        const dataPoint = {
             timestamp: logData.timestamp,
             date: new Date(logData.timestamp).toLocaleString(),
             avgMsgLen: logData.msgLens.length ? logData.msgLens.reduce((a, b) => a + b, 0) / logData.msgLens.length : 0,
@@ -256,22 +303,48 @@ function processTimeSeriesData(logStats, dbStats) {
             score: feedbackEntry ? feedbackEntry.score : null,
             errors: logData.errors.length,
             promptVersion: logData.promptVersion,
-            modelUsed: logData.modelUsed
-        });
+            modelUsed: logData.modelUsed,
+            interactionCount: logData.interactionCount,
+            source: feedbackEntry ? feedbackEntry.source : null
+        };
+
+        timeSeries.push(dataPoint);
+
+        // Separate by feedback source
+        if (feedbackEntry) {
+            if (feedbackEntry.source === 'simulation') {
+                aiTimeSeries.push(dataPoint);
+            } else {
+                humanTimeSeries.push(dataPoint);
+            }
+        }
     }
 
     timeSeries.sort((a, b) => a.timestamp - b.timestamp);
-    return timeSeries;
+    aiTimeSeries.sort((a, b) => a.timestamp - b.timestamp);
+    humanTimeSeries.sort((a, b) => a.timestamp - b.timestamp);
+
+    return { timeSeries, aiTimeSeries, humanTimeSeries };
 }
 
-function generateHTML(logStats, dbStats, timeSeries) {
-    const avgScore = dbStats.feedback.length ? (dbStats.feedback.reduce((a, b) => a + b.score, 0) / dbStats.feedback.length).toFixed(2) : "N/A";
+function generateHTML(logStats, dbStats, timeSeriesData) {
+    const { timeSeries, aiTimeSeries, humanTimeSeries } = timeSeriesData;
+
+    // Calculate separate averages
+    const aiScores = aiTimeSeries.filter(t => t.score !== null).map(t => t.score);
+    const humanScores = humanTimeSeries.filter(t => t.score !== null).map(t => t.score);
+    const avgAiScore = aiScores.length ? (aiScores.reduce((a, b) => a + b, 0) / aiScores.length).toFixed(2) : "N/A";
+    const avgHumanScore = humanScores.length ? (humanScores.reduce((a, b) => a + b, 0) / humanScores.length).toFixed(2) : "N/A";
 
     // --- Chart Data Preparation ---
     const labels = timeSeries.map(t => t.date);
-    const scores = timeSeries.map(t => t.score);
+    const aiLabels = aiTimeSeries.map(t => t.date);
+    const humanLabels = humanTimeSeries.map(t => t.date);
+    const aiScoresChart = aiTimeSeries.map(t => t.score);
+    const humanScoresChart = humanTimeSeries.map(t => t.score);
     const msgLens = timeSeries.map(t => t.avgMsgLen);
     const respLens = timeSeries.map(t => t.avgRespLen);
+    const interactionCounts = timeSeries.map(t => t.interactionCount);
 
     // --- Groupings ---
     const flagGroups = groupFlags(dbStats.flags);
@@ -300,215 +373,103 @@ function generateHTML(logStats, dbStats, timeSeries) {
     }).join('');
 
 
-    // --- Scenario Grouping (A/B Tests) ---
-    const scenarioGroups = {}; // { "Scenario Name": [ { version, data } ] }
+    // --- Scenario Grouping (Restructured Hierarchy) ---
+    // NEW STRUCTURE: Scenario Name -> Versions (timestamped runs)
+    const scenarioGroups = {}; // { "Scenario Name": [ { version, timestamp, data } ] }
+
     Object.entries(logStats.granular).forEach(([version, data]) => {
-        // Extract base name: remove prefix and timestamp
-        // e.g. "simulation_v176226_caregiver_support" -> "caregiver support"
-        const match = version.match(/(?:simulation|world)_v\d+_(.+)/);
-        const baseName = match ? match[1].replace(/_/g, ' ') : version;
-
-        if (!scenarioGroups[baseName]) scenarioGroups[baseName] = [];
-        scenarioGroups[baseName].push({ version, data });
-    });
-
-    // --- Generate Scenario HTML with Tabs & Comparison ---
-    let scenarioHtml = Object.entries(scenarioGroups).sort((a, b) => b[0].localeCompare(a[0])).map(([baseName, variants]) => {
-        // Sort variants by timestamp (newest first) or name?
-        // Let's sort by version string for consistency
-        variants.sort((a, b) => b.version.localeCompare(a.version));
-
-        // Comparison Table (Only if multiple variants)
-        let comparisonTable = '';
-        if (variants.length > 1) {
-            comparisonTable = `
-            <div class="comparison-card">
-                <h4>⚖️ Variant Comparison: ${baseName.toUpperCase()}</h4>
-                <table>
-                    <thead><tr><th>Variant / Version</th><th>Count</th><th>Avg Turns</th><th>Fail Rate</th><th>Avg Score</th></tr></thead>
-                    <tbody>
-                        ${variants.map(v => {
-                const failRate = (((v.data.failures.startup + v.data.failures.error) / v.data.total) * 100).toFixed(1);
-                // Get score from timeSeries
-                const scores = timeSeries.filter(t => t.promptVersion === v.version && t.score !== null).map(t => t.score);
-                const avgS = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : "N/A";
-                return `<tr><td>${v.version}</td><td>${v.data.total}</td><td>${v.data.avgInteractions}</td><td>${failRate}%</td><td>${avgS}</td></tr>`;
-            }).join('')}
-                    </tbody>
-                </table>
-            </div>`;
+        // Extract scenario name from first conversation
+        let scenarioName = "Unknown Scenario";
+        if (data.conversationIds.length > 0) {
+            const firstConvId = data.conversationIds[0];
+            const convData = logStats.conversations.get(firstConvId);
+            if (convData) {
+                scenarioName = extractScenarioName(convData);
+            }
         }
 
-        // Individual Cards (Collapsible)
-        const variantCards = variants.map(v => {
-            const data = v.data;
-            const failTotal = data.failures.startup + data.failures.error;
-            const failRate = ((failTotal / data.total) * 100).toFixed(1);
-
-            // Date Formatting
-            const tsMatch = v.version.match(/_v(\d+)_/);
-            let dateStr = "Unknown Date";
-            if (tsMatch) {
-                const ts = parseInt(tsMatch[1]);
-                if (!isNaN(ts)) dateStr = new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        // Extract timestamp from version string or conversation data
+        let timestamp = Date.now();
+        const tsMatch = version.match(/_v(\d+)_/);
+        if (tsMatch) {
+            timestamp = parseInt(tsMatch[1]);
+        } else if (data.conversationIds.length > 0) {
+            const firstConvId = data.conversationIds[0];
+            const convData = logStats.conversations.get(firstConvId);
+            if (convData && convData.timestamp) {
+                timestamp = convData.timestamp;
             }
+        }
 
-            // Feedback Injection
-            // Filter detailed feedback for conversations in this bucket
-            const bucketFeedback = dbStats.detailedFeedback.filter(f => data.conversationIds.includes(f.conversation_id));
-            const feedbackCounts = {};
-            bucketFeedback.forEach(f => {
-                // Use description or category as key
-                const k = f.description || f.category;
-                feedbackCounts[k] = (feedbackCounts[k] || 0) + 1;
-            });
-            const topFeedback = Object.entries(feedbackCounts)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 3)
-                .map(([msg, count]) => `<li>${msg} (${count})</li>`)
-                .join('');
-            const feedbackSection = topFeedback ?
-                `<div style="margin-top:15px; background:#fff3cd; padding:10px; border-radius:4px;">
-                    <strong style="color:#856404; display:block; margin-bottom:5px;">⚠️ Top Feedback:</strong>
-                    <ul style="margin:0; padding-left:20px; font-size:0.9em;">${topFeedback}</ul>
-                </div>` : '';
+        if (!scenarioGroups[scenarioName]) scenarioGroups[scenarioName] = [];
+        scenarioGroups[scenarioName].push({ version, timestamp, data });
+    });
 
+    // Sort versions within each scenario by timestamp (newest first)
+    Object.values(scenarioGroups).forEach(versions => {
+        versions.sort((a, b) => b.timestamp - a.timestamp);
+    });
+
+    // --- Generate Scenario HTML (Restructured: Scenario -> Versions) ---
+    let scenarioHtml = Object.entries(scenarioGroups).sort((a, b) => a[0].localeCompare(b[0])).map(([scenarioName, versions]) => {
+        // Calculate aggregate stats for this scenario
+        const totalConvs = versions.reduce((sum, v) => sum + v.data.total, 0);
+        const totalFailures = versions.reduce((sum, v) => sum + v.data.failures.startup + v.data.failures.error, 0);
+        const scenarioFailRate = ((totalFailures / totalConvs) * 100).toFixed(1);
+
+        // Version rows (nested under scenario)
+        const versionRows = versions.map(v => {
+            const failTotal = v.data.failures.startup + v.data.failures.error;
+            const failRate = ((failTotal / v.data.total) * 100).toFixed(1);
+            const dateStr = new Date(v.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+            // Get score from timeSeries
+            const scores = timeSeries.filter(t => t.promptVersion === v.version && t.score !== null).map(t => t.score);
+            const avgScore = scores.length ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2) : "N/A";
 
             return `
-             <details class="scenario-details">
-                <summary>
-                    <div>
-                        <span class="summary-title">${v.version}</span>
-                        <div style="font-size:0.8em; color:#95a5a6;">${dateStr}</div>
-                    </div>
-                    <span class="summary-stats">
-                        ${data.total} convs | ${data.avgInteractions} turns | <span style="color: ${failRate > 10 ? '#e74c3c' : '#2ecc71'}">${failRate}% fail</span>
-                    </span>
-                </summary>
-                <div class="scenario-card-content">
-                    <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px;">
-                        <div class="stat-card" style="padding: 10px;">
-                            <div class="stat-label" style="font-size: 0.75em;">Total Conversations</div>
-                            <div class="stat-value" style="font-size: 1.5em; margin-top: 5px;">${data.total}</div>
-                        </div>
-                        <div class="stat-card" style="padding: 10px;">
-                            <div class="stat-label" style="font-size: 0.75em;">Avg Turns</div>
-                            <div class="stat-value" style="font-size: 1.5em; margin-top: 5px;">${data.avgInteractions}</div>
-                        </div>
-                         <div class="stat-card" style="padding: 10px;">
-                            <div class="stat-label" style="font-size: 0.75em;">Success Rate</div>
-                            <div class="stat-value" style="font-size: 1.5em; margin-top: 5px;">${(100 - failRate).toFixed(1)}%</div>
-                        </div>
-                    </div>
-                    
-                    ${feedbackSection}
-
-                    <div style="display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px;">
-                        <div style="flex: 1; min-width: 300px;">
-                            <h4 style="margin-top: 0;">👥 Cast Composition</h4>
-                            <table class="nested-table">
-                                <thead><tr><th>Cast Roles</th><th>Count</th><th>%</th></tr></thead>
-                                <tbody>
-                                    ${Object.entries(data.casts).sort((a, b) => b[1] - a[1]).map(([cast, count]) => `
-                                        <tr><td>${cast}</td><td>${count}</td><td>${((count / data.total) * 100).toFixed(1)}%</td></tr>
-                                    `).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                        <div style="flex: 1; min-width: 300px;">
-                            <h4 style="margin-top: 0;">❌ Failure Analysis</h4>
-                            <table class="nested-table">
-                                <thead><tr><th>Type</th><th>Count</th><th>%</th></tr></thead>
-                                <tbody>
-                                    <tr>
-                                        <td><b>Agent Startup Failure (0 turns)</b></td>
-                                        <td style="color: ${data.failures.startup > 0 ? '#e74c3c' : 'inherit'};"><b>${data.failures.startup}</b></td>
-                                        <td>${((data.failures.startup / data.total) * 100).toFixed(1)}%</td>
-                                    </tr>
-                                    <tr>
-                                        <td><b>System Error</b></td>
-                                        <td style="color: ${data.failures.error > 0 ? '#e74c3c' : 'inherit'};"><b>${data.failures.error}</b></td>
-                                        <td>${((data.failures.error / data.total) * 100).toFixed(1)}%</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-             </details>`;
+                <tr style="background: #f9f9f9;">
+                    <td style="padding-left: 30px; font-family: monospace; font-size: 0.85em;">${v.version}</td>
+                    <td>${dateStr}</td>
+                    <td>${v.data.total}</td>
+                    <td>${v.data.avgInteractions}</td>
+                    <td style="color: ${failRate > 10 ? '#e74c3c' : '#2ecc71'}">${failRate}%</td>
+                    <td>${avgScore}</td>
+                </tr>
+            `;
         }).join('');
 
-        return `<div class="scenario-group">
-            <h3 class="group-title">${baseName} <span style="font-size:0.6em; color:#7f8c8d; font-weight:normal;">(${variants.length} variants)</span></h3>
-            ${comparisonTable}
-            ${variantCards}
-        </div>`;
-    }).join('');
-
-    // --- Version Grouping (Inverse of Scenarios) ---
-    // Group by the "v<Timestamp>" string
-    const versionGroups = {}; // { "v12345": [ { scenarioName, data } ] }
-    Object.entries(logStats.granular).forEach(([fullVersionString, data]) => {
-        // Extract timestamp version
-        const match = fullVersionString.match(/_v(\d+)_/);
-        const versionId = match ? `v${match[1]}` : 'v(unknown)';
-
-        // Extract scenario name for the card title
-        const matchName = fullVersionString.match(/(?:simulation|world)_v\d+_(.+)/);
-        const scenarioName = matchName ? matchName[1].replace(/_/g, ' ') : fullVersionString;
-
-        if (!versionGroups[versionId]) versionGroups[versionId] = [];
-        versionGroups[versionId].push({ scenarioName, data });
-    });
-
-    // --- Generate Version Matrix HTML ---
-    let versionMatrixHtml = Object.entries(versionGroups).sort((a, b) => b[0].localeCompare(a[0])).map(([versionId, scenarios]) => {
-        // Overall Stats for this Version
-        const totalConvs = scenarios.reduce((sum, s) => sum + s.data.total, 0);
-        const totalFailures = scenarios.reduce((sum, s) => sum + s.data.failures.startup + s.data.failures.error, 0);
-        const globalFailRate = ((totalFailures / totalConvs) * 100).toFixed(1);
-
-        // Date & Model Info
-        let dateStr = "Unknown Date";
-        const tsMatch = versionId.match(/v(\d+)/);
-        if (tsMatch) {
-            const ts = parseInt(tsMatch[1]);
-            if (!isNaN(ts)) dateStr = new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-        }
-
-        // Find common models in this version
-        const modelsInVersion = new Set();
-        scenarios.forEach(s => {
-            s.data.conversationIds.forEach(cid => {
-                const c = logStats.conversations.get(cid);
-                if (c && c.modelUsed) modelsInVersion.add(c.modelUsed);
-            });
-        });
-        const modelStr = Array.from(modelsInVersion).join(', ') || 'Unknown Model';
-
-        return `<div class="scenario-group">
-            <h3 class="group-title">
-                ${versionId} 
-                <span style="font-size:0.6em; color:#7f8c8d; font-weight:normal; margin-left: 10px;">
-                    ${dateStr} | Models: ${modelStr} | (${scenarios.length} scenarios)
-                </span>
-            </h3>
-            
-            <div class="comparison-card">
-                 <h4>🧪 Scenario Performance Matrix for ${versionId}</h4>
-                 <div style="font-size:0.85em; color:#7f8c8d; margin-bottom:10px;">Global Fail Rate: <span style="color: ${globalFailRate > 10 ? '#e74c3c' : '#2ecc71'}">${globalFailRate}%</span></div>
-                 <table>
-                    <thead><tr><th>Scenario</th><th>Conversations</th><th>Avg Turns</th><th>Fail Rate</th></tr></thead>
+        return `
+            <div class="scenario-group" style="margin-bottom: 30px;">
+                <h3 class="group-title" style="background: #ecf0f1; padding: 15px; border-radius: 6px; margin-bottom: 10px;">
+                    ${scenarioName} 
+                    <span style="font-size:0.6em; color:#7f8c8d; font-weight:normal; margin-left: 10px;">
+                        (${versions.length} versions | ${totalConvs} total runs | ${scenarioFailRate}% fail rate)
+                    </span>
+                </h3>
+                <table style="width: 100%; margin-bottom: 20px;">
+                    <thead>
+                        <tr>
+                            <th>Version</th>
+                            <th>Date</th>
+                            <th>Runs</th>
+                            <th>Avg Turns</th>
+                            <th>Fail Rate</th>
+                            <th>Avg Score</th>
+                        </tr>
+                    </thead>
                     <tbody>
-                        ${scenarios.map(s => {
-            const failRate = (((s.data.failures.startup + s.data.failures.error) / s.data.total) * 100).toFixed(1);
-            return `<tr><td>${s.scenarioName}</td><td>${s.data.total}</td><td>${s.data.avgInteractions}</td><td>${failRate}%</td></tr>`;
-        }).join('')}
+                        ${versionRows}
                     </tbody>
                 </table>
             </div>
-        </div>`;
+        `;
     }).join('');
+
+    // User wants only Scenario Analysis tab, not Version Comparison
+    const versionMatrixHtml = ''; // Empty - tab will be removed
+
+    // --- Groupings (flagGroups already declared earlier) ---
 
     return `<!DOCTYPE html>
 <html>
@@ -601,8 +562,7 @@ function generateHTML(logStats, dbStats, timeSeries) {
         <div class="sidebar-header">Brainwasher Sim</div>
         <div class="nav-item active" onclick="switchTab('dashboard')">📊 Dashboard</div>
         <div class="nav-item" onclick="switchTab('trends')">📈 Trends & Charts</div>
-        <div class="nav-item" onclick="switchTab('scenarios')">⚖️ Version Comparison</div>
-        <div class="nav-item" onclick="switchTab('versions')">🧪 Scenario Analysis</div>
+        <div class="nav-item" onclick="switchTab('scenarios')">🧪 Scenario Analysis</div>
         
     </div>
 
@@ -626,8 +586,14 @@ function generateHTML(logStats, dbStats, timeSeries) {
                     <div class="stat-value">${logStats.interactions}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">Avg Feedback Score</div>
-                    <div class="stat-value">${avgScore}</div>
+                    <div class="stat-label">AI Feedback Score</div>
+                    <div class="stat-value" style="color: #3498db;">${avgAiScore}</div>
+                    <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">${aiScores.length} samples</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Human Feedback Score</div>
+                    <div class="stat-value" style="color: #9b59b6;">${avgHumanScore}</div>
+                    <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">${humanScores.length} samples</div>
                 </div>
                  <div class="stat-card">
                     <div class="stat-label">
@@ -643,6 +609,19 @@ function generateHTML(logStats, dbStats, timeSeries) {
                 <thead><tr><th>Model</th><th>Conversations</th><th>Unique Scenarios</th><th>Avg. Score</th></tr></thead>
                 <tbody>${modelStatsHtml}</tbody>
             </table>
+
+            <div class="stats-grid" style="margin-top: 20px;">
+                 <div class="stat-card clickable" onclick="showPersonasList()" style="cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                    <div class="stat-label">User Personas 👁️</div>
+                    <div class="stat-value">${logStats.users.size}</div>
+                    <div style="font-size: 0.7em; color: #3498db; margin-top: 4px;">Click to view list</div>
+                </div>
+                 <div class="stat-card clickable" onclick="showScenariosList()" style="cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                    <div class="stat-label">Unique Scenarios 👁️</div>
+                    <div class="stat-value">${Object.keys(scenarioGroups).length}</div>
+                    <div style="font-size: 0.7em; color: #3498db; margin-top: 4px;">Click to view list</div>
+                </div>
+            </div>
 
             <h2>🚨 Top Failure Categories</h2>
             <table>
@@ -663,8 +642,13 @@ function generateHTML(logStats, dbStats, timeSeries) {
         <div id="trends" class="tab-content">
             <h1>Performance Trends</h1>
             <div class="chart-section">
-                <h3>Average Feedback Score</h3>
+                <h3>Feedback Scores Over Time</h3>
+                <p style="font-size: 0.9em; color: #7f8c8d; margin-bottom: 10px;">Separate views for AI-generated vs Human feedback</p>
                 <div class="chart-container"><canvas id="scoreChart"></canvas></div>
+            </div>
+            <div class="chart-section">
+                <h3>Message & Turn Statistics</h3>
+                <div class="chart-container"><canvas id="statsChart"></canvas></div>
             </div>
             <div class="chart-section">
                 <h3>Interaction Lengths</h3>
@@ -681,18 +665,24 @@ function generateHTML(logStats, dbStats, timeSeries) {
             </table>
         </div>
 
-        <!-- SCENARIOS TAB (NOW VERSION COMPARISON) -->
+        <!-- SCENARIOS TAB (NOW SCENARIO ANALYSIS) -->
         <div id="scenarios" class="tab-content">
-             <h1>Version Comparison (A/B Testing)</h1>
-             <p>Side-by-side comparison of different <strong>Prompt Versions</strong> for the same Scenario.</p>
+             <h1>Scenario Analysis</h1>
+             <p>Analysis of each <strong>Scenario</strong> across different system versions and variants.</p>
              ${scenarioHtml}
         </div>
 
-        <!-- VERSIONS TAB (NOW SCENARIO ANALYSIS) -->
-        <div id="versions" class="tab-content">
-             <h1>Scenario Analysis Matrix</h1>
-             <p>Analysis of how a specific <strong>System Version</strong> performed across different Scenarios.</p>
-             ${versionMatrixHtml}
+        </div>
+    </div>
+
+    <!-- Modal for Personas/Scenarios Lists -->
+    <div id="listModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 30px; border-radius: 12px; max-width: 600px; max-height: 80vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 id="modalTitle" style="margin: 0;"></h2>
+                <button onclick="closeModal()" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #7f8c8d;">&times;</button>
+            </div>
+            <div id="modalContent"></div>
         </div>
     </div>
 
@@ -707,30 +697,140 @@ function generateHTML(logStats, dbStats, timeSeries) {
             event.currentTarget.classList.add('active');
         }
 
+        // Interactive modal functions - Using DB data
+        function showPersonasList() {
+            // Use DB personas if available, fallback to log data
+            const dbPersonas = ${JSON.stringify((dbStats.personas || []).map(p => p.role))};
+            const logPersonas = ${JSON.stringify(Array.from(logStats.users))};
+            const personas = dbPersonas.length > 0 ? dbPersonas : logPersonas;
+            
+            document.getElementById('modalTitle').textContent = 'User Personas (' + personas.length + ')';
+            document.getElementById('modalContent').innerHTML = '<ul style="list-style: none; padding: 0;">' +
+                personas.map(p => '<li style="padding: 8px; border-bottom: 1px solid #eee;">' + p + '</li>').join('') +
+                '</ul>';
+            document.getElementById('listModal').style.display = 'flex';
+        }
+
+        function showScenariosList() {
+            // Use DB scenarios if available, fallback to inferred scenarios from logs
+            const dbScenarios = ${JSON.stringify((dbStats.scenarios || []).map(s => ({ name: s.name, description: s.description || '' })))};
+            const logScenarios = ${JSON.stringify(Object.keys(scenarioGroups).map(name => ({ name, count: scenarioGroups[name].reduce((sum, v) => sum + v.data.total, 0) })))};
+            
+            const scenarios = dbScenarios.length > 0 ? dbScenarios : logScenarios;
+            
+            document.getElementById('modalTitle').textContent = 'Unique Scenarios (' + scenarios.length + ')';
+            if (dbScenarios.length > 0) {
+                // DB scenarios - show name and description
+                document.getElementById('modalContent').innerHTML = '<ul style="list-style: none; padding: 0;">' +
+                    scenarios.map(s => '<li style="padding: 12px; border-bottom: 1px solid #eee;"><strong>' + s.name + '</strong>' + 
+                        (s.description ? '<div style="font-size: 0.85em; color: #7f8c8d; margin-top: 4px;">' + s.description + '</div>' : '') + 
+                        '</li>').join('') +
+                    '</ul>';
+            } else {
+                // Log scenarios - show name and run count
+                document.getElementById('modalContent').innerHTML = '<ul style="list-style: none; padding: 0;">' +
+                    scenarios.map(s => '<li style="padding: 8px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between;"><span>' + s.name + '</span><span style="color: #7f8c8d;">' + s.count + ' runs</span></li>').join('') +
+                    '</ul>';
+            }
+            document.getElementById('listModal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('listModal').style.display = 'none';
+        }
+
         // Charts
         const commonOptions = { 
             responsive: true, 
             maintainAspectRatio: false,
             scales: {
                 y: {
-                    beginAtZero: true,
-                    grace: '5%' // Add some breathing room at the top
+                    // removed beginAtZero to allow negative values if feedback is centered around 0
+                    grace: '5%' 
                 }
             }
         };
         
+        // Feedback Score Chart - Separated AI vs Human
         new Chart(document.getElementById('scoreChart'), {
             type: 'line',
             data: {
-                labels: ${JSON.stringify(labels)},
-                datasets: [{
-                    label: 'Score', data: ${JSON.stringify(scores)}, 
-                    borderColor: '#2ecc71', backgroundColor: 'rgba(46, 204, 113, 0.1)', fill: true, tension: 0.3,
-                    spanGaps: true
-                }]
-            }, options: commonOptions
+                labels: ${JSON.stringify(aiLabels)},
+                datasets: [
+                    {
+                        label: 'AI Feedback Score',
+                        data: ${JSON.stringify(aiScoresChart)},
+                        borderColor: '#3498db',
+                        backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        spanGaps: true
+                    },
+                    {
+                        label: 'Human Feedback Score',
+                        data: ${JSON.stringify(humanScoresChart)},
+                        borderColor: '#9b59b6',
+                        backgroundColor: 'rgba(155, 89, 182, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        spanGaps: true
+                    }
+                ]
+            },
+            options: commonOptions
         });
 
+        // Message & Turn Statistics Chart
+        new Chart(document.getElementById('statsChart'), {
+            type: 'line',
+            data: {
+                labels: ${JSON.stringify(labels)},
+                datasets: [
+                    {
+                        label: 'Avg Message Length',
+                        data: ${JSON.stringify(msgLens)},
+                        borderColor: '#e74c3c',
+                        fill: false,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Avg Response Length',
+                        data: ${JSON.stringify(respLens)},
+                        borderColor: '#f39c12',
+                        fill: false,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Interaction Count',
+                        data: ${JSON.stringify(interactionCounts)},
+                        borderColor: '#2ecc71',
+                        fill: false,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: { display: true, text: 'Character Count' }
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: { display: true, text: 'Turn Count' },
+                        grid: { drawOnChartArea: false }
+                    }
+                }
+            }
+        });
+
+        // Interaction Lengths Chart
         new Chart(document.getElementById('lengthChart'), {
             type: 'line',
             data: {

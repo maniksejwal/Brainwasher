@@ -40,6 +40,11 @@ class TrainingLogger {
         response_length: data.agentResponse?.length || 0,
         escalated: data.orchestratorAction?.type === 'ESCALATE',
         shared: data.orchestratorAction?.type === 'SHARE',
+        // Model Tracking
+        model_used: data.modelUsed || 'unknown',
+        model_provider: data.modelProvider || 'unknown',
+        // User Role (for scenario grouping)
+        role: data.role || null,
         // Agentic Communication Fields
         intent: data.intent || null,
         future_plan: data.future_plan ? JSON.stringify(data.future_plan) : null,
