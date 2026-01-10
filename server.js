@@ -101,17 +101,17 @@ events.on('broadcast', (payload) => {
 events.on('future_plan_executed', (planData) => {
     // Broadcast plan execution to relevant users
     if (planData.userId && clients[planData.userId]) {
-        clients[planData.userId].write(`data: ${JSON.stringify({ 
-            type: 'future_plan_executed', 
-            ...planData 
+        clients[planData.userId].write(`data: ${JSON.stringify({
+            type: 'future_plan_executed',
+            ...planData
         })}\n\n`);
     }
 });
 
 events.on('context_switch', (payload) => {
-     if (clients[payload.userId]) {
-        clients[payload.userId].write(`data: ${JSON.stringify({ 
-            type: 'context_switched', 
+    if (clients[payload.userId]) {
+        clients[payload.userId].write(`data: ${JSON.stringify({
+            type: 'context_switched',
             newCircleId: payload.newCircleId,
             patientUsername: payload.patientUsername,
             newRole: payload.newRole
@@ -127,9 +127,9 @@ events.on('escalate', (payload) => {
 
 events.on('analysis_progress', (payload) => {
     if (clients[payload.userId]) {
-        clients[payload.userId].write(`data: ${JSON.stringify({ 
-            type: 'analysis_progress', 
-            ...payload 
+        clients[payload.userId].write(`data: ${JSON.stringify({
+            type: 'analysis_progress',
+            ...payload
         })}\n\n`);
     }
 });
@@ -164,7 +164,7 @@ app.post('/login', async (req, res) => {
 
 app.post('/command', (req, res) => {
     const { userId, circleId, message } = req.body;
-     if (!userId || !circleId || !message) {
+    if (!userId || !circleId || !message) {
         return res.status(400).json({ error: 'Missing userId, circleId, or message' });
     }
     handleCommand(userId, circleId, message);
@@ -185,21 +185,22 @@ app.post('/send', (req, res) => {
 // Serve GUI static files
 app.use('/gui', express.static(path.join(__dirname, 'gui')));
 app.use('/shared', express.static(path.join(__dirname, 'shared')));
+app.use('/reports', express.static(path.join(__dirname, 'training/analysis/reports')));
 
 // Get conversation history (grouped by conversation_id)
 app.get('/api/conversations/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
         const fs = await import('fs/promises');
-        
+
         // Read training log
         const logData = await fs.readFile('./training/training_log.jsonl', 'utf-8');
         const lines = logData.trim().split('\n').filter(line => line);
-        
+
         // Parse and filter by user
         const allLogs = lines.map(line => JSON.parse(line));
         const userLogs = allLogs.filter(log => log.user_id === userId);
-        
+
         // Group by conversation_id
         const conversations = {};
         userLogs.forEach(log => {
@@ -215,10 +216,10 @@ app.get('/api/conversations/:userId', async (req, res) => {
             conversations[convId].messages.push(log);
             conversations[convId].end_time = Math.max(conversations[convId].end_time, log.timestamp);
         });
-        
+
         // Convert to array and sort by most recent
         const result = Object.values(conversations).sort((a, b) => b.start_time - a.start_time);
-        
+
         res.json(result);
     } catch (error) {
         res.status(500).json({ error: error.message, conversations: [] });
@@ -230,25 +231,25 @@ app.get('/api/feedback/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
         const db = await getDb();
-        
+
         // Check if feedback table exists
         const tableExists = await db.get(`
             SELECT name FROM sqlite_master 
             WHERE type='table' AND name='feedback'
         `);
-        
+
         if (!tableExists) {
             // Table doesn't exist yet - return empty array
             return res.json([]);
         }
-        
+
         const feedback = await db.all(`
             SELECT * FROM feedback 
             WHERE user_id = ? 
             ORDER BY timestamp DESC 
             LIMIT 100
         `, [userId]);
-        
+
         res.json(feedback || []);
     } catch (error) {
         console.error('[Server] Feedback error:', error.message);
@@ -261,7 +262,7 @@ app.post('/api/feedback', async (req, res) => {
     try {
         const { userId, conversationId, score, comment } = req.body;
         const db = await getDb();
-        
+
         await db.run(`
             INSERT INTO feedback (conversation_id, user_id, circle_id, score, comment, timestamp)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -273,7 +274,7 @@ app.post('/api/feedback', async (req, res) => {
             comment || null,
             Date.now()
         ]);
-        
+
         res.json({ success: true, message: 'Feedback saved' });
     } catch (error) {
         console.error('[Server] Save feedback error:', error.message);
@@ -286,7 +287,7 @@ app.get('/api/scenarios', async (req, res) => {
     try {
         const personasModule = await import('./training/simulation/personas.js');
         const scenariosModule = await import('./training/simulation/scenarios.js');
-        
+
         res.json({
             personas: personasModule.PERSONAS || {},
             scenarios: scenariosModule.SCENARIOS || {}
@@ -430,26 +431,26 @@ app.get('/api/companion-components', async (req, res) => {
 app.post('/api/simulate', async (req, res) => {
     try {
         let { runs = 5, scenario: scenarioKey = 'random_single', turns = 3 } = req.body;
-        
+
         // Handle random turns
         if (turns === 'random') {
             turns = [3, 5, 10, 15, 20][Math.floor(Math.random() * 5)];
         } else {
             turns = parseInt(turns) || 3;
         }
-        
+
         // Import modules
         const { SimulationDriver } = await import('./training/simulation/simulator.js');
         const personasModule = await import('./training/simulation/personas.js');
         const scenariosModule = await import('./training/simulation/scenarios.js');
-        
+
         const PERSONAS = personasModule.PERSONAS || personasModule.default;
         const SCENARIOS = scenariosModule.SCENARIOS || {};
-        
+
         if (!PERSONAS) {
             throw new Error('PERSONAS not found');
         }
-        
+
         // Get scenario definition
         let scenarioDef;
         if (scenarioKey === 'random') {
@@ -482,20 +483,20 @@ app.post('/api/simulate', async (req, res) => {
                 };
             }
         }
-        
+
         // Build simulation config
         const simConfig = {
             name: `GUI: ${scenarioDef.name}`,
             users: scenarioDef.users.map((user, idx) => ({
                 userId: `sim_${user.role}_${idx}`,
                 role: user.role,
-                personaKey: user.personaKey === 'random' ? 
+                personaKey: user.personaKey === 'random' ?
                     Object.keys(PERSONAS)[Math.floor(Math.random() * Object.keys(PERSONAS).length)] :
                     user.personaKey,
                 relationship: user.relationship,
                 consent: user.consent
             })),
-            circle: { 
+            circle: {
                 patientId: `sim_${scenarioDef.users[0].role}_0`,
                 caregiverIds: scenarioDef.users.slice(1).map((_, idx) => `sim_${scenarioDef.users[idx + 1].role}_${idx + 1}`)
             },
@@ -505,29 +506,29 @@ app.post('/api/simulate', async (req, res) => {
         };
 
         const sim = new SimulationDriver('./care_circle_simulation.db', true, true); // dbPath, autoFeedback, logResults
-        
+
         // Set up progress callback to emit events
         sim.progressCallback = (progress) => {
             console.log('[Server] Simulation progress:', progress);
-            
+
             // Emit simulation progress to all connected clients
             Object.keys(clients).forEach(clientId => {
-                clients[clientId].write(`data: ${JSON.stringify({ 
-                    type: 'simulation_progress', 
-                    ...progress 
+                clients[clientId].write(`data: ${JSON.stringify({
+                    type: 'simulation_progress',
+                    ...progress
                 })}\n\n`);
             });
         };
-        
+
         await sim.runScenario(simConfig);
-        
+
         // No need to copy - simulation results are shown inline
-        
+
         await sim.cleanup();
 
-        res.json({ 
-            success: true, 
-            runs: 1, 
+        res.json({
+            success: true,
+            runs: 1,
             message: `Simulation complete: ${scenarioDef.name}`,
             scenarioKey,
             scenarioName: scenarioDef.name,
@@ -545,18 +546,18 @@ app.post('/api/simulate', async (req, res) => {
 app.post('/api/analyze', async (req, res) => {
     try {
         const fs = await import('fs/promises');
-        
+
         // Read training log
         const logData = await fs.readFile('./training/training_log.jsonl', 'utf-8');
         const lines = logData.trim().split('\n').filter(line => line);
         const allLogs = lines.map(line => JSON.parse(line));
-        
+
         // Calculate simple stats
         const totalInteractions = allLogs.length;
         const avgLatency = allLogs.reduce((sum, log) => sum + (log.latency_ms || 0), 0) / totalInteractions;
         const escalations = allLogs.filter(log => log.escalated).length;
         const shares = allLogs.filter(log => log.shared).length;
-        
+
         res.json({
             success: true,
             total: totalInteractions,
@@ -584,12 +585,12 @@ app.get('/api/user/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
         const { findUserById } = await import('./db/index.js');
-        
+
         const user = await findUserById(userId);
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
-        
+
         res.json({ user });
     } catch (error) {
         console.error('[Server] User API error:', error);
@@ -602,7 +603,7 @@ app.get('/api/mycircles/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
         const { getUserCircles } = await import('./db/index.js');
-        
+
         const circles = await getUserCircles(userId);
         res.json({ circles });
     } catch (error) {
@@ -616,10 +617,10 @@ app.get('/api/patients/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
         const { getUserCircles } = await import('./db/index.js');
-        
+
         const allCircles = await getUserCircles(userId);
         const doctorCircles = allCircles.filter(circle => circle.role === 'doctor');
-        
+
         res.json({ patients: doctorCircles });
     } catch (error) {
         console.error('[Server] Patients API error:', error);
@@ -631,22 +632,22 @@ app.get('/api/circle/:userId', async (req, res) => {
     try {
         const { userId } = req.params;
         const { getCircleMembers, getUserCircles } = await import('./db/index.js');
-        
+
         // Get user's circles
         const circles = await getUserCircles(userId);
-        
+
         if (!circles || circles.length === 0) {
             return res.json({ members: [], circleId: null });
         }
-        
+
         // Get the primary circle (where user is patient)
         const primaryCircle = circles.find(c => c.circle_id === userId) || circles[0];
-        
+
         // Get members of that circle
         const members = await getCircleMembers(primaryCircle.circle_id);
-        
-        res.json({ 
-            members: members || [], 
+
+        res.json({
+            members: members || [],
             circleId: primaryCircle.circle_id,
             patientUsername: primaryCircle.patient_username
         });
@@ -765,7 +766,7 @@ app.post('/api/cli/run-simulation', async (req, res) => {
             args.push('--with-feedback');
         }
         args.push('--from-dashboard');
-        
+
         executeCLICommand('cli/run_simulation.js', args, res);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -779,7 +780,7 @@ app.post('/api/cli/train', async (req, res) => {
         const args = [command];
         if (prompts) args.push('--prompts', prompts);
         if (scenarios) args.push('--scenarios', String(scenarios));
-        
+
         executeCLICommand('cli/train.js', args, res);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -791,6 +792,16 @@ app.post('/api/cli/analyze', async (req, res) => {
     try {
         const { command = 'all' } = req.body;
         executeCLICommand('cli/analyze.js', [command], res);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Generate HTML Report
+app.post('/api/cli/generate-report', async (req, res) => {
+    try {
+        // Run the generation script
+        executeCLICommand('training/analysis/generate_simulation_report.js', [], res);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -808,7 +819,7 @@ app.post('/api/cli/world-simulation', async (req, res) => {
         } else {
             args.push('--with-feedback');
         }
-        
+
         executeCLICommand('cli/world_simulation_cli.js', args, res);
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -822,7 +833,7 @@ app.post('/api/cli/prompts', async (req, res) => {
         const args = [command];
         if (version) args.push(version);
         if (compare) args.push('--compare');
-        
+
         executeCLICommand('cli/prompts.js', args, res);
     } catch (error) {
         res.status(500).json({ error: error.message });

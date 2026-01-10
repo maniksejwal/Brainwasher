@@ -646,7 +646,10 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             role: user.role,
             // Agentic Communication Fields
             intent: agentResult.state_vector?.intent || null,
-            future_plan: agentResult.future_plan || null
+            future_plan: agentResult.future_plan || null,
+            // Model Tracking
+            model_used: agentResult.model_used || 'unknown',
+            model_provider: agentResult.model_provider || 'unknown'
         });
 
         await metricsCollector.recordMessageLength(
@@ -681,7 +684,10 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             allUsers: allUsers.map(u => ({ userId: u.userId, role: u.role, persona: u.personaKey })),
             // Agentic Communication Fields
             intent: agentResult.state_vector?.intent || null,
-            future_plan: agentResult.future_plan || null
+            future_plan: agentResult.future_plan || null,
+            // Model Tracking
+            model_used: agentResult.model_used || 'unknown',
+            model_provider: agentResult.model_provider || 'unknown'
         });
 
         await metricsCollector.recordMessageLength(

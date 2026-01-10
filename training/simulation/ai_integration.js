@@ -135,7 +135,11 @@ export class SimulationAI {
                     privacyLevel: analysis.privacyLevel,
                     facts: analysis.facts || {}
                 },
-                future_plan: analysis.future_plan || null
+                future_plan: analysis.future_plan || null,
+                // Model Tracking
+                model_used: analysis.model_used || 'unknown',
+                model_provider: analysis.model_provider || 'unknown',
+                system_used: analysis.system_used || 'unknown'
             };
 
         } catch (error) {

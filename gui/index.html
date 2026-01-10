@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,13 +10,14 @@
     <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/shoelace.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
 </head>
+
 <body>
     <!-- Login Screen -->
     <div id="login-screen" class="screen active">
         <div class="container">
             <h1>Care Circles</h1>
             <p style="color: #666; margin: 16px 0; max-width: 500px; text-align: center;">
-                A multi-agent system where each person has their own AI assistant. 
+                A multi-agent system where each person has their own AI assistant.
                 Agents coordinate care while respecting privacy boundaries.
             </p>
             <p style="color: #4285F4; font-size: 14px; margin-bottom: 20px;">
@@ -50,7 +52,8 @@
             <div id="chat-view" class="view active">
                 <div id="messages" class="messages"></div>
                 <div class="input-container">
-                    <input type="text" id="message-input" placeholder="Type a message or /command (❓ for help)" autocomplete="off">
+                    <input type="text" id="message-input" placeholder="Type a message or /command (❓ for help)"
+                        autocomplete="off">
                     <button id="send-btn" class="primary">Send</button>
                 </div>
             </div>
@@ -61,7 +64,7 @@
                     <h3>Training & Feedback</h3>
                     <button id="refresh-feedback" class="secondary">Refresh</button>
                 </div>
-                
+
                 <div class="tabs">
                     <button class="tab active" data-tab="my-feedback">My Feedback</button>
                     <button class="tab" data-tab="conversations">Conversations</button>
@@ -69,6 +72,7 @@
                     <button class="tab" data-tab="training">Training</button>
                     <button class="tab" data-tab="prompts">Prompts</button>
                     <button class="tab" data-tab="analysis">Analysis</button>
+                    <button class="tab" data-tab="reports">Reports</button>
                     <button class="tab" data-tab="logs">Server Logs</button>
                 </div>
 
@@ -84,32 +88,40 @@
                     <div style="margin-bottom: 16px; padding: 12px; background: var(--gray-50); border-radius: 8px;">
                         <h4 style="margin: 0 0 8px 0;">📚 How Simulations Work</h4>
                         <p style="font-size: 13px; color: var(--gray-700); margin: 0;">
-                            Simulations create synthetic users with realistic personas (anxious, forgetful, in denial, etc.) 
-                            and run conversations to test the AI agent. Supports both regular scenarios (single care circle) 
-                            and world simulations (multi-care circle dynamics with role inversions). Each simulation automatically 
-                            generates feedback on response quality, escalation handling, and empathy. View results in the "My Feedback" tab.
+                            Simulations create synthetic users with realistic personas (anxious, forgetful, in denial,
+                            etc.)
+                            and run conversations to test the AI agent. Supports both regular scenarios (single care
+                            circle)
+                            and world simulations (multi-care circle dynamics with role inversions). Each simulation
+                            automatically
+                            generates feedback on response quality, escalation handling, and empathy. View results in
+                            the "My Feedback" tab.
                         </p>
                     </div>
-                    
+
                     <div style="margin-bottom: 16px;">
                         <label style="display: block; margin-bottom: 4px; font-weight: 500;">Simulation Type:</label>
-                        <select id="simulation-type" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px; margin-bottom: 8px;">
+                        <select id="simulation-type"
+                            style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px; margin-bottom: 8px;">
                             <option value="regular">Regular Simulation</option>
                             <option value="world">World Simulation (Multi-Circle)</option>
                         </select>
                     </div>
-                    
+
                     <div id="regular-simulation-controls">
                         <div style="margin-bottom: 16px;">
                             <label style="display: block; margin-bottom: 4px; font-weight: 500;">Scenario Type:</label>
-                            <select id="scenario-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                            <select id="scenario-select"
+                                style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
                                 <option value="">Loading scenarios from server...</option>
                             </select>
                         </div>
-                        
+
                         <div style="margin-bottom: 16px;">
-                            <label style="display: block; margin-bottom: 4px; font-weight: 500;">Conversation Length:</label>
-                            <select id="turns-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                            <label style="display: block; margin-bottom: 4px; font-weight: 500;">Conversation
+                                Length:</label>
+                            <select id="turns-select"
+                                style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
                                 <option value="random" selected>Random (3-20 turns)</option>
                                 <option value="3">3 turns</option>
                                 <option value="5">5 turns</option>
@@ -119,11 +131,12 @@
                             </select>
                         </div>
                     </div>
-                    
+
                     <div id="world-simulation-controls" style="display: none;">
                         <div style="margin-bottom: 16px;">
                             <label style="display: block; margin-bottom: 4px; font-weight: 500;">World Scenario:</label>
-                            <select id="world-scenario-select" style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                            <select id="world-scenario-select"
+                                style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px;">
                                 <option value="">Loading world scenarios...</option>
                             </select>
                         </div>
@@ -142,16 +155,23 @@
                             <input type="checkbox" id="show-network" checked> Show Network Visualization
                         </label>
                     </div>
-                    
+
                     <button id="run-simulation" class="primary" style="width: 100%;">🔬 Run Simulation</button>
-                    <div id="network-visualization-container" style="display: none; margin-top: 16px; padding: 20px; background: white; border-radius: 12px; border: 1px solid var(--gray-300);">
-                        <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; gap: 20px;">
+                    <div id="network-visualization-container"
+                        style="display: none; margin-top: 16px; padding: 20px; background: white; border-radius: 12px; border: 1px solid var(--gray-300);">
+                        <div
+                            style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; gap: 20px;">
                             <h4 style="margin: 0; flex: 1; font-size: 18px;">Network Visualization</h4>
-                            <div style="display: flex; gap: 20px; font-size: 13px; color: var(--gray-700); flex-wrap: wrap;">
-                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-messages" checked> Show Messages</label>
-                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-event-log"> Show Event Log</label>
-                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-prompts" checked> Show Prompts</label>
-                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-hardware" checked> Show Hardware Info</label>
+                            <div
+                                style="display: flex; gap: 20px; font-size: 13px; color: var(--gray-700); flex-wrap: wrap;">
+                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-messages" checked>
+                                    Show Messages</label>
+                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-event-log"> Show Event
+                                    Log</label>
+                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-prompts" checked> Show
+                                    Prompts</label>
+                                <label style="cursor: pointer;"><input type="checkbox" id="toggle-hardware" checked>
+                                    Show Hardware Info</label>
                             </div>
                         </div>
                         <div id="network-placeholder" class="network-placeholder">
@@ -160,29 +180,57 @@
                                 <div class="network-placeholder-text">Waiting for CLI participants…</div>
                             </div>
                         </div>
-                        <div id="network-structure-info" style="display: none; margin-bottom: 16px; padding: 12px; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; font-size: 12px; color: var(--gray-800);"></div>
-                        <div id="care-circle-legend" style="display: none; margin-bottom: 16px; gap: 12px; flex-wrap: wrap;"></div>
+                        <div id="network-structure-info"
+                            style="display: none; margin-bottom: 16px; padding: 12px; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px; font-size: 12px; color: var(--gray-800);">
+                        </div>
+                        <div id="care-circle-legend"
+                            style="display: none; margin-bottom: 16px; gap: 12px; flex-wrap: wrap;"></div>
                         <div style="display: flex; gap: 20px; align-items: stretch; min-height: 720px;">
-                            <div id="network-canvas" style="flex: 2.5; min-height: 720px; border: 1px solid var(--gray-200); border-radius: 8px; position: relative; overflow: hidden;"></div>
-                            <div id="network-event-log" style="flex: 1; max-height: 720px; overflow-y: auto; border: 1px solid var(--gray-200); border-radius: 8px; background: var(--gray-50); padding: 14px; font-size: 13px; line-height: 1.6; display: none; flex-direction: column; gap: 10px;"></div>
+                            <div id="network-canvas"
+                                style="flex: 2.5; min-height: 720px; border: 1px solid var(--gray-200); border-radius: 8px; position: relative; overflow: hidden;">
+                            </div>
+                            <div id="network-event-log"
+                                style="flex: 1; max-height: 720px; overflow-y: auto; border: 1px solid var(--gray-200); border-radius: 8px; background: var(--gray-50); padding: 14px; font-size: 13px; line-height: 1.6; display: none; flex-direction: column; gap: 10px;">
+                            </div>
                         </div>
                     </div>
                     <div id="simulation-results" style="margin-top: 16px;"></div>
-                    
-                    <div id="simulation-summary" style="display: none; margin-top: 16px; padding: 16px; background: var(--gray-50); border-radius: 8px;">
+
+                    <div id="simulation-summary"
+                        style="display: none; margin-top: 16px; padding: 16px; background: var(--gray-50); border-radius: 8px;">
                         <h4 style="margin: 0 0 12px 0;">📊 Simulation Complete</h4>
                         <div id="simulation-stats"></div>
                     </div>
                 </div>
 
                 <div id="analysis" class="tab-content scrollable-content">
-                    <button id="generate-analysis" class="primary">Generate Analysis</button>
-                    <div id="analysis-results"></div>
+                    <div class="analysis-header" style="margin-bottom: 20px;">
+                        <h3>Deep System Analysis</h3>
+                        <p style="color: var(--gray-600); font-size: 14px;">Run advanced CLI analysis tools to optimize
+                            prompts and identify failure patterns.</p>
+                    </div>
+                    <div id="analysis-controls"></div>
+                    <div id="analysis-results" class="console-output"></div>
+                </div>
+
+                <div id="reports" class="tab-content scrollable-content">
+                    <div class="analysis-header" style="margin-bottom: 20px;">
+                        <h3>Simulation Progress Report</h3>
+                        <p style="color: var(--gray-600); font-size: 14px;">Generate and view interactive HTML reports
+                            summarizing simulation performance.</p>
+                    </div>
+                    <div id="report-controls" style="margin-bottom: 20px;">
+                        <button id="generate-report-btn" class="primary">
+                            📊 Generate New Report
+                        </button>
+                    </div>
+                    <div id="report-results"></div>
                 </div>
 
                 <div id="training" class="tab-content scrollable-content">
                     <div id="training-dashboard"></div>
-                    <div id="training-metrics" style="margin-top: 16px; padding: 16px; background: var(--gray-50); border-radius: 8px; display: none;">
+                    <div id="training-metrics"
+                        style="margin-top: 16px; padding: 16px; background: var(--gray-50); border-radius: 8px; display: none;">
                         <h4 style="margin: 0 0 12px 0;">📈 Training Metrics</h4>
                         <div id="training-metrics-bars" style="display: flex; flex-direction: column; gap: 12px;"></div>
                     </div>
@@ -194,7 +242,9 @@
 
                 <div id="logs" class="tab-content scrollable-content">
                     <button id="refresh-logs" class="secondary">Refresh</button>
-                    <div id="logs-container" style="font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 16px; border-radius: 4px; max-height: 500px; overflow-y: auto;"></div>
+                    <div id="logs-container"
+                        style="font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 16px; border-radius: 4px; max-height: 500px; overflow-y: auto;">
+                    </div>
                 </div>
             </div>
 
@@ -269,13 +319,17 @@
                 <button id="add-doctor-btn" class="primary">Add Doctor</button>
             </div>
             <div id="caregiver-form" style="display:none; margin-top: 16px;">
-                <input type="text" id="caregiver-username" placeholder="Username" style="width: 100%; margin-bottom: 8px;">
-                <input type="text" id="caregiver-relationship" placeholder="Relationship (e.g., mother, spouse)" style="width: 100%; margin-bottom: 8px;">
+                <input type="text" id="caregiver-username" placeholder="Username"
+                    style="width: 100%; margin-bottom: 8px;">
+                <input type="text" id="caregiver-relationship" placeholder="Relationship (e.g., mother, spouse)"
+                    style="width: 100%; margin-bottom: 8px;">
                 <p style="font-size: 12px; color: #999;">Command: /care username as relationship</p>
             </div>
             <div id="doctor-form" style="display:none; margin-top: 16px;">
-                <input type="text" id="doctor-username" placeholder="Doctor's username" style="width: 100%; margin-bottom: 8px;">
-                <input type="text" id="doctor-specialty" placeholder="Specialty (optional, e.g., Cardiology)" style="width: 100%; margin-bottom: 8px;">
+                <input type="text" id="doctor-username" placeholder="Doctor's username"
+                    style="width: 100%; margin-bottom: 8px;">
+                <input type="text" id="doctor-specialty" placeholder="Specialty (optional, e.g., Cardiology)"
+                    style="width: 100%; margin-bottom: 8px;">
                 <p style="font-size: 12px; color: #999;">Command: /doc username [as specialty]</p>
                 <p style="font-size: 11px; color: #666; margin-top: 8px;">
                     ℹ️ Specialty is optional - doctor can also set it later with /spec command
@@ -291,36 +345,45 @@
     <!-- Help Modal -->
     <div id="help-modal" class="modal">
         <div class="modal-content" style="max-width: 600px;">
-            <button id="close-help" style="float:right; background:none; border:none; font-size:20px; cursor:pointer;">✖</button>
+            <button id="close-help"
+                style="float:right; background:none; border:none; font-size:20px; cursor:pointer;">✖</button>
             <h3>How to Use Care Circles</h3>
-            
+
             <h4>What is this?</h4>
-            <p>A multi-agent system where each person has their own AI assistant. Agents coordinate care while respecting privacy boundaries.</p>
-            
+            <p>A multi-agent system where each person has their own AI assistant. Agents coordinate care while
+                respecting privacy boundaries.</p>
+
             <h4>Available Commands</h4>
-            <div style="font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 12px; border-radius: 4px; margin: 12px 0;">
-                <div style="margin: 8px 0;"><strong>/care</strong> username as relationship - Add caregiver (e.g., /care mom as mother)</div>
-                <div style="margin: 8px 0;"><strong>/doc</strong> username [as specialty] - Add doctor (e.g., /doc dr_smith as Cardiology)</div>
+            <div
+                style="font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 12px; border-radius: 4px; margin: 12px 0;">
+                <div style="margin: 8px 0;"><strong>/care</strong> username as relationship - Add caregiver (e.g., /care
+                    mom as mother)</div>
+                <div style="margin: 8px 0;"><strong>/doc</strong> username [as specialty] - Add doctor (e.g., /doc
+                    dr_smith as Cardiology)</div>
                 <div style="margin: 8px 0;"><strong>/circle</strong> - Show circle members and their roles</div>
-                <div style="margin: 8px 0;"><strong>/switch</strong> username - Switch to another circle (role changes automatically)</div>
+                <div style="margin: 8px 0;"><strong>/switch</strong> username - Switch to another circle (role changes
+                    automatically)</div>
                 <div style="margin: 8px 0;"><strong>/mycircles</strong> - Show all your care circles</div>
                 <div style="margin: 8px 0;"><strong>/patients</strong> - Show all your patients (for doctors)</div>
-                <div style="margin: 8px 0;"><strong>/feedback</strong> +1|-1 "comment" - Rate interaction (e.g., /feedback +1 "Great!")</div>
-                <div style="margin: 8px 0;"><strong>/consent</strong> username level - Set consent (none/limited/full)</div>
+                <div style="margin: 8px 0;"><strong>/feedback</strong> +1|-1 "comment" - Rate interaction (e.g.,
+                    /feedback +1 "Great!")</div>
+                <div style="margin: 8px 0;"><strong>/consent</strong> username level - Set consent (none/limited/full)
+                </div>
                 <div style="font-size: 12px; color: #999; margin-left: 16px;">Or use the dropdown in Circle view</div>
             </div>
-            
+
             <h4>How Roles Work</h4>
             <p style="font-size: 14px; color: #666;">
                 Your role changes automatically based on which circle you're in:
             </p>
             <ul style="font-size: 14px; color: #666; margin-left: 20px;">
                 <li>In your own circle: You're the <strong>patient</strong></li>
-                <li>When added to someone else's circle: You're a <strong>caregiver</strong> or <strong>doctor</strong></li>
+                <li>When added to someone else's circle: You're a <strong>caregiver</strong> or <strong>doctor</strong>
+                </li>
                 <li>Use <code>/switch username</code> to change circles (your role updates automatically)</li>
                 <li>Check your current role in the header badge and browser tab title</li>
             </ul>
-            
+
             <h4>Doctor-Specific Commands</h4>
             <p style="font-size: 14px; color: #666;">
                 If you're a doctor, first set your specialty:
@@ -331,12 +394,13 @@
                 <li><code>/order "test/medication"</code> - Log orders</li>
                 <li><code>/agent ask patient "topic"</code> - Delegate questions to patient's agent</li>
             </ul>
-            
+
             <h4>Keyboard Shortcuts</h4>
-            <div style="font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 12px; border-radius: 4px;">
+            <div
+                style="font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 12px; border-radius: 4px;">
                 <div style="margin: 8px 0;"><strong>Ctrl+F</strong> - Quick feedback</div>
             </div>
-            
+
             <h4>World Simulations</h4>
             <p style="font-size: 14px; color: #666;">
                 World simulations test multi-care circle dynamics where users can be both patients and caregivers:
@@ -347,7 +411,7 @@
                 <li>Complex dynamics: Testing how agents handle multi-circle relationships</li>
                 <li>Visualization: Network view shows all circles, users, and companions</li>
             </ul>
-            
+
             <h4>Training & Analysis</h4>
             <p style="font-size: 14px; color: #666;">
                 Use the Training & Feedback tab to:
@@ -358,17 +422,17 @@
                 <li>Compare prompt versions side-by-side</li>
                 <li>View detailed training logs and metrics</li>
             </ul>
-            
+
             <h4>Terminology</h4>
             <p><strong>Circle:</strong> A patient's care team (caregivers + doctors)</p>
             <p><strong>Interaction:</strong> Single message exchange (your message + agent response)</p>
             <p><strong>Conversation:</strong> Full chat session (multiple interactions grouped together)</p>
-            <p><strong>World Simulation:</strong> Multi-care circle simulation with overlapping users and role inversions</p>
+            <p><strong>World Simulation:</strong> Multi-care circle simulation with overlapping users and role
+                inversions</p>
         </div>
     </div>
 
     <script type="module" src="app.js"></script>
 </body>
+
 </html>
-
-

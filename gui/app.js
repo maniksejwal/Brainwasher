@@ -12,7 +12,8 @@ import { setupCommandSuggestions } from './ui/commandSuggestions.js';
 import { setupFeedbackModal } from './ui/feedback.js';
 import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs } from './ui/dataLoaders.js';
 // Old simulationUI.js removed - using simulationUI_new.js instead
-import { generateAndShowAnalysis } from './ui/analysisUI.js';
+import { initAnalysisUI } from './ui/analysisUI.js';
+import { initReportUI } from './ui/reportUI.js';
 import initTrainingDashboard from './ui/trainingDashboard.js';
 import initPromptComparison from './ui/promptComparison.js';
 
@@ -39,7 +40,7 @@ document.getElementById('login-btn').addEventListener('click', async () => {
 
     try {
         const data = await api.login(username);
-        
+
         state.username = username;
         state.userId = data.userId;
         state.currentCircleId = data.activeCircleId;
@@ -48,7 +49,7 @@ document.getElementById('login-btn').addEventListener('click', async () => {
 
         document.getElementById('login-screen').classList.remove('active');
         document.getElementById('app-screen').classList.add('active');
-        
+
         document.getElementById('current-context').textContent = `@${data.patientUsername}`;
         document.getElementById('username-display').textContent = username;
 
@@ -57,7 +58,7 @@ document.getElementById('login-btn').addEventListener('click', async () => {
         document.title = `${username} (${role}) - Care Circles`;
 
         connectToEventSource();
-        
+
         if (data.isNewUser) {
             addSystemMessage(MESSAGES.WELCOME_NEW(username));
             addSystemMessage(MESSAGES.HELP_HINT);
@@ -65,14 +66,16 @@ document.getElementById('login-btn').addEventListener('click', async () => {
         } else {
             addSystemMessage(MESSAGES.WELCOME_BACK(username));
         }
-        
+
         // Load scenarios for simulation tab
         // Initialize new fresh simulation UI
         initSimulationUI(api, state);
-        
+
         // Initialize training and prompt comparison dashboards
         initTrainingDashboard();
         initPromptComparison();
+        initAnalysisUI();
+        initReportUI();
     } catch (error) {
         alert(MESSAGES.LOGIN_FAILED(error.message));
     }
@@ -204,13 +207,13 @@ document.getElementById('close-help').addEventListener('click', () => {
 document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
         const tabName = tab.dataset.tab;
-        
+
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
-        
+
         tab.classList.add('active');
         document.getElementById(tabName).classList.add('active');
-        
+
         // Load data when switching tabs
         if (tabName === 'my-feedback' && state.userId) {
             loadFeedbackData(api, state.userId);
@@ -231,9 +234,9 @@ document.querySelectorAll('.tab').forEach(tab => {
 
 // Feedback button removed - use inline feedback in simulation tab
 
-document.getElementById('generate-analysis').addEventListener('click', () => {
-    generateAndShowAnalysis(api);
-});
+// Feedback button removed - use inline feedback in simulation tab
+
+// Analysis event listeners handled in initAnalysisUI()
 
 document.getElementById('refresh-logs').addEventListener('click', () => {
     loadServerLogs(api);
@@ -263,36 +266,36 @@ document.getElementById('add-doctor-btn').addEventListener('click', () => {
 
 document.getElementById('submit-add-member').addEventListener('click', async () => {
     let command = '';
-    
+
     if (currentMemberType === 'caregiver') {
         const username = document.getElementById('caregiver-username').value.trim();
         const relationship = document.getElementById('caregiver-relationship').value.trim();
-        
+
         if (!username || !relationship) {
             alert('Please fill in both username and relationship');
             return;
         }
-        
+
         command = `/care ${username} as ${relationship}`;
     } else if (currentMemberType === 'doctor') {
         const username = document.getElementById('doctor-username').value.trim();
         const specialty = document.getElementById('doctor-specialty').value.trim();
-        
+
         if (!username) {
             alert('Please enter doctor username');
             return;
         }
-        
-        command = specialty 
+
+        command = specialty
             ? `/doc ${username} as ${specialty}`
             : `/doc ${username}`;
     } else {
         alert('Please select member type first');
         return;
     }
-    
+
     await sendMessage(command);
-    
+
     // Close modal and reset
     document.getElementById('add-member-modal').classList.remove('active');
     document.getElementById('caregiver-form').style.display = 'none';
@@ -301,7 +304,7 @@ document.getElementById('submit-add-member').addEventListener('click', async () 
     document.getElementById('caregiver-relationship').value = '';
     document.getElementById('doctor-username').value = '';
     currentMemberType = null;
-    
+
     // Reload circle view after adding member
     setTimeout(() => {
         loadCircleInfo(api, state.userId);

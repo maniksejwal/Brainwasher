@@ -68,7 +68,7 @@ if (config.GEMINI_API_KEYS && config.GEMINI_API_KEYS.length > 0) {
             return null;
         }
     }).filter(Boolean);
-    
+
     if (geminiClients.length > 0) {
         console.log(`[Agent] ${geminiClients.length} Gemini client(s) initialized.`);
     }
@@ -159,32 +159,32 @@ function getNextProvider(useCase = 'basic_responses') {
         }
         return null;
     }
-    
+
     const availableProviders = [];
-    
+
     if (isOllamaAvailable()) {
         availableProviders.push({ type: PROVIDERS.OLLAMA });
     }
-    
+
     // Add Gemini clients that haven't failed
     const workingGeminiClients = geminiClients.filter(gc => !failedKeys.has(gc.apiKey));
     if (workingGeminiClients.length > 0) {
         availableProviders.push({ type: PROVIDERS.GEMINI, clients: workingGeminiClients });
     }
-    
+
     // Add OpenAI if available and not failed
     if (openAIClient && !failedKeys.has(config.CHAT_GPT_KEY)) {
         availableProviders.push({ type: PROVIDERS.OPENAI, client: openAIClient });
     }
-    
+
     if (availableProviders.length === 0) {
         return null;
     }
-    
+
     // Round-robin between providers
     const provider = availableProviders[requestCounter % availableProviders.length];
     requestCounter++;
-    
+
     return provider;
 }
 
@@ -198,7 +198,7 @@ function selectModelForUseCase(useCase, expectJson, promptLength) {
             reason: 'Free tier only mode'
         };
     }
-    
+
     // Simple use case mapping
     const useCaseModels = {
         'basic_responses': config.BASIC_RESPONSES_MODEL,
@@ -207,9 +207,9 @@ function selectModelForUseCase(useCase, expectJson, promptLength) {
         'critical_analysis': config.CRITICAL_ANALYSIS_MODEL,
         'synthetic_user': config.SYNTHETIC_USER_MODEL
     };
-    
+
     const selectedModel = useCaseModels[useCase] || config.DEFAULT_MODEL;
-    
+
     return {
         preferredModel: selectedModel,
         fallbackModel: config.FALLBACK_MODEL,
@@ -290,6 +290,11 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
                     const parsedResponse = parseJsonResponse(text, attempt, maxRetries);
                     if (parsedResponse) {
                         logProviderSummary();
+                        // Attach metadata to the parsed object
+                        if (typeof parsedResponse === 'object' && parsedResponse !== null) {
+                            parsedResponse.model_used = modelForAttempt;
+                            parsedResponse.model_provider = providerType;
+                        }
                         return parsedResponse;
                     }
                     if (attempt < maxRetries) {
@@ -370,57 +375,57 @@ function parseJsonResponse(text, attempt, maxRetries) {
 function isKeyFailureError(error) {
     const status = error.status || (error.response ? error.response.status : 500);
     const errorMessage = error.message?.toLowerCase() || '';
-    
+
     // API key specific failures
     if (status === 401 || status === 403) {
         return true; // Unauthorized/Forbidden
     }
-    
+
     // Model not found (404) - treat as key failure to avoid retrying
     if (status === 404 && errorMessage.includes('model')) {
         return true;
     }
-    
+
     // Quota exceeded or invalid key
-    if (errorMessage.includes('quota exceeded') || 
+    if (errorMessage.includes('quota exceeded') ||
         errorMessage.includes('invalid api key') ||
         errorMessage.includes('api key not found') ||
         errorMessage.includes('billing') ||
         errorMessage.includes('payment')) {
         return true;
     }
-    
+
     return false;
 }
 
 function shouldRetryError(error, attempt, maxRetries, providerType = PROVIDERS.OPENAI) {
     if (attempt >= maxRetries) return false;
-    
+
     const status = error.status || (error.response ? error.response.status : 500);
     const errorMessage = error.message?.toLowerCase() || '';
-    
+
     if (providerType === 'ollama') {
         if (status >= 500 || status === 408) {
             return true;
         }
         return errorMessage.includes('timeout') || errorMessage.includes('network');
     }
-    
+
     // Don't retry if it's a key failure
     if (isKeyFailureError(error)) {
         return false;
     }
-    
+
     // Retry on network/rate limit errors
     if (status === 503 || status === 429 || status === 502 || status === 504) {
         return true;
     }
-    
+
     // Retry on timeout errors
     if (errorMessage.includes('timeout') || errorMessage.includes('network')) {
         return true;
     }
-    
+
     return false;
 }
 
@@ -463,14 +468,14 @@ export function getApiStats() {
     const workingGeminiClients = geminiClients.filter(gc => !failedKeys.has(gc.apiKey));
     const workingOpenAI = openAIClient && !failedKeys.has(config.CHAT_GPT_KEY);
     const workingOllama = isOllamaAvailable() ? 1 : 0;
-    
+
     let nextProviderType = 'none';
     const previewProvider = getNextProvider();
     if (previewProvider) {
         nextProviderType = previewProvider.type;
         requestCounter = Math.max(0, requestCounter - 1);
     }
-    
+
     return {
         totalRequests: requestCounter,
         workingProviders: {
@@ -493,7 +498,7 @@ export function resetFailedKeys() {
 // Add more Gemini keys dynamically
 export function addGeminiKeys(newKeys) {
     const validKeys = newKeys.filter(key => key && !failedKeys.has(key));
-    
+
     validKeys.forEach((apiKey, index) => {
         try {
             const client = new GoogleGenerativeAI(apiKey).getGenerativeModel({ model: config.GEMINI_MODEL });
@@ -504,7 +509,7 @@ export function addGeminiKeys(newKeys) {
             failedKeys.add(apiKey);
         }
     });
-    
+
     return validKeys.length;
 }
 
