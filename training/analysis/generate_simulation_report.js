@@ -559,7 +559,7 @@ function generateHTML(logStats, dbStats, timeSeriesData) {
 </head>
 <body>
     <div class="sidebar">
-        <div class="sidebar-header">Brainwasher Sim</div>
+        <div class="sidebar-header">Statistics</div>
         <div class="nav-item active" onclick="switchTab('dashboard')">📊 Dashboard</div>
         <div class="nav-item" onclick="switchTab('trends')">📈 Trends & Charts</div>
         <div class="nav-item" onclick="switchTab('scenarios')">🧪 Scenario Analysis</div>
