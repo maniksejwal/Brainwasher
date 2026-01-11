@@ -100,7 +100,7 @@
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">
-                        Conversations 
+                        Simulated Runs 
                         <span class="info-icon" tooltip="Unique simulation sessions (1 full run)">ⓘ</span>
                     </div>
                     <div class="stat-value">4253</div>
@@ -133,8 +133,8 @@
 
             <h2>🤖 Model Performance</h2>
              <table>
-                <thead><tr><th>Model</th><th>Conversations</th><th>Unique Scenarios</th><th>Avg. Score</th></tr></thead>
-                <tbody><tr><td>unknown</td><td>4253</td><td>4253</td><td>N/A</td></tr></tbody>
+                <thead><tr><th>Simulated Runs</th><th>Avg. Score</th></tr></thead>
+                <tbody><tr><td><b>unknown</b> (4253 runs)</td><td>N/A</td></tr></tbody>
             </table>
 
             <div class="stats-grid" style="margin-top: 20px;">
@@ -1915,7 +1915,7 @@
         
             <div class="scenario-group" style="margin-bottom: 30px;">
                 <h3 class="group-title" style="background: #ecf0f1; padding: 15px; border-radius: 6px; margin-bottom: 10px;">
-                    World 
+                    World Scenario 
                     <span style="font-size:0.6em; color:#7f8c8d; font-weight:normal; margin-left: 10px;">
                         (72 versions | 113 total runs | 0.0% fail rate)
                     </span>
@@ -2629,7 +2629,7 @@
         function showScenariosList() {
             // Use DB scenarios if available, fallback to inferred scenarios from logs
             const dbScenarios = [];
-            const logScenarios = [{"name":"patient","count":4062},{"name":"obesity metabolic health","count":2},{"name":"caregiver crisis intervention","count":1},{"name":"cancer prevention comprehensive","count":1},{"name":"doctor avoidance caregiver convince","count":4},{"name":"family health crisis conflict","count":3},{"name":"smoking cessation motivational interviewing","count":1},{"name":"screen time mgd treatment","count":1},{"name":"caregiver no consent crisis","count":2},{"name":"denial prone","count":3},{"name":"anxious patient","count":2},{"name":"doctor avoidance minimal consultation","count":3},{"name":"medication nonadherent","count":7},{"name":"doctor avoidance agent convince","count":2},{"name":"ipd pediatrics pneumonia","count":2},{"name":"ipd medication adjustment","count":2},{"name":"ipd icu critical care","count":3},{"name":"caregiver burnout support","count":3},{"name":"elderly cognitive","count":4},{"name":"future planning conversation progress","count":2},{"name":"caregiver family conflict","count":2},{"name":"future planning behavior change","count":2},{"name":"caregiver health monitoring","count":1},{"name":"future planning medication adherence","count":1},{"name":"future planning crisis intervention","count":2},{"name":"future planning with commands","count":2},{"name":"future planning symptom progression","count":1},{"name":"caregiver medication management","count":1},{"name":"World","count":113},{"name":"hygiene vs activity","count":1},{"name":"ipd chronic disease exacerbation","count":1},{"name":"doctor patient caregiver disagreement","count":1},{"name":"full care circle","count":1},{"name":"opd cardiology initial","count":1},{"name":"conflicting reports","count":1},{"name":"opd pediatrics fever","count":2},{"name":"caregiver crisis report","count":1},{"name":"opd oncology chemotherapy","count":1},{"name":"screen time digital eye strain","count":1},{"name":"suicidal patient","count":1},{"name":"caregiver medication alert","count":1},{"name":"unknown","count":5}];
+            const logScenarios = [{"name":"patient","count":4062},{"name":"obesity metabolic health","count":2},{"name":"caregiver crisis intervention","count":1},{"name":"cancer prevention comprehensive","count":1},{"name":"doctor avoidance caregiver convince","count":4},{"name":"family health crisis conflict","count":3},{"name":"smoking cessation motivational interviewing","count":1},{"name":"screen time mgd treatment","count":1},{"name":"caregiver no consent crisis","count":2},{"name":"denial prone","count":3},{"name":"anxious patient","count":2},{"name":"doctor avoidance minimal consultation","count":3},{"name":"medication nonadherent","count":7},{"name":"doctor avoidance agent convince","count":2},{"name":"ipd pediatrics pneumonia","count":2},{"name":"ipd medication adjustment","count":2},{"name":"ipd icu critical care","count":3},{"name":"caregiver burnout support","count":3},{"name":"elderly cognitive","count":4},{"name":"future planning conversation progress","count":2},{"name":"caregiver family conflict","count":2},{"name":"future planning behavior change","count":2},{"name":"caregiver health monitoring","count":1},{"name":"future planning medication adherence","count":1},{"name":"future planning crisis intervention","count":2},{"name":"future planning with commands","count":2},{"name":"future planning symptom progression","count":1},{"name":"caregiver medication management","count":1},{"name":"World Scenario","count":113},{"name":"hygiene vs activity","count":1},{"name":"ipd chronic disease exacerbation","count":1},{"name":"doctor patient caregiver disagreement","count":1},{"name":"full care circle","count":1},{"name":"opd cardiology initial","count":1},{"name":"conflicting reports","count":1},{"name":"opd pediatrics fever","count":2},{"name":"caregiver crisis report","count":1},{"name":"opd oncology chemotherapy","count":1},{"name":"screen time digital eye strain","count":1},{"name":"suicidal patient","count":1},{"name":"caregiver medication alert","count":1},{"name":"unknown","count":5}];
             
             const scenarios = dbScenarios.length > 0 ? dbScenarios : logScenarios;
             

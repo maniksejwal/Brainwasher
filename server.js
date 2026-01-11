@@ -798,6 +798,160 @@ app.post('/api/cli/analyze', async (req, res) => {
 });
 
 // Generate HTML Report
+// (kept as is)
+
+// ========== SIMULATION LOGS API (New) ==========
+
+// Get full simulation history
+app.get('/api/simulations/history', async (req, res) => {
+    try {
+        const fs = await import('fs/promises');
+
+        // Check if log file exists
+        try {
+            await fs.access('./training/training_log.jsonl');
+        } catch {
+            return res.json({ sessions: [] });
+        }
+
+        const logData = await fs.readFile('./training/training_log.jsonl', 'utf-8');
+        const lines = logData.trim().split('\n').filter(line => line);
+        const allLogs = lines.map(line => {
+            try { return JSON.parse(line); } catch (e) { return null; }
+        }).filter(l => l);
+
+        // Group by conversation_id
+        const sessionsMap = {};
+        allLogs.forEach(log => {
+            const convId = log.conversation_id;
+            if (!convId || !convId.startsWith('sim_')) return;
+
+            if (!sessionsMap[convId]) {
+                sessionsMap[convId] = {
+                    id: convId,
+                    timestamp: log.timestamp, // Start time
+                    turns: 0,
+                    score: undefined,
+                    scenario: 'Unknown',
+                    logs: []
+                };
+            }
+
+            // Infer scenario from ID if possible (sim_{timestamp}_{scenario})
+            if (sessionsMap[convId].scenario === 'Unknown') {
+                const parts = convId.split('_');
+                // id format: sim_{runId}_{scenarioKey} or sim_{runId}
+                if (parts.length >= 3) {
+                    sessionsMap[convId].scenario = parts.slice(2).join('_');
+                }
+            }
+
+            // Track turns (count user messages)
+            if (log.role === 'user' || log.user_id?.startsWith('sim_')) {
+                sessionsMap[convId].turns++;
+            }
+
+            // Check for explicit feedback/score logs if any
+            if (log.type === 'feedback' && log.score !== undefined) {
+                sessionsMap[convId].score = log.score;
+            }
+        });
+
+        const sessions = Object.values(sessionsMap).sort((a, b) => b.timestamp - a.timestamp);
+        res.json({ sessions });
+
+    } catch (error) {
+        console.error('[Server] Simulation history error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get specific simulation logs
+app.get('/api/simulations/:id/logs', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const fs = await import('fs/promises');
+
+        try {
+            await fs.access('./training/training_log.jsonl');
+        } catch {
+            return res.json({ logs: [] });
+        }
+
+        const logData = await fs.readFile('./training/training_log.jsonl', 'utf-8');
+        const lines = logData.trim().split('\n').filter(line => line);
+
+        const logs = lines
+            .map(line => { try { return JSON.parse(line); } catch (e) { return null; } })
+            .filter(log => log && log.conversation_id === id)
+            .flatMap(log => {
+                const results = [];
+
+                // Helper to format user name
+                const formatUser = (uid) => {
+                    if (!uid) return 'Unknown';
+                    // Remove run ID and cli_ prefix
+                    return uid.replace(/^cli_/, '').replace(/_run_\d+.*$/, '').replace(/_/g, ' ');
+                };
+
+                const userName = formatUser(log.user_id);
+                const companionName = `Companion (${userName})`;
+
+                // 1. User Message
+                if (log.message) {
+                    results.push({
+                        role: log.role || (log.user_id === 'system' ? 'system' : 'user'),
+                        speaker: userName,
+                        target: companionName, // User speaks to their companion
+                        content: log.message,
+                        timestamp: log.timestamp,
+                        type: 'message'
+                    });
+                }
+
+                // 2. Agent Response
+                if (log.agent_response) {
+                    let target = userName; // Default: calls back to user
+                    let content = log.agent_response;
+
+                    // Heuristic: Check if message is "sent to" someone
+                    const sentMatch = content.match(/sent to ([\w_]+)/i);
+                    if (sentMatch) {
+                        target = formatUser(sentMatch[1]);
+                    }
+
+                    results.push({
+                        role: 'assistant',
+                        speaker: companionName, // Companion speaks
+                        target: target,
+                        content: content,
+                        timestamp: log.timestamp + 100,
+                        type: 'response'
+                    });
+                }
+
+                // 3. Fallback/Other
+                if (!log.message && !log.agent_response && log.action) {
+                    results.push({
+                        role: 'system',
+                        speaker: 'System',
+                        target: 'All',
+                        content: log.action,
+                        timestamp: log.timestamp,
+                        type: 'action'
+                    });
+                }
+
+                return results;
+            });
+
+        res.json({ logs });
+
+    } catch (error) {
+        console.error('[Server] Log fetch error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 app.post('/api/cli/generate-report', async (req, res) => {
     try {
         // Run the generation script

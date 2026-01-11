@@ -9,10 +9,10 @@ import { getPromptForModel } from '../prompts/model_specific_prompts.js';
 import { PROMPT_CONTEXT_ENRICHMENT } from '../prompts/enrichment_prompt.js';
 import { getRecentMessages, getUserState, getFactHistory, findUserById, findCircleByPatientId, getUnreadEscalationsForCircle } from '../db/index.js';
 import { STAGES_OF_CHANGE, COPING_STYLES } from '../behavioral_models.js';
-import { events } from '../orchestrator.js';
 import config from '../config.js';
+import { promptVersionManager } from '../training/core/prompt_version_manager.js';
 
-export async function processUserMessage(userId, role, message, careCircleMembers, circleId) {
+export async function processUserMessage(userId, role, message, careCircleMembers, circleId, promptVersion = null) {
     const history = await getRecentMessages(circleId, 5);
     const historyText = history.map(h => `${h.user_id}: ${h.message}`);
     const currentState = await getUserState(userId, circleId);
@@ -20,6 +20,7 @@ export async function processUserMessage(userId, role, message, careCircleMember
     const recentEscalations = await getUnreadEscalationsForCircle(circleId);
     const speaker = await findUserById(userId);
     const circle = await findCircleByPatientId(circleId);
+    if (!circle) throw new Error(`Circle ${circleId} not found`);
     const patient = await findUserById(circle.primary_patient_id);
 
     const behavioralModels = {
@@ -28,11 +29,29 @@ export async function processUserMessage(userId, role, message, careCircleMember
     };
 
     // Use the same model for prompt selection as for API call
-    const modelForPrompt = config.USE_FREE_TIER_ONLY 
-        ? config.DEFAULT_MODEL 
+    const modelForPrompt = config.USE_FREE_TIER_ONLY
+        ? config.DEFAULT_MODEL
         : config.CONVERSATIONAL_AGENT_MODEL;
-    
-    const prompt = getPromptForModel(modelForPrompt)
+
+    // 1. Try loading from database if version is specified or as baseline
+    let promptTemplate = null;
+    try {
+        const versionedPrompt = await promptVersionManager.getPrompt('system_base', promptVersion);
+        if (versionedPrompt) {
+            promptTemplate = versionedPrompt.content;
+            console.log(`[UnifiedAgent] Using ${promptVersion || 'baseline'} prompt from database`);
+        }
+    } catch (err) {
+        console.warn(`[UnifiedAgent] Database prompt lookup failed: ${err.message}`);
+    }
+
+    // 2. Fallback to static prompt logic if DB failed or no version found
+    if (!promptTemplate) {
+        promptTemplate = getPromptForModel(modelForPrompt);
+        console.log(`[UnifiedAgent] Using static/hardcoded prompt for ${modelForPrompt}`);
+    }
+
+    const prompt = promptTemplate
         .replace('{{SPEAKER_USERNAME}}', speaker.username)
         .replace('{{SPEAKER_ROLE}}', role)
         .replace('{{PATIENT_USERNAME}}', patient.username)

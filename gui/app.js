@@ -16,6 +16,7 @@ import { initAnalysisUI } from './ui/analysisUI.js';
 import { initReportUI } from './ui/reportUI.js';
 import initTrainingDashboard from './ui/trainingDashboard.js';
 import initPromptComparison from './ui/promptComparison.js';
+import { loadConversationLogs } from './ui/simulationLogsUI.js';
 
 // Create shared API client
 const api = new ApiClient(config.ORCHESTRATOR_URL);
@@ -225,6 +226,8 @@ document.querySelectorAll('.tab').forEach(tab => {
             // Training dashboard is already initialized
         } else if (tabName === 'prompts') {
             // Prompt comparison is already initialized
+        } else if (tabName === 'simulation-logs') {
+            loadConversationLogs(api);
         }
     });
 });

@@ -260,31 +260,54 @@ function groupFlags(flags) {
 }
 
 function extractScenarioName(data) {
-    // Priority 1: If promptVersion contains a known scenario key from world_scenarios.js
-    // Known world scenarios: patient_caregiver_swap, family_network_care, sandwich_generation, blended_family_care, complex_family_medical_crisis
-    const worldScenarioKeys = ['patient_caregiver_swap', 'family_network_care', 'sandwich_generation', 'blended_family_care', 'complex_family_medical_crisis'];
+    if (!data) return "Unknown";
 
-    for (const key of worldScenarioKeys) {
-        if (data.promptVersion.includes(key)) {
-            // Convert snake_case to Title Case
-            return key.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-        }
+    const pVersion = data.promptVersion || "";
+    const convId = data.conversationId || data.conversation_id || "";
+    const participants = data.participants || new Set();
+
+    // Priority 1: If promptVersion contains a known scenario key from world_scenarios.js
+    const worldScenarioKeys = [
+        'patient_caregiver_swap',
+        'family_network_care',
+        'sandwich_generation',
+        'blended_family_care',
+        'complex_family_medical_crisis'
+    ];
+
+    // Check if promptVersion or conversation_id contains any of these keys
+    const scenarioKey = worldScenarioKeys.find(key =>
+        pVersion.includes(key) || convId.includes(key)
+    );
+
+    if (scenarioKey) {
+        return scenarioKey.split('_').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
     }
 
-    // Priority 2: If promptVersion contains the scenario name (non-timestamped part)
-    // format: simulation_v<timestamp>_<scenario_name> or world_v<timestamp>
-    const pvMatch = data.promptVersion.match(/(?:simulation|world)_v\d+_(.+)/);
+    // Priority 2: If it's a world simulation but key not found, try to infer from participants/id
+    if (pVersion.includes('world') || convId.includes('world')) {
+        // Try to find a hint in the conversation_id after the timestamp
+        const idMatch = convId.match(/world_v\d+_(.+)/);
+        if (idMatch) return idMatch[1].replace(/_/g, ' ');
+
+        // If it's just "world_v...", try checking participants
+        const participantsArr = Array.from(participants);
+        if (participantsArr.includes('mom_helen') || participantsArr.includes('sarah')) return "Complex Family Medical Crisis";
+        if (participantsArr.includes('stepmom')) return "Blended Family Care Dynamics";
+        if (participantsArr.includes('grandma')) return "Family Network Care";
+
+        return "World Scenario";
+    }
+
+    // Priority 3: Regular scenarios
+    const pvMatch = pVersion.match(/(?:simulation|world)_v\d+_(.+)/);
     if (pvMatch) return pvMatch[1].replace(/_/g, ' ');
 
-    // Priority 3: If it's just "world_v<timestamp>", return "World"
-    if (data.promptVersion.match(/^world_v\d+$/)) return "World";
+    const participantsArr = Array.from(participants);
+    const mainUser = participantsArr.find(p => p !== 'agent' && p !== 'model' && p !== 'unknown');
+    if (mainUser) return mainUser.replace(/_\d+$/, '').replace(/_/g, ' ');
 
-    // Priority 4: From conversation_id or participants
-    const participants = Array.from(data.participants);
-    const mainUser = participants.find(p => p !== 'agent' && p !== 'model' && p !== 'unknown');
-    if (mainUser) return mainUser.replace(/_\d+$/, '').replace(/_/g, ' '); // remove trailing numbers
-
-    return data.promptVersion; // Fallback
+    return pVersion || "Unknown";
 }
 
 function processTimeSeriesData(logStats, dbStats) {
@@ -369,7 +392,8 @@ function generateHTML(logStats, dbStats, timeSeriesData) {
         // Calculate avg score for this model
         const modelScores = timeSeries.filter(t => t.modelUsed === model && t.score !== null).map(t => t.score);
         const mAvgScore = modelScores.length ? (modelScores.reduce((a, b) => a + b, 0) / modelScores.length).toFixed(2) : "N/A";
-        return `<tr><td>${model}</td><td>${data.count}</td><td>${data.conversationIds.size}</td><td>${mAvgScore}</td></tr>`;
+        // User wants only 2 columns: Simulated Runs (showing model + count) and Avg. Score
+        return `<tr><td><b>${model}</b> (${data.count} runs)</td><td>${mAvgScore}</td></tr>`;
     }).join('');
 
 
@@ -573,7 +597,7 @@ function generateHTML(logStats, dbStats, timeSeriesData) {
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-label">
-                        Conversations 
+                        Simulated Runs 
                         <span class="info-icon" tooltip="Unique simulation sessions (1 full run)">ⓘ</span>
                     </div>
                     <div class="stat-value">${logStats.conversations.size}</div>
@@ -606,7 +630,7 @@ function generateHTML(logStats, dbStats, timeSeriesData) {
 
             <h2>🤖 Model Performance</h2>
              <table>
-                <thead><tr><th>Model</th><th>Conversations</th><th>Unique Scenarios</th><th>Avg. Score</th></tr></thead>
+                <thead><tr><th>Simulated Runs</th><th>Avg. Score</th></tr></thead>
                 <tbody>${modelStatsHtml}</tbody>
             </table>
 
