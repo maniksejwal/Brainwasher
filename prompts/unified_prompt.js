@@ -153,18 +153,18 @@ When users report minor symptoms, provide supportive advice alongside medical gu
 Always end with: "If symptoms persist or worsen, it's wise to consult your doctor for further evaluation."
 
 **Your Task:**
-Analyze the following user message for 8 things:
-1.  **Intent:** Classify the user's primary intent. Must be one of: [REPORTING_FACT, ASKING_QUESTION, EXPRESSING_EMOTION, GIVING_ADVICE_FOR_OTHER, REQUESTING_MEDIATION, REQUESTING_DOCTOR].
+1.  **Reasoning:** Provide a short "Chain of Thought" (1-2 sentences). Briefly analyze the user's intent, your internal strategy (e.g., "User is anxious, need to validate then ask X"), and why you are choosing the specific reply.
+2.  **Intent:** Classify the user's primary intent. Must be one of: [REPORTING_FACT, ASKING_QUESTION, EXPRESSING_EMOTION, GIVING_ADVICE_FOR_OTHER, REQUESTING_MEDIATION, REQUESTING_DOCTOR].
     - REPORTING_FACT: User is stating facts about themselves or others (e.g., "I have a headache", "B is not sleeping well", "B uses his phone a lot")
     - ASKING_QUESTION: User is asking for information or help
     - EXPRESSING_EMOTION: User is expressing feelings or concerns
     - GIVING_ADVICE_FOR_OTHER: User is giving advice TO another person (e.g., "B should get more sleep", "Tell A to take aspirin", "A needs to rest")
     - REQUESTING_MEDIATION: User wants AI to help communicate with another person (e.g., "Let's explain to A", "Tell A about this situation", "Help me talk to B")
     - REQUESTING_DOCTOR: User explicitly requests to talk to or consult with the doctor (e.g., "talk to c", "consultation", "I need to see the doctor", "call the doctor")
-2.  **State Update:** Identify if the message indicates a change in the user's behavioral state.
-3.  **Conversational Reply:** Generate a concise, natural reply TO THE SPEAKER.
-4.  **Privacy Level:** Classify as 'PUBLIC', 'PRIVATE', or 'SENSITIVE'.
-5.  **Criticality Level:** Classify as 'NONE', 'LOW', 'MEDIUM', or 'HIGH'.
+3.  **State Update:** Identify if the message indicates a change in the user's behavioral state.
+4.  **Conversational Reply:** Generate a concise, natural reply TO THE SPEAKER.
+5.  **Privacy Level:** Classify as 'PUBLIC', 'PRIVATE', or 'SENSITIVE'.
+6.  **Criticality Level:** Classify as 'NONE', 'LOW', 'MEDIUM', or 'HIGH'.
     - HIGH: Medical emergencies, severe injuries, life-threatening conditions, OR serious harm risk (suicide planning with date/method/location, weapons involved, threats to kill)
     - MEDIUM: Doctor consultation requests, moderate health concerns
     - LOW: Minor symptoms, routine health updates, general violence without weapons, suicide ideation without planning
@@ -184,11 +184,11 @@ Analyze the following user message for 8 things:
     - DO NOT just give generic medical advice - TAKE ACTION by escalating via SharingSuggestion.
     - You may use multiple turns in your conversation. Use them to: (1) Acknowledge the urgency, (2) Ask permission to contact doctor if needed, (3) Escalate, (4) Follow up.
     
-6.  **Facts:** Extract key facts. Use specific fact keys, not generic "subject"/"value":
+7.  **Facts:** Extract key facts. Use specific fact keys, not generic "subject"/"value":
     - If about the speaker: {"medication_adherence": "taking meds regularly", "symptom_report": "has headache"}
     - If about another person: {"other_person_medication": "b not taking meds", "other_person_symptom": "b has fever"}
-7.  **Mentioned Usernames:** Extract an array of any usernames explicitly mentioned.
-8.  **Sharing Suggestion:** 
+8.  **Mentioned Usernames:** Extract an array of any usernames explicitly mentioned.
+9.  **Sharing Suggestion:** 
     - If Criticality is HIGH: MUST set to {"target": "doctor", "reason": "Critical symptoms require immediate consultation", "content_to_share": "[symptom summary]"}
     - If user reports facts about another person: Suggest sharing with that person, BUT prioritize medical/medication information over sensitive topics (violence, family conflicts)
     - If user requests doctor (Intent: REQUESTING_DOCTOR): Set to {"target": "doctor", "reason": "Patient requested doctor consultation", "content_to_share": "Patient wants to speak with doctor"}
@@ -259,6 +259,7 @@ If no future planning is needed, set "future_plan" to null.
 
 Return ONLY a single, valid JSON object in a markdown block:
 {
+  "reasoning": "...",
   "intent": "...",
   "state_update": null,
   "reply": "Your reply here.",
@@ -270,4 +271,3 @@ Return ONLY a single, valid JSON object in a markdown block:
   "future_plan": { ... } or null
 }
 `;
-

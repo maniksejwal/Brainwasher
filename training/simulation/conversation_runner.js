@@ -647,6 +647,8 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             // Agentic Communication Fields
             intent: agentResult.state_vector?.intent || null,
             future_plan: agentResult.future_plan || null,
+            reasoning: agentResult.reasoning || null, // Chain of Thought
+            outcome_label: agentResult.outcome_label || null,
             // Model Tracking
             model_used: agentResult.model_used || 'unknown',
             model_provider: agentResult.model_provider || 'unknown'
@@ -685,6 +687,8 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             // Agentic Communication Fields
             intent: agentResult.state_vector?.intent || null,
             future_plan: agentResult.future_plan || null,
+            reasoning: agentResult.reasoning || null, // Chain of Thought
+            outcome_label: agentResult.outcome_label || null,
             // Model Tracking
             model_used: agentResult.model_used || 'unknown',
             model_provider: agentResult.model_provider || 'unknown'

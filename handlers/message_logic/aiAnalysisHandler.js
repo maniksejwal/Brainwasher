@@ -142,6 +142,7 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
             sharingSuggestion: companionResult.sharingSuggestion || null,
             state_update: companionResult.state_update || null, // Include state update if generated
             future_plan: companionResult.future_plan || null, // Include future planning from Companion (now generated!)
+            reasoning: companionResult.reasoning || null, // Pass through reasoning/CoT
             system_used: 'companion' // Track which system was used
         };
 

@@ -28,27 +28,25 @@ class TrainingLogger {
         conversation_id: data.conversationId,
         user_id: data.userId,
         turn: data.turn || null, // Add turn number for precise mapping
-        message: data.message,
-        agent_response: data.agentResponse,
-        orchestrator_action: data.orchestratorAction,
-        state_vector: data.stateVector,
-        prompt_version: data.promptVersion || 'unknown',
-        system_used: data.systemUsed || 'unified', // Track Companion vs unified
-        latency_ms: data.latencyMs,
-        // Metadata for analysis
+        message: data.message, // User message
         message_length: data.message?.length || 0,
+        agent_response: data.agentResponse || '',
         response_length: data.agentResponse?.length || 0,
-        escalated: data.orchestratorAction?.type === 'ESCALATE',
-        shared: data.orchestratorAction?.type === 'SHARE',
-        // Model Tracking
+        latency_ms: data.latencyMs || 0,
+
+        // Context
+        state_vector: data.stateVector ? JSON.stringify(data.stateVector) : null,
+        orchestrator_action: data.orchestratorAction ? JSON.stringify(data.orchestratorAction) : null,
         model_used: data.modelUsed || 'unknown',
-        model_provider: data.modelProvider || 'unknown',
-        // User Role (for scenario grouping)
+        prompt_version: data.promptVersion || 'unknown',
+        system_used: data.systemUsed || 'unified',
+
+        // Agentic/RL Fields
         role: data.role || null,
-        // Agentic Communication Fields
         intent: data.intent || null,
         future_plan: data.future_plan ? JSON.stringify(data.future_plan) : null,
-        outcome_label: data.outcomeLabel || null, // 'positive', 'negative', or null
+        reasoning: data.reasoning || null, // Chain of Thought
+        outcome_label: data.outcomeLabel || null, // Positive/Negative signal
         filter_reason: data.filterReason || null
       };
 

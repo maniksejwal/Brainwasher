@@ -207,6 +207,25 @@ export async function handleMessage(userId, circleId, message) {
         }).catch(err => console.error('[MessageHandler] Failed to log valid reward:', err));
     }
 
+    // Poison Filtering: Determine if we should log this interaction for training vs debugging
+    let filterReason = null;
+    const POISON_PATTERNS = [
+        /i am an ai/i,
+        /as an ai language model/i,
+        /cannot (fulfill|comply|assist)/i,
+        /openai/i,
+        /google/i
+    ];
+
+    if (analysis?.intent === 'ERROR' || analysis?.system_used === 'error') {
+        filterReason = 'system_error';
+    } else if (analysis?.reply && POISON_PATTERNS.some(p => p.test(analysis.reply))) {
+        filterReason = 'ai_refusal';
+    }
+
+    // Only log strictly valid training data if NO filter reason, OR log everything but marked
+    // Strategy: Log everything to JSONL but with a `filter_reason` field so we can exclude it during training dataset generation.
+
     trainingLogger.logInteraction({
         conversationId: `${circleId}_${userId}_${Date.now()}`,
         userId,
@@ -220,7 +239,9 @@ export async function handleMessage(userId, circleId, message) {
         // Agentic Communication Fields
         intent: analysis?.intent || 'UNKNOWN',
         future_plan: analysis?.future_plan || null,
-        outcomeLabel
+        reasoning: analysis?.reasoning || null, // Chain of thought capture
+        outcomeLabel,
+        filterReason // 'system_error', 'ai_refusal', or null
     }).catch(err => { }); // Silently fail
 
     metricsCollector.recordResponseTime('full_analysis', latencyMs, true);
