@@ -48,7 +48,7 @@ class FeedbackAnalyzer {
      */
     async loadFeedback() {
         const db = await getDb();
-        
+
         try {
             const feedback = await db.all(`
                 SELECT * FROM feedback 
@@ -72,7 +72,7 @@ class FeedbackAnalyzer {
     mergeLogsWithFeedback(logs, feedback) {
         // Create feedback map by conversation_id + turn (or message_id for precise matching)
         const feedbackMap = new Map();
-        
+
         feedback.forEach(f => {
             // Primary key: conversation_id + turn number (most precise)
             // Fallback: conversation_id + message_id
@@ -87,7 +87,7 @@ class FeedbackAnalyzer {
             } else {
                 return; // Skip feedback without conversation_id
             }
-            
+
             if (!feedbackMap.has(key)) {
                 feedbackMap.set(key, []);
             }
@@ -96,7 +96,7 @@ class FeedbackAnalyzer {
 
         return logs.map(log => {
             let matchedFeedback = null;
-            
+
             // Try to match by conversation_id + turn number (if log has turn)
             if (log.conversation_id && log.turn !== null && log.turn !== undefined) {
                 // Look for feedback with matching conversation_id
@@ -105,8 +105,8 @@ class FeedbackAnalyzer {
                 const convFeedback = feedback.filter(f => f.conversation_id === log.conversation_id);
                 if (convFeedback.length > 0) {
                     // Sort by message_id (assuming it corresponds to turn order) or timestamp
-                    const sorted = convFeedback.sort((a, b) => 
-                        (a.message_id || 0) - (b.message_id || 0) || 
+                    const sorted = convFeedback.sort((a, b) =>
+                        (a.message_id || 0) - (b.message_id || 0) ||
                         (a.timestamp || 0) - (b.timestamp || 0)
                     );
                     // Match by position (turn 0 = first feedback, turn 1 = second, etc.)
@@ -123,13 +123,13 @@ class FeedbackAnalyzer {
             }
 
             return {
-            ...log,
+                ...log,
                 feedback: matchedFeedback,
                 // Add mapping metadata
                 _mapping: {
                     matched: !!matchedFeedback,
-                    method: matchedFeedback ? 
-                        (log.turn !== null && log.turn !== undefined ? 'conversation_id+turn' : 'conversation_id') : 
+                    method: matchedFeedback ?
+                        (log.turn !== null && log.turn !== undefined ? 'conversation_id+turn' : 'conversation_id') :
                         'none'
                 }
             };
@@ -142,7 +142,7 @@ class FeedbackAnalyzer {
      */
     async calculateRewardBackpropagation() {
         const db = await getDb();
-        
+
         try {
             // Get feedback with prompt versions, goal assessments, AND feedback comments for backpropagation
             const feedbackData = await db.all(`
@@ -161,7 +161,7 @@ class FeedbackAnalyzer {
                 WHERE source = 'simulation' AND prompt_version IS NOT NULL
                 ORDER BY timestamp DESC
             `);
-            
+
             if (feedbackData.length === 0) {
                 return {
                     prompt_performance: {},
@@ -169,7 +169,7 @@ class FeedbackAnalyzer {
                     optimization_opportunities: []
                 };
             }
-            
+
             // Group by prompt version
             const promptGroups = {};
             feedbackData.forEach(feedback => {
@@ -185,7 +185,7 @@ class FeedbackAnalyzer {
                         count: 0
                     };
                 }
-                
+
                 promptGroups[version].interactions.push(feedback);
                 promptGroups[version].total_score += feedback.score;
                 promptGroups[version].total_adherence += feedback.goal_adherence_score || 0;
@@ -194,7 +194,7 @@ class FeedbackAnalyzer {
                 promptGroups[version].critical_failures += feedback.critical_failure ? 1 : 0;
                 promptGroups[version].count++;
             });
-            
+
             // Calculate performance metrics for each prompt
             const promptPerformance = {};
             Object.entries(promptGroups).forEach(([version, data]) => {
@@ -208,17 +208,17 @@ class FeedbackAnalyzer {
                     reward_signal: this.calculateRewardSignal(data)
                 };
             });
-            
+
             // Generate reward signals for optimization
             const rewardSignals = this.generateRewardSignals(promptPerformance);
-            
+
             // Identify optimization opportunities (includes both rewards AND feedback comments)
             const optimizationOpportunities = this.identifyOptimizationOpportunities(promptPerformance, feedbackData);
-            
+
             // BACKPROPAGATION EXTENSION: Include feedback comments in backpropagation
             // Analyze feedback text/comments to identify patterns and issues
             const feedbackAnalysis = await this.analyzeFeedbackComments(feedbackData, promptGroups);
-            
+
             return {
                 prompt_performance: promptPerformance,
                 reward_signals: rewardSignals,
@@ -226,13 +226,13 @@ class FeedbackAnalyzer {
                 feedback_analysis: feedbackAnalysis, // NEW: Feedback-based backpropagation
                 total_feedback_points: feedbackData.length
             };
-            
+
         } catch (error) {
             console.error('[FeedbackAnalyzer] Error calculating reward backpropagation:', error.message);
             return null;
         }
     }
-    
+
     /**
      * Calculate reward signal for a prompt version
      */
@@ -242,29 +242,29 @@ class FeedbackAnalyzer {
         const adherenceWeight = 0.3;
         const historyWeight = 0.2;
         const conversationWeight = 0.1;
-        
+
         const avgScore = data.total_score / data.count;
         const avgAdherence = data.total_adherence / data.count;
         const avgHistory = data.total_history / data.count;
         const avgConversation = data.total_conversation / data.count;
         const failurePenalty = data.critical_failures / data.count;
-        
+
         const reward = (
             avgScore * scoreWeight +
             avgAdherence * adherenceWeight +
             avgHistory * historyWeight +
             avgConversation * conversationWeight
         ) - (failurePenalty * 0.5); // Penalty for critical failures
-        
+
         return Math.max(-1, Math.min(1, reward)); // Clamp between -1 and 1
     }
-    
+
     /**
      * Generate actionable reward signals
      */
     generateRewardSignals(promptPerformance) {
         const signals = [];
-        
+
         Object.entries(promptPerformance).forEach(([version, performance]) => {
             if (performance.reward_signal < -0.3) {
                 signals.push({
@@ -304,23 +304,23 @@ class FeedbackAnalyzer {
                 });
             }
         });
-        
+
         return signals;
     }
-    
+
     /**
      * Identify specific optimization opportunities
      */
     identifyOptimizationOpportunities(promptPerformance, feedbackData) {
         const opportunities = [];
-        
+
         // Find patterns in negative feedback
         const negativeFeedback = feedbackData.filter(f => f.score < 0);
         const failurePatterns = {};
-        
+
         negativeFeedback.forEach(feedback => {
             const comment = feedback.comment?.toLowerCase() || '';
-            
+
             // Categorize failure types
             if (comment.includes('escalat')) {
                 failurePatterns.escalation = (failurePatterns.escalation || 0) + 1;
@@ -335,7 +335,7 @@ class FeedbackAnalyzer {
                 failurePatterns.generic_response = (failurePatterns.generic_response || 0) + 1;
             }
         });
-        
+
         // Create optimization opportunities based on patterns
         Object.entries(failurePatterns).forEach(([pattern, count]) => {
             if (count >= 3) { // Threshold for actionable optimization
@@ -348,10 +348,10 @@ class FeedbackAnalyzer {
                 });
             }
         });
-        
+
         return opportunities;
     }
-    
+
     /**
      * Analyze feedback comments for backpropagation (NEW: Extends backpropagation to include feedback text)
      * Uses LLM to intelligently extract themes, issues, and suggestions from feedback comments
@@ -361,13 +361,13 @@ class FeedbackAnalyzer {
      */
     async analyzeFeedbackComments(feedbackData, promptGroups) {
         const feedbackAnalysis = {};
-        
+
         // Analyze feedback comments per prompt version using LLM
         for (const [version, group] of Object.entries(promptGroups)) {
             const comments = group.interactions
                 .filter(f => f.comment || f.feedback_text)
                 .map(f => f.comment || f.feedback_text || '');
-            
+
             if (comments.length === 0) {
                 feedbackAnalysis[version] = {
                     total_feedback: 0,
@@ -377,7 +377,7 @@ class FeedbackAnalyzer {
                 };
                 continue;
             }
-            
+
             // Use LLM to analyze comments
             try {
                 const analysis = await this._analyzeCommentsWithLLM(comments, version);
@@ -388,7 +388,7 @@ class FeedbackAnalyzer {
                 feedbackAnalysis[version] = this._analyzeCommentsFallback(comments);
             }
         }
-        
+
         return feedbackAnalysis;
     }
 
@@ -400,7 +400,7 @@ class FeedbackAnalyzer {
      */
     async _analyzeCommentsWithLLM(comments, promptVersion) {
         const commentsText = comments.join('\n---\n');
-        
+
         // Use prompt from prompts package
         const analysisPrompt = generateFeedbackAnalysisPrompt(promptVersion, commentsText);
 
@@ -413,7 +413,7 @@ class FeedbackAnalyzer {
                 2000, // maxTokens
                 'analysis' // useCase
             );
-            
+
             // Parse the JSON response
             let analysis;
             if (typeof result === 'object' && result.reply) {
@@ -435,7 +435,7 @@ class FeedbackAnalyzer {
             } else {
                 throw new Error('Unexpected response format from LLM');
             }
-            
+
             // Validate and normalize the response structure
             return {
                 total_feedback: comments.length,
@@ -467,10 +467,10 @@ class FeedbackAnalyzer {
         const themes = {};
         const issues = {};
         const suggestions = [];
-        
+
         comments.forEach(comment => {
             const lowerComment = comment.toLowerCase();
-            
+
             // Extract common themes with simple pattern matching
             if (lowerComment.includes('verbose') || lowerComment.includes('too long') || lowerComment.includes('repetitive')) {
                 themes.verbosity = (themes.verbosity || 0) + 1;
@@ -498,7 +498,7 @@ class FeedbackAnalyzer {
                 suggestions.push('Strengthen 6-step misconception handling process');
             }
         });
-        
+
         return {
             total_feedback: comments.length,
             themes: Object.entries(themes)
@@ -513,7 +513,7 @@ class FeedbackAnalyzer {
             suggestions: [...new Set(suggestions)]
         };
     }
-    
+
     /**
      * Get specific prompt improvement suggestions
      */
@@ -540,7 +540,7 @@ class FeedbackAnalyzer {
                 'Improve personalization based on patient history'
             ]
         };
-        
+
         return suggestions[pattern] || ['Review prompt for clarity and specificity'];
     }
 
@@ -549,9 +549,9 @@ class FeedbackAnalyzer {
      */
     async analyzePerformance() {
         const db = await getDb();
-        
+
         try {
-            // Get recent feedback data
+            // Get recent feedback data from DB
             const feedbackData = await db.all(`
                 SELECT 
                     AVG(score) as averageScore,
@@ -563,17 +563,69 @@ class FeedbackAnalyzer {
                 FROM feedback 
                 WHERE source = 'simulation'
             `);
-            
+
             const metrics = feedbackData[0] || {};
-            
+
+            // NEW: Parse training_log.jsonl for outcome labels (RLHF rewards)
+            const logPath = path.join(__dirname, '../training_log.jsonl');
+            let rewardScore = 0;
+            let rewardCount = 0;
+
+            try {
+                const content = await fs.readFile(logPath, 'utf-8');
+                const entries = content.split('\n')
+                    .filter(line => line.trim())
+                    .map(line => {
+                        try {
+                            return JSON.parse(line);
+                        } catch (e) {
+                            return null;
+                        }
+                    })
+                    .filter(entry => entry !== null);
+
+                // Calculate reward-weighted score from last 7 days
+                const cutoffTime = Date.now() - (7 * 24 * 60 * 60 * 1000);
+
+                for (const entry of entries) {
+                    if (entry.timestamp > cutoffTime && entry.outcome_label) {
+                        if (entry.outcome_label === 'positive') {
+                            rewardScore += 1.0;
+                            rewardCount++;
+                        } else if (entry.outcome_label === 'negative') {
+                            rewardScore -= 1.0;
+                            rewardCount++;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.log('[FeedbackAnalyzer] Could not read training_log.jsonl for outcome labels:', error.message);
+            }
+
+            const avgRewardScore = rewardCount > 0 ? rewardScore / rewardCount : 0;
+
             // Calculate derived metrics
             const total = metrics.totalFeedback || 0;
             const failureRate = total > 0 ? (metrics.criticalFailures / total) : 0;
             const escalationEffectiveness = 1 - Math.min(failureRate, 1); // Inverse of critical failures
             const conversationQuality = (metrics.avgConversation || 0) / 5; // Normalize to 0-1
-            
+
+            // Combine AI feedback score with RLHF reward score
+            const baseFeedbackScore = metrics.averageScore || 0;
+            const combinedScore = rewardCount > 0
+                ? (baseFeedbackScore + avgRewardScore) / 2
+                : baseFeedbackScore;
+
+            console.log(`[FeedbackAnalyzer] Performance Analysis:`);
+            console.log(`  AI Feedback Score: ${baseFeedbackScore.toFixed(2)}`);
+            console.log(`  RLHF Reward Score: ${avgRewardScore.toFixed(2)} (${rewardCount} samples)`);
+            console.log(`  Combined Score: ${combinedScore.toFixed(2)}`);
+
             return {
-                averageScore: metrics.averageScore || 0,
+                averageScore: combinedScore, // Use combined score
+                baseFeedbackScore: baseFeedbackScore, // Keep original for reference
+                rewardScore: avgRewardScore, // NEW: RLHF reward score
+                rewardCount: rewardCount, // NEW: Number of reward samples
                 escalationEffectiveness: escalationEffectiveness,
                 conversationQuality: conversationQuality,
                 adherenceScore: metrics.avgAdherence || 0,
@@ -585,6 +637,9 @@ class FeedbackAnalyzer {
             console.error('[FeedbackAnalyzer] Error analyzing performance:', error.message);
             return {
                 averageScore: 0,
+                baseFeedbackScore: 0,
+                rewardScore: 0,
+                rewardCount: 0,
                 escalationEffectiveness: 0,
                 conversationQuality: 0,
                 adherenceScore: 0,
@@ -603,15 +658,15 @@ class FeedbackAnalyzer {
         try {
             const logPath = path.join(__dirname, '../training_log.jsonl');
             const logs = await this.loadTrainingLog(logPath);
-            
+
             // Separate logs by system_used
             const companionLogs = logs.filter(log => log.system_used === 'companion');
             const unifiedLogs = logs.filter(log => log.system_used === 'unified');
-            
+
             // Calculate metrics for each system
             const companionMetrics = this.calculateSystemMetrics(companionLogs);
             const unifiedMetrics = this.calculateSystemMetrics(unifiedLogs);
-            
+
             // Compare performance
             const comparison = {
                 companion: companionMetrics,
@@ -625,7 +680,7 @@ class FeedbackAnalyzer {
                     recommendation: this.generateRecommendation(companionMetrics, unifiedMetrics)
                 }
             };
-            
+
             return comparison;
         } catch (error) {
             console.error('[FeedbackAnalyzer] Error comparing systems:', error.message);
@@ -648,7 +703,7 @@ class FeedbackAnalyzer {
                 shareRate: 0
             };
         }
-        
+
         const withFeedback = logs.filter(log => log.human_score !== undefined);
         const totalScore = withFeedback.reduce((sum, log) => sum + (log.human_score || 0), 0);
         const totalLatency = logs.reduce((sum, log) => sum + (log.latency_ms || 0), 0);
@@ -656,7 +711,7 @@ class FeedbackAnalyzer {
         const totalMessageLength = logs.reduce((sum, log) => sum + (log.message_length || 0), 0);
         const escalatedCount = logs.filter(log => log.escalated === true).length;
         const sharedCount = logs.filter(log => log.shared === true).length;
-        
+
         return {
             totalInteractions: logs.length,
             avgScore: withFeedback.length > 0 ? totalScore / withFeedback.length : 0,
@@ -674,11 +729,11 @@ class FeedbackAnalyzer {
     generateRecommendation(companionMetrics, unifiedMetrics) {
         const companionScore = companionMetrics.avgScore;
         const unifiedScore = unifiedMetrics.avgScore;
-        
+
         if (Math.abs(companionScore - unifiedScore) < 0.1) {
             return 'Both systems perform similarly. Consider A/B testing with more data.';
         }
-        
+
         if (companionScore > unifiedScore) {
             return `Companion system outperforms unified by ${((companionScore - unifiedScore) * 100).toFixed(1)}% average score. Consider promoting Companion to production.`;
         } else {
@@ -691,23 +746,23 @@ class FeedbackAnalyzer {
      */
     calculateStats(mergedData) {
         const withFeedback = mergedData.filter(d => d.feedback);
-        
+
         const stats = {
             total_interactions: mergedData.length,
             with_feedback: withFeedback.length,
             feedback_rate: withFeedback.length / mergedData.length,
-            
+
             // Scores
             positive_feedback: withFeedback.filter(d => d.feedback.score === 1).length,
             neutral_feedback: withFeedback.filter(d => d.feedback.score === 0).length,
             negative_feedback: withFeedback.filter(d => d.feedback.score === -1).length,
             average_score: withFeedback.reduce((sum, d) => sum + d.feedback.score, 0) / withFeedback.length || 0,
-            
+
             // Response metrics
             average_latency: mergedData.length > 0 ? mergedData.reduce((sum, d) => sum + (d.latency_ms || 0), 0) / mergedData.length : 0,
             average_response_length: mergedData.length > 0 ? mergedData.reduce((sum, d) => sum + (d.response_length || 0), 0) / mergedData.length : 0,
             average_message_length: mergedData.length > 0 ? mergedData.reduce((sum, d) => sum + (d.message_length || 0), 0) / mergedData.length : 0,
-            
+
             // Actions
             escalations: mergedData.filter(d => d.escalated).length,
             shares: mergedData.filter(d => d.shared).length
@@ -723,7 +778,7 @@ class FeedbackAnalyzer {
      */
     analyzeNegativeFeedback(mergedData) {
         const negative = mergedData.filter(d => d.feedback && d.feedback.score === -1);
-        
+
         const patterns = {
             verbosity: [],
             missed_escalations: [],
@@ -738,7 +793,7 @@ class FeedbackAnalyzer {
             const messageLength = item.message_length || 1;
 
             // Detect verbosity issues
-            if (comment.includes('verbose') || comment.includes('too long') || comment.includes('wordy') || 
+            if (comment.includes('verbose') || comment.includes('too long') || comment.includes('wordy') ||
                 responseLength / messageLength > 4) {
                 patterns.verbosity.push(item);
             }
@@ -768,7 +823,7 @@ class FeedbackAnalyzer {
      */
     analyzePositiveFeedback(mergedData) {
         const positive = mergedData.filter(d => d.feedback && d.feedback.score === 1);
-        
+
         const characteristics = {
             average_response_length: positive.length > 0 ? positive.reduce((sum, d) => sum + (d.response_length || 0), 0) / positive.length : 0,
             average_latency: positive.length > 0 ? positive.reduce((sum, d) => sum + (d.latency_ms || 0), 0) / positive.length : 0,
@@ -788,7 +843,7 @@ class FeedbackAnalyzer {
 
         try {
             let analysis;
-            
+
             if (this.useOpenAI) {
                 const response = await this.openai.chat.completions.create({
                     model: 'gpt-4',
@@ -862,7 +917,7 @@ class FeedbackAnalyzer {
      */
     _buildReport(stats, negativePatterns, positiveChars, aiAnalysis, systemComparison = null) {
         const timestamp = new Date().toISOString();
-        
+
         return `# Training Data Analysis Report
 
 Generated: ${timestamp}
@@ -945,7 +1000,7 @@ ${this._generatePriorityRecommendations(stats, negativePatterns)}
 *This report is automatically generated by the Feedback Analyzer*
 `;
     }
-    
+
     /**
      * Format system comparison for report
      */
@@ -953,11 +1008,11 @@ ${this._generatePriorityRecommendations(stats, negativePatterns)}
         if (!comparison || !comparison.comparison) {
             return 'Insufficient data for system comparison.';
         }
-        
+
         const comp = comparison.comparison;
         const companion = comparison.companion;
         const unified = comparison.unified;
-        
+
         return `
 ### Performance Metrics
 
@@ -1030,7 +1085,7 @@ async function main() {
 }
 
 // Run if called directly
-if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}` || 
+if (import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}` ||
     process.argv[1]?.includes('feedback_analyzer')) {
     main().catch(error => {
         console.error('Error:', error);

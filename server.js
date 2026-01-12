@@ -866,6 +866,65 @@ app.get('/api/simulations/history', async (req, res) => {
     }
 });
 
+// Submit human feedback
+app.post('/api/feedback/submit', async (req, res) => {
+    try {
+        const { conversation_id, message_id, score, comment, category } = req.body;
+
+        if (!conversation_id || score === undefined) {
+            return res.status(400).json({ error: 'Missing required fields: conversation_id, score' });
+        }
+
+        const db = await getDb();
+        await db.run(`
+            INSERT INTO feedback (
+                conversation_id, user_id, circle_id, message_id,
+                score, comment, feedback_type, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            conversation_id,
+            'human_reviewer',
+            conversation_id,
+            message_id || null,
+            score,
+            comment || '',
+            category || 'message',
+            Date.now()
+        ]);
+
+        res.json({ success: true, message: 'Feedback submitted successfully' });
+    } catch (error) {
+        console.error('[Server] Feedback submission error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get prompt text by version
+app.get('/api/prompts/:version', async (req, res) => {
+    try {
+        const { version } = req.params;
+
+        const db = await getDb();
+        const prompt = await db.get(`
+            SELECT version, prompt_type, prompt_text, created_at
+            FROM prompt_versions
+            WHERE version = ?
+        `, [version]);
+
+        if (!prompt) {
+            return res.status(404).json({ error: 'Prompt not found' });
+        }
+
+        res.json({
+            ...prompt,
+            source: 'main_db'
+        });
+    } catch (error) {
+        console.error('[Server] Prompt fetch error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get specific simulation logs
 app.get('/api/simulations/:id/logs', async (req, res) => {
     try {

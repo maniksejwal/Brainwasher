@@ -12348,3 +12348,7 @@
 {"timestamp":1768068445832,"type":"response_time","agent_type":"full_analysis","duration_ms":3626,"success":true}
 {"timestamp":1768068445832,"type":"message_length","user_id":"cli_patient_1_run_1768068352337","message_length":115,"response_length":0}
 {"timestamp":1768068448727,"type":"message_length","user_id":"cli_patient_1_run_1768068352337","message_length":115,"response_length":65}
+{"timestamp":1768133068553,"type":"response_time","agent_type":"full_analysis","duration_ms":17681,"success":true}
+{"timestamp":1768133068553,"type":"message_length","user_id":"cli_patient_1_run_1768133039223","message_length":125,"response_length":0}
+{"timestamp":1768133078147,"type":"message_length","user_id":"cli_patient_1_run_1768133039223","message_length":125,"response_length":88}
+{"timestamp":1768133105108,"type":"message_length","user_id":"cli_patient_1_run_1768133039223","message_length":161,"response_length":138}

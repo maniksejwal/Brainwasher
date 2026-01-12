@@ -5,6 +5,11 @@
  */
 
 import { getDb } from '../../db/connection.js';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export class TrainingDatabaseManager {
     constructor() {
@@ -18,18 +23,18 @@ export class TrainingDatabaseManager {
      */
     async initialize(simulationMode = false) {
         this.isSimulationMode = simulationMode;
-        
+
         if (simulationMode) {
             process.env.SIMULATION_MODE = 'true';
         } else {
             delete process.env.SIMULATION_MODE;
         }
-        
+
         this.db = await getDb();
-        
+
         // Initialize training tables
         await this._initializeTrainingTables();
-        
+
         console.log(`[TrainingDatabaseManager] Initialized in ${simulationMode ? 'simulation' : 'production'} mode`);
         return this.db;
     }
@@ -39,7 +44,7 @@ export class TrainingDatabaseManager {
      */
     async _initializeTrainingTables() {
         const db = this.getDb();
-        
+
         // Create prompt_versions table
         await db.exec(`
             CREATE TABLE IF NOT EXISTS prompt_versions (
@@ -51,7 +56,7 @@ export class TrainingDatabaseManager {
                 is_active BOOLEAN DEFAULT 0
             );
         `);
-        
+
         // Create training_metadata table
         await db.exec(`
             CREATE TABLE IF NOT EXISTS training_metadata (
@@ -83,13 +88,43 @@ export class TrainingDatabaseManager {
      * Get conversation count for training analysis
      */
     async getConversationCount(days = 7) {
-        const db = this.getDb();
-        const result = await db.get(`
-            SELECT COUNT(DISTINCT conversation_id) as count 
-            FROM feedback 
-            WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
-        `);
-        return result?.count || 0;
+        const logPath = path.join(__dirname, '../training_log.jsonl');
+
+        try {
+            const content = await fs.readFile(logPath, 'utf-8');
+            const entries = content.split('\n')
+                .filter(line => line.trim())
+                .map(line => {
+                    try {
+                        return JSON.parse(line);
+                    } catch (e) {
+                        return null;
+                    }
+                })
+                .filter(entry => entry !== null);
+
+            const cutoffTime = Date.now() - (days * 24 * 60 * 60 * 1000);
+            const recentConversations = new Set();
+
+            for (const entry of entries) {
+                if (entry.timestamp > cutoffTime && entry.conversation_id) {
+                    recentConversations.add(entry.conversation_id);
+                }
+            }
+
+            console.log(`[TrainingDB] Found ${recentConversations.size} unique conversations in last ${days} days`);
+            return recentConversations.size;
+        } catch (error) {
+            console.error('[TrainingDB] Error reading training_log.jsonl:', error.message);
+            // Fallback to feedback table if training_log.jsonl doesn't exist
+            const db = this.getDb();
+            const result = await db.get(`
+                SELECT COUNT(DISTINCT conversation_id) as count 
+                FROM feedback 
+                WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
+            `);
+            return result?.count || 0;
+        }
     }
 
     /**
@@ -97,11 +132,11 @@ export class TrainingDatabaseManager {
      */
     async getPerformanceMetrics(days = 7) {
         const db = this.getDb();
-        
+
         // Check if goal columns exist
         const columns = await db.all("PRAGMA table_info(feedback)");
         const hasGoalColumns = columns.some(col => col.name === 'goal_adherence_score');
-        
+
         let query;
         if (hasGoalColumns) {
             query = `
@@ -126,9 +161,9 @@ export class TrainingDatabaseManager {
                 WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
             `;
         }
-        
+
         const result = await db.get(query);
-        
+
         return {
             averageScore: result?.averageScore || 0,
             totalFeedback: result?.totalFeedback || 0,
@@ -163,7 +198,7 @@ export class TrainingDatabaseManager {
             ORDER BY timestamp DESC
             LIMIT ?
         `, [limit]);
-        
+
         return feedback;
     }
 

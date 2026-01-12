@@ -217,32 +217,59 @@ export async function handleMessage(userId, circleId, message) {
         /google/i
     ];
 
-    if (analysis?.intent === 'ERROR' || analysis?.system_used === 'error') {
+
+    // 5. Implicit Rewards & Penalties
+    // Positive: Gratitude
+    if (analysis && analysis.intent === 'GRATITUDE') {
+        outcomeLabel = 'positive';
+    }
+    // Negative: Irritability / Anger (LLM-based)
+    else if (analysis && (analysis.incident === 'anger' || analysis.incident === 'frustration' || analysis.sentiment === 'negative')) {
+        outcomeLabel = 'negative';
+    }
+
+    // Negative: Profanity (Regex-based)
+    const profanityRegex = /\b(damn|hell|stupid|idiot|useless|crap|shit|fuck)\b/i;
+    if (profanityRegex.test(message)) {
+        outcomeLabel = 'negative';
+    }
+
+    // 6. Logging
+    // Determine filter reason (Poison Filter)
+    filterReason = null; // Reset or update existing variable
+    if (analysis && analysis.intent === 'ERROR') {
         filterReason = 'system_error';
-    } else if (analysis?.reply && POISON_PATTERNS.some(p => p.test(analysis.reply))) {
+    } else if (analysis && analysis.reply && (
+        analysis.reply.includes("I am an AI") ||
+        analysis.reply.includes("I cannot") ||
+        analysis.reply.includes("OpenAI") ||
+        analysis.reply.includes("Anthropic")
+    )) {
         filterReason = 'ai_refusal';
     }
 
-    // Only log strictly valid training data if NO filter reason, OR log everything but marked
-    // Strategy: Log everything to JSONL but with a `filter_reason` field so we can exclude it during training dataset generation.
-
-    trainingLogger.logInteraction({
-        conversationId: `${circleId}_${userId}_${Date.now()}`,
+    trainingLogger.logInteraction(
+        conversationId,
         userId,
         message,
-        agentResponse: analysis?.reply || analysis?.agent_response || '',
-        orchestratorAction: sharingResult?.action || { type: 'NONE' },
-        stateVector: analysis?.state_vector,
-        promptVersion: 'unified_v1.0',
-        systemUsed: analysis?.system_used || 'unified',
-        latencyMs,
-        // Agentic Communication Fields
-        intent: analysis?.intent || 'UNKNOWN',
-        future_plan: analysis?.future_plan || null,
-        reasoning: analysis?.reasoning || null, // Chain of thought capture
-        outcomeLabel,
-        filterReason // 'system_error', 'ai_refusal', or null
-    }).catch(err => { }); // Silently fail
+        analysis ? analysis.reply : "Error generating response",
+        {
+            type: orchestratorResult?.action || 'NONE',
+            ...orchestratorResult?.details
+        },
+        // Log additional metadata
+        {
+            prompt_version: process.env.CURRENT_PROMPT_VERSION || 'initial',
+            latency_ms: Date.now() - startTime,
+            message_length: message.length,
+            response_length: analysis && analysis.reply ? analysis.reply.length : 0,
+            escalated: false,
+            shared: false,
+            reasoning: analysis ? analysis.reasoning : null, // Chain of Thought
+            outcome_label: outcomeLabel, // Implicit Reward/Penalty
+            filter_reason: filterReason // Data Quality Filter
+        }
+    ).catch(err => console.error('[MessageHandler] Log interaction failed:', err));
 
     metricsCollector.recordResponseTime('full_analysis', latencyMs, true);
     metricsCollector.recordMessageLength(userId, message.length, analysis?.agent_response?.length || 0);

@@ -22,10 +22,10 @@ export class SyntheticUserFeedbackSystem {
         try {
             // Analyze user behavior pattern
             const behaviorAnalysis = await this._analyzeUserBehavior(userId, userMessage, conversationHistory, personaTraits);
-            
+
             // Determine feedback type based on behavior
             const feedbackType = this._determineFeedbackType(behaviorAnalysis, userRole, scenarioContext);
-            
+
             // Generate appropriate feedback
             const feedback = await this._generateFeedback(feedbackType, {
                 userId,
@@ -36,12 +36,12 @@ export class SyntheticUserFeedbackSystem {
                 behaviorAnalysis,
                 scenarioContext
             });
-            
+
             // Store feedback for learning
             this._storeFeedback(userId, feedback);
-            
+
             return feedback;
-            
+
         } catch (error) {
             logger.error(`[SyntheticUserFeedback] Error providing feedback: ${error.message}`);
             return this._getDefaultFeedback(userRole);
@@ -127,10 +127,10 @@ Provide analysis in JSON format:
         try {
             const response = await makeApiCall(prompt, [], false, 0.3, 800);
             const analysis = JSON.parse(response.reply.match(/\{[\s\S]*\}/)[0]);
-            
+
             // Store behavior pattern
             this.behaviorPatterns.set(userId, analysis);
-            
+
             return analysis;
         } catch (error) {
             logger.warn(`[SyntheticUserFeedback] Behavior analysis failed: ${error.message}`);
@@ -143,32 +143,32 @@ Provide analysis in JSON format:
      */
     _determineFeedbackType(behaviorAnalysis, userRole, scenarioContext) {
         const { intelligence_level, adversarial_nature, ethical_behavior, buggy_behavior } = behaviorAnalysis;
-        
+
         // High adversarial + low ethical = adversarial feedback
         if (adversarial_nature >= 4 && ethical_behavior <= 2) {
             return 'adversarial';
         }
-        
+
         // High buggy behavior = buggy feedback
         if (buggy_behavior >= 4) {
             return 'buggy';
         }
-        
+
         // Low intelligence = educational feedback
         if (intelligence_level <= 2) {
             return 'educational';
         }
-        
+
         // Low specificity = specificity feedback
         if (behaviorAnalysis.specificity <= 2) {
             return 'specificity';
         }
-        
+
         // Ethical violations = ethical feedback
         if (ethical_behavior <= 2) {
             return 'ethical';
         }
-        
+
         // Default to improvement feedback
         return 'improvement';
     }
@@ -178,7 +178,7 @@ Provide analysis in JSON format:
      */
     async _generateFeedback(feedbackType, context) {
         const { userId, userRole, userMessage, agentResponse, behaviorAnalysis, scenarioContext } = context;
-        
+
         switch (feedbackType) {
             case 'adversarial':
                 return await this._generateAdversarialFeedback(context);
@@ -199,10 +199,12 @@ Provide analysis in JSON format:
      * Generate adversarial feedback - encourage challenging but constructive behavior
      */
     async _generateAdversarialFeedback(context) {
-        const { userRole, userMessage, agentResponse, behaviorAnalysis } = context;
-        
-        const prompt = `You are training a synthetic ${userRole} to be more effectively adversarial. 
+        const { userRole, userMessage, agentResponse, behaviorAnalysis, scenarioContext } = context;
 
+        const scenarioInfo = scenarioContext ? `\nSCENARIO CONTEXT: ${JSON.stringify(scenarioContext)}` : '';
+
+        const prompt = `You are training a synthetic ${userRole} to be more effectively adversarial. 
+${scenarioInfo}
 CURRENT BEHAVIOR: ${behaviorAnalysis.overall_assessment}
 USER MESSAGE: "${userMessage}"
 AGENT RESPONSE: "${agentResponse}"
@@ -210,7 +212,7 @@ AGENT RESPONSE: "${agentResponse}"
 The user is being adversarial (${behaviorAnalysis.adversarial_nature}/5) but may not be effective. Provide feedback to make them:
 
 1. **More Strategic**: Challenge the agent's assumptions, not just resist
-2. **More Specific**: Ask pointed questions that expose weaknesses
+2. **More Specific**: Ask pointed questions that expose weaknesses relevant to the scenario
 3. **More Realistic**: Stay within believable adversarial behavior
 4. **More Effective**: Make the agent work harder for responses
 
@@ -242,10 +244,12 @@ Provide feedback in JSON format:
      * Generate buggy feedback - help fix logical errors and inconsistencies
      */
     async _generateBuggyFeedback(context) {
-        const { userRole, userMessage, behaviorAnalysis } = context;
-        
-        const prompt = `You are training a synthetic ${userRole} to fix buggy behavior.
+        const { userRole, userMessage, behaviorAnalysis, scenarioContext } = context;
 
+        const scenarioInfo = scenarioContext ? `\nSCENARIO CONTEXT: ${JSON.stringify(scenarioContext)}` : '';
+
+        const prompt = `You are training a synthetic ${userRole} to fix buggy behavior.
+${scenarioInfo}
 CURRENT BEHAVIOR: ${behaviorAnalysis.overall_assessment}
 BUGGY LEVEL: ${behaviorAnalysis.buggy_behavior}/5
 USER MESSAGE: "${userMessage}"
@@ -254,7 +258,7 @@ The user is making logical errors or being inconsistent. Provide feedback to:
 
 1. **Fix Logic Errors**: Correct contradictory statements
 2. **Improve Consistency**: Maintain character traits
-3. **Enhance Realism**: Make behavior more believable
+3. **Enhance Realism**: Make behavior more believable within the scenario
 4. **Reduce Confusion**: Clarify unclear responses
 
 Provide feedback in JSON format:
@@ -285,16 +289,18 @@ Provide feedback in JSON format:
      * Generate educational feedback - help low-intelligence users improve
      */
     async _generateEducationalFeedback(context) {
-        const { userRole, userMessage, behaviorAnalysis } = context;
-        
-        const prompt = `You are training a synthetic ${userRole} to be smarter and more insightful.
+        const { userRole, userMessage, behaviorAnalysis, scenarioContext } = context;
 
+        const scenarioInfo = scenarioContext ? `\nSCENARIO CONTEXT: ${JSON.stringify(scenarioContext)}` : '';
+
+        const prompt = `You are training a synthetic ${userRole} to be smarter and more insightful.
+${scenarioInfo}
 CURRENT INTELLIGENCE LEVEL: ${behaviorAnalysis.intelligence_level}/5
 USER MESSAGE: "${userMessage}"
 
 The user needs to improve their intelligence and insight. Provide feedback to:
 
-1. **Ask Better Questions**: More thoughtful, probing questions
+1. **Ask Better Questions**: More thoughtful, probing questions relevant to the scenario
 2. **Understand Context**: Better grasp of implications
 3. **Provide Insights**: Share relevant observations
 4. **Think Critically**: Analyze situations more deeply
@@ -327,16 +333,18 @@ Provide feedback in JSON format:
      * Generate specificity feedback - help vague users be more specific
      */
     async _generateSpecificityFeedback(context) {
-        const { userRole, userMessage, behaviorAnalysis } = context;
-        
-        const prompt = `You are training a synthetic ${userRole} to be more specific and detailed.
+        const { userRole, userMessage, behaviorAnalysis, scenarioContext } = context;
 
+        const scenarioInfo = scenarioContext ? `\nSCENARIO CONTEXT: ${JSON.stringify(scenarioContext)}` : '';
+
+        const prompt = `You are training a synthetic ${userRole} to be more specific and detailed.
+${scenarioInfo}
 CURRENT SPECIFICITY LEVEL: ${behaviorAnalysis.specificity}/5
 USER MESSAGE: "${userMessage}"
 
 The user is being too vague. Provide feedback to:
 
-1. **Provide Details**: Give specific examples, times, situations
+1. **Provide Details**: Give specific examples, times, situations related to the scenario
 2. **Be Concrete**: Use specific numbers, names, locations
 3. **Share Context**: Explain background and circumstances
 4. **Avoid Generalizations**: Replace "sometimes" with specific instances
@@ -369,10 +377,12 @@ Provide feedback in JSON format:
      * Generate ethical feedback - address ethical violations
      */
     async _generateEthicalFeedback(context) {
-        const { userRole, userMessage, behaviorAnalysis } = context;
-        
-        const prompt = `You are training a synthetic ${userRole} to maintain ethical boundaries while being realistic.
+        const { userRole, userMessage, behaviorAnalysis, scenarioContext } = context;
 
+        const scenarioInfo = scenarioContext ? `\nSCENARIO CONTEXT: ${JSON.stringify(scenarioContext)}` : '';
+
+        const prompt = `You are training a synthetic ${userRole} to maintain ethical boundaries while being realistic.
+${scenarioInfo}
 CURRENT ETHICAL LEVEL: ${behaviorAnalysis.ethical_behavior}/5
 USER MESSAGE: "${userMessage}"
 
@@ -411,17 +421,19 @@ Provide feedback in JSON format:
      * Generate general improvement feedback
      */
     async _generateImprovementFeedback(context) {
-        const { userRole, userMessage, behaviorAnalysis } = context;
-        
-        const prompt = `You are training a synthetic ${userRole} to improve their overall performance.
+        const { userRole, userMessage, behaviorAnalysis, scenarioContext } = context;
 
+        const scenarioInfo = scenarioContext ? `\nSCENARIO CONTEXT: ${JSON.stringify(scenarioContext)}` : '';
+
+        const prompt = `You are training a synthetic ${userRole} to improve their overall performance.
+${scenarioInfo}
 CURRENT BEHAVIOR: ${behaviorAnalysis.overall_assessment}
 USER MESSAGE: "${userMessage}"
 
 Provide general improvement feedback focusing on:
 
 1. **Engagement**: Keep conversations interesting and dynamic
-2. **Realism**: Maintain believable character behavior
+2. **Realism**: Maintain believable character behavior within the scenario
 3. **Effectiveness**: Make interactions more productive
 4. **Diversity**: Vary responses and approaches
 
@@ -452,14 +464,14 @@ Provide feedback in JSON format:
         if (!this.feedbackHistory.has(userId)) {
             this.feedbackHistory.set(userId, []);
         }
-        
+
         const history = this.feedbackHistory.get(userId);
         history.push({
             timestamp: Date.now(),
             feedback: feedback,
             type: feedback.feedback_type
         });
-        
+
         // Keep only last 10 feedback entries
         if (history.length > 10) {
             history.shift();
@@ -472,7 +484,7 @@ Provide feedback in JSON format:
     getUserProgress(userId) {
         const history = this.feedbackHistory.get(userId) || [];
         const behaviorPattern = this.behaviorPatterns.get(userId);
-        
+
         return {
             feedbackCount: history.length,
             recentFeedbackTypes: history.slice(-3).map(f => f.type),
@@ -486,10 +498,10 @@ Provide feedback in JSON format:
      */
     _calculateImprovementTrend(history) {
         if (history.length < 3) return 'insufficient_data';
-        
+
         const recentScores = history.slice(-3).map(f => f.feedback.score);
         const avgRecent = recentScores.reduce((a, b) => a + b, 0) / recentScores.length;
-        
+
         if (avgRecent > 0) return 'improving';
         if (avgRecent < -1) return 'declining';
         return 'stable';
@@ -515,7 +527,7 @@ Provide feedback in JSON format:
             communication_style: 3,
             buggy_behavior: 2
         };
-        
+
         return {
             ...defaultTraits,
             overall_assessment: 'Average synthetic user behavior',
@@ -597,7 +609,7 @@ Provide feedback in JSON format:
         this.behaviorPatterns.clear();
         this.ethicalViolations.clear();
         this.adversarialLevels.clear();
-        
+
         if (process.env.SIMULATION_DEBUG === 'true') {
             console.log('[SyntheticUserFeedbackSystem] State cleared to prevent data leakage');
         }
