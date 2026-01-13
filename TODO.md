@@ -1,48 +1,52 @@
 Multi-Agent System - Project Roadmap & TODO
 
 This document tracks the development progress and future plans for the multi-agent system prototype.
-Up Next
-Advanced Agent Capabilities
 
-    In Progress - Conversational Intent Analysis: Enhance the unified agent to distinguish between a user reporting a factual symptom versus expressing an opinion, frustration, or giving advice for another member. The message handler must be updated to use this intent to choose the correct action (e.g., mediate advice vs. escalate a symptom).
+## 🚨 Critical Priority: First Epoch Completion
 
-    Multi-Question Pending Action Stack (v2): Implement advanced logic for managing the question stack, including priority, timeouts, and dependencies.
+The system is currently pre-optimization ("Cold Start"). The goal is to reach the **First Optimization Epoch**:
+- [x] Fix conversation counting (Now sees 1000+ conversations)
+- [x] Integrate Outcome Labels (RLHF)
+- [x] Enable Human Feedback GUI
+- [ ] **Run Training Pipeline**: Execute `node cli/train.js run` to complete the first full optimization cycle.
+- [ ] **Deploy First Optimized Prompt**: Move winning prompt to production.
 
-    Self-Reference Resolution: Enhance the AI agent to correctly identify when a user is referring to themselves in the third person.
+---
 
-Learning & Training Infrastructure
-    (See documentation/reinforcement_learning_framework.md for complete implementation plan)
+## Up Next
 
-    Implement Rich Data Logging: Create the training_log.jsonl pipeline.
+### RBAC Implementation (In Progress) 🔐
+- [x] Database schema (`system_roles`, `sessions`)
+- [x] Authentication middleware (minimal, with forward compatibility)
+- [x] Login/logout endpoints
+- [x] Password hashing (Simulated/Placeholder)
+- [x] Frontend Login UI
+- [ ] Admin UI (User Management)
+- [ ] CLI Login Tool
 
-    Create the Annotation Tool: Build annotator.js for human-in-the-loop feedback.
+### Advanced Agent Capabilities
+- [ ] Multi-Question Pending Action Stack (v2)
+- [ ] Self-Reference Resolution
 
-    Build the Training Stub: Create trainer.js.
+---
 
-    Implement Simulation Infrastructure: Build simulator.js with synthetic user generation.
+## Completed Features ✅
 
-    Add HITL Feedback: Implement /score command in client for live feedback collection.
+### Training & Learning Infrastructure (Jan 2026)
+- **Feedback GUI**: Human feedback modal in simulation logs.
+- **RLHF Integration**: Implicit rewards (outcome labels) used in training.
+- **Conversation Count Fix**: Pipeline correctly reads `training_log.jsonl`.
+- **Database Architecture**: Split into Main DB (production) and Simulation DB (testing).
+- **Rich Data Logging**: Capture "Chain of Thought" (reasoning) and outcome labels.
+- **Poison Filter**: Error detection and filtering for training data.
 
-    Build Meta-Learning: Create feedback analysis and prompt optimization agents.
+### Core Capabilities
+- **Advanced Agent**: Conversational Intent Analysis, Entity Resolution.
+- **Context Management**: Implied Context Switching (v2), Context Enrichment.
+- **Care Circles**: Reciprocal care circles infrastructure and consent model.
+- **Doctor's Agent**: Specialized interaction model and tools.
 
-    Establish A/B Testing: Framework for prompt version comparison.
-
-Completed Features
-
-    Advanced Agent Capabilities
-
-        Entity Resolution & Context Enrichment (v2)
-
-        Implied Context Switching (v2)
-
-        Multi-Question Pending Action Stack (v1)
-
-    Usability & Feature Enhancements
-
-    Codebase Refactoring
-
-    Enhance Doctor's Agent & Interaction Model
-
-    Scenarios & Tests Refactored
-
-    Reciprocal Care Circles (Infrastructure & Consent)
+### Infrastructure
+- **Simulation**: Synthetic user generation, scenario runner.
+- **Meta-Learning**: Feedback analysis, prompt optimization agents.
+- **A/B Testing**: Thompson Sampling framework for prompt selection.

@@ -171,6 +171,39 @@ The GUI is a **single-page application** served by the server:
 
 See [Architecture Documentation](documentation/architecture.md) for technical details.
 
+## Authentication & Authorization 🔐
+
+The system now requires authentication for GUI and CLI access. We implement a Role-Based Access Control (RBAC) system:
+
+**Roles**:
+- **Admin**: Full system access, training pipeline execution, user management
+- **Reviewer**: Training stats, simulations, feedback analysis
+- **Doctor**: Patient data access, escalations, directives
+- **Caregiver**: Limited patient data (consent-based)
+- **Patient**: Own care circle only
+
+**Login**:
+- **GUI**: Login modal appears on first access
+- **CLI**: Use `node cli/login.js` (stores token in `~/.care-circle/`)
+
+**Permissions**: Fine-grained control over API endpoints. See [RBAC Documentation](documentation/rbac_documentation.md).
+
+**Status**: ⚠️ Partially implemented (Database schema & middleware ready, endpoints in progress).
+
+## Database Architecture
+
+The system uses a **Two-Database Architecture** to isolate production data from testing:
+
+- **Main DB** (`care_circle.db`): Stores production conversations, real user data, and human feedback.
+- **Simulation DB** (`care_circle_simulation.db`): Stores synthetic training data and simulation results.
+
+**Why Separate?**
+- Isolates test data from production metrics.
+- Prevents synthetic users from polluting real analytics.
+- Allows safe, destructive experimentation in simulation.
+
+**Selection**: Automatic via `SIMULATION_MODE` environment variable. See [Database Architecture](documentation/database_architecture.md) for details.
+
 ## Training & Continuous Improvement 🆕
 
 The system includes a comprehensive training infrastructure that enables continuous self-improvement through:
@@ -200,6 +233,15 @@ node training/analysis/feedback_analyzer.js
 # Optimize prompts
 node training/analysis/prompt_optimizer.js
 ```
+
+### Recent Enhancements (Jan 2026) 🆕
+
+- **Feedback GUI**: Submit feedback directly from the "Conversation Logs" tab in the dashboard.
+- **RLHF Integration**: Outcome labels (e.g., gratitude, profanity, irritability) are now automatically detected and used in training (Implicit Rewards).
+- **Conversation Count Fix**: Training pipeline now correctly counts conversations from `training_log.jsonl`, enabling optimization on 1000+ samples.
+- **Prompt Viewer**: View full text of optimized prompts via the API (`/api/prompts/:version`).
+
+See [Training Enhancements Walkthrough](documentation/walkthrough.md).
 
 ### Simulation Dashboard 🎯
 
@@ -268,6 +310,31 @@ node cli/simulation_dashboard.js
 - 🏗️ **[Architecture](documentation/training/ARCHITECTURE.md)** - System diagrams with Mermaid
 - ✅ **[Implementation](documentation/training/IMPLEMENTATION_SUMMARY.md)** - What was built
 - 📖 **[RL Framework](documentation/reinforcement_learning_framework.md)** - Theoretical foundation
+
+## API Endpoints Reference
+
+### Authentication
+- `POST /api/auth/login` - User login
+- `POST /api/auth/logout` - User logout
+- `GET /api/auth/me` - Get current user details
+
+### Messages
+- `POST /api/messages/send` - Send a message
+- `GET /api/messages/history` - Get conversation history
+
+### Feedback
+- `POST /api/feedback/submit` - Submit human feedback
+- `GET /api/feedback/view` - View feedback logs (requires permissions)
+
+### Training
+- `POST /api/training/run` - Run training pipeline (Admin only)
+- `GET /api/training/status` - Get training status
+
+### Simulations
+- `GET /api/simulations/history` - List simulation sessions
+- `GET /api/simulations/:id/logs` - Get logs for a specific simulation
+
+See [RBAC Documentation](documentation/rbac_documentation.md) for the full permission matrix.
 
 ## Testing
 

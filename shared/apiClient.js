@@ -16,12 +16,12 @@ export class ApiClient {
     /**
      * Login user
      */
-    async login(username) {
+    async login(username, role = 'user', password = '') {
         try {
-            const response = await fetch(`${this.baseUrl}/login`, {
+            const response = await fetch(`${this.baseUrl}/api/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username })
+                body: JSON.stringify({ username, role, password })
             });
 
             if (!response.ok) {
@@ -85,7 +85,7 @@ export class ApiClient {
     async getUnreadEscalations(userId) {
         try {
             const response = await fetch(`${this.baseUrl}/doctor/escalations/unread/${userId}`);
-            
+
             if (!response.ok) {
                 throw new Error(`Fetch escalations failed: ${response.status}`);
             }
@@ -103,7 +103,7 @@ export class ApiClient {
     async getFeedback(userId) {
         try {
             const response = await fetch(`${this.baseUrl}/api/feedback/${userId}`);
-            
+
             if (!response.ok) {
                 throw new Error(`Fetch feedback failed: ${response.status}`);
             }
@@ -121,7 +121,7 @@ export class ApiClient {
     async getDetailedFeedback(userId) {
         try {
             const response = await fetch(`${this.baseUrl}/api/feedback/${userId}`);
-            
+
             if (!response.ok) {
                 throw new Error(`Fetch feedback failed: ${response.status}`);
             }
@@ -147,7 +147,7 @@ export class ApiClient {
                     comment
                 })
             });
-            
+
             if (!response.ok) {
                 throw new Error(`Provide feedback failed: ${response.status}`);
             }
@@ -165,11 +165,11 @@ export class ApiClient {
     async getScenarios() {
         try {
             const response = await fetch(`${this.baseUrl}/api/scenarios`);
-            
+
             if (!response.ok) {
                 throw new Error(`Failed to load scenarios: ${response.status}`);
             }
-            
+
             return await response.json();
         } catch (error) {
             console.error('[ApiClient] Scenarios error:', error.message);

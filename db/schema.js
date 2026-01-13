@@ -111,9 +111,26 @@ export async function initializeDatabase() {
             performance_score REAL DEFAULT 0,
             created_at INTEGER NOT NULL
         );
+        
+        CREATE TABLE IF NOT EXISTS system_roles (
+            user_id TEXT PRIMARY KEY,
+            role TEXT NOT NULL DEFAULT 'user',
+            permissions TEXT,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+        
+        CREATE TABLE IF NOT EXISTS sessions (
+            session_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            expires_at INTEGER NOT NULL,
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
     `);
     console.log('[Database] Initialized.');
-    
+
     // Migrate existing tables to add missing columns
     await migrateDatabase(db);
 }
@@ -132,7 +149,7 @@ async function migrateDatabase(db) {
             await db.run('ALTER TABLE future_plans ADD COLUMN trigger_value TEXT');
             await db.run('ALTER TABLE future_plans ADD COLUMN trigger_details TEXT');
         }
-        
+
         // Check and add trigger_type to scheduled_messages if missing
         const scheduledMessagesInfo = await db.all('PRAGMA table_info(scheduled_messages)');
         const hasScheduledTriggerType = scheduledMessagesInfo.some(col => col.name === 'trigger_type');

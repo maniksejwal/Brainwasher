@@ -23,7 +23,18 @@
             <p style="color: #4285F4; font-size: 14px; margin-bottom: 20px;">
                 Enter any username to start (creates account if new)
             </p>
-            <input type="text" id="username" placeholder="Enter username" autofocus>
+            <input type="text" id="username" placeholder="Enter username" autofocus style="margin-bottom: 10px;">
+            <select id="role-select"
+                style="width: 100%; padding: 12px; border: 1px solid var(--gray-300); border-radius: 4px; margin-bottom: 10px; background: white;">
+                <option value="user">User / Patient (Default)</option>
+                <option value="doctor">Doctor</option>
+                <option value="caregiver">Caregiver</option>
+                <option value="reviewer">Reviewer</option>
+                <option value="admin">Admin</option>
+            </select>
+            <input type="password" id="password" placeholder="Password (Optional/Simulated)" disabled
+                style="margin-bottom: 16px; background: #f5f5f5; cursor: not-allowed;"
+                title="Password auth is simulated in this version">
             <button id="login-btn" class="primary">Continue</button>
         </div>
     </div>
