@@ -5,29 +5,10 @@ import fs from 'fs/promises';
 const router = express.Router();
 
 // Trigger simulation
-router.post('/simulate', async (req, res) => { // NOTE: Changed path from /simulate to /run (mounted at /api/simulations/run ?) 
-    // Wait, original was /api/simulate. I should map it correctly.
-    // If I mount this router at /api/simulations, then this is /run.
-    // But original was /api/simulate.
-    // I'll keep it as / (root of router) and mount at /api/simulate?
-    // But there are other routes like /history.
-    // Better: Mount at /api/simulations.
-    // Original: POST /api/simulate. New: POST /api/simulations/run.
-    // ERROR: This breaks API client!
-    // I must preserve routes or update client.
-    // I'll update client if needed, or keep route /simulate (root).
-    // Let's use specific paths here and mount carefully.
-
-    // I will use /simulate for compatibility matching `apiClient.runSimulation`.
-    // Actually, I'll fix the route in this file to match what the client expects, or change client.
-    // Client calls `/api/simulate`.
-    // If I mount at `/api`, then route is `/simulate`.
-    // If I mount at `/`, then `/api/simulate`.
-    // I will export specific routes matching the original paths relative to where I mount.
-    // I'll mount this router at `/api`.
-
+router.post('/simulate', async (req, res) => {
     try {
         let { runs = 5, scenario: scenarioKey = 'random_single', turns = 3 } = req.body;
+
 
         // Handle random turns
         if (turns === 'random') {

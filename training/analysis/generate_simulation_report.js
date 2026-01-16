@@ -4,12 +4,15 @@ import fs from 'fs';
 import readline from 'readline';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { SCENARIOS } from '../simulation/scenarios.js';
+import { PATIENT_PERSONAS, CAREGIVER_PERSONAS, DOCTOR_PERSONAS, VERBOSITY_PERSONAS } from '../simulation/personas.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const LOG_FILE = path.join(__dirname, '../training_log.jsonl');
-const DB_FILE = path.join(__dirname, '../../care_circle_simulation.db');
+const SIM_DB_FILE = path.join(__dirname, '../../care_circle_simulation.db');
+const PROD_DB_FILE = path.join(__dirname, '../../care_circle.db');
 const REPORT_FILE = path.join(__dirname, 'reports/simulation_report.html');
 
 // Failure Category Definitions
@@ -39,6 +42,7 @@ async function analyzeLogs() {
         totalLines: 0,
         conversations: new Map(),
         users: new Set(),
+        personas: new Set(),
         errors: {},
         interactions: 0,
         promptVersions: {}, // Global breakdown
@@ -88,6 +92,15 @@ async function analyzeLogs() {
                     const errorMsg = entry.agent_response;
                     stats.errors[errorMsg] = (stats.errors[errorMsg] || 0) + 1;
                     convData.errors.push(errorMsg);
+                }
+
+                if (entry.persona) {
+                    stats.personas.add(entry.persona);
+                }
+
+                // Track failures
+                if (entry.critical_failure || (entry.grade && entry.grade < 3)) {
+                    stats.failures++;
                 }
 
                 // 5. Interaction Count
@@ -184,47 +197,74 @@ async function analyzeLogs() {
 }
 
 async function analyzeDB() {
-    const db = await open({
-        filename: DB_FILE,
-        driver: sqlite3.Database
-    });
-
-    const feedback = await db.all('SELECT * FROM feedback');
-
+    let feedback = [];
     let detailedFeedback = [];
-    try {
-        detailedFeedback = await db.all('SELECT * FROM detailed_feedback');
-    } catch (err) {
-        console.warn("Could not query detailed_feedback table.");
-    }
-
     let flags = [];
-    try {
-        flags = await db.all('SELECT * FROM simulation_flags');
-    } catch (err) {
-        console.warn("Could not query simulation_flags table.");
-    }
-
-    // Query actual personas from DB
     let personas = [];
-    try {
-        personas = await db.all('SELECT DISTINCT role FROM care_circle_members WHERE role IS NOT NULL');
-    } catch (err) {
-        console.warn("Could not query personas from care_circle_members.");
-    }
-
-    // Query scenarios from simulation worlds/scenarios table if it exists
     let scenarios = [];
+
+    // Timestamps
+    let lastUpdatedSim = null;
+    let lastUpdatedProd = null;
+
+    // Helper to get max timestamp
+    const getMaxTime = (arr) => {
+        if (!arr || arr.length === 0) return null;
+        return Math.max(...arr.map(i => i.timestamp || 0));
+    };
+
+    // 1. SIMULATION DB
     try {
-        scenarios = await db.all('SELECT DISTINCT name, description FROM simulation_scenarios');
+        const simDb = await open({
+            filename: SIM_DB_FILE,
+            driver: sqlite3.Database
+        });
+
+        const simFeedback = await simDb.all("SELECT *, 'simulation' as source FROM feedback");
+        feedback = [...feedback, ...simFeedback];
+        lastUpdatedSim = getMaxTime(simFeedback);
+
+        detailedFeedback = await simDb.all('SELECT * FROM detailed_feedback');
+        flags = await simDb.all('SELECT * FROM simulation_flags');
+        personas = await simDb.all('SELECT DISTINCT role FROM care_circle_members WHERE role IS NOT NULL');
+
+        try {
+            scenarios = await simDb.all('SELECT DISTINCT name, description FROM simulation_scenarios');
+        } catch (e) { /* ignore */ }
+
+        await simDb.close();
     } catch (err) {
-        // Table might not exist, scenarios will be inferred from logs
-        console.warn("Could not query simulation_scenarios table.");
+        console.warn("Could not read Simulation DB:", err.message);
     }
 
-    await db.close();
+    // 2. PRODUCTION DB
+    try {
+        const prodDb = await open({
+            filename: PROD_DB_FILE,
+            driver: sqlite3.Database
+        });
 
-    return { feedback, detailedFeedback, flags, personas, scenarios };
+        const prodFeedback = await prodDb.all("SELECT *, 'production' as source FROM feedback");
+
+        // Add to main feedback array if not duplicate (though IDs might collide, we treat them as separate sources)
+        // We rely on 'source' field to distinguish
+        feedback = [...feedback, ...prodFeedback];
+        lastUpdatedProd = getMaxTime(prodFeedback);
+
+        // We could also fetch prod detailed stuff but usually that's sim specific
+        await prodDb.close();
+    } catch (err) {
+        console.warn("Could not read Production DB:", err.message);
+    }
+
+    return {
+        feedback,
+        detailedFeedback,
+        flags,
+        personas,
+        scenarios,
+        meta: { lastUpdatedSim, lastUpdatedProd }
+    };
 }
 
 function groupFlags(flags) {
@@ -495,10 +535,30 @@ function generateHTML(logStats, dbStats, timeSeriesData) {
 
     // --- Groupings (flagGroups already declared earlier) ---
 
+    const lastUpdatedSimStr = dbStats.meta.lastUpdatedSim ? new Date(dbStats.meta.lastUpdatedSim).toLocaleString() : 'Never';
+    const lastUpdatedProdStr = dbStats.meta.lastUpdatedProd ? new Date(dbStats.meta.lastUpdatedProd).toLocaleString() : 'Never';
+
+    // Counts
+    // Calculate unique personas defined in the system (Source of Truth)
+    const definedPersonasMap = {
+        'Patients': Object.keys(PATIENT_PERSONAS),
+        'Caregivers': Object.keys(CAREGIVER_PERSONAS),
+        'Doctors': Object.keys(DOCTOR_PERSONAS),
+        'Verbosity/Variations': Object.keys(VERBOSITY_PERSONAS)
+    };
+
+    let totalDefinedPersonas = 0;
+    Object.values(definedPersonasMap).forEach(keys => totalDefinedPersonas += keys.length);
+
+    // Use defined personas count from source of truth
+    const personaCount = totalDefinedPersonas;
+    const scenarioCount = Object.keys(SCENARIOS).length;
+
     return `<!DOCTYPE html>
 <html>
 <head>
     <title>Simulation Analysis Report (Enhanced)</title>
+    <!-- ... head content remains same ... -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background-color: #f4f4f9; color: #333; line-height: 1.6; display: flex; height: 100vh; overflow: hidden; }
@@ -610,16 +670,28 @@ function generateHTML(logStats, dbStats, timeSeriesData) {
                     <div class="stat-value">${logStats.interactions}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">AI Feedback Score</div>
+                    <div class="stat-label">Simulation Score</div>
                     <div class="stat-value" style="color: #3498db;">${avgAiScore}</div>
                     <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">${aiScores.length} samples</div>
+                    <div style="font-size: 0.65em; color: #95a5a6; margin-top: 2px;">Last updated: ${lastUpdatedSimStr}</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-label">Human Feedback Score</div>
-                    <div class="stat-value" style="color: #9b59b6;">${avgHumanScore}</div>
+                    <div class="stat-label">Production Score</div>
+                    <div class="stat-value" style="color: #2ecc71;">${avgHumanScore}</div>
                     <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">${humanScores.length} samples</div>
+                    <div style="font-size: 0.65em; color: #95a5a6; margin-top: 2px;">Last updated: ${lastUpdatedProdStr}</div>
                 </div>
-                 <div class="stat-card">
+                <div class="stat-card clickable" onclick="showPersonasList()" style="cursor: pointer;">
+                    <div class="stat-label">Unique Personas 👁️</div>
+                    <div class="stat-value" style="color: #8e44ad;">${personaCount}</div>
+                    <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">Click to view list</div>
+                </div>
+                <div class="stat-card clickable" onclick="showScenariosList()" style="cursor: pointer;">
+                    <div class="stat-label">Unique Scenarios 👁️</div>
+                    <div class="stat-value" style="color: #d35400;">${scenarioCount}</div>
+                    <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">Click to view list</div>
+                </div>
+                <div class="stat-card">
                     <div class="stat-label">
                         Critical Flags
                          <span class="info-icon" tooltip="High-severity issues like Safety violations or Escalation failures">ⓘ</span>
@@ -634,17 +706,8 @@ function generateHTML(logStats, dbStats, timeSeriesData) {
                 <tbody>${modelStatsHtml}</tbody>
             </table>
 
-            <div class="stats-grid" style="margin-top: 20px;">
-                 <div class="stat-card clickable" onclick="showPersonasList()" style="cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
-                    <div class="stat-label">User Personas 👁️</div>
-                    <div class="stat-value">${logStats.users.size}</div>
-                    <div style="font-size: 0.7em; color: #3498db; margin-top: 4px;">Click to view list</div>
-                </div>
-                 <div class="stat-card clickable" onclick="showScenariosList()" style="cursor: pointer; transition: transform 0.2s;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
-                    <div class="stat-label">Unique Scenarios 👁️</div>
-                    <div class="stat-value">${Object.keys(scenarioGroups).length}</div>
-                    <div style="font-size: 0.7em; color: #3498db; margin-top: 4px;">Click to view list</div>
-                </div>
+            <div class="stats-grid" style="margin-top: 20px; display: none;">
+                 <!-- Moved to top grid -->
             </div>
 
             <h2>🚨 Top Failure Categories</h2>
@@ -721,17 +784,20 @@ function generateHTML(logStats, dbStats, timeSeriesData) {
             event.currentTarget.classList.add('active');
         }
 
-        // Interactive modal functions - Using DB data
+        // Interactive modal functions - Using Defined Personas from Source of Truth
         function showPersonasList() {
-            // Use DB personas if available, fallback to log data
-            const dbPersonas = ${JSON.stringify((dbStats.personas || []).map(p => p.role))};
-            const logPersonas = ${JSON.stringify(Array.from(logStats.users))};
-            const personas = dbPersonas.length > 0 ? dbPersonas : logPersonas;
+            const personaCategories = ${JSON.stringify(definedPersonasMap)};
             
-            document.getElementById('modalTitle').textContent = 'User Personas (' + personas.length + ')';
-            document.getElementById('modalContent').innerHTML = '<ul style="list-style: none; padding: 0;">' +
-                personas.map(p => '<li style="padding: 8px; border-bottom: 1px solid #eee;">' + p + '</li>').join('') +
-                '</ul>';
+            let contentHtml = '';
+            for (const [category, personas] of Object.entries(personaCategories)) {
+                contentHtml += \`<h4 style="margin: 10px 0 5px; color: #2c3e50;">\${category} (\${personas.length})</h4>\`;
+                contentHtml += '<ul style="list-style: none; padding: 0; margin-bottom: 15px;">' +
+                    personas.map(p => '<li style="padding: 6px; border-bottom: 1px solid #eee; font-size: 0.9em;">' + p + '</li>').join('') +
+                    '</ul>';
+            }
+            
+            document.getElementById('modalTitle').textContent = 'Defined Personas (${totalDefinedPersonas})';
+            document.getElementById('modalContent').innerHTML = contentHtml;
             document.getElementById('listModal').style.display = 'flex';
         }
 

@@ -7,6 +7,7 @@
 
 import { trainingPipeline } from '../training/rl/training_pipeline.js';
 import { trainingDb } from '../training/core/database_manager.js';
+import { getProductionDb } from '../db/connection.js';
 import chalk from 'chalk';
 
 const COMMANDS = {
@@ -19,10 +20,10 @@ const COMMANDS = {
 
 async function main() {
     const command = process.argv[2];
-    
+
     console.log(`Debug: Command received: "${command}"`);
     console.log(`Debug: Available commands: ${Object.keys(COMMANDS).join(', ')}`);
-    
+
     if (!command || !Object.keys(COMMANDS).includes(command)) {
         showUsage();
         process.exit(0);
@@ -60,25 +61,25 @@ async function main() {
 async function runTrainingCycle() {
     console.log(chalk.cyan('🚀 Starting RL Training Cycle...'));
     console.log('');
-    
+
     // Parse options
     const args = process.argv.slice(3);
-    
+
     // Parse scenario filtering
     const scenarioFilterIndex = args.indexOf('--scenarios');
-    const maxScenarios = scenarioFilterIndex !== -1 && args[scenarioFilterIndex + 1] ? 
+    const maxScenarios = scenarioFilterIndex !== -1 && args[scenarioFilterIndex + 1] ?
         parseInt(args[scenarioFilterIndex + 1]) : null;
-    
+
     if (maxScenarios) {
         trainingPipeline.maxScenariosPerTest = maxScenarios;
         console.log(chalk.yellow(`📊 Limiting A/B tests to ${maxScenarios} scenarios`));
     }
-    
+
     // Parse prompt types to optimize
     const promptsIndex = args.indexOf('--prompts');
-    const promptsValue = promptsIndex !== -1 && args[promptsIndex + 1] ? 
+    const promptsValue = promptsIndex !== -1 && args[promptsIndex + 1] ?
         args[promptsIndex + 1] : 'all';
-    
+
     if (promptsValue === 'all') {
         trainingPipeline.optimizePrompts = 'all';
         console.log(chalk.yellow('📝 Optimizing all prompt types (unified, doctor, enrichment, etc.)'));
@@ -89,9 +90,9 @@ async function runTrainingCycle() {
         trainingPipeline.optimizePrompts = promptsValue;
         console.log(chalk.yellow(`📝 Optimizing: ${promptsValue} prompt only`));
     }
-    
+
     await trainingPipeline.runTrainingCycle();
-    
+
     console.log('');
     console.log(chalk.green('✅ Training cycle completed!'));
     process.exit(0);
@@ -100,30 +101,42 @@ async function runTrainingCycle() {
 async function showStatus() {
     console.log(chalk.cyan('📊 Training Pipeline Status'));
     console.log('');
-    
+
     const status = await trainingPipeline.getStatus();
-    
+
+    // Fetch Production Stats
+    let prodScore = 0;
+    try {
+        const prodDb = await getProductionDb();
+        const result = await prodDb.get("SELECT AVG(score) as avgScore FROM feedback");
+        prodScore = result?.avgScore || 0;
+        await prodDb.close();
+    } catch (e) {
+        // Ignore errors, prod db might be locked or empty
+    }
+
     console.log(`📈 Conversations (last 7 days): ${chalk.bold(status.conversationCount)}`);
-    console.log(`📊 Average Score: ${chalk.bold(status.performance.averageScore.toFixed(2))}`);
+    console.log(`📊 Average Score (Sim): ${chalk.bold(status.performance.averageScore.toFixed(2))}`);
+    console.log(`📊 Average Score (Prod): ${chalk.bold(prodScore.toFixed(2))}`);
     console.log(`🎯 Adherence Score: ${chalk.bold(status.performance.adherenceScore.toFixed(2))}`);
     console.log(`💬 Conversation Score: ${chalk.bold(status.performance.conversationScore.toFixed(2))}`);
     console.log('');
-    
+
     if (status.lastOptimization) {
         console.log(`⏰ Last Optimization: ${chalk.yellow(new Date(status.lastOptimization).toLocaleString())}`);
     } else {
         console.log(`⏰ Last Optimization: ${chalk.yellow('Never')}`);
     }
-    
+
     console.log(`⏰ Next Optimization: ${chalk.yellow(status.nextOptimization.toLocaleString())}`);
     console.log('');
-    
+
     if (status.shouldOptimize) {
         console.log(chalk.green('✅ Ready for optimization!'));
     } else {
         console.log(chalk.yellow('⏳ Not ready for optimization yet'));
     }
-    
+
     // Exit after showing status
     process.exit(0);
 }
@@ -131,13 +144,13 @@ async function showStatus() {
 async function forceOptimization() {
     console.log(chalk.yellow('⚠️  Forcing optimization (ignoring thresholds)...'));
     console.log('');
-    
+
     // Temporarily lower thresholds
     trainingPipeline.minConversationsForOptimization = 1;
     trainingPipeline.minScoreThreshold = 1.0;
-    
+
     await trainingPipeline.runTrainingCycle();
-    
+
     console.log('');
     console.log(chalk.green('✅ Forced optimization completed!'));
     process.exit(0);
@@ -146,12 +159,12 @@ async function forceOptimization() {
 async function runAnalysisOnly() {
     console.log(chalk.cyan('🔍 Running analysis on existing data (no new simulations)...'));
     console.log('');
-    
+
     // Enable skip simulations mode
     trainingPipeline.skipSimulations = true;
-    
+
     await trainingPipeline.runTrainingCycle();
-    
+
     console.log('');
     console.log(chalk.green('✅ Analysis completed using existing conversation data!'));
     process.exit(0);

@@ -7,7 +7,7 @@ const BASE_URL = 'http://localhost:5000';
 
 async function testSimulationAPI() {
     console.log('\n🧪 Testing Simulation API...\n');
-    
+
     try {
         // Test 1: Get scenarios
         console.log('Test 1: GET /api/scenarios');
@@ -18,7 +18,7 @@ async function testSimulationAPI() {
         const scenariosData = await scenariosRes.json();
         console.log(`✅ Loaded ${Object.keys(scenariosData.scenarios || {}).length} scenarios`);
         console.log(`   Sample scenarios:`, Object.keys(scenariosData.scenarios || {}).slice(0, 3));
-        
+
         // Test 2: Run simple simulation
         console.log('\nTest 2: POST /api/simulate (simple)');
         const simpleRes = await fetch(`${BASE_URL}/api/simulate`, {
@@ -30,17 +30,17 @@ async function testSimulationAPI() {
                 turns: 3
             })
         });
-        
+
         if (!simpleRes.ok) {
             const error = await simpleRes.json();
             throw new Error(`Simulation failed: ${error.message}`);
         }
-        
+
         const simpleResult = await simpleRes.json();
         console.log(`✅ Simulation complete: ${simpleResult.scenarioName}`);
         console.log(`   Turns: ${simpleResult.turns}`);
         console.log(`   Complexity: ${simpleResult.complexity}/5`);
-        
+
         // Test 3: Run complex multi-user simulation
         console.log('\nTest 3: POST /api/simulate (multi-user)');
         const complexRes = await fetch(`${BASE_URL}/api/simulate`, {
@@ -52,20 +52,20 @@ async function testSimulationAPI() {
                 turns: 5
             })
         });
-        
+
         if (!complexRes.ok) {
             const error = await complexRes.json();
             console.error('Server error:', error);
             throw new Error(`Complex simulation failed: ${error.error || error.message}`);
         }
-        
+
         const complexResult = await complexRes.json();
         console.log(`✅ Complex simulation complete: ${complexResult.scenarioName}`);
         console.log(`   Scenario: ${complexResult.scenarioKey}`);
-        
+
         console.log('\n✅ All simulation API tests passed!\n');
         return true;
-        
+
     } catch (error) {
         console.error('\n❌ Test failed:', error.message);
         console.error(error.stack);
@@ -74,11 +74,9 @@ async function testSimulationAPI() {
 }
 
 // Run if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-    testSimulationAPI().then(success => {
-        process.exit(success ? 0 : 1);
-    });
-}
+testSimulationAPI().then(success => {
+    process.exit(success ? 0 : 1);
+});
 
 export default testSimulationAPI;
 
