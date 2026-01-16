@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Simulation Analysis Report (Enhanced)</title>
+    <meta charset="UTF-8">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        STYLES
+    </style>
+</head>
+
+<body>
+    <div class="sidebar">
+        <div class="sidebar-header">Statistics</div>
+        <div class="nav-item active" onclick="switchTab('dashboard')">📊 Dashboard</div>
+        <div class="nav-item" onclick="switchTab('trends')">📈 Trends & Charts</div>
+        <div class="nav-item" onclick="switchTab('scenarios')">🧪 Scenario Analysis</div>
+    </div>
+
+    <div class="main-content">
+        <!-- DASHBOARD TAB -->
+        <div id="dashboard" class="tab-content active">
+            <h1>Simulation Dashboard</h1>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">
+                        Simulated Runs
+                        <span class="info-icon" tooltip="Unique simulation sessions (1 full run)">ⓘ</span>
+                    </div>
+                    <div class="stat-value">{{SIMULATED_RUNS}}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">
+                        Interactions
+                        <span class="info-icon" tooltip="Total turns (User + Agent pairs) across all sessions">ⓘ</span>
+                    </div>
+                    <div class="stat-value">{{INTERACTIONS_COUNT}}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Simulation Score</div>
+                    <div class="stat-value" style="color: #3498db;">{{AVG_AI_SCORE}}</div>
+                    <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">{{AI_SCORE_SAMPLES}} samples</div>
+                    <div style="font-size: 0.65em; color: #95a5a6; margin-top: 2px;">Last updated: {{LAST_UPDATED_SIM}}
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Production Score</div>
+                    <div class="stat-value" style="color: #2ecc71;">{{AVG_HUMAN_SCORE}}</div>
+                    <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">{{HUMAN_SCORE_SAMPLES}} samples
+                    </div>
+                    <div style="font-size: 0.65em; color: #95a5a6; margin-top: 2px;">Last updated: {{LAST_UPDATED_PROD}}
+                    </div>
+                </div>
+                <div class="stat-card clickable" onclick="showPersonasList()" style="cursor: pointer;">
+                    <div class="stat-label">Total Defined Personas 👁️</div>
+                    <div class="stat-value" style="color: #8e44ad;">{{PERSONA_COUNT}}</div>
+                    <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">Click to view list</div>
+                </div>
+                <div class="stat-card clickable" onclick="showScenariosList()" style="cursor: pointer;">
+                    <div class="stat-label">Unique Scenarios 👁️</div>
+                    <div class="stat-value" style="color: #d35400;">{{SCENARIO_COUNT}}</div>
+                    <div style="font-size: 0.7em; color: #7f8c8d; margin-top: 4px;">Click to view list</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">
+                        Critical Flags
+                        <span class="info-icon"
+                            tooltip="High-severity issues like Safety violations or Escalation failures">ⓘ</span>
+                    </div>
+                    <div class="stat-value" style="color: #e74c3c;">{{CRITICAL_FLAGS}}</div>
+                </div>
+            </div>
+
+            <h2>🤖 Model Performance</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Simulated Runs</th>
+                        <th>Avg. Score</th>
+                    </tr>
+                </thead>
+                <tbody>{{MODEL_STATS_ROWS}}</tbody>
+            </table>
+
+            <h2>🚨 Top Failure Categories</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Category</th>
+                        <th>Description</th>
+                        <th>Count</th>
+                    </tr>
+                </thead>
+                <tbody>{{FAILURE_CATEGORY_ROWS}}</tbody>
+            </table>
+        </div>
+
+        <!-- TRENDS TAB -->
+        <div id="trends" class="tab-content">
+            <h1>Performance Trends</h1>
+            <div class="chart-section">
+                <h3>Feedback Scores Over Time</h3>
+                <p style="font-size: 0.9em; color: #7f8c8d; margin-bottom: 10px;">Separate views for AI-generated vs
+                    Human feedback</p>
+                <div class="chart-container"><canvas id="scoreChart"></canvas></div>
+            </div>
+            <div class="chart-section">
+                <h3>Message & Turn Statistics</h3>
+                <div class="chart-container"><canvas id="statsChart"></canvas></div>
+            </div>
+            <div class="chart-section">
+                <h3>Interaction Lengths</h3>
+                <div class="chart-container"><canvas id="lengthChart"></canvas></div>
+            </div>
+            <h2>System Errors</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Error Message</th>
+                        <th>Count</th>
+                    </tr>
+                </thead>
+                <tbody>{{SYSTEM_ERROR_ROWS}}</tbody>
+            </table>
+        </div>
+
+        <!-- SCENARIOS TAB -->
+        <div id="scenarios" class="tab-content">
+            <h1>Scenario Analysis</h1>
+            <p>Analysis of each <strong>Scenario</strong> across different system versions and variants.</p>
+            {{SCENARIO_HTML}}
+        </div>
+
+    </div>
+
+    <!-- Modal for Personas/Scenarios Lists -->
+    <div id="listModal"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+        <div
+            style="background: white; padding: 30px; border-radius: 12px; max-width: 600px; max-height: 80vh; overflow-y: auto; box-shadow: 0 10px 40px rgba(0,0,0,0.3);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 id="modalTitle" style="margin: 0;"></h2>
+                <button onclick="closeModal()"
+                    style="background: none; border: none; font-size: 24px; cursor: pointer; color: #7f8c8d;">&times;</button>
+            </div>
+            <div id="modalContent"></div>
+        </div>
+    </div>
+
+    <script>
+        { { SCRIPTS } }
+    </script>
+</body>
+
+</html>

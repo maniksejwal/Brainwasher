@@ -31,6 +31,12 @@ app.use(express.json());
 setupLogger();
 
 // Serve Static Files
+// Specific route must come BEFORE the static middleware for the same path prefix to take precedence
+app.get('/reports/simulation', (req, res) => {
+    const reportPath = path.join(__dirname, 'training/analysis/reports/simulation_report.html');
+    res.sendFile(reportPath);
+});
+
 app.use('/gui', express.static(path.join(__dirname, 'gui')));
 app.use('/shared', express.static(path.join(__dirname, 'shared')));
 app.use('/reports', express.static(path.join(__dirname, 'training/analysis/reports')));
@@ -90,8 +96,14 @@ events.on('escalate', (payload) => {
     // I'll assume broadcast handles it if I pass all keys? No.
     // I'll dynamically import broadcastToAll? Or just add it to imports.
     // Wait, I didn't import broadcastToAll at the top.
-    import('./lib/sse.js').then(({ broadcastToAll }) => {
-        broadcastToAll({ type: 'escalation', ...payload });
+    import('./lib/sse.js').then(({ broadcast, broadcastToAll }) => {
+        if (payload.userId) {
+            broadcast([payload.userId], { type: 'escalation', ...payload });
+        } else {
+            // Fallback for backward compatibility
+            console.warn('[Server] Escalation event missing userId, using broadcastToAll fallback.');
+            broadcastToAll({ type: 'escalation', ...payload });
+        }
     });
 });
 

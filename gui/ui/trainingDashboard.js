@@ -135,11 +135,47 @@ export function initTrainingDashboard() {
         }
     });
 
+    async function loadMetrics() {
+        try {
+            const response = await fetch('/api/simulation/analysis/stats');
+            const data = await response.json();
+
+            if (data.success) {
+                // Map API data to metricsState
+                metricsState.conversationCount = data.logStats.conversationsCount;
+
+                // Calculate average AI score
+                if (data.timeSeriesData && data.timeSeriesData.aiTimeSeries) {
+                    const aiScores = data.timeSeriesData.aiTimeSeries
+                        .filter(t => t.score !== null)
+                        .map(t => t.score);
+
+                    if (aiScores.length > 0) {
+                        const sum = aiScores.reduce((a, b) => a + b, 0);
+                        metricsState.averageScore = sum / aiScores.length;
+                    }
+                }
+
+                renderMetrics();
+
+                // Append summary to output for visibility
+                appendOutput(`\n[API] Fetched stats: ${metricsState.conversationCount} runs, Avg Score: ${metricsState.averageScore?.toFixed(2) || 'N/A'}\n`);
+            }
+        } catch (error) {
+            console.error('Failed to load analysis stats:', error);
+            // Don't clutter output on fail, just log
+        }
+    }
+
     document.getElementById('train-status').addEventListener('click', async () => {
         outputBuffer = '';
         outputDiv.textContent = 'Checking status...\n';
         activeCommand = 'status';
         resetMetrics();
+
+        // Call API in parallel with CLI command
+        loadMetrics();
+
         try {
             await executor.execute('train', {
                 command: 'status'

@@ -250,4 +250,45 @@ router.get('/simulations/:id/logs', async (req, res) => {
     }
 });
 
+// Get comprehensive analysis stats
+router.get('/analysis/stats', async (req, res) => {
+    try {
+        const { TrainingMetricsAnalyzer } = await import('../training/analysis/lib/training_metrics_analyzer.js');
+        const analyzer = new TrainingMetricsAnalyzer();
+
+        // Run analysis
+        const logStats = await analyzer.analyzeLogs();
+        const dbStats = await analyzer.analyzeDB();
+        const timeSeriesData = analyzer.processTimeSeriesData();
+        const definedPersonas = analyzer.getDefinedPersonas();
+        const scenarios = analyzer.getScenarios();
+
+        res.json({
+            success: true,
+            logStats: {
+                totalLines: logStats.totalLines,
+                interactions: logStats.interactions,
+                conversationsCount: logStats.conversations.size,
+                models: logStats.models,
+                errors: logStats.errors
+            },
+            dbStats: {
+                flagsCount: dbStats.flags.length,
+                meta: dbStats.meta,
+                issueCounts: dbStats.detailedFeedback.reduce((acc, f) => {
+                    acc[f.category] = (acc[f.category] || 0) + 1;
+                    return acc;
+                }, {})
+            },
+            timeSeriesData,
+            definedPersonas,
+            scenariosCount: Object.keys(scenarios).length
+        });
+
+    } catch (error) {
+        console.error('[Simulation] Analysis error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 export default router;
