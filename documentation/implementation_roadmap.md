@@ -387,13 +387,41 @@ Before deploying any change:
 
 ---
 
-## Next Immediate Steps
+---
 
-1. **Create directory structure**: `mkdir training/`
-2. **Implement logger.js**: Start passive observation
-3. **Run baseline tests**: Ensure current system is stable
-4. **Begin logging**: Collect data for 1 week
-5. **Review and iterate**: Assess data quality before Phase 2
+## Phase 6: Deployment & Integration (Next Implementation)
 
-This approach ensures you build a robust RL system without risking your working application.
+**Goal**: Prepare the system for production deployment with robust security and external integrations.
+
+### 6.1 Integration
+- [ ] Connect ICD API: Integrate medical coding API for standardized terminology.
+- [ ] Connect Doc Categorizer: Implement document classification service.
+- [ ] Connect Completeness API: Integrate API to check for missing medical information.
+
+### 6.2 Deployment
+- [ ] Deployment Configuration: Set up production environment variables and build scripts.
+- [ ] CI/CD Pipeline: GitHub Actions for automated testing and deployment.
+- [ ] Cloud Infrastructure: Provision resources (likely AWS or similar).
+
+### 6.3 Authentication
+- [ ] Real Firebase/Cognito Auth: Replace current local auth with robust provider (Firebase or AWS Cognito).
+- [ ] Secure Session Management: Implement secure tokens and refresh logic.
+
+### 6.4 Security
+- [ ] Security Audit: Comprehensive review of API endpoints and data access.
+- [ ] Data Encryption: Ensure at-rest and in-transit encryption.
+- [ ] Rate Limiting: Harden DDoS protection.
+
+### 6.5 Training
+- [ ] Continuous Training Pipeline: Automate the feedback loop from Phase 4.
+
+---
+
+## Next Immediate Steps (Updated)
+
+1. **Connect ICD, Doc Categorizer, and Completeness APIs** (Phase 6.1)
+2. **Setup Real Auth (Firebase/Cognito)** (Phase 6.3)
+3. **Conduct Security Audit** (Phase 6.4)
+4. **Prepare for Deployment** (Phase 6.2)
+5. **Continuous Training** (Phase 6.5)
 
