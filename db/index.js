@@ -71,6 +71,7 @@ import {
 
 export {
     getDb,
+    setGlobalDb,
     initializeDatabase,
     clearDatabase,
     findUserByUsername,

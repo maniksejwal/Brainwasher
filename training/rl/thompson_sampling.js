@@ -21,9 +21,20 @@ export class ThompsonSampling {
 
         // Initialize tracking for all versions
         this.versions.forEach(v => {
-            this.successes[v] = 0;
-            this.failures[v] = 0;
-            this.totalSamples[v] = 0;
+            const stats = options.initialStats && options.initialStats[v];
+            if (stats) {
+                this.successes[v] = stats.successes || 0;
+                this.failures[v] = stats.failures || 0;
+                this.totalSamples[v] = (this.successes[v] + this.failures[v]);
+                // If provided total samples is different (e.g. from non-boolean rewards), use that
+                if (stats.totalSamples && stats.totalSamples > this.totalSamples[v]) {
+                    this.totalSamples[v] = stats.totalSamples;
+                }
+            } else {
+                this.successes[v] = 0;
+                this.failures[v] = 0;
+                this.totalSamples[v] = 0;
+            }
         });
     }
 

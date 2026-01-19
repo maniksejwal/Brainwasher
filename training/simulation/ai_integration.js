@@ -9,9 +9,15 @@ import { handleCommand } from '../../handlers/commandHandler.js';
 import { performAiAnalysis } from '../../handlers/message_logic/aiAnalysisHandler.js';
 import { ORCHESTRATOR_ACTIONS } from '../../constants.js';
 
+import { setGlobalDb } from '../../db/index.js';
+
 export class SimulationAI {
     constructor(simulationDb) {
         this.simulationDb = simulationDb;
+        // Inject the simulation DB into the global scope so handlers use it
+        if (simulationDb) {
+            setGlobalDb(simulationDb);
+        }
     }
 
     /**

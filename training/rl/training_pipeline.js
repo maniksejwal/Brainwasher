@@ -34,14 +34,14 @@ export class TrainingPipeline {
         this.optimizePrompts = options.optimizePrompts || 'all';
         this.maxRunsPerTest = options.maxRunsPerTest || 5; // Configurable via constructor
         this.maxScenariosPerTest = options.maxScenariosPerTest || null; // Configurable via constructor
-        
+
         // Conversation count calculation:
         // For each optimized prompt: maxRunsPerTest × 2 (baseline + challenger) = conversations per prompt
         // Example: 2 prompts, 5 runs each = 2 × 5 × 2 = 20 conversations total
-        
+
         this.feedbackAnalyzer = new FeedbackAnalyzer();
         this.promptOptimizer = new PromptOptimizer();
-        
+
         this.db = null;
     }
 
@@ -99,7 +99,7 @@ export class TrainingPipeline {
             // This generates a report BEFORE running new simulations - it analyzes past data to identify what needs optimization
             console.log('[TrainingPipeline] Analyzing current performance...');
             const performanceAnalysis = await this.feedbackAnalyzer.analyzePerformance();
-            
+
             // Step 3: Identify optimization opportunities
             console.log('[TrainingPipeline] Identifying optimization opportunities...');
             const optimizationOpportunities = await this.identifyOptimizationOpportunities(performanceAnalysis);
@@ -120,13 +120,13 @@ export class TrainingPipeline {
             console.log('[TrainingPipeline] Generating optimized prompts...');
             console.log(`[TrainingPipeline] Optimizing prompts: ${this.optimizePrompts === 'all' ? 'all prompt types' : Array.isArray(this.optimizePrompts) ? this.optimizePrompts.join(', ') : this.optimizePrompts}`);
             let optimizedPrompts = [];
-            
+
             if (this.optimizePrompts === 'unified' || (Array.isArray(this.optimizePrompts) && this.optimizePrompts.includes('unified'))) {
                 // Use existing unified prompt optimization (reuse code)
                 const unifiedPrompts = await this.generateOptimizedPrompts(optimizationOpportunities);
                 optimizedPrompts.push(...unifiedPrompts);
             }
-            
+
             if (this.optimizePrompts === 'all' || (Array.isArray(this.optimizePrompts) && this.optimizePrompts.some(p => p !== 'unified'))) {
                 // Use multi-prompt optimizer for other prompts
                 const { MultiPromptOptimizer } = await import('./prompt_optimizer_multi.js');
@@ -137,7 +137,7 @@ export class TrainingPipeline {
                 );
                 optimizedPrompts.push(...otherPrompts);
             }
-            
+
             console.log(`[TrainingPipeline] Generated ${optimizedPrompts.length} optimized prompt version(s) across ${new Set(optimizedPrompts.map(p => p.type)).size} prompt type(s)`);
 
             // Step 5: Multi-arm bandit testing with Thompson Sampling (replaces A/B testing)
@@ -175,11 +175,11 @@ export class TrainingPipeline {
                     }
                 }
             }
-            
+
             if (winners.length > 0) {
                 console.log('\n⚠️  DEPLOYMENT CANDIDATES DETECTED ⚠️');
                 console.log(`Found ${winners.length} optimized prompt(s) that outperformed baseline:\n`);
-                
+
                 for (const winner of winners) {
                     console.log(`📝 ${winner.name || winner.type || 'Unknown Prompt'}:`);
                     console.log(`   Version: ${winner.version}`);
@@ -191,7 +191,7 @@ export class TrainingPipeline {
                     console.log(`     node cli/train.js deploy --version ${winner.version}`);
                     console.log('');
                 }
-                
+
                 console.log('⚠️  Auto-deployment is DISABLED. Review prompts and deploy manually. ⚠️');
                 console.log('\n💡 Note: Prompts are stored in the PRODUCTION database (care_circle.db)');
                 console.log('   They can be viewed from any database using: node cli/prompts.js list');
@@ -243,12 +243,14 @@ export class TrainingPipeline {
         }
 
         // Poor escalation handling
+        // Poor escalation handling
         if (performanceAnalysis.escalationEffectiveness < 0.5) {
             opportunities.push({
                 type: 'poor_escalation',
                 priority: 'high',
                 description: 'Escalation handling needs improvement',
-                targetMetric: 'escalationEffectiveness'
+                targetMetric: 'escalationEffectiveness',
+                tags: ['escalation'] // Tag for scenario targetting
             });
         }
 
@@ -258,11 +260,70 @@ export class TrainingPipeline {
                 type: 'low_conversation_quality',
                 priority: 'medium',
                 description: 'Conversation quality needs improvement',
-                targetMetric: 'conversationQuality'
+                targetMetric: 'conversationQuality',
+                tags: ['complex', 'emotional'] // Tag for scenario targetting
             });
         }
 
         return opportunities;
+    }
+
+    /**
+     * Get historical statistics for versions
+     * @private
+     */
+    async _getHistoricalStats(versions) {
+        if (!versions || versions.length === 0) return {};
+
+        try {
+            const placeholders = versions.map(() => '?').join(',');
+            // Query DB for aggregate stats
+            // Note: score > 0.5 counts as success for boolean approx
+            const rows = await this.db.all(`
+                SELECT 
+                    prompt_version,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN score > 0.5 THEN 1 ELSE 0 END) as successes,
+                    SUM(CASE WHEN score <= 0.5 THEN 1 ELSE 0 END) as failures
+                FROM feedback
+                WHERE prompt_version IN (${placeholders})
+                GROUP BY prompt_version
+            `, versions);
+
+            const stats = {};
+            rows.forEach(row => {
+                stats[row.prompt_version] = {
+                    successes: row.successes,
+                    failures: row.failures,
+                    totalSamples: row.total
+                };
+            });
+
+            // Also get 'current' stats (which might represent NULL version in DB or specific base version)
+            if (versions.includes('current')) {
+                const currentStats = await this.db.get(`
+                    SELECT 
+                        COUNT(*) as total,
+                        SUM(CASE WHEN score > 0.5 THEN 1 ELSE 0 END) as successes,
+                        SUM(CASE WHEN score <= 0.5 THEN 1 ELSE 0 END) as failures
+                    FROM feedback
+                    WHERE prompt_version IS NULL OR prompt_version = 'current'
+                `);
+
+                if (currentStats && currentStats.total > 0) {
+                    stats['current'] = {
+                        successes: currentStats.successes,
+                        failures: currentStats.failures,
+                        totalSamples: currentStats.total
+                    };
+                }
+            }
+
+            return stats;
+        } catch (error) {
+            console.warn('[TrainingPipeline] Failed to get historical stats:', error.message);
+            return {};
+        }
     }
 
     /**
@@ -275,7 +336,7 @@ export class TrainingPipeline {
         // From training/rl/ we need to go up 2 levels to reach project root
         const promptsDir = path.join(__dirname, '../../prompts');
         const unifiedPromptPath = path.join(promptsDir, 'unified_prompt.js');
-        
+
         let currentPrompt;
         try {
             // Resolve to absolute path for better error messages
@@ -294,7 +355,7 @@ export class TrainingPipeline {
             try {
                 // Build focused analysis for this opportunity
                 const focusedAnalysis = `Opportunity: ${opportunity.type}\nPriority: ${opportunity.priority}\nDescription: ${opportunity.description}\nTarget Metric: ${opportunity.targetMetric}\n\n${typeof analysisReport === 'string' ? analysisReport : analysisReport.aiAnalysis || JSON.stringify(analysisReport)}`;
-                
+
                 const optimizedPrompt = await this.promptOptimizer.optimizePrompt(currentPrompt, focusedAnalysis);
 
                 if (optimizedPrompt && optimizedPrompt.length > 100) {
@@ -307,13 +368,13 @@ export class TrainingPipeline {
                         minute: '2-digit'
                     });
                     const promptName = `${opportunity.type || 'optimization'} - ${opportunity.description?.substring(0, 40) || 'optimization'} (${timestamp})`;
-                    
+
                     // Save to database immediately for tracking (ALWAYS to production DB)
                     let originalSimMode = process.env.SIMULATION_MODE;
                     try {
                         // Force use of production database for prompt storage
                         delete process.env.SIMULATION_MODE; // Temporarily disable simulation mode
-                        
+
                         const { savePromptVersion } = await import('../../db/index.js');
                         await savePromptVersion(version, optimizedPrompt, promptName, 0);
                         console.log(`[TrainingPipeline] Saved optimized prompt ${version}: ${promptName}`);
@@ -325,7 +386,7 @@ export class TrainingPipeline {
                             process.env.SIMULATION_MODE = originalSimMode;
                         }
                     }
-                    
+
                     optimizedPrompts.push({
                         ...opportunity,
                         optimizedPrompt,
@@ -362,7 +423,7 @@ export class TrainingPipeline {
             for (const promptData of optimizedPrompts) {
                 try {
                     const testResult = await this._analyzeExistingDataForBandit('current', promptData.version);
-                    
+
                     results.tests.push({
                         ...promptData,
                         testResult
@@ -380,19 +441,43 @@ export class TrainingPipeline {
             // Get all available scenarios for diversity
             const { SCENARIOS } = await import('../simulation/scenarios.js');
             const allScenarios = Object.keys(SCENARIOS);
-            
+
             for (const promptData of optimizedPrompts) {
                 try {
-                    // Select diverse scenarios - each run gets a different random scenario
-                    // This ensures we test the prompt across various contexts, not just repeated scenarios
+                    // Determine target scenarios for this optimization
+                    // If the opportunity specifies a target metric or description that links to a scenario type
+                    let targetTags = [];
+                    if (promptData.targetMetric === 'escalationEffectiveness' || (promptData.description && promptData.description.toLowerCase().includes('escalat'))) {
+                        targetTags.push('escalation'); // Use scenarios with 'escalation' in name/desc
+                    }
+                    if (promptData.type === 'low_conversation_quality') {
+                        // General improvements should be tested broadly, maybe 'complex' scenarios
+                        targetTags.push('complex');
+                    }
+
+                    // Select diverse scenarios - prioritize those matching tags if any
+                    // each run gets a different random scenario
                     const diverseScenarios = [];
                     const runsPerVersion = this.maxRunsPerTest || 2; // Configurable via constructor
                     const maxScenariosToUse = this.maxScenariosPerTest || allScenarios.length; // Limit scenarios if needed
-                    
+
+                    // Filter scenarios by tags if present
+                    let candidateScenarios = allScenarios;
+                    if (targetTags.length > 0) {
+                        const tagged = allScenarios.filter(s => {
+                            const name = s.toLowerCase();
+                            return targetTags.some(t => name.includes(t));
+                        });
+                        if (tagged.length > 0) {
+                            console.log(`[TrainingPipeline] Targeted testing: found ${tagged.length} scenarios matching tags [${targetTags.join(',')}]`);
+                            candidateScenarios = tagged;
+                        }
+                    }
+
                     // Limit scenarios if configured
-                    const scenariosToChooseFrom = maxScenariosToUse < allScenarios.length ? 
-                        allScenarios.slice(0, maxScenariosToUse) : allScenarios;
-                    
+                    const scenariosToChooseFrom = maxScenariosToUse < candidateScenarios.length ?
+                        candidateScenarios.slice(0, maxScenariosToUse) : candidateScenarios;
+
                     // Ensure we have enough unique scenarios
                     if (scenariosToChooseFrom.length >= runsPerVersion) {
                         // Pick unique random scenarios (no repetition)
@@ -404,22 +489,31 @@ export class TrainingPipeline {
                         for (let i = 0; i < runsPerVersion; i++) {
                             // Prefer less-used scenarios
                             const available = scenariosToChooseFrom.filter(s => !scenarioCounts[s] || scenarioCounts[s] < 2);
-                            const selected = available.length > 0 ? 
+                            const selected = available.length > 0 ?
                                 available[Math.floor(Math.random() * available.length)] :
                                 scenariosToChooseFrom[Math.floor(Math.random() * scenariosToChooseFrom.length)];
                             diverseScenarios.push(selected);
                             scenarioCounts[selected] = (scenarioCounts[selected] || 0) + 1;
                         }
                     }
-                    
-                    console.log(`[TrainingPipeline] Using ${diverseScenarios.length} diverse scenarios for multi-arm bandit (from ${scenariosToChooseFrom.length} available, ${allScenarios.length} total)`);
-                    
+
+                    console.log(`[TrainingPipeline] Using ${diverseScenarios.length} diverse scenarios for multi-arm bandit (from ${scenariosToChooseFrom.length} available, filtered from ${allScenarios.length} total)`);
+
                     // Multi-arm bandit with Thompson Sampling
                     const versions = ['current', promptData.version];
+
+                    // Fetch historical stats for persistence
+                    console.log('[TrainingPipeline] Fetching historical stats for MAB persistence...');
+                    const initialStats = await this._getHistoricalStats(versions);
+                    if (initialStats['current']) {
+                        console.log(`[TrainingPipeline] Loaded history for current: ${initialStats['current'].totalSamples} samples (${initialStats['current'].successes} successes)`);
+                    }
+
                     const thompsonSampling = new ThompsonSampling(versions, {
-                        minSamples: runsPerVersion || 2
+                        minSamples: runsPerVersion || 2,
+                        initialStats: initialStats
                     });
-                    
+
                     // Run simulations and update Thompson Sampling
                     const testResult = await this._runThompsonSamplingTest(
                         thompsonSampling,
@@ -436,7 +530,7 @@ export class TrainingPipeline {
                     // Determine winner based on Thompson Sampling statistics
                     const stats = thompsonSampling.getStatistics();
                     const bestVersion = stats.sort((a, b) => b.expectedValue - a.expectedValue)[0];
-                    
+
                     if (bestVersion.version === promptData.version) {
                         results.winner = {
                             ...promptData,
@@ -454,7 +548,7 @@ export class TrainingPipeline {
 
         return results;
     }
-    
+
     /**
      * Get scenario config from unified SCENARIOS
      * Returns both the config and whether it's a world scenario (based on circles field)
@@ -462,12 +556,12 @@ export class TrainingPipeline {
      */
     async _getScenarioConfig(scenarioKey) {
         const { SCENARIOS, isWorldScenario } = await import('../simulation/scenarios.js');
-        
+
         const config = SCENARIOS[scenarioKey];
         if (!config) {
             throw new Error(`Scenario ${scenarioKey} not found in SCENARIOS`);
         }
-        
+
         return { config, isWorld: isWorldScenario(config) };
     }
 
@@ -480,23 +574,23 @@ export class TrainingPipeline {
             versionResults: {},
             totalRuns: 0
         };
-        
+
         // Set simulation mode for all simulations
         const originalSimulationMode = process.env.SIMULATION_MODE;
         process.env.SIMULATION_MODE = 'true';
-        
+
         // Run simulations for each scenario, using Thompson Sampling to select versions
         for (const scenario of scenarios) {
             // Get scenario config and type
             const { config: scenarioConfig, isWorld: isWorldScenario } = await this._getScenarioConfig(scenario);
-            
+
             // Select version using Thompson Sampling
             const selectedVersion = thompsonSampling.selectVersion();
-            
+
             // Set prompt version for this simulation
             const originalEnv = process.env.PROMPT_VERSION;
             process.env.PROMPT_VERSION = selectedVersion === 'current' ? null : selectedVersion;
-            
+
             // Create appropriate simulator for this scenario
             let simulator;
             if (isWorldScenario) {
@@ -506,25 +600,25 @@ export class TrainingPipeline {
                 const { SimulationDriver } = await import('../simulation/simulator.js');
                 simulator = new SimulationDriver();
             }
-            
+
             try {
                 const startTime = Date.now();
-                
+
                 await simulator.runScenario(scenarioConfig, scenario);
-                
+
                 const duration = Date.now() - startTime;
-                
+
                 // Get score from feedback (simulation stores feedback in database)
                 // Query feedback table for this conversation
                 const db = simulator.db;
-                
+
                 // For world simulations, we need to query all conversation IDs
                 let conversationIds = [simulator.conversationId];
                 if (simulator.conversationIds && simulator.conversationIds.length > 0) {
                     // World simulation has multiple circles = multiple conversation IDs
                     conversationIds = simulator.conversationIds;
                 }
-                
+
                 // Query feedback for all conversation IDs in this simulation
                 const placeholders = conversationIds.map(() => '?').join(',');
                 const feedback = await db.all(`
@@ -535,22 +629,22 @@ export class TrainingPipeline {
                     ORDER BY timestamp DESC
                     LIMIT 50
                 `, [...conversationIds, selectedVersion === 'current' ? null : selectedVersion]);
-                
+
                 // Calculate average score from feedback
-                const avgScore = feedback.length > 0 
+                const avgScore = feedback.length > 0
                     ? feedback.reduce((sum, f) => sum + (f.score || 0), 0) / feedback.length
                     : 0;
-                
+
                 // Use weighted score: feedback score + goal scores
-                const weightedScore = avgScore * 0.6 + 
-                    (feedback.length > 0 ? feedback.reduce((sum, f) => 
+                const weightedScore = avgScore * 0.6 +
+                    (feedback.length > 0 ? feedback.reduce((sum, f) =>
                         sum + (f.goal_adherence_score || 0) + (f.goal_history_score || 0) + (f.goal_conversation_score || 0), 0) / feedback.length / 3 : 0) * 0.4;
-                
+
                 const reward = weightedScore > 0 ? true : false; // Convert to boolean for Thompson Sampling
-                
+
                 // Update Thompson Sampling
                 thompsonSampling.updateReward(selectedVersion, reward);
-                
+
                 // Track results
                 if (!results.versionResults[selectedVersion]) {
                     results.versionResults[selectedVersion] = {
@@ -565,12 +659,12 @@ export class TrainingPipeline {
                     results.versionResults[selectedVersion].successes++;
                 }
                 results.totalRuns++;
-                
+
                 // Cleanup simulator
                 if (simulator.cleanup) {
                     await simulator.cleanup();
                 }
-                
+
             } catch (error) {
                 console.warn(`[TrainingPipeline] Simulation failed for ${scenario}:`, error.message);
                 // Update as failure
@@ -584,19 +678,19 @@ export class TrainingPipeline {
                 }
             }
         }
-        
+
         // Restore original simulation mode
         if (originalSimulationMode !== undefined) {
             process.env.SIMULATION_MODE = originalSimulationMode;
         } else {
             delete process.env.SIMULATION_MODE;
         }
-        
+
         // Calculate final scores
         const stats = thompsonSampling.getStatistics();
         const baselineStats = stats.find(s => s.version === 'current');
         const challengerStats = stats.find(s => s.version === promptData.version);
-        
+
         return {
             baselineScore: baselineStats?.expectedValue || 0,
             challengerScore: challengerStats?.expectedValue || 0,
@@ -613,15 +707,15 @@ export class TrainingPipeline {
     async _analyzeExistingDataForBandit(baselineVersion, challengerVersion) {
         // Reuse FeedbackAnalyzer's reward backpropagation method
         const rewardAnalysis = await this.feedbackAnalyzer.calculateRewardBackpropagation();
-        
+
         // Extract baseline performance
-        const baselinePerf = rewardAnalysis.prompt_performance[baselineVersion] || 
-                           rewardAnalysis.prompt_performance['current'] ||
-                           Object.values(rewardAnalysis.prompt_performance)[0]; // First available
-        
+        const baselinePerf = rewardAnalysis.prompt_performance[baselineVersion] ||
+            rewardAnalysis.prompt_performance['current'] ||
+            Object.values(rewardAnalysis.prompt_performance)[0]; // First available
+
         // Extract challenger performance
         const challengerPerf = rewardAnalysis.prompt_performance[challengerVersion];
-        
+
         const baselineScore = baselinePerf?.reward_signal || baselinePerf?.avg_score || 0;
         const challengerScore = challengerPerf?.reward_signal || challengerPerf?.avg_score || 0;
         const baselineCount = baselinePerf?.total_interactions || 0;
@@ -645,20 +739,20 @@ export class TrainingPipeline {
         const projectRoot = path.resolve(__dirname, '../../../');
         const promptPath = path.join(projectRoot, 'prompts/unified_prompt.js');
         const backupPath = path.join(projectRoot, 'prompts/unified_prompt.js.backup');
-        
+
         console.log(`[TrainingPipeline] Deploying to: ${promptPath}`);
-        
+
         // Check if prompt file exists
         try {
             await fs.access(promptPath);
         } catch (error) {
             throw new Error(`Prompt file not found at ${promptPath}. Cannot deploy.`);
         }
-        
+
         // Backup current prompt
         await fs.copyFile(promptPath, backupPath);
         console.log(`[TrainingPipeline] Backed up to: ${backupPath}`);
-        
+
         // Wrap optimized prompt in proper export format
         const wrappedPrompt = `/**
  * @fileoverview prompts/unified_prompt.js
@@ -673,12 +767,12 @@ export class TrainingPipeline {
 
 export const PROMPT_UNIFIED_AGENT_WITH_STATE = \`${promptData.optimizedPrompt}\`;
 `;
-        
+
         // Write new prompt
         await fs.writeFile(promptPath, wrappedPrompt, 'utf8');
-        
+
         console.log(`[TrainingPipeline] ✓ Deployed ${promptData.version} (score: ${promptData.testResult?.challengerScore?.toFixed(2) || 'N/A'}, baseline: ${promptData.testResult?.baselineScore?.toFixed(2) || 'N/A'})`);
-        
+
         // Update database with new version
         try {
             const { savePromptVersion } = await import('../../db/index.js');
@@ -710,13 +804,13 @@ export const PROMPT_UNIFIED_AGENT_WITH_STATE = \`${promptData.optimizedPrompt}\`
     async getStatus() {
         const conversationCount = await this.getConversationCount();
         const performance = await this.getCurrentPerformance();
-        
+
         return {
             conversationCount,
             performance,
             lastOptimization: this.lastOptimization,
-            nextOptimization: this.lastOptimization ? 
-                new Date(this.lastOptimization + this.optimizationInterval) : 
+            nextOptimization: this.lastOptimization ?
+                new Date(this.lastOptimization + this.optimizationInterval) :
                 new Date(Date.now() + this.optimizationInterval),
             shouldOptimize: await this.shouldOptimize()
         };

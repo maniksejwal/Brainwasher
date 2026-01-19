@@ -7,10 +7,10 @@ let currentDbPath = null;
 // This function manages the singleton database connection.
 export async function getDb() {
     // Use simulation database when in simulation mode (for both regular and world simulations)
-    const dbPath = process.env.SIMULATION_MODE === 'true' 
-        ? './care_circle_simulation.db' 
+    const dbPath = process.env.SIMULATION_MODE === 'true'
+        ? './care_circle_simulation.db'
         : './care_circle.db';
-    
+
     // If database path changed or connection doesn't exist, create/recreate connection
     if (!db || currentDbPath !== dbPath) {
         if (db) {
@@ -25,6 +25,14 @@ export async function getDb() {
         });
     }
     return db;
+}
+
+// Allow overriding the database instance (e.g., for simulations)
+export function setGlobalDb(dbInstance) {
+    if (db) {
+        // Optional: console.warn("Overriding existing global DB connection");
+    }
+    db = dbInstance;
 }
 
 /**
