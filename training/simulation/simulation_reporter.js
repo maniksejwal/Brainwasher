@@ -16,9 +16,9 @@ export class SimulationReporter {
     /**
      * Auto-score feedback and store in database
      */
-    async autoScore(conversationId, userId, circleId, messageId, score, reason, promptVersion = 'simulation_v1.0', goalAssessment = null, modelUsed = null, promptType = null, systemUsed = null) {
+    async autoScore(conversationId, userId, circleId, messageId, score, reason, promptVersion = 'simulation_v1.0', goalAssessment = null, modelUsed = null, promptType = null, systemUsed = null, scenarioName = null, personaName = null) {
         const db = this.dbConnection || await getDb();
-        
+
         // Create table with correct schema
         await db.run(`
             CREATE TABLE IF NOT EXISTS feedback (
@@ -34,13 +34,17 @@ export class SimulationReporter {
                 prompt_version TEXT,
                 prompt_type TEXT,
                 system_used TEXT,
+                scenario_name TEXT,
+                persona_name TEXT,
                 goal_adherence_score REAL,
                 goal_history_score REAL,
                 goal_conversation_score REAL,
-                critical_failure BOOLEAN DEFAULT 0
+                critical_failure BOOLEAN DEFAULT 0,
+                model_used TEXT,
+                model_version TEXT
             )
         `);
-        
+
         // Migrate existing table to add missing columns
         await this._ensureFeedbackSchema(db);
 
@@ -50,9 +54,9 @@ export class SimulationReporter {
         const goalConversation = goalAssessment?.conversation || null;
 
         await db.run(
-            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source, prompt_version, prompt_type, system_used, goal_adherence_score, goal_history_score, goal_conversation_score, critical_failure, model_used, model_version)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [conversationId, messageId, userId, circleId, score, reason, Date.now(), promptVersion, promptType, systemUsed, goalAdherence, goalHistory, goalConversation, criticalFailure, modelUsed, modelUsed]
+            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source, prompt_version, prompt_type, system_used, scenario_name, persona_name, goal_adherence_score, goal_history_score, goal_conversation_score, critical_failure, model_used, model_version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [conversationId, messageId, userId, circleId, score, reason, Date.now(), promptVersion, promptType, systemUsed, scenarioName, personaName, goalAdherence, goalHistory, goalConversation, criticalFailure, modelUsed, modelUsed]
         );
 
         const autoScoredMsg = `[SimulationReporter][Auto-Scored]: Score ${score} - "${reason}"`;
@@ -63,7 +67,7 @@ export class SimulationReporter {
         } else {
             console.log(chalk.yellowBright(autoScoredMsg));
         }
-        
+
         // Store advice/recommendations if critical failure
         if (criticalFailure) {
             await this.storeAdvice(conversationId, userId, 'improvement', reason, 'high');
@@ -80,35 +84,63 @@ export class SimulationReporter {
                 SELECT name FROM sqlite_master 
                 WHERE type='table' AND name='feedback'
             `);
-            
+
             if (!tableExists) {
                 // Table will be created by CREATE TABLE above
                 return;
             }
-            
+
             // Check existing columns
             const tableInfo = await db.all(`PRAGMA table_info(feedback)`);
             const columnNames = tableInfo.map(col => col.name);
-            
+
             // Add prompt_type if missing
             if (!columnNames.includes('prompt_type')) {
                 console.log('[DB Migration] Adding missing "prompt_type" column to feedback table...');
                 await db.run(`ALTER TABLE feedback ADD COLUMN prompt_type TEXT`);
                 console.log('[DB Migration] Successfully added "prompt_type" column');
             }
-            
+
             // Add system_used if missing
             if (!columnNames.includes('system_used')) {
                 console.log('[DB Migration] Adding missing "system_used" column to feedback table...');
                 await db.run(`ALTER TABLE feedback ADD COLUMN system_used TEXT`);
                 console.log('[DB Migration] Successfully added "system_used" column');
             }
-            
+
             // Add message_id if missing
             if (!columnNames.includes('message_id')) {
                 console.log('[DB Migration] Adding missing "message_id" column to feedback table...');
                 await db.run(`ALTER TABLE feedback ADD COLUMN message_id INTEGER`);
                 console.log('[DB Migration] Successfully added "message_id" column');
+            }
+
+            // Add scenario_name if missing (Granular Analysis)
+            if (!columnNames.includes('scenario_name')) {
+                console.log('[DB Migration] Adding missing "scenario_name" column to feedback table...');
+                await db.run(`ALTER TABLE feedback ADD COLUMN scenario_name TEXT`);
+                console.log('[DB Migration] Successfully added "scenario_name" column');
+            }
+
+            // Add persona_name if missing (Granular Analysis)
+            if (!columnNames.includes('persona_name')) {
+                console.log('[DB Migration] Adding missing "persona_name" column to feedback table...');
+                await db.run(`ALTER TABLE feedback ADD COLUMN persona_name TEXT`);
+                console.log('[DB Migration] Successfully added "persona_name" column');
+            }
+
+            // Add model_used if missing
+            if (!columnNames.includes('model_used')) {
+                console.log('[DB Migration] Adding missing "model_used" column to feedback table...');
+                await db.run(`ALTER TABLE feedback ADD COLUMN model_used TEXT`);
+                console.log('[DB Migration] Successfully added "model_used" column');
+            }
+
+            // Add model_version if missing
+            if (!columnNames.includes('model_version')) {
+                console.log('[DB Migration] Adding missing "model_version" column to feedback table...');
+                await db.run(`ALTER TABLE feedback ADD COLUMN model_version TEXT`);
+                console.log('[DB Migration] Successfully added "model_version" column');
             }
         } catch (error) {
             console.warn('[DB Migration] Error checking feedback schema:', error.message);
@@ -120,7 +152,7 @@ export class SimulationReporter {
      */
     async flagMessage(conversationId, messageId, flagType, reason) {
         const db = this.dbConnection || await getDb();
-        
+
         await db.run(`
             CREATE TABLE IF NOT EXISTS flagged_messages (
                 flag_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -131,7 +163,7 @@ export class SimulationReporter {
                 timestamp INTEGER
             )
         `);
-        
+
         await db.run(
             `INSERT INTO flagged_messages (conversation_id, message_id, flag_type, reason, timestamp)
              VALUES (?, ?, ?, ?, ?)`,
@@ -144,7 +176,19 @@ export class SimulationReporter {
      */
     async storeAdvice(conversationId, userId, adviceType, adviceText, priority = 'medium') {
         const db = this.dbConnection || await getDb();
-        
+
+        await db.run(`
+            CREATE TABLE IF NOT EXISTS advice (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT,
+                user_id TEXT,
+                advice_type TEXT,
+                advice_text TEXT,
+                priority TEXT,
+                timestamp INTEGER
+            )
+        `);
+
         await db.run(
             `INSERT INTO advice (conversation_id, user_id, advice_type, advice_text, priority, timestamp)
              VALUES (?, ?, ?, ?, ?, ?)`,
@@ -155,9 +199,9 @@ export class SimulationReporter {
     /**
      * Auto-report detailed issues
      */
-    async autoReport(conversationId, userId, circleId, messageId, category, description, context) {
+    async autoReport(conversationId, userId, circleId, messageId, category, description, context, scenarioName = null, personaName = null) {
         const db = this.dbConnection || await getDb();
-        
+
         await db.run(`
             CREATE TABLE IF NOT EXISTS detailed_feedback (
                 report_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -171,14 +215,30 @@ export class SimulationReporter {
                 context TEXT,
                 prompt_version TEXT,
                 timestamp INTEGER NOT NULL,
+                scenario_name TEXT,
+                persona_name TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             )
         `);
 
+        // Check for new columns in detailed_feedback (migration)
+        try {
+            const tableInfo = await db.all(`PRAGMA table_info(detailed_feedback)`);
+            const columnNames = tableInfo.map(col => col.name);
+            if (!columnNames.includes('scenario_name')) {
+                await db.run(`ALTER TABLE detailed_feedback ADD COLUMN scenario_name TEXT`);
+            }
+            if (!columnNames.includes('persona_name')) {
+                await db.run(`ALTER TABLE detailed_feedback ADD COLUMN persona_name TEXT`);
+            }
+        } catch (err) {
+            // Ignore if table doesn't exist yet or other error, CREATE TABLE handles it
+        }
+
         await db.run(
-            `INSERT INTO detailed_feedback (conversation_id, message_id, user_id, circle_id, category, description, context, timestamp, source)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'simulation')`,
-            [conversationId, messageId, userId, circleId, category, description, context, Date.now()]
+            `INSERT INTO detailed_feedback (conversation_id, message_id, user_id, circle_id, category, description, context, timestamp, source, scenario_name, persona_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?)`,
+            [conversationId, messageId, userId, circleId, category, description, context, Date.now(), scenarioName, personaName]
         );
 
         console.log(chalk.blue(`[SimulationReporter][Message Flagged]`) + chalk.white(` ${category}: ${description}`));
@@ -189,7 +249,7 @@ export class SimulationReporter {
      */
     async flagSimulation(conversationId, flagType, reason) {
         const db = this.dbConnection || await getDb();
-        
+
         await db.run(`
             CREATE TABLE IF NOT EXISTS simulation_flags (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -209,9 +269,9 @@ export class SimulationReporter {
         );
 
         // Compact but visible flag message
-        console.log(chalk.red.bold('🚨 [SIMULATION FLAGGED]') + 
-                   chalk.yellow(` ${flagType}`) + 
-                   chalk.white(` | ${reason} | ${conversationId}`));
+        console.log(chalk.red.bold('🚨 [SIMULATION FLAGGED]') +
+            chalk.yellow(` ${flagType}`) +
+            chalk.white(` | ${reason} | ${conversationId}`));
     }
 
     /**
@@ -224,7 +284,7 @@ export class SimulationReporter {
             history: this.scorer._assessHistoryGoal(userMessage, agentResponse, conversationHistory),
             conversation: this.scorer._assessConversationGoal(userMessage, agentResponse)
         };
-        
+
         return goals;
     }
 
@@ -233,7 +293,7 @@ export class SimulationReporter {
      */
     async generateFeedbackReport(conversationId) {
         const db = this.dbConnection || await getDb();
-        
+
         try {
             // Get all feedback for conversation
             const feedback = await db.all(`
@@ -241,28 +301,28 @@ export class SimulationReporter {
                 WHERE conversation_id = ?
                 ORDER BY timestamp ASC
             `, [conversationId]);
-            
+
             // Get detailed reports
             const detailedReports = await db.all(`
                 SELECT * FROM detailed_feedback 
                 WHERE conversation_id = ?
                 ORDER BY timestamp ASC
             `, [conversationId]);
-            
+
             // Calculate summary statistics
             const totalTurns = feedback.length;
             const avgScore = feedback.reduce((sum, f) => sum + f.score, 0) / totalTurns;
             const criticalFailures = feedback.filter(f => f.critical_failure).length;
             const positiveScores = feedback.filter(f => f.score > 0).length;
             const negativeScores = feedback.filter(f => f.score < 0).length;
-            
+
             // Goal assessment summary
             const goalSummary = {
                 adherence: feedback.reduce((sum, f) => sum + (f.goal_adherence_score || 0), 0) / totalTurns,
                 history: feedback.reduce((sum, f) => sum + (f.goal_history_score || 0), 0) / totalTurns,
                 conversation: feedback.reduce((sum, f) => sum + (f.goal_conversation_score || 0), 0) / totalTurns
             };
-            
+
             return {
                 conversationId: conversationId,
                 summary: {
@@ -278,7 +338,7 @@ export class SimulationReporter {
                 detailedReports: detailedReports,
                 recommendations: this._generateRecommendations(feedback, detailedReports)
             };
-            
+
         } catch (error) {
             console.error('[SimulationReporter] Error generating feedback report:', error.message);
             return null;
@@ -290,11 +350,11 @@ export class SimulationReporter {
      */
     _generateRecommendations(feedback, detailedReports) {
         const recommendations = [];
-        
+
         // Analyze patterns
         const avgScore = feedback.reduce((sum, f) => sum + f.score, 0) / feedback.length;
         const criticalFailures = feedback.filter(f => f.critical_failure).length;
-        
+
         if (avgScore < 0) {
             recommendations.push({
                 priority: 'high',
@@ -308,7 +368,7 @@ export class SimulationReporter {
                 ]
             });
         }
-        
+
         if (criticalFailures > 0) {
             recommendations.push({
                 priority: 'critical',
@@ -322,13 +382,13 @@ export class SimulationReporter {
                 ]
             });
         }
-        
+
         // Analyze detailed reports
         const categories = {};
         detailedReports.forEach(report => {
             categories[report.category] = (categories[report.category] || 0) + 1;
         });
-        
+
         Object.entries(categories).forEach(([category, count]) => {
             if (count >= 2) {
                 recommendations.push({
@@ -339,7 +399,7 @@ export class SimulationReporter {
                 });
             }
         });
-        
+
         return recommendations;
     }
 
@@ -369,14 +429,14 @@ export class SimulationReporter {
                 'Improve personalization'
             ]
         };
-        
+
         return actions[category] || ['Review prompt for clarity and specificity'];
     }
 
     /**
      * Store conversation-level analysis in database
      */
-    async storeConversationAnalysis(conversationId, analysis) {
+    async storeConversationAnalysis(conversationId, analysis, scenarioName = null, personaName = null) {
         try {
             if (!this.dbConnection) {
                 console.warn('[SimulationReporter] No database connection for storing conversation analysis');
@@ -389,15 +449,29 @@ export class SimulationReporter {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     conversation_id TEXT NOT NULL,
                     analysis_data TEXT NOT NULL,
-                    timestamp INTEGER NOT NULL
+                    timestamp INTEGER NOT NULL,
+                    scenario_name TEXT,
+                    persona_name TEXT
                 )
             `);
 
+            // Migration: Add columns if missing
+            try {
+                const tableInfo = await this.dbConnection.all(`PRAGMA table_info(conversation_analysis)`);
+                const columnNames = tableInfo.map(col => col.name);
+                if (!columnNames.includes('scenario_name')) {
+                    await this.dbConnection.run(`ALTER TABLE conversation_analysis ADD COLUMN scenario_name TEXT`);
+                }
+                if (!columnNames.includes('persona_name')) {
+                    await this.dbConnection.run(`ALTER TABLE conversation_analysis ADD COLUMN persona_name TEXT`);
+                }
+            } catch (err) { /* ignore */ }
+
             // Store the analysis
             await this.dbConnection.run(`
-                INSERT INTO conversation_analysis (conversation_id, analysis_data, timestamp)
-                VALUES (?, ?, ?)
-            `, [conversationId, JSON.stringify(analysis), Date.now()]);
+                INSERT INTO conversation_analysis (conversation_id, analysis_data, timestamp, scenario_name, persona_name)
+                VALUES (?, ?, ?, ?, ?)
+            `, [conversationId, JSON.stringify(analysis), Date.now(), scenarioName, personaName]);
 
             console.log(`[SimulationReporter] Conversation analysis stored for ${conversationId}`);
             return true;

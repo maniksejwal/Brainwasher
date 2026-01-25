@@ -50,7 +50,7 @@ The system is currently pre-optimization ("Cold Start"). The goal is to reach th
         - [ ] Connect EMR Storage (S3/Blob)
         - [ ] Implement Document Indexing
     - [ ] **Infrastructure Refinement**:
-        - [ ] Refactor `setGlobalDb` (Singleton) to Dependency Injection to support safe parallel/isolated runs.
+        - [ ] Ensure Production/Simulation Database Isolation (avoid locking).
 
 ### RBAC Implementation (In Progress) 🔐
 - [x] Database schema (`system_roles`, `sessions`)
@@ -104,7 +104,9 @@ The system is currently pre-optimization ("Cold Start"). The goal is to reach th
 
 ### Infrastructure
 - **Simulation**:
-    - [ ] **Dynamic Generation**: Permute Personas × Scenarios (Combinatorial).
+    - [ ] **Scenario Builder**: Auto-generate test scenarios (Personas × Situations).
     - [ ] **World Scenarios**: Integrate multi-agent world scenarios into standard training loop.
-- **Meta-Learning**: Feedback analysis, prompt optimization agents.
+- **Meta-Learning**: 
+    - [ ] **Granular Feedback Analysis**: Add context-aware, specific failure categorization (not just good/bad).
+    - Feedback analysis, prompt optimization agents.
 - **A/B Testing**: Thompson Sampling framework for prompt selection.

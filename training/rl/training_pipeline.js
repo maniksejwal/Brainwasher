@@ -35,6 +35,14 @@ export class TrainingPipeline {
         this.maxRunsPerTest = options.maxRunsPerTest || 5; // Configurable via constructor
         this.maxScenariosPerTest = options.maxScenariosPerTest || null; // Configurable via constructor
 
+        /**
+         * mixModeRatio: Ratio of targeted vs random scenarios (prevents overfitting)
+         * - targeted: Scenarios matching optimization opportunities (e.g., escalation scenarios for escalation improvements)
+         * - random: Randomly selected scenarios for general coverage
+         * Default: 10% targeted, 90% random (mostly random to ensure generalization)
+         */
+        this.mixModeRatio = options.mixModeRatio || { targeted: 0.1, random: 0.9 };
+
         // Conversation count calculation:
         // For each optimized prompt: maxRunsPerTest × 2 (baseline + challenger) = conversations per prompt
         // Example: 2 prompts, 5 runs each = 2 × 5 × 2 = 20 conversations total
@@ -269,6 +277,57 @@ export class TrainingPipeline {
     }
 
     /**
+     * Select mixed scenarios using Mix Mode (targeted + random)
+     * Prevents overfitting by ensuring general coverage alongside targeted testing
+     * @param {Array} allScenarios - All available scenarios
+     * @param {Array} targetTags - Tags for targeted scenario selection
+     * @param {number} totalNeeded - Total number of scenarios to select
+     * @returns {Object} { all: Array, targeted: Array, random: Array }
+     * @private
+     */
+    _selectMixedScenarios(allScenarios, targetTags, totalNeeded) {
+        const targetedCount = Math.ceil(totalNeeded * this.mixModeRatio.targeted);
+        const randomCount = totalNeeded - targetedCount;
+
+        let targetedScenarios = [];
+        let randomScenarios = [];
+
+        // Step 1: Select targeted scenarios if tags are provided
+        if (targetTags.length > 0) {
+            const matchingScenarios = allScenarios.filter(s => {
+                const name = s.toLowerCase();
+                return targetTags.some(t => name.includes(t));
+            });
+
+            if (matchingScenarios.length > 0) {
+                // Shuffle and take required count
+                const shuffled = [...matchingScenarios].sort(() => Math.random() - 0.5);
+                targetedScenarios = shuffled.slice(0, Math.min(targetedCount, shuffled.length));
+                console.log(`[TrainingPipeline] Mix Mode: Selected ${targetedScenarios.length}/${targetedCount} targeted scenarios matching tags [${targetTags.join(',')}]`);
+            } else {
+                console.log(`[TrainingPipeline] Mix Mode: No scenarios found matching tags [${targetTags.join(',')}], using random selection`);
+            }
+        }
+
+        // Step 2: Select random scenarios from remaining pool
+        const remainingScenarios = allScenarios.filter(s => !targetedScenarios.includes(s));
+        const shuffledRemaining = [...remainingScenarios].sort(() => Math.random() - 0.5);
+
+        // If we didn't get enough targeted scenarios, compensate with more random ones
+        const additionalNeeded = totalNeeded - targetedScenarios.length;
+        randomScenarios = shuffledRemaining.slice(0, additionalNeeded);
+
+        console.log(`[TrainingPipeline] Mix Mode: Selected ${randomScenarios.length} random scenarios for general coverage`);
+        console.log(`[TrainingPipeline] Mix Mode: Total ${targetedScenarios.length + randomScenarios.length} scenarios (${Math.round(targetedScenarios.length / totalNeeded * 100)}% targeted, ${Math.round(randomScenarios.length / totalNeeded * 100)}% random)`);
+
+        return {
+            all: [...targetedScenarios, ...randomScenarios],
+            targeted: targetedScenarios,
+            random: randomScenarios
+        };
+    }
+
+    /**
      * Get historical statistics for versions
      * @private
      */
@@ -438,9 +497,10 @@ export class TrainingPipeline {
             }
         } else {
             // Run new simulations with scenario diversity (not repetition)
-            // Get all available scenarios for diversity
-            const { SCENARIOS } = await import('../simulation/scenarios.js');
-            const allScenarios = Object.keys(SCENARIOS);
+            // Get all available scenarios for diversity (including generated ones)
+            const { getScenarios } = await import('../simulation/scenarios.js');
+            const allScenarioMap = getScenarios({ includeGenerated: true });
+            const allScenarios = Object.keys(allScenarioMap);
 
             for (const promptData of optimizedPrompts) {
                 try {
@@ -455,49 +515,23 @@ export class TrainingPipeline {
                         targetTags.push('complex');
                     }
 
-                    // Select diverse scenarios - prioritize those matching tags if any
-                    // each run gets a different random scenario
-                    const diverseScenarios = [];
+                    // Calculate total scenarios needed
                     const runsPerVersion = this.maxRunsPerTest || 2; // Configurable via constructor
                     const maxScenariosToUse = this.maxScenariosPerTest || allScenarios.length; // Limit scenarios if needed
 
-                    // Filter scenarios by tags if present
-                    let candidateScenarios = allScenarios;
-                    if (targetTags.length > 0) {
-                        const tagged = allScenarios.filter(s => {
-                            const name = s.toLowerCase();
-                            return targetTags.some(t => name.includes(t));
-                        });
-                        if (tagged.length > 0) {
-                            console.log(`[TrainingPipeline] Targeted testing: found ${tagged.length} scenarios matching tags [${targetTags.join(',')}]`);
-                            candidateScenarios = tagged;
-                        }
-                    }
+                    // Use Mix Mode to select scenarios (10% targeted, 90% random by default)
+                    const limitedScenarios = maxScenariosToUse < allScenarios.length ?
+                        allScenarios.slice(0, maxScenariosToUse) : allScenarios;
 
-                    // Limit scenarios if configured
-                    const scenariosToChooseFrom = maxScenariosToUse < candidateScenarios.length ?
-                        candidateScenarios.slice(0, maxScenariosToUse) : candidateScenarios;
+                    const mixedSelection = this._selectMixedScenarios(
+                        limitedScenarios,
+                        targetTags,
+                        Math.min(runsPerVersion, limitedScenarios.length)
+                    );
 
-                    // Ensure we have enough unique scenarios
-                    if (scenariosToChooseFrom.length >= runsPerVersion) {
-                        // Pick unique random scenarios (no repetition)
-                        const shuffled = [...scenariosToChooseFrom].sort(() => Math.random() - 0.5);
-                        diverseScenarios.push(...shuffled.slice(0, runsPerVersion));
-                    } else {
-                        // If we have fewer scenarios than runs, use all but minimize repetition
-                        const scenarioCounts = {};
-                        for (let i = 0; i < runsPerVersion; i++) {
-                            // Prefer less-used scenarios
-                            const available = scenariosToChooseFrom.filter(s => !scenarioCounts[s] || scenarioCounts[s] < 2);
-                            const selected = available.length > 0 ?
-                                available[Math.floor(Math.random() * available.length)] :
-                                scenariosToChooseFrom[Math.floor(Math.random() * scenariosToChooseFrom.length)];
-                            diverseScenarios.push(selected);
-                            scenarioCounts[selected] = (scenarioCounts[selected] || 0) + 1;
-                        }
-                    }
+                    const diverseScenarios = mixedSelection.all;
 
-                    console.log(`[TrainingPipeline] Using ${diverseScenarios.length} diverse scenarios for multi-arm bandit (from ${scenariosToChooseFrom.length} available, filtered from ${allScenarios.length} total)`);
+                    console.log(`[TrainingPipeline] Using ${diverseScenarios.length} diverse scenarios for multi-arm bandit (from ${limitedScenarios.length} available, filtered from ${allScenarios.length} total)`);
 
                     // Multi-arm bandit with Thompson Sampling
                     const versions = ['current', promptData.version];
@@ -550,14 +584,66 @@ export class TrainingPipeline {
     }
 
     /**
-     * Get scenario config from unified SCENARIOS
+     * Select mixed scenarios using Mix Mode (targeted + random split)
+     * Implements 10/90 split by default to prevent overfitting
+     * @param {Array} allScenarios - All available scenario keys
+     * @param {Array} targetTags - Tags for targeted scenario selection
+     * @param {number} totalScenarios - Total number of scenarios to select
+     * @returns {Object} { targeted: [...], random: [...], all: [...], allScenarios: Object }
+     * @private
+     */
+    _selectMixedScenarios(allScenarios, targetTags, totalScenarios) {
+        const targetedCount = Math.ceil(totalScenarios * this.mixModeRatio.targeted);
+        const randomCount = totalScenarios - targetedCount;
+
+        const result = {
+            targeted: [],
+            random: [],
+            all: []
+        };
+
+        // Step 1: Select targeted scenarios if tags are provided
+        if (targetTags.length > 0) {
+            const taggedScenarios = allScenarios.filter(s => {
+                const name = s.toLowerCase();
+                return targetTags.some(t => name.includes(t));
+            });
+
+            if (taggedScenarios.length > 0) {
+                // Randomly select from tagged scenarios
+                const shuffled = [...taggedScenarios].sort(() => Math.random() - 0.5);
+                result.targeted = shuffled.slice(0, Math.min(targetedCount, taggedScenarios.length));
+            }
+        }
+
+        // Step 2: Select random scenarios from the full pool (excluding already selected targeted ones)
+        const availableForRandom = allScenarios.filter(s => !result.targeted.includes(s));
+        const shuffledRandom = [...availableForRandom].sort(() => Math.random() - 0.5);
+        result.random = shuffledRandom.slice(0, randomCount);
+
+        // Step 3: Combine both sets
+        result.all = [...result.targeted, ...result.random];
+
+        console.log(`[TrainingPipeline] Mix Mode: ${result.targeted.length} targeted + ${result.random.length} random = ${result.all.length} total scenarios`);
+        if (result.targeted.length > 0) {
+            console.log(`[TrainingPipeline] Targeted scenarios (${targetTags.join(', ')}): ${result.targeted.join(', ')}`);
+        }
+
+        return result;
+    }
+
+    /**
+     * Get scenario config from unified SCENARIOS (including generated ones)
      * Returns both the config and whether it's a world scenario (based on circles field)
      * @private
      */
     async _getScenarioConfig(scenarioKey) {
-        const { SCENARIOS, isWorldScenario } = await import('../simulation/scenarios.js');
+        const { getScenarios, isWorldScenario } = await import('../simulation/scenarios.js');
 
-        const config = SCENARIOS[scenarioKey];
+        // We need to fetch all scenarios including generated ones to lookup the key
+        const allScenarios = getScenarios({ includeGenerated: true });
+
+        const config = allScenarios[scenarioKey];
         if (!config) {
             throw new Error(`Scenario ${scenarioKey} not found in SCENARIOS`);
         }
@@ -640,7 +726,22 @@ export class TrainingPipeline {
                     (feedback.length > 0 ? feedback.reduce((sum, f) =>
                         sum + (f.goal_adherence_score || 0) + (f.goal_history_score || 0) + (f.goal_conversation_score || 0), 0) / feedback.length / 3 : 0) * 0.4;
 
-                const reward = weightedScore > 0 ? true : false; // Convert to boolean for Thompson Sampling
+                // Calculate Comparative Score (Relative Intelligence: Agent vs Synthetic User)
+                const comparativeScore = await this._calculateComparativeScore(conversationIds[0], db);
+
+                // Log comparative metrics
+                if (comparativeScore.relativeIntelligence !== 1.0) {
+                    console.log(`[TrainingPipeline] Comparative Score: Agent=${comparativeScore.agentEffectiveness.toFixed(2)}, User=${comparativeScore.syntheticUserEffectiveness.toFixed(2)}, Relative Intelligence=${comparativeScore.relativeIntelligence.toFixed(2)}`);
+                }
+
+                // Integrate comparative score into final weighted score
+                // If Relative Intelligence > 1.0, Agent is outperforming Synthetic User (boost score)
+                // If Relative Intelligence < 1.0, Synthetic User is outperforming Agent (penalize score)
+                const comparativeWeight = 0.2; // 20% weight for comparative scoring
+                const finalScore = weightedScore * (1 - comparativeWeight) +
+                    (comparativeScore.relativeIntelligence * weightedScore) * comparativeWeight;
+
+                const reward = finalScore > 0 ? true : false; // Convert to boolean for Thompson Sampling
 
                 // Update Thompson Sampling
                 thompsonSampling.updateReward(selectedVersion, reward);
@@ -698,6 +799,110 @@ export class TrainingPipeline {
             stats: stats,
             versionResults: results.versionResults
         };
+    }
+
+    /**
+     * Calculate Comparative Score (Relative Intelligence: Agent vs Synthetic User)
+     * Measures how effective the Agent is compared to the Synthetic User in achieving goals
+     * @param {string} conversationId - The conversation ID to analyze
+     * @param {Object} db - Database connection
+     * @returns {Promise<Object>} Comparative score metrics
+     * @private
+     */
+    async _calculateComparativeScore(conversationId, db) {
+        try {
+            // Query messages to get Agent and Synthetic User turns
+            const messages = await db.all(`
+                SELECT role, message, timestamp
+                FROM messages
+                WHERE circle_id = ?
+                ORDER BY timestamp ASC
+            `, [conversationId]);
+
+            if (messages.length === 0) {
+                return {
+                    agentEffectiveness: 0,
+                    syntheticUserEffectiveness: 0,
+                    relativeIntelligence: 1.0, // Neutral if no data
+                    agentTurns: 0,
+                    userTurns: 0
+                };
+            }
+
+            // Separate Agent and Synthetic User messages
+            const agentMessages = messages.filter(m => m.role.includes('agent'));
+            const userMessages = messages.filter(m => !m.role.includes('agent'));
+
+            // Query feedback scores for this conversation
+            const feedback = await db.all(`
+                SELECT score, goal_adherence_score, goal_history_score, goal_conversation_score
+                FROM feedback
+                WHERE conversation_id = ?
+            `, [conversationId]);
+
+            // Calculate Agent effectiveness (based on feedback scores)
+            const avgFeedbackScore = feedback.length > 0
+                ? feedback.reduce((sum, f) => sum + (f.score || 0), 0) / feedback.length
+                : 0;
+
+            const avgGoalScore = feedback.length > 0
+                ? feedback.reduce((sum, f) =>
+                    sum + (f.goal_adherence_score || 0) + (f.goal_history_score || 0) + (f.goal_conversation_score || 0), 0
+                ) / feedback.length / 3
+                : 0;
+
+            const agentEffectiveness = (avgFeedbackScore + avgGoalScore) / 2;
+
+            // Calculate Synthetic User effectiveness (based on message quality heuristics)
+            // Heuristics:
+            // 1. Message length variation (good conversations have varied message lengths)
+            // 2. Response relevance (measured by lack of repetition)
+            // 3. Engagement (number of turns)
+
+            const userMessageLengths = userMessages.map(m => m.message.length);
+            const avgUserLength = userMessageLengths.reduce((sum, len) => sum + len, 0) / userMessageLengths.length || 0;
+            const userLengthVariance = userMessageLengths.reduce((sum, len) =>
+                sum + Math.pow(len - avgUserLength, 2), 0) / userMessageLengths.length || 0;
+
+            // Normalize variance to 0-1 scale (higher variance = more natural conversation)
+            const normalizedVariance = Math.min(userLengthVariance / 10000, 1.0);
+
+            // Check for repetition (simple heuristic: unique messages / total messages)
+            const uniqueUserMessages = new Set(userMessages.map(m => m.message.toLowerCase().trim()));
+            const repetitionScore = uniqueUserMessages.size / userMessages.length || 0;
+
+            // Engagement score (more turns = better engagement, capped at 1.0)
+            const engagementScore = Math.min(userMessages.length / 10, 1.0);
+
+            // Combine heuristics for Synthetic User effectiveness
+            const syntheticUserEffectiveness = (normalizedVariance * 0.3 + repetitionScore * 0.4 + engagementScore * 0.3);
+
+            // Calculate Relative Intelligence (Agent / Synthetic User)
+            // Values > 1.0 mean Agent is more effective than Synthetic User
+            // Values < 1.0 mean Synthetic User is more effective (Agent needs improvement)
+            const relativeIntelligence = syntheticUserEffectiveness > 0
+                ? agentEffectiveness / syntheticUserEffectiveness
+                : agentEffectiveness; // If no user effectiveness, use agent score directly
+
+            return {
+                agentEffectiveness: agentEffectiveness,
+                syntheticUserEffectiveness: syntheticUserEffectiveness,
+                relativeIntelligence: relativeIntelligence,
+                agentTurns: agentMessages.length,
+                userTurns: userMessages.length,
+                feedbackCount: feedback.length
+            };
+        } catch (error) {
+            console.warn(`[TrainingPipeline] Failed to calculate comparative score for ${conversationId}:`, error.message);
+            return {
+                agentEffectiveness: 0,
+                syntheticUserEffectiveness: 0,
+                relativeIntelligence: 1.0,
+                agentTurns: 0,
+                userTurns: 0,
+                error: error.message
+            };
+        }
     }
 
     /**

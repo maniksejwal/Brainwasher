@@ -8,7 +8,7 @@
  * internal structure of the database package.
  */
 
-import { getDb } from './connection.js';
+import { getDb, setGlobalDb } from './connection.js';
 import { initializeDatabase, clearDatabase } from './schema.js';
 import {
     findUserByUsername,

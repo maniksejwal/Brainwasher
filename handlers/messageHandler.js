@@ -248,14 +248,18 @@ export async function handleMessage(userId, circleId, message) {
         filterReason = 'ai_refusal';
     }
 
+    // Construct conversation ID for logging (consistent with reward logging)
+    const logConversationId = `${circleId}_${userId}`;
+    const logOrchestratorDetails = sharingResult || { action: 'NONE' };
+
     trainingLogger.logInteraction(
-        conversationId,
+        logConversationId,
         userId,
         message,
         analysis ? analysis.reply : "Error generating response",
         {
-            type: orchestratorResult?.action || 'NONE',
-            ...orchestratorResult?.details
+            type: logOrchestratorDetails.action || 'NONE',
+            ...logOrchestratorDetails.details
         },
         // Log additional metadata
         {
@@ -263,8 +267,8 @@ export async function handleMessage(userId, circleId, message) {
             latency_ms: Date.now() - startTime,
             message_length: message.length,
             response_length: analysis && analysis.reply ? analysis.reply.length : 0,
-            escalated: false,
-            shared: false,
+            escalated: Boolean(sharingResult?.escalated),
+            shared: Boolean(sharingResult?.shared),
             reasoning: analysis ? analysis.reasoning : null, // Chain of Thought
             outcome_label: outcomeLabel, // Implicit Reward/Penalty
             filter_reason: filterReason // Data Quality Filter

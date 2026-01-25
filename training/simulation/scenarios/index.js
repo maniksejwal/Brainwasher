@@ -30,8 +30,12 @@ import { BEHAVIOR_CHANGE_SCENARIOS } from './behavior_change_scenarios.js';
 import { HOSPITAL_SCENARIOS } from '../hospital_scenarios.js';
 // Import world scenario definitions directly to avoid circular dependency
 import { WORLD_SCENARIOS_DEFINITIONS } from '../../world_simulation/world_scenarios.js';
+// Import Scenario Builder for combinatorial scenario generation
+import { generateAllScenarios, getRandomGeneratedScenarios } from '../scenario_builder.js';
 
 // Export all scenarios as a single merged object (regular + world scenarios)
+// NOTE: Generated scenarios are NOT included by default to avoid overwhelming the scenario pool
+// Use getScenarios({ includeGenerated: true }) to include them
 export const SCENARIOS = {
     ...BASIC_SCENARIOS,
     ...AVOIDANCE_SCENARIOS,
@@ -117,8 +121,8 @@ export function getRegularScenarios() {
 
 export function getScenariosByComplexity(minComplexity, maxComplexity) {
     return Object.entries(SCENARIOS)
-        .filter(([_, scenario]) => 
-            scenario.complexity >= minComplexity && 
+        .filter(([_, scenario]) =>
+            scenario.complexity >= minComplexity &&
             scenario.complexity <= maxComplexity
         )
         .reduce((acc, [key, value]) => ({ ...acc, [key]: value }), {});
@@ -160,6 +164,40 @@ export function getScenarioGroups() {
         lifestyle: LIFESTYLE_SCENARIOS,
         behavior_change: BEHAVIOR_CHANGE_SCENARIOS,
         hospital: HOSPITAL_SCENARIOS
+    };
+}
+
+/**
+ * Get scenarios with optional generated scenarios
+ * @param {Object} options - Configuration
+ * @param {boolean} options.includeGenerated - Include combinatorial generated scenarios
+ * @param {number} options.generatedCount - Number of generated scenarios to include (default: all)
+ * @param {Array} options.personas - Personas to use for generation
+ * @param {Array} options.situations - Situations to use for generation
+ * @returns {Object} Scenario map
+ */
+export function getScenarios(options = {}) {
+    if (!options.includeGenerated) {
+        return SCENARIOS;
+    }
+
+    // Generate scenarios based on options
+    let generatedScenarios;
+    if (options.generatedCount) {
+        generatedScenarios = getRandomGeneratedScenarios(options.generatedCount, {
+            personas: options.personas,
+            baseScenarios: SCENARIOS // Inject the definitions
+        });
+    } else {
+        generatedScenarios = generateAllScenarios({
+            personas: options.personas,
+            baseScenarios: SCENARIOS // Inject the definitions
+        });
+    }
+
+    return {
+        ...SCENARIOS,
+        ...generatedScenarios
     };
 }
 

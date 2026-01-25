@@ -27,38 +27,43 @@ export class SimulationFeedback {
     /**
      * Main feedback method - coordinates all feedback operations
      */
-    async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null, promptVersion = null, conversationHistory = []) {
+    /**
+     * Main feedback method - coordinates all feedback operations
+     */
+    async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null, promptVersion = null, conversationHistory = [], scenarioName = null, personaName = null) {
         // Use stored prompt version if not provided
         const actualPromptVersion = promptVersion || this.promptVersion;
         try {
             // 1. Score the response
             const analysis = await this.scorer.analyzeResponse(userMessage, agentResponse, orchestratorAction, conversationHistory);
-            
+
             // 2. Assess care circle goals
             const goalAssessment = this.reporter.assessCareCircleGoals(userMessage, agentResponse, conversationHistory);
-            
+
             // 3. Store feedback in database
             if (process.env.SIMULATION_DEBUG === 'true') console.log('[SimulationFeedback] Debug - analysis:', JSON.stringify(analysis, null, 2));
-            
+
             // Extract prompt type and system used from agent response
             const promptType = agentResponse?.promptType || agentResponse?.analysis?.prompt_type || 'unified';
             const systemUsed = agentResponse?.system_used || agentResponse?.analysis?.system_used || 'unified';
-            
+
             await this.reporter.autoScore(
-                conversationId, userId, circleId, messageId, 
-                analysis.totalScore, analysis.scores?.[0]?.reason || 'No reason provided', 
-                actualPromptVersion, goalAssessment, agentResponse.modelUsed, promptType, systemUsed
+                conversationId, userId, circleId, messageId,
+                analysis.totalScore, analysis.scores?.[0]?.reason || 'No reason provided',
+                actualPromptVersion, goalAssessment, agentResponse.modelUsed, promptType, systemUsed,
+                scenarioName, personaName // Pass context
             );
-            
+
             // 4. Store detailed reports for each issue
             for (const issue of analysis.issues) {
                 await this.reporter.autoReport(
                     conversationId, userId, circleId, messageId,
-                    issue.category, issue.description, 
-                    context || userMessage
+                    issue.category, issue.description,
+                    context || userMessage,
+                    scenarioName, personaName // Pass context
                 );
             }
-            
+
             // 5. Return comprehensive analysis
             return {
                 score: analysis.score,
@@ -67,7 +72,7 @@ export class SimulationFeedback {
                 goalAssessment: goalAssessment,
                 criticalFailure: analysis.scores.some(s => s.score <= -2)
             };
-            
+
         } catch (error) {
             console.error('[SimulationFeedback] Error providing feedback:', error.message);
             throw error;
@@ -92,18 +97,18 @@ export class SimulationFeedback {
      * Provide conversation-level feedback analysis
      * Analyzes patterns across multiple messages in a conversation
      */
-    async provideConversationFeedback(conversationId, conversationHistory, feedbackHistory) {
+    async provideConversationFeedback(conversationId, conversationHistory, feedbackHistory, scenarioName = null, personaName = null) {
         try {
             console.log(`[SimulationFeedback] Analyzing conversation-level patterns for ${conversationId}...`);
-            
+
             // Perform conversation-level analysis
             const conversationAnalysis = this.conversationAnalyzer.analyzeConversation(
-                conversationHistory, 
+                conversationHistory,
                 feedbackHistory
             );
-            
+
             // Store conversation analysis in database
-            await this.reporter.storeConversationAnalysis(conversationId, conversationAnalysis);
+            await this.reporter.storeConversationAnalysis(conversationId, conversationAnalysis, scenarioName, personaName);
 
             if (conversationAnalysis?.speakerBalance?.starvationFlags?.length) {
                 const summary = conversationAnalysis.speakerBalance.starvationFlags
@@ -127,10 +132,10 @@ export class SimulationFeedback {
                     'high'
                 );
             }
-            
+
             // Generate conversation-level recommendations
             const conversationRecommendations = this._generateConversationRecommendations(conversationAnalysis);
-            
+
             console.log(`[SimulationFeedback] Conversation analysis complete:`);
             console.log(`  📊 Context Continuity: ${((conversationAnalysis.contextContinuity?.continuityRate || 0) * 100).toFixed(1)}%`);
             console.log(`  🔄 Repetitive Patterns: ${conversationAnalysis.repetitivePatterns?.severity || 'low'}`);
@@ -143,14 +148,14 @@ export class SimulationFeedback {
                 console.log(`  ⚠️ Starvation Penalty: ${conversationAnalysis.starvationPenalty}`);
             }
             console.log(`  💡 Recommendations: ${conversationRecommendations.length} generated`);
-            
+
             return {
                 conversationId,
                 analysis: conversationAnalysis,
                 recommendations: conversationRecommendations,
                 timestamp: Date.now()
             };
-            
+
         } catch (error) {
             console.error('[SimulationFeedback] Error providing conversation feedback:', error.message);
             return null;
@@ -162,7 +167,7 @@ export class SimulationFeedback {
      */
     _generateConversationRecommendations(analysis) {
         const recommendations = [];
-        
+
         // Context continuity issues
         if (analysis.contextContinuity.continuityRate < 0.7) {
             recommendations.push({
@@ -178,7 +183,7 @@ export class SimulationFeedback {
                 ]
             });
         }
-        
+
         // Repetitive patterns
         if (analysis.repetitivePatterns.severity === 'high') {
             recommendations.push({
@@ -194,7 +199,7 @@ export class SimulationFeedback {
                 ]
             });
         }
-        
+
         // Escalation handling
         if (analysis.escalationPatterns.effectiveness < 0.5) {
             recommendations.push({
@@ -210,7 +215,7 @@ export class SimulationFeedback {
                 ]
             });
         }
-        
+
         // Denial handling
         if (analysis.denialHandling.denialHandlingRate < 0.6) {
             recommendations.push({
@@ -226,7 +231,7 @@ export class SimulationFeedback {
                 ]
             });
         }
-        
+
         // Engagement quality
         if (analysis.engagementQuality.overallScore < 0.6) {
             recommendations.push({
@@ -242,7 +247,7 @@ export class SimulationFeedback {
                 ]
             });
         }
-        
+
         // Multi-user specific recommendations
         if (analysis.conflictResolution.applicable) {
             if (analysis.conflictResolution.resolvedConflicts / analysis.conflictResolution.totalConflicts < 0.7) {
@@ -260,7 +265,7 @@ export class SimulationFeedback {
                 });
             }
         }
-        
+
         return recommendations;
     }
 }

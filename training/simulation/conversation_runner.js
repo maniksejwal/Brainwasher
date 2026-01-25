@@ -294,8 +294,10 @@ export class ConversationRunner {
 
             // Store user message in database
             try {
+                // Use actual circleId (patient userId) instead of conversationId to satisfy foreign key constraint
+                const circleId = activeUser.circleId || this.conversationId;
                 await addMessage(
-                    this.conversationId, // Use conversation ID as circle_id for unified retrieval
+                    circleId,
                     activeUser.userId,
                     activeUser.role,
                     userMessage,
@@ -337,8 +339,10 @@ export class ConversationRunner {
 
             // Store agent response in database
             try {
+                // Use actual circleId (patient userId) instead of conversationId to satisfy foreign key constraint
+                const circleId = activeUser.circleId || this.conversationId;
                 await addMessage(
-                    this.conversationId,
+                    circleId,
                     'agent',
                     `${activeUser.role}_agent`,
                     agentResult.agent_response,
@@ -544,12 +548,17 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             }
         });
 
+        // Determine primary persona context
+        const primaryPersona = users.length === 1 ? users[0].persona.name : 'Multi-User Group';
+
         // Perform conversation-level analysis
         console.log(`[ConversationRunner] Performing conversation-level analysis...`);
         const conversationAnalysis = await this.feedbackCollector.provideConversationFeedback(
             this.conversationId,
             conversationHistory,
-            allFeedback
+            allFeedback,
+            this.scenarioContext?.name || 'Unknown Scenario',
+            primaryPersona
         );
 
         return conversationAnalysis;
@@ -571,7 +580,11 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
                 userMessage,
                 agentResult.agent_response,
                 agentResult.orchestrator_action,
-                userMessage
+                userMessage, // Context (user message)
+                this.promptVersion, // Prompt version
+                user.conversationHistory, // History
+                this.scenarioContext?.name || 'Unknown Scenario', // Scenario Name used for Granular Analysis
+                user.persona?.name || 'Unknown Persona' // Persona Name used for Granular Analysis
             );
 
             feedbackData = {

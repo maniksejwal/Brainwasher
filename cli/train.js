@@ -75,6 +75,21 @@ async function runTrainingCycle() {
         console.log(chalk.yellow(`📊 Limiting A/B tests to ${maxScenarios} scenarios`));
     }
 
+    // Parse Mix Mode ratio
+    const mixModeIndex = args.indexOf('--mix-mode');
+    const mixModeValue = mixModeIndex !== -1 && args[mixModeIndex + 1] ?
+        args[mixModeIndex + 1] : null;
+
+    if (mixModeValue) {
+        const [targeted, random] = mixModeValue.split('/').map(v => parseInt(v));
+        if (targeted && random && targeted + random === 100) {
+            trainingPipeline.mixModeRatio = { targeted: targeted / 100, random: random / 100 };
+            console.log(chalk.yellow(`🎯 Mix Mode: ${targeted}% targeted + ${random}% random scenarios`));
+        } else {
+            console.log(chalk.red('⚠️  Invalid --mix-mode format. Use format: 10/90 (must sum to 100)'));
+        }
+    }
+
     // Parse prompt types to optimize
     const promptsIndex = args.indexOf('--prompts');
     const promptsValue = promptsIndex !== -1 && args[promptsIndex + 1] ?
@@ -188,6 +203,9 @@ function showUsage() {
     console.log('  --prompts <types>        Which prompts to optimize (default: all)');
     console.log('                          Options: unified, all, or comma-separated list');
     console.log('                          Examples: --prompts unified, --prompts all, --prompts unified,doctor_summary');
+    console.log('  --mix-mode <ratio>       Targeted/Random scenario split (default: 10/90)');
+    console.log('                          Format: X/Y where X+Y=100 (e.g., 10/90, 20/80)');
+    console.log('                          Prevents overfitting by mixing targeted and random scenarios');
     console.log('');
     console.log('Examples:');
     console.log('  node cli/train.js status                              # Check if ready for optimization');
@@ -195,6 +213,7 @@ function showUsage() {
     console.log('  node cli/train.js run --prompts unified               # Optimize unified prompt only');
     console.log('  node cli/train.js run --prompts unified,doctor_summary # Optimize specific prompts');
     console.log('  node cli/train.js run --scenarios 5                    # Limit A/B tests to 5 scenarios');
+    console.log('  node cli/train.js run --mix-mode 20/80                 # Use 20% targeted, 80% random scenarios');
     console.log('  node cli/train.js force                                # Force optimization for testing');
     console.log('');
     console.log('Note: maxRunsPerTest controls how many runs per version (default: 5)');

@@ -6,6 +6,13 @@ let currentDbPath = null;
 
 // This function manages the singleton database connection.
 export async function getDb() {
+    // If a database was injected via setGlobalDb (e.g., for simulations), use it
+    // Don't close it or replace it - the caller owns the lifecycle
+    if (db && currentDbPath === null) {
+        // Database was injected, not opened by getDb - return it as-is
+        return db;
+    }
+
     // Use simulation database when in simulation mode (for both regular and world simulations)
     const dbPath = process.env.SIMULATION_MODE === 'true'
         ? './care_circle_simulation.db'

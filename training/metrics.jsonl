@@ -12352,3 +12352,16 @@
 {"timestamp":1768133068553,"type":"message_length","user_id":"cli_patient_1_run_1768133039223","message_length":125,"response_length":0}
 {"timestamp":1768133078147,"type":"message_length","user_id":"cli_patient_1_run_1768133039223","message_length":125,"response_length":88}
 {"timestamp":1768133105108,"type":"message_length","user_id":"cli_patient_1_run_1768133039223","message_length":161,"response_length":138}
+{"timestamp":1769342790031,"type":"response_time","agent_type":"full_analysis","duration_ms":4006,"success":true}
+{"timestamp":1769342790031,"type":"message_length","user_id":"sim_patient_1769342777981_run_1769342777969","message_length":191,"response_length":0}
+{"timestamp":1769342858615,"type":"response_time","agent_type":"full_analysis","duration_ms":5485,"success":true}
+{"timestamp":1769342858615,"type":"message_length","user_id":"sim_patient_1769342845721_run_1769342845502","message_length":137,"response_length":0}
+{"timestamp":1769342959366,"type":"response_time","agent_type":"full_analysis","duration_ms":8640,"success":true}
+{"timestamp":1769342959366,"type":"message_length","user_id":"sim_patient_1769342941857_run_1769342941845","message_length":173,"response_length":0}
+{"timestamp":1769342963591,"type":"message_length","user_id":"sim_patient_1769342941857_run_1769342941845","message_length":173,"response_length":121}
+{"timestamp":1769342975455,"type":"response_time","agent_type":"full_analysis","duration_ms":5738,"success":true}
+{"timestamp":1769342975455,"type":"message_length","user_id":"sim_patient_1769342941857_run_1769342941845","message_length":218,"response_length":0}
+{"timestamp":1769342978512,"type":"message_length","user_id":"sim_patient_1769342941857_run_1769342941845","message_length":218,"response_length":107}
+{"timestamp":1769342988208,"type":"response_time","agent_type":"full_analysis","duration_ms":3180,"success":true}
+{"timestamp":1769342988208,"type":"message_length","user_id":"sim_patient_1769342941857_run_1769342941845","message_length":143,"response_length":0}
+{"timestamp":1769342991892,"type":"message_length","user_id":"sim_patient_1769342941857_run_1769342941845","message_length":143,"response_length":98}

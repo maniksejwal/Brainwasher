@@ -26,30 +26,30 @@ async function runBulkScenarios(scenarioKeys, runsPerScenario = 3) {
         }
 
         console.log(chalk.yellow(`\n📋 Running: ${scenario.name}`));
-        
+
         for (let run = 1; run <= runsPerScenario; run++) {
-            const simulator = new SimulationDriver({ 
+            const simulator = new SimulationDriver({
                 autoFeedback: true,
                 logResults: false
             });
 
             try {
                 process.env.SIMULATION_MODE = 'true';
-                
+
                 const startTime = Date.now();
-                await simulator.runScenario(scenario);
+                await simulator.runScenario(scenario, scenarioKey);
                 const duration = Date.now() - startTime;
-                
-                console.log(chalk.green(`  ✓ Run ${run}/${runsPerScenario} - ${(duration/1000).toFixed(1)}s`));
+
+                console.log(chalk.green(`  ✓ Run ${run}/${runsPerScenario} - ${(duration / 1000).toFixed(1)}s`));
                 successCount++;
-                
+
             } catch (error) {
                 console.log(chalk.red(`  ✗ Run ${run}/${runsPerScenario} - ${error.message}`));
                 failureCount++;
             } finally {
                 await simulator.cleanup();
                 delete process.env.SIMULATION_MODE;
-                
+
                 // Small delay between runs
                 if (run < runsPerScenario) {
                     await new Promise(resolve => setTimeout(resolve, 500));
@@ -67,7 +67,7 @@ async function runBulkScenarios(scenarioKeys, runsPerScenario = 3) {
 // CLI interface
 async function main() {
     const args = process.argv.slice(2);
-    
+
     if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
         console.log(chalk.blue.bold('\n🚀 Quick Bulk Runner'));
         console.log(chalk.blue('Run multiple simulations of specific scenarios\n'));
@@ -84,19 +84,19 @@ async function main() {
         console.log(chalk.gray('  ... (run with --help to see all)'));
         return;
     }
-    
+
     const runsPerScenario = (() => {
         const idx = args.indexOf('--runs');
         return idx !== -1 && args[idx + 1] ? parseInt(args[idx + 1]) : 3;
     })();
-    
+
     const scenarioKeys = args.filter(arg => arg !== '--runs' && !arg.match(/^\d+$/));
-    
+
     if (scenarioKeys.length === 0) {
         console.log(chalk.red('❌ No scenarios specified'));
         return;
     }
-    
+
     try {
         await runBulkScenarios(scenarioKeys, runsPerScenario);
     } catch (error) {
