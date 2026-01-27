@@ -1,6 +1,7 @@
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import config from '../config.js';
 
 const dbStorage = new AsyncLocalStorage();
 let globalDb;
@@ -19,17 +20,15 @@ export async function getDb() {
         return globalDb;
     }
 
-    // 3. Default behavior (singleton connection)
-    const dbPath = process.env.SIMULATION_MODE === 'true'
-        ? './care_circle_simulation.db'
-        : './care_circle.db';
+    // 3. Config-based path selection
+    const dbPath = config.getDbPath();
 
     if (!globalDb || currentDbPath !== dbPath) {
         if (globalDb) {
             await globalDb.close();
         }
         currentDbPath = dbPath;
-        console.log(`[DB] Opening connection: ${dbPath}`);
+        console.log(`[DB] Opening connection: ${dbPath} (env: ${config.NODE_ENV})`);
         globalDb = await open({
             filename: dbPath,
             driver: sqlite3.Database

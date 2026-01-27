@@ -3,13 +3,3 @@ node_modules/*
 ./care_circle.db
 care_circle.db*
 
-# Databases
-*.db
-*.db-shm
-*.db-wal
-*.sqlite
-
-# Logs
-*.jsonl
-*.log
-npm-debug.log

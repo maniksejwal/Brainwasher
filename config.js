@@ -37,7 +37,7 @@ const config = {
     CHAT_GPT_KEY: process.env.CHAT_GPT_KEY,
     OLLAMA_API_BASE_URL: envConfig.OLLAMA_API_BASE_URL,
     OLLAMA_DEFAULT_MODEL: envConfig.OLLAMA_DEFAULT_MODEL,
-    
+
     // Model Configuration - Simple and Clear
     OPENAI_MODEL: 'gpt-3.5-turbo',                    // Free tier - DEFAULT
     OPENAI_MODEL_GPT4: 'gpt-4',                      // Paid
@@ -45,39 +45,39 @@ const config = {
     OPENAI_MODEL_GPT4O: 'gpt-4o',                    // Paid
     OPENAI_MODEL_GPT4O_MINI: 'gpt-4o-mini',          // Paid (cheaper)
     OPENAI_MODEL_GPT5: 'gpt-5',                      // Paid (future)
-    
+
     // Google Models
     GEMINI_MODEL: 'gemini-1.5-flash-latest',         // Free tier
     GEMINI_MODEL_PRO: 'gemini-pro',                  // Free tier
     GEMINI_MODEL_FLASH: 'gemini-1.5-flash',          // Free tier
     GEMINI_MODEL_PRO_VISION: 'gemini-pro-vision',    // Free tier
-    
+
     // HARDCODED PREFERENCES - Free Tier Only
     USE_FREE_TIER_ONLY: false,                         // Set to false to use paid models
     DEFAULT_MODEL: envConfig.DEFAULT_MODEL,                  // What to use when free tier only
     FALLBACK_MODEL: envConfig.FALLBACK_MODEL,                // Fallback when primary fails
-    
+
     // Simple Model Selection - Just Lists
     FREE_MODELS: ['mistral:latest', 'gpt-3.5-turbo', 'gemini-1.5-flash-latest', 'gemini-pro'],
     PAID_MODELS: ['gpt-4', 'gpt-4-turbo-preview', 'gpt-4o', 'gpt-4o-mini', 'gpt-5'],
-    
+
     // Use Case Mapping - Simple Constants
     BASIC_RESPONSES_MODEL: envConfig.BASIC_RESPONSES_MODEL,
     CONVERSATIONAL_AGENT_MODEL: envConfig.CONVERSATIONAL_AGENT_MODEL,      // Changed to free tier
     ESCALATION_MODEL: envConfig.ESCALATION_MODEL,               // Changed to free tier
     CRITICAL_ANALYSIS_MODEL: envConfig.CRITICAL_ANALYSIS_MODEL,        // Changed to free tier
     SYNTHETIC_USER_MODEL: envConfig.SYNTHETIC_USER_MODEL,
-    
+
     // Memory Configuration
     MAX_SESSION_MEMORY: 20,
     MAX_CONVERSATION_HISTORY: 50,
-    
+
     // Load Balancer - Simple Settings
     USE_LOAD_BALANCER: false,
     MAX_RETRIES: 3,
     RETRY_DELAY: 1000,
     USE_ONLY_OPENAI: envConfig.USE_ONLY_OPENAI,                           // Skip Gemini due to reliability issues
-    
+
     // Companion System Configuration
     USE_COMPANIONS: true,                            // Use Companion system (false = use unified agent)
     COMPANION_AB_TEST_ENABLED: true,                // A/B test Companion vs unified agent
@@ -85,6 +85,32 @@ const config = {
 
     HOST: '127.0.0.1',
     PORT: 5000,
+
+    // Database Configuration
+    NODE_ENV: process.env.NODE_ENV || 'development',
+    DB_PATHS: {
+        production: process.env.DB_PATH_PRODUCTION || './data/care_circle_prod.db',
+        development: process.env.DB_PATH_DEVELOPMENT || './care_circle.db',
+        simulation: process.env.DB_PATH_SIMULATION || './care_circle_simulation.db',
+        test: process.env.DB_PATH_TEST || ':memory:'
+    },
+
+    // Get active database path based on environment
+    getDbPath(mode = null) {
+        // 1. Explicit override
+        if (process.env.DB_PATH) return process.env.DB_PATH;
+
+        // 2. Simulation mode (legacy support)
+        if (process.env.SIMULATION_MODE === 'true') {
+            return this.DB_PATHS.simulation;
+        }
+
+        // 3. Mode-specific (e.g., for tests)
+        if (mode) return this.DB_PATHS[mode] || this.DB_PATHS.development;
+
+        // 4. Environment-based
+        return this.DB_PATHS[this.NODE_ENV] || this.DB_PATHS.development;
+    }
 };
 
 // Construct the URL from HOST and PORT
