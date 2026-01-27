@@ -3,16 +3,16 @@
  * Sessions and agent data are destroyed after conclusion
  */
 
-import fs from 'fs/promises';
-import path from 'path';
 import { randomUUID } from 'crypto';
+import { getStorage } from '../lib/storage/index.js';
 
-const SESSIONS_DIR = './sessions/negotiations';
+const SESSIONS_DIR = 'sessions/negotiations';
 const SESSION_EXPIRY_MS = 86400000; // 24 hours
 
 class EphemeralSessionManager {
     constructor() {
         this.activeSessions = new Map();
+        this.storage = getStorage();
         this._startCleanupTimer();
     }
 
@@ -21,7 +21,7 @@ class EphemeralSessionManager {
      */
     async createSession(participants, topic, type = 'negotiation', metadata = {}) {
         const sessionId = randomUUID();
-        
+
         const session = {
             id: sessionId,
             type,
@@ -115,7 +115,7 @@ class EphemeralSessionManager {
         };
 
         console.log(`[SessionManager] Concluding session ${sessionId}: ${outcome}`);
-        
+
         // Destroy ephemeral data
         await this.destroySessionData(sessionId);
 
@@ -130,11 +130,11 @@ class EphemeralSessionManager {
         if (!session) return;
 
         console.log(`[Privacy] Destroying ephemeral data for session ${sessionId}...`);
-        
+
         // Delete messages
         const messageCount = session.messages.length;
         session.messages = [];
-        
+
         // Delete agent internal states (strategies, reasoning)
         const agentCount = Object.keys(session.agentStates).length;
         for (const userId in session.agentStates) {
@@ -147,9 +147,9 @@ class EphemeralSessionManager {
         this.activeSessions.delete(sessionId);
 
         // Delete file
-        const sessionPath = path.join(SESSIONS_DIR, `${sessionId}.json`);
+        const sessionFile = `${SESSIONS_DIR}/${sessionId}.json`;
         try {
-            await fs.unlink(sessionPath);
+            await this.storage.delete(sessionFile);
         } catch (error) {
             // Already deleted or doesn't exist
         }
@@ -169,8 +169,8 @@ class EphemeralSessionManager {
 
         // Load from disk
         try {
-            const sessionPath = path.join(SESSIONS_DIR, `${sessionId}.json`);
-            const data = await fs.readFile(sessionPath, 'utf8');
+            const sessionFile = `${SESSIONS_DIR}/${sessionId}.json`;
+            const data = await this.storage.read(sessionFile);
             const session = JSON.parse(data);
             this.activeSessions.set(sessionId, session);
             return session;
@@ -197,9 +197,8 @@ class EphemeralSessionManager {
      */
     async _persistSession(sessionId, session) {
         try {
-            await fs.mkdir(SESSIONS_DIR, { recursive: true });
-            const sessionPath = path.join(SESSIONS_DIR, `${sessionId}.json`);
-            await fs.writeFile(sessionPath, JSON.stringify(session, null, 2), 'utf8');
+            const sessionFile = `${SESSIONS_DIR}/${sessionId}.json`;
+            await this.storage.write(sessionFile, JSON.stringify(session, null, 2));
         } catch (error) {
             console.error(`[SessionManager] Error persisting session:`, error.message);
         }
@@ -239,7 +238,7 @@ class EphemeralSessionManager {
      */
     async destroyAllSessions() {
         console.log('[SessionManager] DESTROYING ALL SESSIONS...');
-        
+
         const sessionIds = Array.from(this.activeSessions.keys());
         for (const sessionId of sessionIds) {
             await this.destroySessionData(sessionId);

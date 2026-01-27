@@ -3,19 +3,18 @@
  * Uses AI meta-prompting to automatically optimize system prompts based on feedback analysis.
  */
 
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import config from '../../config.js';
+import { getStorage } from '../../lib/storage/index.js';
 import { FeedbackAnalyzer } from './feedback_analyzer.js';
 import { OPTIMIZATION_SYSTEM_PROMPT, PROMPT_OPTIMIZATION_TEMPLATE } from '../config/analysis_prompts.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// No longer need __dirname
 
 class PromptOptimizer {
     constructor() {
+        this.storage = getStorage();
         // Initialize LLM for optimization
         if (config.CHAT_GPT_KEY) {
             this.openai = new OpenAI({ apiKey: config.CHAT_GPT_KEY });
@@ -33,17 +32,17 @@ class PromptOptimizer {
      */
     async loadPrompt(promptPath) {
         try {
-            const content = await fs.readFile(promptPath, 'utf8');
-            
+            const content = await this.storage.read(promptPath);
+
             // Extract the actual prompt content (looking for exported strings/templates)
             const match = content.match(/export\s+(?:const|let|var)\s+\w+\s*=\s*`([^`]+)`/s) ||
-                         content.match(/export\s+(?:const|let|var)\s+\w+\s*=\s*"([^"]+)"/s) ||
-                         content.match(/export\s+(?:const|let|var)\s+\w+\s*=\s*'([^']+)'/s);
-            
+                content.match(/export\s+(?:const|let|var)\s+\w+\s*=\s*"([^"]+)"/s) ||
+                content.match(/export\s+(?:const|let|var)\s+\w+\s*=\s*'([^']+)'/s);
+
             if (match) {
                 return match[1];
             }
-            
+
             // If no match, return whole file
             return content;
         } catch (error) {
@@ -59,43 +58,43 @@ class PromptOptimizer {
     async optimizeFromSimulationFeedback(promptPath, promptVersion = 'simulation_v1.0') {
         try {
             console.log(`[PromptOptimizer] Starting optimization for ${promptPath} (${promptVersion})`);
-            
+
             // 1. Load current prompt
             const currentPrompt = await this.loadPrompt(promptPath);
             if (!currentPrompt) {
                 throw new Error('Failed to load current prompt');
             }
-            
+
             // 2. Get feedback analysis
             const analyzer = new FeedbackAnalyzer();
             const analysis = await analyzer.calculateRewardBackpropagation();
-            
+
             if (!analysis || !analysis.prompt_performance[promptVersion]) {
                 console.log('[PromptOptimizer] No feedback data available for optimization');
                 return null;
             }
-            
+
             // 3. Get failure pattern analysis
             const { IssueAnalyzer } = await import('./issue_analyzer.js');
             const issueAnalyzer = new IssueAnalyzer();
             const failureReport = await issueAnalyzer.generateFailurePatternReport();
-            
+
             // 4. Create comprehensive analysis report
             const analysisReport = this._createAnalysisReport(analysis, failureReport, promptVersion);
-            
+
             // 5. Generate optimized prompt
             const optimizedPrompt = await this.optimizePrompt(currentPrompt, analysisReport);
-            
+
             if (!optimizedPrompt) {
                 throw new Error('Failed to generate optimized prompt');
             }
-            
+
             // 6. Save optimized prompt
             const newVersion = this._incrementVersion(promptVersion);
             const optimizedPath = await this._saveOptimizedPrompt(promptPath, optimizedPrompt, newVersion);
-            
+
             console.log(`[PromptOptimizer] Generated optimized prompt: ${optimizedPath}`);
-            
+
             return {
                 originalPath: promptPath,
                 optimizedPath: optimizedPath,
@@ -104,7 +103,7 @@ class PromptOptimizer {
                 analysisReport: analysisReport,
                 optimizationSummary: this._generateOptimizationSummary(analysisReport)
             };
-            
+
         } catch (error) {
             console.error('[PromptOptimizer] Error optimizing from simulation feedback:', error.message);
             return null;
@@ -116,7 +115,7 @@ class PromptOptimizer {
      */
     _createAnalysisReport(rewardAnalysis, failureReport, promptVersion) {
         const promptPerf = rewardAnalysis.prompt_performance[promptVersion];
-        
+
         return {
             promptVersion: promptVersion,
             performance: {
@@ -147,22 +146,22 @@ class PromptOptimizer {
             improvements: [],
             priority: 'medium'
         };
-        
+
         // Analyze performance issues
         if (analysisReport.performance.rewardSignal < -0.3) {
             summary.issues.push('Poor overall performance');
             summary.priority = 'high';
         }
-        
+
         if (analysisReport.performance.failureRate > 0.1) {
             summary.issues.push('High critical failure rate');
             summary.priority = 'high';
         }
-        
+
         if (analysisReport.performance.goalScores.adherence < 0.6) {
             summary.issues.push('Poor adherence goal performance');
         }
-        
+
         // Analyze failure patterns
         analysisReport.failurePatterns.forEach(pattern => {
             if (pattern.severity === 'high') {
@@ -170,14 +169,14 @@ class PromptOptimizer {
                 summary.priority = 'high';
             }
         });
-        
+
         // Generate improvement suggestions
         analysisReport.recommendations.forEach(rec => {
             if (rec.priority === 'high') {
                 summary.improvements.push(rec.description);
             }
         });
-        
+
         return summary;
     }
 
@@ -203,10 +202,10 @@ class PromptOptimizer {
         const fileNameParts = fileName.split('.');
         const baseName = fileNameParts[0];
         const extension = fileNameParts[1] || 'js';
-        
+
         const newFileName = `${baseName}_${newVersion}.${extension}`;
         const newPath = originalPath.replace(fileName, newFileName);
-        
+
         // Create the optimized prompt content
         const promptContent = `/**
  * @fileoverview Optimized prompt version ${newVersion}
@@ -223,7 +222,7 @@ export const GENERATED_AT = '${new Date().toISOString()}';
 export const ORIGINAL_PATH = '${originalPath}';
 `;
 
-        await fs.writeFile(newPath, promptContent, 'utf8');
+        await this.storage.write(newPath, promptContent);
         return newPath;
     }
 
@@ -255,7 +254,7 @@ export const ORIGINAL_PATH = '${originalPath}';
         try {
             // Build optimization prompt
             const optimizationPrompt = PROMPT_OPTIMIZATION_TEMPLATE(currentPrompt, analysis);
-            
+
             // Call AI API
             let response;
             if (this.useOpenAI) {
@@ -276,15 +275,15 @@ export const ORIGINAL_PATH = '${originalPath}';
                 ]);
                 response = result.response.text();
             }
-            
+
             // Extract optimized prompt from response
             const optimizedPrompt = this._extractPromptContent(response);
-            
+
             if (!optimizedPrompt || optimizedPrompt.length < 100) {
                 console.warn('[PromptOptimizer] Generated prompt seems too short, using original');
                 return currentPrompt;
             }
-            
+
             return optimizedPrompt;
         } catch (error) {
             console.error('[PromptOptimizer] Error generating optimized prompt:', error.message);
@@ -299,7 +298,7 @@ export const ORIGINAL_PATH = '${originalPath}';
         // Parse current version number
         const fileName = path.basename(promptPath, '.js');
         const versionMatch = fileName.match(/_v(\d+)\.(\d+)$/);
-        
+
         let newVersion;
         if (versionMatch) {
             const major = parseInt(versionMatch[1]);
@@ -327,7 +326,7 @@ export const optimizedPrompt = \`${optimizedContent}\`;
 export default optimizedPrompt;
 `;
 
-        await fs.writeFile(newFilePath, fileContent, 'utf8');
+        await this.storage.write(newFilePath, fileContent);
         console.log(`\n✓ Optimized prompt saved to: ${newFilePath}`);
 
         return newFilePath;
@@ -345,7 +344,7 @@ export default optimizedPrompt;
                 .map(l => ' * - ' + l.trim());
             return lines.join('\n') || ' * - General improvements based on feedback';
         }
-        
+
         return ' * - Improvements based on performance analysis';
     }
 
@@ -381,7 +380,7 @@ export default optimizedPrompt;
         // Generate optimized prompt
         console.log('Generating optimized prompt (this may take a moment)...');
         const optimizedPrompt = await this.optimizePrompt(currentPrompt, analysis);
-        
+
         if (!optimizedPrompt) {
             console.error('Failed to generate optimized prompt');
             return null;
@@ -412,7 +411,7 @@ export default optimizedPrompt;
         console.log('─'.repeat(80));
         console.log('DIFF PREVIEW');
         console.log('─'.repeat(80));
-        
+
         const currentLines = current.split('\n').length;
         const optimizedLines = optimized.split('\n').length;
         const currentWords = current.split(/\s+/).length;
@@ -457,24 +456,24 @@ export default optimizedPrompt;
         console.log('\n' + '═'.repeat(80));
         console.log('BATCH OPTIMIZATION SUMMARY');
         console.log('═'.repeat(80));
-        
+
         const successful = results.filter(r => r.success).length;
         console.log(`Successful: ${successful}/${results.length}`);
-        
+
         if (successful > 0) {
             console.log('\nOptimized files:');
             results.filter(r => r.success).forEach(r => {
                 console.log(`  ✓ ${r.file} → ${path.basename(r.newPath)}`);
             });
         }
-        
+
         if (successful < results.length) {
             console.log('\nFailed:');
             results.filter(r => !r.success).forEach(r => {
                 console.log(`  ✗ ${r.file}: ${r.error}`);
             });
         }
-        
+
         console.log('═'.repeat(80) + '\n');
     }
 }

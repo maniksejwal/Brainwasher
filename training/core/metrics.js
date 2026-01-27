@@ -5,19 +5,19 @@
  * Used for monitoring and identifying areas for improvement.
  */
 
-import fs from 'fs/promises';
-import path from 'path';
+import { getStorage } from '../../lib/storage/index.js';
 
 class MetricsCollector {
-  constructor(metricsPath = './training/metrics.jsonl') {
+  constructor(metricsPath = 'training/metrics.jsonl') {
     this.metricsPath = metricsPath;
+    this.storage = getStorage();
     this.enabled = process.env.METRICS_COLLECTION !== 'disabled';
-    
+
     // In-memory buffer for batching (flush every 10 metrics or 30 seconds)
     this.buffer = [];
     this.bufferSize = 10;
     this.flushInterval = 30000; // 30 seconds
-    
+
     this._startPeriodicFlush();
   }
 
@@ -105,7 +105,7 @@ class MetricsCollector {
 
     try {
       const lines = this.buffer.map(m => JSON.stringify(m)).join('\n') + '\n';
-      await fs.appendFile(this.metricsPath, lines, 'utf8');
+      await this.storage.append(this.metricsPath, lines);
       this.buffer = [];
     } catch (error) {
       console.error('[MetricsCollector] Error flushing metrics:', error.message);
@@ -126,13 +126,8 @@ class MetricsCollector {
    */
   async initialize() {
     try {
-      const dir = path.dirname(this.metricsPath);
-      await fs.mkdir(dir, { recursive: true });
-      
-      try {
-        await fs.access(this.metricsPath);
-      } catch {
-        await fs.writeFile(this.metricsPath, '', 'utf8');
+      if (!(await this.storage.exists(this.metricsPath))) {
+        await this.storage.write(this.metricsPath, '');
         console.log('[MetricsCollector] Initialized metrics file at:', this.metricsPath);
       }
     } catch (error) {
@@ -145,10 +140,10 @@ class MetricsCollector {
    */
   async readMetrics(filter = null) {
     try {
-      const content = await fs.readFile(this.metricsPath, 'utf8');
+      const content = await this.storage.read(this.metricsPath);
       const lines = content.trim().split('\n').filter(line => line);
       const metrics = lines.map(line => JSON.parse(line));
-      
+
       if (filter) {
         return metrics.filter(filter);
       }

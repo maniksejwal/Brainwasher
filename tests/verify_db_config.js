@@ -14,17 +14,17 @@ async function testDbConfig() {
     // Test 1: Default environment (development)
     console.log('1. Testing default environment (development)...');
     const defaultPath = config.getDbPath();
-    console.log(`   Expected: ./care_circle.db`);
+    console.log(`   Expected: ./data/dbs/care_circle_dev.db`);
     console.log(`   Actual: ${defaultPath}`);
-    console.log(`   ✅ ${defaultPath === './care_circle.db' ? 'PASS' : 'FAIL'}\n`);
+    console.log(`   ✅ ${defaultPath === './data/dbs/care_circle_dev.db' ? 'PASS' : 'FAIL'}\n`);
 
     // Test 2: Simulation mode (legacy support)
     console.log('2. Testing simulation mode (legacy)...');
     process.env.SIMULATION_MODE = 'true';
     const simPath = config.getDbPath();
-    console.log(`   Expected: ./care_circle_simulation.db`);
+    console.log(`   Expected: ./data/dbs/care_circle_simulation.db`);
     console.log(`   Actual: ${simPath}`);
-    console.log(`   ✅ ${simPath === './care_circle_simulation.db' ? 'PASS' : 'FAIL'}\n`);
+    console.log(`   ✅ ${simPath === './data/dbs/care_circle_simulation.db' ? 'PASS' : 'FAIL'}\n`);
     delete process.env.SIMULATION_MODE;
 
     // Test 3: Explicit mode parameter
@@ -40,9 +40,9 @@ async function testDbConfig() {
     process.env.NODE_ENV = 'production';
     // Need to re-import config to pick up new env
     const prodPath = config.getDbPath();
-    console.log(`   Expected: ./data/care_circle_prod.db`);
+    console.log(`   Expected: ./data/dbs/care_circle_prod.db`);
     console.log(`   Actual: ${prodPath}`);
-    console.log(`   ✅ ${prodPath === './data/care_circle_prod.db' ? 'PASS' : 'FAIL'}\n`);
+    console.log(`   ✅ ${prodPath === './data/dbs/care_circle_prod.db' ? 'PASS' : 'FAIL'}\n`);
     process.env.NODE_ENV = originalEnv;
 
     // Test 5: Explicit DB_PATH override

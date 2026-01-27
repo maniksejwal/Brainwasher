@@ -4,10 +4,8 @@
  * Provides insights for prompt optimization.
  */
 
-import fs from 'fs/promises';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { getDb } from '../../db/connection.js';
+import { getStorage } from '../../lib/storage/index.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import config from '../../config.js';
@@ -15,10 +13,11 @@ import { ANALYSIS_SYSTEM_PROMPT, FEEDBACK_ANALYSIS_TEMPLATE } from '../config/an
 import { generateFeedbackAnalysisPrompt } from '../../prompts/feedback_analysis_prompt.js';
 import { makeApiCall } from '../../agents/api_client.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// No longer need __dirname for relative paths
 
 class FeedbackAnalyzer {
     constructor() {
+        this.storage = getStorage();
         // Initialize LLM for analysis
         if (config.CHAT_GPT_KEY) {
             this.openai = new OpenAI({ apiKey: config.CHAT_GPT_KEY });
@@ -32,9 +31,9 @@ class FeedbackAnalyzer {
     /**
      * Load training log entries
      */
-    async loadTrainingLog(logPath = path.join(__dirname, '../training_log.jsonl')) {
+    async loadTrainingLog(logPath = 'training/training_log.jsonl') {
         try {
-            const content = await fs.readFile(logPath, 'utf8');
+            const content = await this.storage.read(logPath);
             const lines = content.trim().split('\n').filter(line => line);
             return lines.map(line => JSON.parse(line));
         } catch (error) {
@@ -893,7 +892,7 @@ class FeedbackAnalyzer {
     /**
      * Generate comprehensive analysis report
      */
-    async generateReport(outputPath = path.join(__dirname, '../analysis_report.md')) {
+    async generateReport(outputPath = 'training/analysis_report.md') {
         console.log('[FeedbackAnalyzer] Generating analysis report...\n');
 
         const logs = await this.loadTrainingLog();
@@ -929,7 +928,7 @@ class FeedbackAnalyzer {
         const report = this._buildReport(stats, negativePatterns, positiveChars, aiAnalysis, systemComparison);
 
         // Save report
-        await fs.writeFile(outputPath, report, 'utf8');
+        await this.storage.write(outputPath, report);
         console.log(`\n✓ Report saved to: ${outputPath}\n`);
 
         return { stats, negativePatterns, positiveChars, aiAnalysis };

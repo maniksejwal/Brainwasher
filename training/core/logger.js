@@ -6,13 +6,13 @@
  * the conversation continues unaffected.
  */
 
-import fs from 'fs/promises';
-import path from 'path';
 import { privacyGuard } from '../../security/privacy_guard.js';
+import { getStorage } from '../../lib/storage/index.js';
 
 export class TrainingLogger {
-  constructor(logPath = './training/training_log.jsonl') {
+  constructor(logPath = 'training/training_log.jsonl') {
     this.logPath = logPath;
+    this.storage = getStorage();
     this.enabled = process.env.TRAINING_MODE !== 'disabled';
   }
 
@@ -112,7 +112,7 @@ export class TrainingLogger {
    */
   async _appendToLog(entry) {
     const line = JSON.stringify(entry) + '\n';
-    await fs.appendFile(this.logPath, line, 'utf8');
+    await this.storage.append(this.logPath, line);
   }
 
   /**
@@ -120,14 +120,9 @@ export class TrainingLogger {
    */
   async initialize() {
     try {
-      const dir = path.dirname(this.logPath);
-      await fs.mkdir(dir, { recursive: true });
-
-      // Check if file exists, create if not
-      try {
-        await fs.access(this.logPath);
-      } catch {
-        await fs.writeFile(this.logPath, '', 'utf8');
+      // Storage provider handles directory creation and file initialization
+      if (!(await this.storage.exists(this.logPath))) {
+        await this.storage.write(this.logPath, '');
         console.log('[TrainingLogger] Initialized training log at:', this.logPath);
       }
     } catch (error) {
@@ -140,7 +135,7 @@ export class TrainingLogger {
    */
   async readLog(filter = null) {
     try {
-      const content = await fs.readFile(this.logPath, 'utf8');
+      const content = await this.storage.read(this.logPath);
       const lines = content.trim().split('\n').filter(line => line);
       const entries = lines.map(line => JSON.parse(line));
 

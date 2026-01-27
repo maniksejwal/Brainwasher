@@ -89,9 +89,9 @@ const config = {
     // Database Configuration
     NODE_ENV: process.env.NODE_ENV || 'development',
     DB_PATHS: {
-        production: process.env.DB_PATH_PRODUCTION || './data/care_circle_prod.db',
-        development: process.env.DB_PATH_DEVELOPMENT || './care_circle.db',
-        simulation: process.env.DB_PATH_SIMULATION || './care_circle_simulation.db',
+        production: process.env.DB_PATH_PRODUCTION || './data/dbs/care_circle_prod.db',
+        development: process.env.DB_PATH_DEVELOPMENT || './data/dbs/care_circle_dev.db',
+        simulation: process.env.DB_PATH_SIMULATION || './data/dbs/care_circle_simulation.db',
         test: process.env.DB_PATH_TEST || ':memory:'
     },
 
