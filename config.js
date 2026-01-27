@@ -110,11 +110,24 @@ const config = {
 
         // 4. Environment-based
         return this.DB_PATHS[this.NODE_ENV] || this.DB_PATHS.development;
-    }
+    },
+
+    // Storage Configuration
+    STORAGE_TYPE: process.env.STORAGE_TYPE || 'local', // 'local', 's3', 'gcp'
+    STORAGE_LOCAL_PATH: process.env.STORAGE_LOCAL_PATH || './data/storage/local',
+
+    // S3 Storage (future)
+    STORAGE_S3_BUCKET: process.env.STORAGE_S3_BUCKET || '',
+    STORAGE_S3_REGION: process.env.STORAGE_S3_REGION || 'us-east-1',
+
+    // GCP Storage (future)
+    STORAGE_GCP_BUCKET: process.env.STORAGE_GCP_BUCKET || '',
+    STORAGE_GCP_PROJECT_ID: process.env.STORAGE_GCP_PROJECT_ID || ''
 };
 
 // Construct the URL from HOST and PORT
 config.ORCHESTRATOR_URL = `http://${config.HOST}:${config.PORT}`;
 
 export default config;
+
 

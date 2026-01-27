@@ -25,6 +25,15 @@ The system is currently pre-optimization ("Cold Start"). The goal is to reach th
 - [ ] **Push Notifications**: Mobile/Web push integration.
 - [ ] **Testing**: Comprehensive test cases for providers and layers.
 
+### LLM API Integration 🤖
+- [ ] **Llama 4 API Integration**:
+    - [ ] Review integration guide (`documentation/llama4_integration.md`)
+    - [ ] Evaluate Llama 4 vs OpenAI/Gemini for specific use cases
+    - [ ] Implement provider abstraction for Llama 4 (if needed)
+    - [ ] Benchmark performance and cost
+    - [ ] Update model selection logic in `config.js`
+
+
 ### Data & State Architecture (Refinements) 🧠
 - [ ] **Enhanced User Profiles**: Extend `users` table for preferences and demographics.
 - [ ] **Structured Fact Storage**:
