@@ -28,6 +28,7 @@ import { PSYCHOLOGY_SCENARIOS } from './psychology_scenarios.js';
 import { LIFESTYLE_SCENARIOS } from './lifestyle_scenarios.js';
 import { BEHAVIOR_CHANGE_SCENARIOS } from './behavior_change_scenarios.js';
 import { HOSPITAL_SCENARIOS } from '../hospital_scenarios.js';
+import { NOTIFICATION_SCENARIOS } from './notification_scenarios.js';
 // Import world scenario definitions directly to avoid circular dependency
 import { WORLD_SCENARIOS_DEFINITIONS } from '../../world_simulation/world_scenarios.js';
 // Import Scenario Builder for combinatorial scenario generation
@@ -62,6 +63,7 @@ export const SCENARIOS = {
     ...LIFESTYLE_SCENARIOS,
     ...BEHAVIOR_CHANGE_SCENARIOS,
     ...HOSPITAL_SCENARIOS,
+    ...NOTIFICATION_SCENARIOS,
     // World scenarios (multi-care circle scenarios)
     ...WORLD_SCENARIOS_DEFINITIONS
 };
@@ -92,6 +94,7 @@ export { PSYCHOLOGY_SCENARIOS };
 export { LIFESTYLE_SCENARIOS };
 export { BEHAVIOR_CHANGE_SCENARIOS };
 export { HOSPITAL_SCENARIOS };
+export { NOTIFICATION_SCENARIOS };
 
 // Helper function to check if a scenario is a world scenario (has circles field)
 export function isWorldScenario(scenario) {
@@ -163,7 +166,8 @@ export function getScenarioGroups() {
         psychology: PSYCHOLOGY_SCENARIOS,
         lifestyle: LIFESTYLE_SCENARIOS,
         behavior_change: BEHAVIOR_CHANGE_SCENARIOS,
-        hospital: HOSPITAL_SCENARIOS
+        hospital: HOSPITAL_SCENARIOS,
+        notification: NOTIFICATION_SCENARIOS
     };
 }
 

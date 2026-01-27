@@ -21,6 +21,7 @@ import guiRouter from './routes/gui.js';
 import cliRouter from './routes/cli.js';
 import analysisRouter from './routes/analysis.js';
 import componentsRouter from './routes/components.js';
+import notificationsRouter from './routes/notifications.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -135,6 +136,9 @@ app.use('/api', analysisRouter);
 
 // Components
 app.use('/api', componentsRouter);
+
+// Notifications
+app.use('/api', notificationsRouter);
 
 // Core API (Prompts, Command, Legacy Login) -> Mounted at root because it handles both /login and /api/prompts
 app.use('/', coreRouter);

@@ -16,13 +16,15 @@ import {
     getRecentMessages,
     getUserState,
     getFactHistory,
-    getUnreadEscalationsForCircle
+    getUnreadEscalationsForCircle,
+    findMemberInSharedCircles
 } from '../../db/index.js';
 import { processUserMessage, performContextEnrichment } from '../../agents/index.js';
 import { events } from '../../orchestrator.js';
-import { getAgentName } from '../utils/agentIdentity.js';
+import { coordinateCompanions } from '../../companions/CompanionCoordinator.js';
+import { notificationService } from '../../notifications/NotificationService.js';
 
-async function resolveEntitiesAndEnrichContext(message, analysis, circleId) {
+async function resolveEntitiesAndEnrichContext(userId, message, analysis, circleId) {
     if (!analysis.mentioned_usernames || analysis.mentioned_usernames.length === 0) {
         return analysis; // No entities to resolve, return original analysis.
     }
@@ -49,6 +51,42 @@ async function resolveEntitiesAndEnrichContext(message, analysis, circleId) {
                 enrichedAnalysis.criticality = re_evaluation.updated_criticality;
                 // We can also store the enriched summary for better escalation details later.
                 enrichedAnalysis.enriched_summary = re_evaluation.updated_summary;
+            }
+        } else {
+            // Cross-Circle Bridge Logic
+            if (userId) { // Ensure we have the requester's ID
+                const bridgedMember = await findMemberInSharedCircles(mentionedUsername, userId);
+                if (bridgedMember) {
+                    console.log(`[EntityResolution] Cross-Circle Bridge: Found "${mentionedUsername}" in circle ${bridgedMember.circle_id} (Role: ${bridgedMember.role})`);
+
+                    // Proceed with context enrichment but note the cross-circle nature
+                    // Pass a composite role description to the agent context
+                    const bridgedRole = `${bridgedMember.role} (from shared circle ${bridgedMember.circle_id})`;
+
+                    const re_evaluation = await performContextEnrichment(
+                        message,
+                        analysis,
+                        mentionedUsername,
+                        bridgedMember.username,
+                        bridgedRole
+                    );
+
+                    if (re_evaluation && re_evaluation.updated_criticality) {
+                        console.log(`[ContextEnrichment] (Bridged) Criticality updated from ${analysis.criticality} to ${re_evaluation.updated_criticality}`);
+                        enrichedAnalysis.criticality = re_evaluation.updated_criticality;
+                        enrichedAnalysis.enriched_summary = re_evaluation.updated_summary;
+                    }
+
+                    // Tag the analysis so downstream handlers know this was a bridge
+                    if (!enrichedAnalysis.bridged_entities) {
+                        enrichedAnalysis.bridged_entities = [];
+                    }
+                    enrichedAnalysis.bridged_entities.push({
+                        username: bridgedMember.username,
+                        circleId: bridgedMember.circle_id,
+                        role: bridgedMember.role
+                    });
+                }
             }
         }
     }
@@ -167,7 +205,7 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
 
         // Entity resolution and context enrichment
         if (analysis.mentioned_usernames && analysis.mentioned_usernames.length > 0) {
-            analysis = await resolveEntitiesAndEnrichContext(message, analysis, circleId);
+            analysis = await resolveEntitiesAndEnrichContext(userId, message, analysis, circleId);
         }
 
         events.emit('analysis_progress', {
@@ -247,7 +285,7 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         });
     }
 
-    analysis = await resolveEntitiesAndEnrichContext(message, analysis, circleId);
+    analysis = await resolveEntitiesAndEnrichContext(userId, message, analysis, circleId);
 
     // Step 3: Database Operations
     events.emit('analysis_progress', {
@@ -289,6 +327,23 @@ export async function performAiAnalysis(userId, role, message, circleId) {
 
         // Emit escalation event for notification system
         events.emit('escalate', { circleId });
+
+        // NEW: Send notifications via NotificationService
+        try {
+            const members = await getCircleMembers(circleId);
+            for (const member of members) {
+                // Don't notify the user who caused it? Or maybe yes?
+                // For now, notify everyone including the sender.
+                notificationService.send(
+                    member.user_id,
+                    'escalation',
+                    `⚠️ Critical Event Detected: ${analysis.criticality}`,
+                    { criticality: analysis.criticality, details: escalationDetails }
+                ).catch(e => console.error(`[AIAnalysisHandler] Notification failed for ${member.user_id}:`, e.message));
+            }
+        } catch (e) {
+            console.error('[AIAnalysisHandler] Error fetching members for notification:', e.message);
+        }
 
         console.log(`📢 [AIAnalysisHandler] Escalation event emitted for circle ${circleId}`);
     }

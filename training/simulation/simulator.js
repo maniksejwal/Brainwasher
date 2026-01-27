@@ -5,6 +5,7 @@
 
 import { open } from 'sqlite';
 import sqlite3 from 'sqlite3';
+import { runWithDb } from '../../db/connection.js';
 import { getPersona, getRandomPersona } from './personas.js';
 import { SyntheticUser } from './synthetic_user.js';
 import { simulationClientManager } from './simulation_client.js';
@@ -27,7 +28,7 @@ export class SimulationDriver {
         this.logResults = options.logResults !== false;
         this.autoFeedback = options.autoFeedback !== false;
         this.progressCallback = options.progressCallback || null;
-        
+
         // Initialize escalation notification system
         escalationNotificationSystem.initialize();
     }
@@ -38,9 +39,9 @@ export class SimulationDriver {
     async initializeDatabase() {
         // Suppress verbose database logs unless in debug mode
         if (process.env.SIMULATION_DEBUG === 'true') {
-        console.log(`[Simulator] Initializing test database: ${this.dbPath}`);
+            console.log(`[Simulator] Initializing test database: ${this.dbPath}`);
         }
-        
+
         // Safety check: Never use production database
         if (this.dbPath.includes('care_circle.db') && !this.dbPath.includes('simulation')) {
             throw new Error('SAFETY: Attempted to use production database for simulation!');
@@ -226,10 +227,10 @@ export class SimulationDriver {
             );
         `);
 
-            // Suppress schema logs unless in debug mode
-            if (process.env.SIMULATION_DEBUG === 'true') {
-        console.log('[Simulator] Test database initialized');
-            }
+        // Suppress schema logs unless in debug mode
+        if (process.env.SIMULATION_DEBUG === 'true') {
+            console.log('[Simulator] Test database initialized');
+        }
     }
 
     /**
@@ -238,7 +239,7 @@ export class SimulationDriver {
     async createSyntheticUsers(userConfigs) {
         // Suppress user creation logs unless in debug mode
         if (process.env.SIMULATION_DEBUG === 'true') {
-        console.log(`[Simulator] Creating ${userConfigs.length} synthetic users...`);
+            console.log(`[Simulator] Creating ${userConfigs.length} synthetic users...`);
         }
 
         for (const config of userConfigs) {
@@ -251,7 +252,7 @@ export class SimulationDriver {
             if (!supportedRoles.includes(normalizedRole)) {
                 console.warn(`[Simulator] Unknown or missing role "${role}". Defaulting persona category to 'patient'.`);
             }
- 
+
             // Support multiple persona options: if personaOptions array exists, randomly select one
             let selectedPersonaKey = personaKey || persona;
             if (personaOptions && Array.isArray(personaOptions) && personaOptions.length > 0) {
@@ -265,10 +266,10 @@ export class SimulationDriver {
             }
 
             const personaData = getPersona(personaCategory, selectedPersonaKey);
-            
+
             // Create run-specific user ID to prevent contamination
             const runSpecificUserId = `${userId}_run_${this.runId}`;
-            
+
             const syntheticUser = new SyntheticUser(runSpecificUserId, role, selectedPersonaKey, personaData);
             this.syntheticUsers.push(syntheticUser);
 
@@ -291,7 +292,7 @@ export class SimulationDriver {
     async createCareCircle(patientId, caregiverIds = []) {
         // patientId and caregiverIds are already run-specific from syntheticUsers
         const circleId = patientId; // Circle ID = patient ID
-        
+
         // Create care circle (matching real schema)
         await this.db.run(
             `INSERT OR REPLACE INTO care_circles (circle_id, primary_patient_id, created_at) VALUES (?, ?, ?)`,
@@ -347,104 +348,107 @@ export class SimulationDriver {
     async runScenario(scenarioConfig, scenarioKey) {
         // Set scenario ID and update conversation ID
         this.setScenario(scenarioKey);
-        
-        console.log(`\n🧪 SIMULATION: ${scenarioConfig.name || scenarioKey}`);
-        console.log(`📋 Scenario: ${scenarioConfig.description || 'No description provided'}`);
-        console.log(`👥 Users: ${scenarioConfig.users.length} | 🔄 Turns: ${scenarioConfig.turns || 6}\n`);
 
-        // Emit progress events if callback provided
-        const emitProgress = (step, description, details, extraData) => {
-            if (this.progressCallback) {
-                this.progressCallback({ 
-                    step, 
-                    description, 
-                    details: extraData || details,
-                    ...(extraData && { originalDetails: details })
-                });
-            }
-        };
+        return runWithDb(this.db, async () => {
 
-        try {
-        // Initialize
-            emitProgress(1, 'Initializing simulation database...', 'Setting up test environment');
-        await this.initializeDatabase();
+            console.log(`\n🧪 SIMULATION: ${scenarioConfig.name || scenarioKey}`);
+            console.log(`📋 Scenario: ${scenarioConfig.description || 'No description provided'}`);
+            console.log(`👥 Users: ${scenarioConfig.users.length} | 🔄 Turns: ${scenarioConfig.turns || 6}\n`);
 
-        // Create users
-            emitProgress(2, 'Creating synthetic users...', `Setting up ${scenarioConfig.users.length} test users`);
-        await this.createSyntheticUsers(scenarioConfig.users);
-
-            // Create care circle for ALL scenarios (single user needs it too)
-            emitProgress(3, 'Setting up care circle...', 'Creating patient-caregiver relationships');
-            const patientUser = this.syntheticUsers.find(u => u.role === 'patient');
-            const caregiverUsers = this.syntheticUsers.filter(u => u.role === 'caregiver');
-            const doctorUsers = this.syntheticUsers.filter(u => u.role === 'doctor');
-            
-            const patientId = patientUser?.userId || this.syntheticUsers[0].userId;
-            const caregiverIds = caregiverUsers.map(u => u.userId);
-            const doctorIds = doctorUsers.map(u => u.userId);
-            
-            await this.createCareCircle(patientId, [...caregiverIds, ...doctorIds]);
-
-            // Run conversations
-            const totalTurns = scenarioConfig.sessions ? scenarioConfig.sessions * scenarioConfig.turns : scenarioConfig.turns;
-            emitProgress(4, 'Starting conversations...', `Running ${totalTurns} conversation turns across ${scenarioConfig.sessions || 1} sessions`);
-            
-            const conversationRunner = new ConversationRunner(
-                this.db, 
-                this.conversationId, 
-                this.autoFeedback, 
-                this.logResults,
-                scenarioConfig, // Pass scenario context for evaluation
-                this.promptVersion // Pass dynamic prompt version
-            );
-            
-            if (this.syntheticUsers.length === 1) {
-                // Single user conversation
-                if (scenarioConfig.sessions) {
-                    // Multi-session scenario
-                    await conversationRunner.runMultiSessionConversation(
-                        this.syntheticUsers[0], 
-                        scenarioConfig.sessions,
-                        scenarioConfig.turns, 
-                        emitProgress
-                    );
-                } else {
-                    // Single session scenario
-                    await conversationRunner.runSingleUserConversation(
-                        this.syntheticUsers[0], 
-                        scenarioConfig.turns, 
-                        emitProgress
-                    );
+            // Emit progress events if callback provided
+            const emitProgress = (step, description, details, extraData) => {
+                if (this.progressCallback) {
+                    this.progressCallback({
+                        step,
+                        description,
+                        details: extraData || details,
+                        ...(extraData && { originalDetails: details })
+                    });
                 }
-            } else {
-                // Multi-user conversation
-                if (scenarioConfig.sessions) {
-                    // Multi-session scenario
-                    await conversationRunner.runMultiSessionMultiUserConversation(
-                        this.syntheticUsers, 
-                        scenarioConfig.sessions,
-                        scenarioConfig.turns, 
-                        emitProgress
-                    );
+            };
+
+            try {
+                // Initialize
+                emitProgress(1, 'Initializing simulation database...', 'Setting up test environment');
+                await this.initializeDatabase();
+
+                // Create users
+                emitProgress(2, 'Creating synthetic users...', `Setting up ${scenarioConfig.users.length} test users`);
+                await this.createSyntheticUsers(scenarioConfig.users);
+
+                // Create care circle for ALL scenarios (single user needs it too)
+                emitProgress(3, 'Setting up care circle...', 'Creating patient-caregiver relationships');
+                const patientUser = this.syntheticUsers.find(u => u.role === 'patient');
+                const caregiverUsers = this.syntheticUsers.filter(u => u.role === 'caregiver');
+                const doctorUsers = this.syntheticUsers.filter(u => u.role === 'doctor');
+
+                const patientId = patientUser?.userId || this.syntheticUsers[0].userId;
+                const caregiverIds = caregiverUsers.map(u => u.userId);
+                const doctorIds = doctorUsers.map(u => u.userId);
+
+                await this.createCareCircle(patientId, [...caregiverIds, ...doctorIds]);
+
+                // Run conversations
+                const totalTurns = scenarioConfig.sessions ? scenarioConfig.sessions * scenarioConfig.turns : scenarioConfig.turns;
+                emitProgress(4, 'Starting conversations...', `Running ${totalTurns} conversation turns across ${scenarioConfig.sessions || 1} sessions`);
+
+                const conversationRunner = new ConversationRunner(
+                    this.db,
+                    this.conversationId,
+                    this.autoFeedback,
+                    this.logResults,
+                    scenarioConfig, // Pass scenario context for evaluation
+                    this.promptVersion // Pass dynamic prompt version
+                );
+
+                if (this.syntheticUsers.length === 1) {
+                    // Single user conversation
+                    if (scenarioConfig.sessions) {
+                        // Multi-session scenario
+                        await conversationRunner.runMultiSessionConversation(
+                            this.syntheticUsers[0],
+                            scenarioConfig.sessions,
+                            scenarioConfig.turns,
+                            emitProgress
+                        );
+                    } else {
+                        // Single session scenario
+                        await conversationRunner.runSingleUserConversation(
+                            this.syntheticUsers[0],
+                            scenarioConfig.turns,
+                            emitProgress
+                        );
+                    }
                 } else {
-                    // Single session scenario
-                    await conversationRunner.runMultiUserConversation(
-                        this.syntheticUsers, 
-                        scenarioConfig.turns, 
-                        emitProgress
-                    );
+                    // Multi-user conversation
+                    if (scenarioConfig.sessions) {
+                        // Multi-session scenario
+                        await conversationRunner.runMultiSessionMultiUserConversation(
+                            this.syntheticUsers,
+                            scenarioConfig.sessions,
+                            scenarioConfig.turns,
+                            emitProgress
+                        );
+                    } else {
+                        // Single session scenario
+                        await conversationRunner.runMultiUserConversation(
+                            this.syntheticUsers,
+                            scenarioConfig.turns,
+                            emitProgress
+                        );
+                    }
                 }
+
+                emitProgress(5, 'Simulation complete!', 'Analyzing results and generating feedback', { complete: true });
+
+                console.log(`\n✅ SIMULATION COMPLETE: ${scenarioConfig.name}`);
+                console.log(`📊 Users: ${scenarioConfig.users.length} | 🔄 Turns: ${scenarioConfig.turns || 6} | 💬 Feedback: ${this.autoFeedback ? 'Auto-generated' : 'Manual'}\n`);
+
+            } catch (error) {
+                console.error('[Simulator] Error during simulation:', error.message);
+                throw error;
             }
-            
-            emitProgress(5, 'Simulation complete!', 'Analyzing results and generating feedback', { complete: true });
-
-        console.log(`\n✅ SIMULATION COMPLETE: ${scenarioConfig.name}`);
-        console.log(`📊 Users: ${scenarioConfig.users.length} | 🔄 Turns: ${scenarioConfig.turns || 6} | 💬 Feedback: ${this.autoFeedback ? 'Auto-generated' : 'Manual'}\n`);
-
-        } catch (error) {
-            console.error('[Simulator] Error during simulation:', error.message);
-            throw error;
-        }
+        });
     }
 
     /**
@@ -453,20 +457,20 @@ export class SimulationDriver {
     async cleanup() {
         // Cleanup simulation clients
         simulationClientManager.cleanup();
-        
+
         // Cleanup escalation notification system
         escalationNotificationSystem.cleanup();
-        
+
         // Cleanup synthetic user feedback system to prevent data leakage
         syntheticUserFeedback.cleanup();
-        
+
         if (this.db) {
             await this.db.close();
         }
         // Suppress cleanup logs unless in debug mode
         if (process.env.SIMULATION_DEBUG === 'true') {
-        console.log('[Simulator] Cleanup complete (database preserved for analysis)');
+            console.log('[Simulator] Cleanup complete (database preserved for analysis)');
+        }
     }
-}
 }
 

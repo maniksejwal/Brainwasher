@@ -11,6 +11,7 @@
 import { FeedbackAnalyzer } from '../analysis/feedback_analyzer.js';
 import { PromptOptimizer } from '../analysis/prompt_optimizer.js';
 import { ThompsonSampling } from './thompson_sampling.js';
+import { ContextualBandit } from './contextual_bandit.js';
 import { trainingDb } from '../core/database_manager.js';
 import fs from 'fs/promises';
 import path from 'path';
@@ -20,7 +21,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export class TrainingPipeline {
     constructor(options = {}) {
-        this.minConversationsForOptimization = options.minConversations || 50;
+        this.minConversationsForOptimization = options.minConversations || 5; // Reduced default for testing (was 50)
         this.minScoreThreshold = options.minScoreThreshold || 0.5;
         this.optimizationInterval = options.optimizationInterval || 24 * 60 * 60 * 1000; // 24 hours
         this.lastOptimization = null;
@@ -533,24 +534,21 @@ export class TrainingPipeline {
 
                     console.log(`[TrainingPipeline] Using ${diverseScenarios.length} diverse scenarios for multi-arm bandit (from ${limitedScenarios.length} available, filtered from ${allScenarios.length} total)`);
 
-                    // Multi-arm bandit with Thompson Sampling
+                    // Multi-arm bandit with Thompson Sampling (Contextual)
                     const versions = ['current', promptData.version];
 
-                    // Fetch historical stats for persistence
-                    console.log('[TrainingPipeline] Fetching historical stats for MAB persistence...');
-                    const initialStats = await this._getHistoricalStats(versions);
-                    if (initialStats['current']) {
-                        console.log(`[TrainingPipeline] Loaded history for current: ${initialStats['current'].totalSamples} samples (${initialStats['current'].successes} successes)`);
-                    }
+                    // Fetch historical stats for persistence (Segmented by context)
+                    console.log('[TrainingPipeline] Fetching historical stats for Contextual Bandit...');
+                    const initialStatsByType = await this._getHistoricalStatsByContext(versions);
 
-                    const thompsonSampling = new ThompsonSampling(versions, {
+                    const bandit = new ContextualBandit(versions, {
                         minSamples: runsPerVersion || 2,
-                        initialStats: initialStats
+                        priorStatsByType: initialStatsByType
                     });
 
-                    // Run simulations and update Thompson Sampling
-                    const testResult = await this._runThompsonSamplingTest(
-                        thompsonSampling,
+                    // Run simulations and update Bandit
+                    const testResult = await this._runContextualBanditTest(
+                        bandit,
                         versions,
                         diverseScenarios,
                         promptData
@@ -561,8 +559,8 @@ export class TrainingPipeline {
                         testResult
                     });
 
-                    // Determine winner based on Thompson Sampling statistics
-                    const stats = thompsonSampling.getStatistics();
+                    // Determine winner based on Global statistics (Overall Performance)
+                    const stats = bandit.getAllStatistics().global;
                     const bestVersion = stats.sort((a, b) => b.expectedValue - a.expectedValue)[0];
 
                     if (bestVersion.version === promptData.version) {
@@ -581,6 +579,182 @@ export class TrainingPipeline {
         }
 
         return results;
+    }
+
+    /**
+     * Get historical statistics grouped by context (category)
+     * @private
+     */
+    async _getHistoricalStatsByContext(versions) {
+        if (!versions || versions.length === 0) return {};
+
+        try {
+            const placeholders = versions.map(() => '?').join(',');
+            // Query DB for aggregate stats grouped by category (context)
+            // Note: category column in feedback table stores personaKey (context)
+            const rows = await this.db.all(`
+                SELECT 
+                    category,
+                    prompt_version,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN score > 0.5 THEN 1 ELSE 0 END) as successes,
+                    SUM(CASE WHEN score <= 0.5 THEN 1 ELSE 0 END) as failures
+                FROM feedback
+                WHERE prompt_version IN (${placeholders}) OR prompt_version IS NULL OR prompt_version = 'current'
+                GROUP BY category, prompt_version
+            `, versions);
+
+            const statsByType = {};
+
+            rows.forEach(row => {
+                // Construct context key for ContextualBandit
+                // We assume category in DB maps to "persona:KEY" part of context key
+                // ContextualBandit expects keys like "persona:anxious_patient" or "global"
+
+                // Determine context key:
+                // If category is present, prefix with "persona:" (unless it's already structured)
+                // For now, let's assume category IS the personaKey.
+                // ContextualBandit _generateContextKey output for {personaCategory: 'foo'} is "persona:foo"
+                let contextKey = 'global';
+                if (row.category) {
+                    contextKey = `persona:${row.category}`;
+                }
+
+                if (!statsByType[contextKey]) {
+                    statsByType[contextKey] = {};
+                }
+
+                // Map 'current' or NULL to 'current' version
+                const version = (row.prompt_version === 'current' || row.prompt_version === null) ? 'current' : row.prompt_version;
+
+                statsByType[contextKey][version] = {
+                    successes: row.successes,
+                    failures: row.failures,
+                    totalSamples: row.total
+                };
+            });
+
+            // Also fetch GLOBAL stats (aggregated across all categories)
+            const globalStats = await this._getHistoricalStats(versions);
+            statsByType['global'] = globalStats;
+
+            return statsByType;
+        } catch (error) {
+            console.warn('[TrainingPipeline] Failed to get historical stats by context:', error.message);
+            return {};
+        }
+    }
+
+    /**
+     * Run Contextual Bandit test (replaces _runThompsonSamplingTest)
+     * @private
+     */
+    async _runContextualBanditTest(bandit, versions, scenarios, promptData) {
+        const results = {
+            versionResults: {},
+            totalRuns: 0
+        };
+
+        const originalSimulationMode = process.env.SIMULATION_MODE;
+        process.env.SIMULATION_MODE = 'true';
+
+        for (const scenario of scenarios) {
+            // Get scenario config
+            const { config: scenarioConfig, isWorld: isWorldScenario } = await this._getScenarioConfig(scenario);
+
+            // Determine Context
+            // We need to extract persona info to build the context object
+            // Scenario config has 'users' array. We take the first user's persona or role.
+            let context = { complexity: scenarioConfig.complexity || 1 };
+
+            if (scenarioConfig.users && scenarioConfig.users.length > 0) {
+                const user = scenarioConfig.users[0];
+                // Use personaKey if available, otherwise role
+                context.personaCategory = user.personaKey || user.role || 'patient';
+            }
+
+            // Select version using Contextual Bandit
+            const selectedVersion = bandit.selectVersion(context);
+
+            // Set prompt version
+            const originalEnv = process.env.PROMPT_VERSION;
+            process.env.PROMPT_VERSION = selectedVersion === 'current' ? null : selectedVersion;
+
+            let simulator;
+            if (isWorldScenario) {
+                const { WorldSimulator } = await import('../world_simulation/world_simulator.js');
+                simulator = new WorldSimulator();
+            } else {
+                const { SimulationDriver } = await import('../simulation/simulator.js');
+                simulator = new SimulationDriver();
+            }
+
+            try {
+                await simulator.runScenario(scenarioConfig, scenario);
+
+                // Get Feedback Score (Reuse logic from _runThompsonSamplingTest)
+                const db = simulator.db;
+                let conversationIds = [simulator.conversationId];
+                if (simulator.conversationIds?.length > 0) conversationIds = simulator.conversationIds;
+
+                const placeholders = conversationIds.map(() => '?').join(',');
+                const feedback = await db.all(`
+                    SELECT score, goal_adherence_score, goal_history_score, goal_conversation_score
+                    FROM feedback
+                    WHERE conversation_id IN (${placeholders}) 
+                    AND (prompt_version = ? OR prompt_version IS NULL)
+                    ORDER BY timestamp DESC
+                    LIMIT 50
+                `, [...conversationIds, selectedVersion === 'current' ? null : selectedVersion]);
+
+                const avgScore = feedback.length > 0
+                    ? feedback.reduce((sum, f) => sum + (f.score || 0), 0) / feedback.length
+                    : 0;
+
+                const weightedScore = avgScore * 0.6 +
+                    (feedback.length > 0 ? feedback.reduce((sum, f) =>
+                        sum + (f.goal_adherence_score || 0) + (f.goal_history_score || 0) + (f.goal_conversation_score || 0), 0) / feedback.length / 3 : 0) * 0.4;
+
+                // Comparative Score Logic
+                const comparativeScore = await this._calculateComparativeScore(conversationIds[0], db);
+                const comparativeWeight = 0.2;
+                const finalScore = weightedScore * (1 - comparativeWeight) +
+                    (comparativeScore.relativeIntelligence * weightedScore) * comparativeWeight;
+
+                const reward = finalScore > 0 ? true : false;
+
+                // Update Contextual Bandit
+                bandit.updateReward(selectedVersion, reward, context);
+
+                // Track results
+                if (!results.versionResults[selectedVersion]) {
+                    results.versionResults[selectedVersion] = { runs: 0, successes: 0, totalScore: 0 };
+                }
+                results.versionResults[selectedVersion].runs++;
+                results.versionResults[selectedVersion].totalScore += weightedScore;
+                if (reward) results.versionResults[selectedVersion].successes++;
+                results.totalRuns++;
+
+                if (simulator.cleanup) await simulator.cleanup();
+
+            } catch (error) {
+                console.warn(`[TrainingPipeline] Simulation failed for ${scenario}:`, error.message);
+                bandit.updateReward(selectedVersion, false, context);
+            } finally {
+                if (originalEnv !== undefined) process.env.PROMPT_VERSION = originalEnv;
+                else delete process.env.PROMPT_VERSION;
+            }
+        }
+
+        if (originalSimulationMode !== undefined) process.env.SIMULATION_MODE = originalSimulationMode;
+        else delete process.env.SIMULATION_MODE;
+
+        // Return standardized results based on GLOBAL stats for compatibility
+        const stats = bandit.getAllStatistics().global;
+        return {
+            stats: stats,
+            versionResults: results.versionResults
+        };
     }
 
     /**

@@ -18,6 +18,7 @@ import { handleDoctorMessage } from './message_logic/doctorMessageHandler.js';
 import { handleNonDoctorQuestion } from './message_logic/nonDoctorQuestionHandler.js';
 import { broadcastErrorReply, formatAnalysisErrorMessage } from './utils/errorHandling.js';
 import { getAgentName } from './utils/agentIdentity.js';
+import { privacyGuard } from '../security/privacy_guard.js';
 
 // Lazy initialization of topic shift handler
 let topicShiftHandler = null;
@@ -252,11 +253,17 @@ export async function handleMessage(userId, circleId, message) {
     const logConversationId = `${circleId}_${userId}`;
     const logOrchestratorDetails = sharingResult || { action: 'NONE' };
 
+    // Privacy Scrubbing (PII Removal)
+    // We scrub the message and reply to ensure no sensitive data enters the training logs.
+    const scrubbedMessage = privacyGuard.scrub(message);
+    const scrubbedReply = privacyGuard.scrub(analysis ? analysis.reply : "Error generating response");
+    const scrubbedReasoning = analysis && analysis.reasoning ? privacyGuard.scrub(analysis.reasoning) : null;
+
     trainingLogger.logInteraction(
         logConversationId,
         userId,
-        message,
-        analysis ? analysis.reply : "Error generating response",
+        scrubbedMessage,
+        scrubbedReply,
         {
             type: logOrchestratorDetails.action || 'NONE',
             ...logOrchestratorDetails.details
@@ -269,7 +276,7 @@ export async function handleMessage(userId, circleId, message) {
             response_length: analysis && analysis.reply ? analysis.reply.length : 0,
             escalated: Boolean(sharingResult?.escalated),
             shared: Boolean(sharingResult?.shared),
-            reasoning: analysis ? analysis.reasoning : null, // Chain of Thought
+            reasoning: scrubbedReasoning, // Chain of Thought (Scrubbed)
             outcome_label: outcomeLabel, // Implicit Reward/Penalty
             filter_reason: filterReason // Data Quality Filter
         }

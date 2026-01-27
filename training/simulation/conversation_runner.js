@@ -583,8 +583,10 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
                 userMessage, // Context (user message)
                 this.promptVersion, // Prompt version
                 user.conversationHistory, // History
+                user.conversationHistory, // History
                 this.scenarioContext?.name || 'Unknown Scenario', // Scenario Name used for Granular Analysis
-                user.persona?.name || 'Unknown Persona' // Persona Name used for Granular Analysis
+                user.persona?.name || 'Unknown Persona', // Persona Name used for Granular Analysis
+                user.personaKey // Category (Context Key)
             );
 
             feedbackData = {

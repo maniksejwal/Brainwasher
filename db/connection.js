@@ -1,45 +1,51 @@
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
-let db;
+const dbStorage = new AsyncLocalStorage();
+let globalDb;
 let currentDbPath = null;
 
 // This function manages the singleton database connection.
 export async function getDb() {
-    // If a database was injected via setGlobalDb (e.g., for simulations), use it
-    // Don't close it or replace it - the caller owns the lifecycle
-    if (db && currentDbPath === null) {
-        // Database was injected, not opened by getDb - return it as-is
-        return db;
+    // 1. Check for context-specific DB (isolated simulation)
+    const contextDb = dbStorage.getStore();
+    if (contextDb) {
+        return contextDb;
     }
 
-    // Use simulation database when in simulation mode (for both regular and world simulations)
+    // 2. Check for global injected DB
+    if (globalDb && currentDbPath === null) {
+        return globalDb;
+    }
+
+    // 3. Default behavior (singleton connection)
     const dbPath = process.env.SIMULATION_MODE === 'true'
         ? './care_circle_simulation.db'
         : './care_circle.db';
 
-    // If database path changed or connection doesn't exist, create/recreate connection
-    if (!db || currentDbPath !== dbPath) {
-        if (db) {
-            // Close existing connection if switching databases
-            await db.close();
+    if (!globalDb || currentDbPath !== dbPath) {
+        if (globalDb) {
+            await globalDb.close();
         }
         currentDbPath = dbPath;
         console.log(`[DB] Opening connection: ${dbPath}`);
-        db = await open({
+        globalDb = await open({
             filename: dbPath,
             driver: sqlite3.Database
         });
     }
-    return db;
+    return globalDb;
 }
 
-// Allow overriding the database instance (e.g., for simulations)
+// Allow overriding the database instance (Legacy / Global)
 export function setGlobalDb(dbInstance) {
-    if (db) {
-        // Optional: console.warn("Overriding existing global DB connection");
-    }
-    db = dbInstance;
+    globalDb = dbInstance;
+}
+
+// Execute a function with an isolated database context
+export function runWithDb(dbInstance, callback) {
+    return dbStorage.run(dbInstance, callback);
 }
 
 /**
@@ -52,3 +58,4 @@ export async function getProductionDb() {
         driver: sqlite3.Database
     });
 }
+

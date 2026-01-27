@@ -119,3 +119,22 @@ export async function getUserState(userId, circleId) {
     return row ? JSON.parse(row.session_state) : { state: 'IDLE' };
 }
 
+/**
+ * Find a member in any circle shared with the requesting user
+ * Used for Cross-Circle Entity Resolution (Bridging)
+ */
+export async function findMemberInSharedCircles(targetUsername, requestingUserId) {
+    const db = await getDb();
+    return db.get(`
+        SELECT u.username, u.user_id, m.circle_id, m.role, m.relationship_type, c.primary_patient_id
+        FROM users u
+        JOIN care_circle_members m ON u.user_id = m.user_id
+        JOIN care_circles c ON m.circle_id = c.circle_id
+        WHERE u.username = ? COLLATE NOCASE
+        AND m.circle_id IN (
+            SELECT circle_id FROM care_circle_members WHERE user_id = ?
+        )
+        LIMIT 1
+    `, [targetUsername, requestingUserId]);
+}
+

@@ -8,7 +8,34 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import OpenAI from 'openai';
 import config from '../config.js';
+import { logApiUsage } from '../db/index.js';
 import { parseJsonWithFixes } from '../utils/jsonParser.js';
+
+const MODEL_PRICING = {
+    // OpenAI (Prices per 1M tokens)
+    'gpt-3.5-turbo': { input: 0.50, output: 1.50 },
+    'gpt-4': { input: 30.00, output: 60.00 },
+    'gpt-4-turbo-preview': { input: 10.00, output: 30.00 },
+    'gpt-4o': { input: 5.00, output: 15.00 },
+    'gpt-4o-mini': { input: 0.15, output: 0.60 },
+    // Gemini (Approximate/Avg)
+    'gemini-1.5-flash': { input: 0.35, output: 1.05 },
+    'gemini-1.5-pro': { input: 3.50, output: 10.50 },
+    'gemini-pro': { input: 0.50, output: 1.50 },
+    // Ollama (Local)
+    'ollama': { input: 0, output: 0 }
+};
+
+function calculateCost(model, promptTokens, completionTokens) {
+    // Find matching model key (partial match support)
+    const pricingKey = Object.keys(MODEL_PRICING).find(k => model.includes(k)) || 'gpt-3.5-turbo';
+    const pricing = MODEL_PRICING[pricingKey] || MODEL_PRICING['gpt-3.5-turbo'];
+
+    const inputCost = (promptTokens / 1_000_000) * pricing.input;
+    const outputCost = (completionTokens / 1_000_000) * pricing.output;
+
+    return inputCost + outputCost;
+}
 
 const PROVIDERS = Object.freeze({
     OLLAMA: 'ollama',
@@ -243,10 +270,19 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
 
             try {
                 let text;
+                let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
                 switch (providerType) {
                     case PROVIDERS.OLLAMA: {
                         const ollamaResult = await callOllama(fullPrompt, temperature, maxTokens, modelForAttempt);
                         text = ollamaResult.response;
+
+                        usage = {
+                            prompt_tokens: ollamaResult.prompt_eval_count || 0,
+                            completion_tokens: ollamaResult.eval_count || 0,
+                            total_tokens: (ollamaResult.prompt_eval_count || 0) + (ollamaResult.eval_count || 0)
+                        };
+
                         providerState.ollamaFailed = false;
                         trackProviderOutcome(PROVIDERS.OLLAMA, modelForAttempt, 'success');
                         break;
@@ -263,6 +299,15 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
                         }
                         const completion = await provider.client.chat.completions.create(requestBody);
                         text = completion.choices[0].message.content;
+
+                        if (completion.usage) {
+                            usage = {
+                                prompt_tokens: completion.usage.prompt_tokens,
+                                completion_tokens: completion.usage.completion_tokens,
+                                total_tokens: completion.usage.total_tokens
+                            };
+                        }
+
                         trackProviderOutcome(PROVIDERS.OPENAI, modelForAttempt, 'success');
                         break;
                     }
@@ -279,11 +324,33 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
                         const result = await geminiClient.client.generateContent(fullPrompt, generationConfig);
                         const response = await result.response;
                         text = response.text();
+
+                        // Extract usage if available
+                        usage = {
+                            prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
+                            completion_tokens: response.usageMetadata?.candidatesTokenCount || 0,
+                            total_tokens: response.usageMetadata?.totalTokenCount || 0
+                        };
+
                         trackProviderOutcome(`${PROVIDERS.GEMINI}#${geminiClient.index}`, modelForAttempt, 'success');
                         break;
                     }
-                    default:
                         throw new Error(`[Agent] Unsupported provider type: ${providerType}`);
+                }
+
+                // Log Usage
+                if (usage.total_tokens > 0) {
+                    const cost = calculateCost(modelForAttempt, usage.prompt_tokens, usage.completion_tokens);
+                    // Fire and forget logging
+                    logApiUsage(
+                        providerType,
+                        modelForAttempt,
+                        useCase,
+                        usage.prompt_tokens,
+                        usage.completion_tokens,
+                        usage.total_tokens,
+                        cost
+                    ).catch(e => console.error('[Agent] Failed to log API usage:', e.message));
                 }
 
                 if (expectJson) {

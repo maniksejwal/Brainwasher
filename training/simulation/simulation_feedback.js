@@ -30,7 +30,7 @@ export class SimulationFeedback {
     /**
      * Main feedback method - coordinates all feedback operations
      */
-    async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null, promptVersion = null, conversationHistory = [], scenarioName = null, personaName = null) {
+    async provideFeedback(conversationId, userId, circleId, messageId, userMessage, agentResponse, orchestratorAction, context = null, promptVersion = null, conversationHistory = [], scenarioName = null, personaName = null, category = null) {
         // Use stored prompt version if not provided
         const actualPromptVersion = promptVersion || this.promptVersion;
         try {
@@ -51,7 +51,7 @@ export class SimulationFeedback {
                 conversationId, userId, circleId, messageId,
                 analysis.totalScore, analysis.scores?.[0]?.reason || 'No reason provided',
                 actualPromptVersion, goalAssessment, agentResponse.modelUsed, promptType, systemUsed,
-                scenarioName, personaName // Pass context
+                scenarioName, personaName, category // Pass context
             );
 
             // 4. Store detailed reports for each issue

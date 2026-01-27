@@ -5,6 +5,7 @@
 
 import { getDb } from '../../db/connection.js';
 import { SimulationScorer } from './simulation_scorer.js';
+import { privacyGuard } from '../../security/privacy_guard.js';
 import chalk from 'chalk';
 
 export class SimulationReporter {
@@ -16,7 +17,7 @@ export class SimulationReporter {
     /**
      * Auto-score feedback and store in database
      */
-    async autoScore(conversationId, userId, circleId, messageId, score, reason, promptVersion = 'simulation_v1.0', goalAssessment = null, modelUsed = null, promptType = null, systemUsed = null, scenarioName = null, personaName = null) {
+    async autoScore(conversationId, userId, circleId, messageId, score, reason, promptVersion = 'simulation_v1.0', goalAssessment = null, modelUsed = null, promptType = null, systemUsed = null, scenarioName = null, personaName = null, category = null) {
         const db = this.dbConnection || await getDb();
 
         // Create table with correct schema
@@ -53,10 +54,13 @@ export class SimulationReporter {
         const goalHistory = goalAssessment?.history || null;
         const goalConversation = goalAssessment?.conversation || null;
 
+        // Scrub PII from comment
+        const safeReason = privacyGuard.scrub(reason);
+
         await db.run(
-            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source, prompt_version, prompt_type, system_used, scenario_name, persona_name, goal_adherence_score, goal_history_score, goal_conversation_score, critical_failure, model_used, model_version)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [conversationId, messageId, userId, circleId, score, reason, Date.now(), promptVersion, promptType, systemUsed, scenarioName, personaName, goalAdherence, goalHistory, goalConversation, criticalFailure, modelUsed, modelUsed]
+            `INSERT INTO feedback (conversation_id, message_id, user_id, circle_id, score, comment, timestamp, source, prompt_version, prompt_type, system_used, scenario_name, persona_name, category, goal_adherence_score, goal_history_score, goal_conversation_score, critical_failure, model_used, model_version)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [conversationId, messageId, userId, circleId, score, safeReason, Date.now(), promptVersion, promptType, systemUsed, scenarioName, personaName, category, goalAdherence, goalHistory, goalConversation, criticalFailure, modelUsed, modelUsed]
         );
 
         const autoScoredMsg = `[SimulationReporter][Auto-Scored]: Score ${score} - "${reason}"`;
@@ -235,10 +239,14 @@ export class SimulationReporter {
             // Ignore if table doesn't exist yet or other error, CREATE TABLE handles it
         }
 
+        // Scrub PII
+        const safeDescription = privacyGuard.scrub(description);
+        const safeContext = privacyGuard.scrub(typeof context === 'string' ? context : JSON.stringify(context));
+
         await db.run(
             `INSERT INTO detailed_feedback (conversation_id, message_id, user_id, circle_id, category, description, context, timestamp, source, scenario_name, persona_name)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'simulation', ?, ?)`,
-            [conversationId, messageId, userId, circleId, category, description, context, Date.now(), scenarioName, personaName]
+            [conversationId, messageId, userId, circleId, category, safeDescription, safeContext, Date.now(), scenarioName, personaName]
         );
 
         console.log(chalk.blue(`[SimulationReporter][Message Flagged]`) + chalk.white(` ${category}: ${description}`));

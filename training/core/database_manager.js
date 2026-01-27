@@ -87,7 +87,7 @@ export class TrainingDatabaseManager {
     /**
      * Get conversation count for training analysis
      */
-    async getConversationCount(days = 7) {
+    async getConversationCount(days = 7, minCount = 50) {
         const logPath = path.join(__dirname, '../training_log.jsonl');
 
         try {
@@ -105,11 +105,21 @@ export class TrainingDatabaseManager {
 
             const cutoffTime = Date.now() - (days * 24 * 60 * 60 * 1000);
             const recentConversations = new Set();
+            const allConversations = new Set();
 
             for (const entry of entries) {
-                if (entry.timestamp > cutoffTime && entry.conversation_id) {
-                    recentConversations.add(entry.conversation_id);
+                if (entry.conversation_id) {
+                    allConversations.add(entry.conversation_id);
+                    if (entry.timestamp > cutoffTime) {
+                        recentConversations.add(entry.conversation_id);
+                    }
                 }
+            }
+
+            // Fallback: Use last minCount conversations if recent ones are insufficient
+            if (recentConversations.size < minCount && allConversations.size >= minCount) {
+                console.log(`[TrainingDB] Shortage of recent data (${recentConversations.size}), using last ${minCount} conversations instead.`);
+                return Math.min(allConversations.size, minCount); // Or just return allConversations.size if logic allows
             }
 
             console.log(`[TrainingDB] Found ${recentConversations.size} unique conversations in last ${days} days`);
@@ -123,7 +133,22 @@ export class TrainingDatabaseManager {
                 FROM feedback 
                 WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
             `);
-            return result?.count || 0;
+            let count = result?.count || 0;
+
+            // DB Fallback logic
+            if (count < minCount) {
+                const fallbackResult = await db.get(`
+                    SELECT COUNT(DISTINCT conversation_id) as count FROM (
+                        SELECT conversation_id FROM feedback ORDER BY timestamp DESC LIMIT ${minCount * 10} 
+                    )
+                `);
+                // Note: Multiplying limit by 10 to ensure we get enough unique IDs if there are multiple feedbacks per conv
+                if (fallbackResult?.count > count) {
+                    console.log(`[TrainingDB] DB Shortage of recent data (${count}), using count-based fallback.`);
+                    return fallbackResult.count;
+                }
+            }
+            return count;
         }
     }
 

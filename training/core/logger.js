@@ -8,8 +8,9 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import { privacyGuard } from '../../security/privacy_guard.js';
 
-class TrainingLogger {
+export class TrainingLogger {
   constructor(logPath = './training/training_log.jsonl') {
     this.logPath = logPath;
     this.enabled = process.env.TRAINING_MODE !== 'disabled';
@@ -23,31 +24,34 @@ class TrainingLogger {
     if (!this.enabled) return;
 
     try {
+      // SCRUB PII: Clone and scrub data before logging to ensure privacy
+      const safeData = privacyGuard.scrubObject(JSON.parse(JSON.stringify(data)));
+
       const logEntry = {
         timestamp: Date.now(),
-        conversation_id: data.conversationId,
-        user_id: data.userId,
-        turn: data.turn || null, // Add turn number for precise mapping
-        message: data.message, // User message
-        message_length: data.message?.length || 0,
-        agent_response: data.agentResponse || '',
-        response_length: data.agentResponse?.length || 0,
-        latency_ms: data.latencyMs || 0,
+        conversation_id: safeData.conversationId,
+        user_id: safeData.userId,
+        turn: safeData.turn || null, // Add turn number for precise mapping
+        message: safeData.message, // User message
+        message_length: safeData.message?.length || 0,
+        agent_response: safeData.agentResponse || '',
+        response_length: safeData.agentResponse?.length || 0,
+        latency_ms: safeData.latencyMs || 0,
 
         // Context
-        state_vector: data.stateVector ? JSON.stringify(data.stateVector) : null,
-        orchestrator_action: data.orchestratorAction ? JSON.stringify(data.orchestratorAction) : null,
-        model_used: data.modelUsed || 'unknown',
-        prompt_version: data.promptVersion || 'unknown',
-        system_used: data.systemUsed || 'unified',
+        state_vector: safeData.stateVector ? JSON.stringify(safeData.stateVector) : null,
+        orchestrator_action: safeData.orchestratorAction ? JSON.stringify(safeData.orchestratorAction) : null,
+        model_used: safeData.modelUsed || 'unknown',
+        prompt_version: safeData.promptVersion || 'unknown',
+        system_used: safeData.systemUsed || 'unified',
 
         // Agentic/RL Fields
-        role: data.role || null,
-        intent: data.intent || null,
-        future_plan: data.future_plan ? JSON.stringify(data.future_plan) : null,
-        reasoning: data.reasoning || null, // Chain of Thought
-        outcome_label: data.outcomeLabel || null, // Positive/Negative signal
-        filter_reason: data.filterReason || null
+        role: safeData.role || null,
+        intent: safeData.intent || null,
+        future_plan: safeData.future_plan ? JSON.stringify(safeData.future_plan) : null,
+        reasoning: safeData.reasoning || null, // Chain of Thought
+        outcome_label: safeData.outcomeLabel || null, // Positive/Negative signal
+        filter_reason: safeData.filterReason || null
       };
 
       await this._appendToLog(logEntry);

@@ -9,7 +9,9 @@ import { MESSAGES } from './config/messages.js';
 import { displayMessage, addUserMessage, addSystemMessage, displayEscalation, displayAnalysisProgress } from './ui/messages.js';
 import { displaySimulationMessage } from './ui/simulationUI_new.js';
 import { setupCommandSuggestions } from './ui/commandSuggestions.js';
+import { setupCommandSuggestions } from './ui/commandSuggestions.js';
 import { setupFeedbackModal } from './ui/feedback.js';
+import NotificationCenter from './ui/NotificationCenter.js';
 
 // Logic Modules
 import { setupLoginHandler } from './ui/loginLogic.js';
@@ -73,6 +75,8 @@ function connectToEventSource() {
 // Listen for login success to trigger SSE
 window.addEventListener('loginSuccess', () => {
     connectToEventSource();
+    // Initialize Notification Center
+    new NotificationCenter(state.userId);
 });
 
 // ====== SEND MESSAGE ======

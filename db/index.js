@@ -25,7 +25,8 @@ import {
     updateUserState,
     updateMemberRelationship,
     updateMemberRole,
-    getUserState
+    getUserState,
+    findMemberInSharedCircles
 } from './queries_users.js';
 import {
     addMessage,
@@ -68,6 +69,17 @@ import {
     getAllPromptVersions,
     getCurrentDeployedPrompt
 } from './queries_prompts.js';
+import {
+    logApiUsage,
+    getApiUsageStats
+} from './queries_usage.js';
+import {
+    getUserNotificationPreferences,
+    setNotificationPreference,
+    isNotificationEnabled,
+    logNotification,
+    getNotificationHistory
+} from './queries_notifications.js';
 
 export {
     getDb,
@@ -89,6 +101,7 @@ export {
     updateMemberRelationship,
     updateMemberRole,
     getUserState,
+    findMemberInSharedCircles,
     addMessage,
     getRecentMessages,
     upsertFact,
@@ -121,6 +134,13 @@ export {
     getPromptVersion,
     findPromptVersionsByName,
     getAllPromptVersions,
-    getCurrentDeployedPrompt
+    getCurrentDeployedPrompt,
+    logApiUsage,
+    getApiUsageStats,
+    getUserNotificationPreferences,
+    setNotificationPreference,
+    isNotificationEnabled,
+    logNotification,
+    getNotificationHistory
 };
 
