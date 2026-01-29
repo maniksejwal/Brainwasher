@@ -122,7 +122,15 @@ const config = {
 
     // GCP Storage (future)
     STORAGE_GCP_BUCKET: process.env.STORAGE_GCP_BUCKET || '',
-    STORAGE_GCP_PROJECT_ID: process.env.STORAGE_GCP_PROJECT_ID || ''
+    STORAGE_GCP_PROJECT_ID: process.env.STORAGE_GCP_PROJECT_ID || '',
+
+    // External APIs
+    LLAMA_API_URL: process.env.LLAMA_API_URL || 'https://5p99qnahlb.execute-api.ap-south-1.amazonaws.com/api/llama/generate',
+    LLAMA_API_KEY: process.env.LLAMA_API_KEY || '',
+
+    // ICD API
+    ICD_API_URL: process.env.ICD_API_URL || '',
+    ICD_API_KEY: process.env.ICD_API_KEY || ''
 };
 
 // Construct the URL from HOST and PORT
