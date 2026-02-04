@@ -225,6 +225,19 @@ export class SimulationDriver {
                 timestamp INTEGER NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             );
+
+            CREATE TABLE IF NOT EXISTS api_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                use_case TEXT,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                total_tokens INTEGER,
+                cost_usd REAL,
+                metadata TEXT
+            );
         `);
 
         // Suppress schema logs unless in debug mode

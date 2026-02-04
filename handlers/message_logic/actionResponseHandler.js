@@ -12,33 +12,33 @@ import { getActivePendingActions } from '../../db/index.js';
 
 export async function handlePendingActionResponse(userId, circleId, message) {
     // This function now only handles natural language responses, not commands.
-    if (message.startsWith('/')) return false;
+    if (message.startsWith('/')) return null;
 
     // Check for escalation permission responses first
     const pendingActions = await getActivePendingActions(userId, circleId);
     const escalationAction = pendingActions.find(a => a.action_type === 'escalation_permission');
-    
+
     if (escalationAction) {
         const handled = await handleEscalationPermissionResponse(userId, circleId, message, escalationAction);
         if (handled) {
-            return true;
+            return { reply: handled.reply || "Permission processed" };
         }
     }
 
     const actionResult = await handleUserResponseToAction(userId, circleId, message);
 
     if (!actionResult) {
-        return false; // Indicates no pending action was handled
+        return null; // Indicates no pending action was handled
     }
-    
+
     // Ensure userResponse is set for delegated probe responses (fallback if not set in state_manager)
     if (actionResult.details?.action_type === 'delegated_probe_response') {
         actionResult.userResponse = actionResult.userResponse || message;
     }
-    
+
     // Delegate the execution of the action to the shared executor module.
     await executeResolvedAction(actionResult, userId, circleId);
-    
-    return true; // Indicates a pending action was successfully handled
+
+    return actionResult; // Return the full result so messageHandler can use the reply
 }
 

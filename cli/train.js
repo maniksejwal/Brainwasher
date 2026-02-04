@@ -15,6 +15,7 @@ const COMMANDS = {
     'status': 'Show training pipeline status',
     'force': 'Force optimization regardless of thresholds',
     'analyze-only': 'Run analysis on existing data without running simulations',
+    'loop': 'Run continuous training loop',
     'help': 'Show this help message'
 };
 
@@ -47,6 +48,9 @@ async function main() {
             case 'analyze-only':
                 await runAnalysisOnly();
                 break;
+            case 'loop':
+                await runTrainingLoop();
+                break;
             case 'help':
                 showUsage();
                 process.exit(0);
@@ -58,7 +62,27 @@ async function main() {
     }
 }
 
-async function runTrainingCycle() {
+async function runTrainingLoop() {
+    console.log(chalk.cyan('🔄 Starting Continuous Training Loop...'));
+    console.log(chalk.yellow('Press Ctrl+C to stop.'));
+    console.log('');
+
+    const delayMs = 30000; // 30 seconds break between cycles
+
+    while (true) {
+        try {
+            await runTrainingCycle(false); // false = do not exit
+            console.log(chalk.gray(`💤 Sleeping for ${delayMs / 1000}s...`));
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        } catch (error) {
+            console.error(chalk.red(`❌ Cycle Error: ${error.message}`));
+            console.log(chalk.gray('Retrying in 60s...'));
+            await new Promise(resolve => setTimeout(resolve, 60000));
+        }
+    }
+}
+
+async function runTrainingCycle(shouldExit = true) {
     console.log(chalk.cyan('🚀 Starting RL Training Cycle...'));
     console.log('');
 
@@ -106,10 +130,25 @@ async function runTrainingCycle() {
         console.log(chalk.yellow(`📝 Optimizing: ${promptsValue} prompt only`));
     }
 
-    await trainingPipeline.runTrainingCycle();
+    // Parse cycle limit
+    const cyclesIndex = args.indexOf('--cycles');
+    const maxCycles = cyclesIndex !== -1 && args[cyclesIndex + 1] ? parseInt(args[cyclesIndex + 1]) : 3; // Default to 3 cycles
 
-    console.log('');
-    console.log(chalk.green('✅ Training cycle completed!'));
+    console.log(chalk.cyan(`🔄 Starting Continuous Training Loop (Limit: ${maxCycles} cycles)...`));
+
+    let cycleCount = 0;
+    while (cycleCount < maxCycles) {
+        cycleCount++;
+        console.log(chalk.magenta(`\n🔁 Cycle ${cycleCount}/${maxCycles}`));
+        await trainingPipeline.runTrainingCycle();
+
+        // Optional: Add a small delay between cycles to allow for cleanup/interrupts
+        if (cycleCount < maxCycles) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+    }
+
+    console.log(chalk.green('\n✅ Training loop completed all cycles.'));
     process.exit(0);
 }
 

@@ -65,6 +65,21 @@ export class TrainingDatabaseManager {
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         `);
+
+        // Create api_usage table (required for simulation agents)
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS api_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER,
+                completion_tokens INTEGER,
+                total_tokens INTEGER,
+                duration_ms INTEGER,
+                context_id TEXT
+            );
+        `);
     }
 
     /**

@@ -47,11 +47,12 @@ export async function handleMessage(userId, circleId, message) {
     // For patients and caregivers, follow the full "chain of thought".
 
     // Step 1: Handle any pending user actions.
-    const wasActionHandled = await handlePendingActionResponse(userId, circleId, message);
-    if (wasActionHandled) {
+    // Step 1: Handle any pending user actions.
+    const actionResult = await handlePendingActionResponse(userId, circleId, message);
+    if (actionResult) {
         metricsCollector.recordResponseTime('action_response', Date.now() - startTime, true);
         return {
-            reply: "Action handled successfully",
+            reply: actionResult.reply || "Action handled successfully",
             intent: 'ACTION_RESPONSE',
             criticality: 'NONE',
             privacyLevel: 'PRIVATE',

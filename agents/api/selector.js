@@ -17,6 +17,16 @@ const OPENAI_MODELS = new Set(
 );
 
 export function selectModelForUseCase(useCase, expectJson, promptLength) {
+    // GLOBAL OVERRIDE: Migrate all agents to Llama 4
+    if (config.USE_LLAMA_FOR_ALL) {
+        // TODO: Remove this global override and configure models individually in config.js
+        return {
+            preferredModel: 'llama4',
+            fallbackModel: config.FALLBACK_MODEL,
+            reason: 'Global Llama 4 Override'
+        };
+    }
+
     // If free tier only, use default model
     if (config.USE_FREE_TIER_ONLY) {
         return {

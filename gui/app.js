@@ -9,7 +9,6 @@ import { MESSAGES } from './config/messages.js';
 import { displayMessage, addUserMessage, addSystemMessage, displayEscalation, displayAnalysisProgress } from './ui/messages.js';
 import { displaySimulationMessage } from './ui/simulationUI_new.js';
 import { setupCommandSuggestions } from './ui/commandSuggestions.js';
-import { setupCommandSuggestions } from './ui/commandSuggestions.js';
 import { setupFeedbackModal } from './ui/feedback.js';
 import NotificationCenter from './ui/NotificationCenter.js';
 

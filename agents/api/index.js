@@ -207,6 +207,9 @@ function handleProviderError(error, providerType, provider, attempt) {
         case PROVIDERS.OLLAMA:
             providerState.ollamaFailed = true;
             break;
+        case PROVIDERS.LLAMA:
+            providerState.llamaFailed = true;
+            break;
     }
 }
 
@@ -229,7 +232,14 @@ function shouldRetryError(error, attempt, maxRetries, providerType) {
         return msg.includes('timeout') || msg.includes('network');
     }
 
-    if (isKeyFailureError(error)) return false;
+    if (providerType === 'llama') {
+        // Always retry Llama errors to trigger failover to backup providers
+        return true;
+    }
+
+    // Allow retry on key failure (so we can switch providers)
+    // if (isKeyFailureError(error)) return false; // Removed to enable failover
+
     if ([503, 429, 502, 504].includes(status)) return true;
     if (msg.includes('timeout') || msg.includes('network')) return true;
 

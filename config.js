@@ -47,13 +47,14 @@ const config = {
     OPENAI_MODEL_GPT5: 'gpt-5',                      // Paid (future)
 
     // Google Models
-    GEMINI_MODEL: 'gemini-1.5-flash-latest',         // Free tier
+    GEMINI_MODEL: 'gemini-pro',                      // Verified working model for v1
     GEMINI_MODEL_PRO: 'gemini-pro',                  // Free tier
     GEMINI_MODEL_FLASH: 'gemini-1.5-flash',          // Free tier
     GEMINI_MODEL_PRO_VISION: 'gemini-pro-vision',    // Free tier
 
-    // HARDCODED PREFERENCES - Free Tier Only
-    USE_FREE_TIER_ONLY: false,                         // Set to false to use paid models
+    // GLOBAL OVERRIDES
+    USE_LLAMA_FOR_ALL: true,                         // Set to true to force Llama 4 for ALL agents
+    USE_FREE_TIER_ONLY: false,                       // Set to false to use paid models
     DEFAULT_MODEL: envConfig.DEFAULT_MODEL,                  // What to use when free tier only
     FALLBACK_MODEL: envConfig.FALLBACK_MODEL,                // Fallback when primary fails
 
