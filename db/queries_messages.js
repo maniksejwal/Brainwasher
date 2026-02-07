@@ -33,3 +33,32 @@ export async function getFactHistory(circleId, factKey = 'all', limit = 10) {
     }
     return db.all('SELECT * FROM fact_history WHERE circle_id = ? AND fact_key = ? ORDER BY timestamp DESC LIMIT ?', [circleId, factKey, limit]);
 }
+
+/**
+ * Get total unread messages count for a user across all circles.
+ * (Excludes user's own messages)
+ */
+export async function getTotalUnreadMessageCount(userId) {
+    const db = await getDb();
+    const result = await db.get(`
+        SELECT COUNT(*) as count 
+        FROM messages m
+        JOIN care_circle_members cm ON m.circle_id = cm.circle_id
+        WHERE cm.user_id = ?
+          AND m.user_id != ? -- Don't count own messages
+          AND m.timestamp > cm.last_read_timestamp
+    `, [userId, userId]);
+    return result?.count || 0;
+}
+
+/**
+ * Mark a circle as read for a user (updates last_read_timestamp)
+ */
+export async function markCircleRead(userId, circleId) {
+    const db = await getDb();
+    await db.run(`
+        UPDATE care_circle_members 
+        SET last_read_timestamp = ? 
+        WHERE user_id = ? AND circle_id = ?
+    `, [Date.now(), userId, circleId]);
+}

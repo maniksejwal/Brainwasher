@@ -58,3 +58,57 @@ export async function getNotificationHistory(userId, limit = 50) {
         LIMIT ?
     `, [userId, limit]);
 }
+
+/**
+ * Add an in-app notification (Inbox/Alert)
+ */
+export async function addInAppNotification(userId, type, title, body, data = {}) {
+    const db = await getDb();
+    await db.run(`
+        INSERT INTO in_app_notifications (user_id, type, title, body, data, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `, [userId, type, title, body, JSON.stringify(data), Date.now()]);
+}
+
+/**
+ * Get in-app notifications for a user
+ */
+export async function getInAppNotifications(userId, limit = 50, offset = 0) {
+    const db = await getDb();
+    const rows = await db.all(`
+        SELECT * FROM in_app_notifications 
+        WHERE user_id = ? 
+        ORDER BY created_at DESC 
+        LIMIT ? OFFSET ?
+    `, [userId, limit, offset]);
+
+    return rows.map(row => ({
+        ...row,
+        data: row.data ? JSON.parse(row.data) : {}
+    }));
+}
+
+/**
+ * Mark a notification as read
+ */
+export async function markNotificationRead(notificationId) {
+    const db = await getDb();
+    await db.run('UPDATE in_app_notifications SET is_read = 1 WHERE notification_id = ?', [notificationId]);
+}
+
+/**
+ * Mark all notifications as read for a user
+ */
+export async function markAllNotificationsRead(userId) {
+    const db = await getDb();
+    await db.run('UPDATE in_app_notifications SET is_read = 1 WHERE user_id = ?', [userId]);
+}
+
+/**
+ * Get unread notification count
+ */
+export async function getUnreadNotificationCount(userId) {
+    const db = await getDb();
+    const result = await db.get('SELECT COUNT(*) as count FROM in_app_notifications WHERE user_id = ? AND is_read = 0', [userId]);
+    return result?.count || 0;
+}

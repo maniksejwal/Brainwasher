@@ -119,6 +119,11 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
         const circle = await findCircleById(circleId);
         const patient = circle ? await findUserById(circle.primary_patient_id) : null;
 
+        // NEW Features: Profile & Notifications
+        const { getUserProfile } = await import('../../db/queries_users.js');
+        const userProfile = await getUserProfile(userId);
+        const unreadSummary = await notificationService.getUnreadSummary(userId);
+
         const behavioralModels = {
             stages_of_change: STAGES_OF_CHANGE,
             coping_styles: COPING_STYLES
@@ -138,11 +143,13 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
             recentEscalations,
             speaker: speaker ? { username: speaker.username, userId: speaker.user_id } : null,
             patient: patient ? { username: patient.username, userId: patient.user_id } : null,
+            userProfile, // Demographics, prefs
+            unreadSummary, // Notification counts
             hasMedicalContent: /pain|symptom|medication|diagnosis|treatment/i.test(message),
             hasCriticalContent: /emergency|urgent|critical|severe/i.test(message),
             circleId,
             behavioralModels,
-            userAge: currentState?.age || null // For elderly fall detection
+            userAge: userProfile?.age || currentState?.age || null // Prioritize profile age
         };
 
         // Coordinate companions
@@ -271,7 +278,7 @@ export async function performAiAnalysis(userId, role, message, circleId) {
     const members = await getCircleMembers(circleId);
     const memberUsernames = members.map(m => m.username);
 
-    let analysis = await processUserMessage(userId, role, message, memberUsernames, circleId);
+    let analysis = await processUserMessage(userId, role, message, memberUsernames, circleId, null, { userProfile, unreadSummary });
     analysis.system_used = 'unified'; // Track which system was used
     console.log(`[AIAnalysisHandler] Initial analysis complete. Mentioned entities: ${analysis.mentioned_usernames?.join(', ')}`);
 

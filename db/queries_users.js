@@ -138,3 +138,49 @@ export async function findMemberInSharedCircles(targetUsername, requestingUserId
     `, [targetUsername, requestingUserId]);
 }
 
+/**
+ * Get user profile data (demographics, etc.)
+ */
+export async function getUserProfile(userId) {
+    const db = await getDb();
+    const row = await db.get('SELECT profile_data FROM users WHERE user_id = ?', [userId]);
+    try {
+        return row?.profile_data ? JSON.parse(row.profile_data) : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+/**
+ * Update user profile data (merges with existing)
+ */
+export async function updateUserProfile(userId, data) {
+    const db = await getDb();
+    const current = await getUserProfile(userId);
+    const updated = { ...current, ...data };
+    await db.run('UPDATE users SET profile_data = ? WHERE user_id = ?', [JSON.stringify(updated), userId]);
+}
+
+/**
+ * Get user global preferences
+ */
+export async function getUserPreferences(userId) {
+    const db = await getDb();
+    const row = await db.get('SELECT preferences FROM users WHERE user_id = ?', [userId]);
+    try {
+        return row?.preferences ? JSON.parse(row.preferences) : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+/**
+ * Update user global preferences (merges with existing)
+ */
+export async function updateUserPreferences(userId, data) {
+    const db = await getDb();
+    const current = await getUserPreferences(userId);
+    const updated = { ...current, ...data };
+    await db.run('UPDATE users SET preferences = ? WHERE user_id = ?', [JSON.stringify(updated), userId]);
+}
+

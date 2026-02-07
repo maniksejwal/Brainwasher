@@ -105,6 +105,9 @@ node cli/chat/main.js
 # /care @username - Add caregiver
 # /doc - Set specialty
 # /consent @username 3 - Set consent level
+# /dm @username message - Send DM
+# /inbox - Check unread messages
+# See documentation/CLI_COMMANDS.md for full list.
 ```
 
 ---

@@ -14,7 +14,7 @@ export async function initializeDatabase() {
         PRAGMA journal_mode = WAL;
         PRAGMA foreign_keys = ON;
 
-        CREATE TABLE IF NOT EXISTS users ( user_id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL );
+        CREATE TABLE IF NOT EXISTS users ( user_id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL, profile_data TEXT, preferences TEXT );
         CREATE TABLE IF NOT EXISTS care_circles ( circle_id TEXT PRIMARY KEY, primary_patient_id TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY (primary_patient_id) REFERENCES users(user_id) );
         CREATE TABLE IF NOT EXISTS care_circle_members ( member_id INTEGER PRIMARY KEY AUTOINCREMENT, circle_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, relationship_type TEXT, consent_level TEXT DEFAULT 'none', session_state TEXT, UNIQUE(circle_id, user_id), FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id), FOREIGN KEY (user_id) REFERENCES users(user_id) );
         CREATE TABLE IF NOT EXISTS messages ( message_id INTEGER PRIMARY KEY AUTOINCREMENT, circle_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, message TEXT NOT NULL, privacy_level TEXT NOT NULL, criticality_level TEXT NOT NULL, timestamp INTEGER NOT NULL, FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id) );
@@ -196,6 +196,104 @@ async function migrateDatabase(db) {
             await db.run('ALTER TABLE scheduled_messages ADD COLUMN trigger_details TEXT');
             await db.run('ALTER TABLE scheduled_messages ADD COLUMN trigger_condition TEXT');
         }
+
+        // Migration for Enhanced User Profiles
+        const usersInfo = await db.all('PRAGMA table_info(users)');
+        const hasProfileData = usersInfo.some(col => col.name === 'profile_data');
+        if (!hasProfileData && usersInfo.length > 0) {
+            console.log('[Migration] Adding profile_data and preferences to users...');
+            await db.run('ALTER TABLE users ADD COLUMN profile_data TEXT');
+            await db.run('ALTER TABLE users ADD COLUMN preferences TEXT');
+        }
+
+        // New Structured Facts Table (facts_v2)
+        // Check if facts_v2 exists, if not create it
+        const factsV2Exists = await db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='facts_v2'");
+
+        if (!factsV2Exists) {
+            await db.exec(`
+                CREATE TABLE IF NOT EXISTS facts_v2 (
+                    fact_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    circle_id TEXT NOT NULL,
+                    fact_key TEXT NOT NULL,
+                    value TEXT,
+                    category TEXT,
+                    subject_id TEXT, -- Who is this fact about? (User ID or 'system' or name)
+                    target_object TEXT, -- Specific object/body part/topic (optional)
+                    sensitivity TEXT DEFAULT 'normal', -- public, circle, private, sensitive
+                    observed_at INTEGER, -- Point in time the fact was observed or stated to be true (distinct from validity)
+                    confidence REAL DEFAULT 1.0,
+                    source_type TEXT DEFAULT 'user',
+                    reported_by TEXT NOT NULL,
+                    provenance TEXT,
+                    valid_from INTEGER,
+                    valid_until INTEGER,
+                    visibility TEXT DEFAULT 'circle',
+                    is_current INTEGER DEFAULT 1,
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_facts_v2_circle_key ON facts_v2(circle_id, fact_key);
+                CREATE INDEX IF NOT EXISTS idx_facts_v2_validity ON facts_v2(valid_from, valid_until);
+                CREATE INDEX IF NOT EXISTS idx_facts_v2_subject ON facts_v2(subject_id);
+            `);
+        } else {
+            // Migration for new columns if table exists but cols missing (for dev iteration)
+            const info = await db.all('PRAGMA table_info(facts_v2)');
+            if (!info.some(c => c.name === 'subject_id')) {
+                await db.run('ALTER TABLE facts_v2 ADD COLUMN subject_id TEXT');
+            }
+            if (!info.some(c => c.name === 'target_object')) {
+                await db.run('ALTER TABLE facts_v2 ADD COLUMN target_object TEXT');
+            }
+            if (!info.some(c => c.name === 'sensitivity')) {
+                await db.run('ALTER TABLE facts_v2 ADD COLUMN sensitivity TEXT DEFAULT "normal"');
+            }
+            if (!info.some(c => c.name === 'observed_at')) {
+                await db.run('ALTER TABLE facts_v2 ADD COLUMN observed_at INTEGER');
+            }
+        }
+
+        // Migration for Unread Messages (Care Circles)
+        const membersInfo = await db.all('PRAGMA table_info(care_circle_members)');
+        const hasLastRead = membersInfo.some(col => col.name === 'last_read_timestamp');
+        if (!hasLastRead && membersInfo.length > 0) {
+            console.log('[Migration] Adding last_read_timestamp to care_circle_members...');
+            await db.run('ALTER TABLE care_circle_members ADD COLUMN last_read_timestamp INTEGER DEFAULT 0');
+        }
+
+        // Direct Messages Table
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS direct_messages (
+                dm_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_id TEXT NOT NULL,
+                receiver_id TEXT NOT NULL,
+                message TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                read_at INTEGER,
+                FOREIGN KEY (sender_id) REFERENCES users(user_id),
+                FOREIGN KEY (receiver_id) REFERENCES users(user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_dm_receiver ON direct_messages(receiver_id);
+            CREATE INDEX IF NOT EXISTS idx_dm_conversation ON direct_messages(sender_id, receiver_id);
+        `);
+
+        // In-App Notifications (Inbox)
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS in_app_notifications (
+                notification_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                type TEXT NOT NULL, -- 'message', 'alert', 'system'
+                title TEXT,
+                body TEXT,
+                data TEXT, -- JSON payload (link, validation errors, etc)
+                is_read INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_user ON in_app_notifications(user_id);
+        `);
+
     } catch (error) {
         console.warn('[Schema Migration] Error migrating database:', error.message);
     }

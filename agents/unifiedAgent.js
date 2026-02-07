@@ -12,7 +12,7 @@ import { STAGES_OF_CHANGE, COPING_STYLES } from '../behavioral_models.js';
 import config from '../config.js';
 import { promptVersionManager } from '../training/core/prompt_version_manager.js';
 
-export async function processUserMessage(userId, role, message, careCircleMembers, circleId, promptVersion = null) {
+export async function processUserMessage(userId, role, message, careCircleMembers, circleId, promptVersion = null, additionalContext = {}) {
     const history = await getRecentMessages(circleId, 5);
     const historyText = history.map(h => `${h.user_id}: ${h.message}`);
     const currentState = await getUserState(userId, circleId);
@@ -22,6 +22,10 @@ export async function processUserMessage(userId, role, message, careCircleMember
     const circle = await findCircleByPatientId(circleId);
     if (!circle) throw new Error(`Circle ${circleId} not found`);
     const patient = await findUserById(circle.primary_patient_id);
+
+    // Default safe values for optional context
+    const userProfile = additionalContext.userProfile || {};
+    const unreadSummary = additionalContext.unreadSummary || { total: 0 };
 
     const behavioralModels = {
         stages_of_change: STAGES_OF_CHANGE,
@@ -47,7 +51,7 @@ export async function processUserMessage(userId, role, message, careCircleMember
 
     // 2. Fallback to static prompt logic if DB failed or no version found
     if (!promptTemplate) {
-        promptTemplate = getPromptForModel(modelForPrompt);
+        promptTemplate = getPromptForModel(modelForPrompt); // Uses updated prompt with {{USER_PROFILE}}
         console.log(`[UnifiedAgent] Using static/hardcoded prompt for ${modelForPrompt}`);
     }
 
@@ -60,7 +64,10 @@ export async function processUserMessage(userId, role, message, careCircleMember
         .replace('{{USER_STATE}}', JSON.stringify(currentState, null, 2))
         .replace('{{FACT_HISTORY}}', JSON.stringify(factHistory, null, 2))
         .replace('{{RECENT_ESCALATIONS}}', JSON.stringify(recentEscalations, null, 2))
-        .replace('{{BEHAVIORAL_MODELS}}', JSON.stringify(behavioralModels, null, 2));
+        .replace('{{BEHAVIORAL_MODELS}}', JSON.stringify(behavioralModels, null, 2))
+        // New replacements
+        .replace('{{USER_PROFILE}}', JSON.stringify(userProfile, null, 2))
+        .replace('{{UNREAD_SUMMARY}}', JSON.stringify(unreadSummary, null, 2));
 
     return makeApiCall(prompt, historyText, true, 0.7, 300, 'conversational_agent'); // Increased maxTokens to 300 for complete responses
 }

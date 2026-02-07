@@ -22,6 +22,7 @@ import { handleSetSpecialtyCommand } from './commands/setSpecialty.js';
 import { handleScoreCommand } from './commands/scoreCommand.js';
 import { handleReportCommand } from './commands/reportCommand.js';
 import { handleFeedbackCommand } from './commands/feedbackCommand.js';
+import { handleDMCommand, handleInboxCommand } from './commands/messageCommands.js';
 
 export async function handleCommand(userId, circleId, message) {
     const parts = message.toLowerCase().split(' ');
@@ -72,7 +73,7 @@ export async function handleCommand(userId, circleId, message) {
             await handleDirectiveCommand(userId, circleId, message, command);
             break;
         case '/agent':
-             if (currentUserInfo.role !== 'doctor') {
+            if (currentUserInfo.role !== 'doctor') {
                 events.emit('broadcast', { targetUsers: [userId], reply: `This command is only available to doctors.`, from: 'system', circleId });
                 return;
             }
@@ -103,11 +104,11 @@ export async function handleCommand(userId, circleId, message) {
         case '/score':
             // Helper function to send message back to user
             const sendMessageToUser = (targetUserId, msg) => {
-                events.emit('broadcast', { 
-                    targetUsers: [targetUserId], 
-                    reply: msg, 
-                    from: 'system', 
-                    circleId 
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
                 });
             };
             await handleScoreCommand(userId, circleId, parts, sendMessageToUser);
@@ -115,11 +116,11 @@ export async function handleCommand(userId, circleId, message) {
         case '/report':
             // Reuse the same helper function
             const sendReportMessage = (targetUserId, msg) => {
-                events.emit('broadcast', { 
-                    targetUsers: [targetUserId], 
-                    reply: msg, 
-                    from: 'system', 
-                    circleId 
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
                 });
             };
             await handleReportCommand(userId, circleId, parts, sendReportMessage);
@@ -127,14 +128,36 @@ export async function handleCommand(userId, circleId, message) {
         case '/feedback':
             // Unified feedback command
             const sendFeedbackMessage = (targetUserId, msg) => {
-                events.emit('broadcast', { 
-                    targetUsers: [targetUserId], 
-                    reply: msg, 
-                    from: 'system', 
-                    circleId 
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
                 });
             };
             await handleFeedbackCommand(userId, circleId, parts, sendFeedbackMessage);
+            break;
+        case '/dm':
+            const sendDMReply = (targetUserId, msg) => {
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
+                });
+            };
+            await handleDMCommand(userId, circleId, parts, sendDMReply);
+            break;
+        case '/inbox':
+            const sendInboxReply = (targetUserId, msg) => {
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
+                });
+            };
+            await handleInboxCommand(userId, circleId, sendInboxReply);
             break;
         default:
             events.emit('broadcast', { targetUsers: [userId], reply: `Unknown command: ${command}`, from: 'system', circleId });
