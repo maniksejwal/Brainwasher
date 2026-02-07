@@ -23,28 +23,43 @@ export class ExperienceGenerator {
             selectedScenarios.push(random);
         }
 
-        // Run simulations
+        // Run simulations in batches
         const originalSimMode = process.env.SIMULATION_MODE;
         process.env.SIMULATION_MODE = 'true';
 
         let completed = 0;
-        for (const scenario of selectedScenarios) {
-            try {
-                const driver = new SimulationDriver();
-                const { config } = await this._getScenarioConfig(scenario);
+        const batchSize = 5; // Default batch size
 
-                await driver.runScenario(config, scenario);
-                completed++;
+        // Helper for splitting array into chunks
+        const chunks = [];
+        for (let i = 0; i < selectedScenarios.length; i += batchSize) {
+            chunks.push(selectedScenarios.slice(i, i + batchSize));
+        }
 
-                // Explicitly log this as a training update to ensure DB reflects it immediately
-                if (driver.simulationId) {
-                    console.log(`[ExperienceGenerator] Experience generated: ${scenario} (ID: ${driver.simulationId})`);
+        for (const chunk of chunks) {
+            console.log(`[ExperienceGenerator] ⏳ Processing Batch ${(chunks.indexOf(chunk) + 1)}/${chunks.length} (Scenarios: ${chunk.length})...`);
+
+            await Promise.all(chunk.map(async (scenario) => {
+                try {
+                    const driver = new SimulationDriver();
+                    const { config } = await this._getScenarioConfig(scenario);
+
+                    await driver.runScenario(config, scenario);
+                    completed++;
+
+                    const percent = Math.round((completed / count) * 100);
+                    process.stdout.write(`\r[ExperienceGenerator] Progress: ${completed}/${count} (${percent}%)  Last: ${scenario.substring(0, 30)}...`);
+
+                    // Explicitly log this as a training update to ensure DB reflects it immediately
+                    if (driver.simulationId) {
+                        // console.log(`[ExperienceGenerator] Experience generated: ${scenario} (ID: ${driver.simulationId})`);
+                    }
+
+                    if (driver.cleanup) await driver.cleanup();
+                } catch (error) {
+                    console.warn(`[ExperienceGenerator] Failed to generate experience for ${scenario}:`, error.message);
                 }
-
-                if (driver.cleanup) await driver.cleanup();
-            } catch (error) {
-                console.warn(`[ExperienceGenerator] Failed to generate experience for ${scenario}:`, error.message);
-            }
+            }));
         }
 
         if (originalSimMode !== undefined) process.env.SIMULATION_MODE = originalSimMode;

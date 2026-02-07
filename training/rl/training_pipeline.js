@@ -23,6 +23,7 @@ export class TrainingPipeline {
         this.optimizePrompts = options.optimizePrompts || 'all';
         this.maxRunsPerTest = options.maxRunsPerTest || 5;
         this.maxScenariosPerTest = options.maxScenariosPerTest || null;
+        this.concurrency = options.concurrency || 5;
 
         this.mixModeRatio = options.mixModeRatio || { targeted: 0.1, random: 0.9 };
 
@@ -74,6 +75,29 @@ export class TrainingPipeline {
         }
 
         return true;
+    }
+
+    /**
+     * Get current status of the pipeline
+     */
+    async getStatus() {
+        const conversationCount = await this.getConversationCount();
+        const performance = await this.getCurrentPerformance();
+        const shouldOptimize = await this.shouldOptimize();
+
+        // Calculate next optimization time
+        let nextOptimization = new Date();
+        if (this.lastOptimization) {
+            nextOptimization = new Date(this.lastOptimization + this.optimizationInterval);
+        }
+
+        return {
+            conversationCount,
+            performance,
+            lastOptimization: this.lastOptimization,
+            nextOptimization,
+            shouldOptimize
+        };
     }
 
     /**

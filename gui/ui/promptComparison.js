@@ -38,209 +38,284 @@ export function initPromptComparison() {
 
     const executor = new CommandExecutor('');
 
+    // Cache for loaded prompt contents
+    const contentCache = new Map();
+    let promptEntries = [];
+    let groupedPrompts = {};
+    let currentType = '';
+    let selectedBaseFn = null;
+    let selectedCompareFn = null;
+
     container.innerHTML = `
-        <div style="padding: 16px; display: flex; flex-direction: column; gap: 16px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-                <h3 style="margin: 0;">Prompts</h3>
+        <div style="padding: 16px; display: flex; flex-direction: column; gap: 16px; height: 100%;">
+            <!-- Header & Filter -->
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; background: white; padding: 12px; border-radius: 8px; border: 1px solid var(--gray-200);">
+                <div style="display: flex; align-items: center; gap: 16px; flex: 1;">
+                    <h3 style="margin: 0; min-width: 140px;">Prompt Library</h3>
+                    <div style="height: 24px; width: 1px; background: var(--gray-200);"></div>
+                    <sl-select id="prompt-type-select" placeholder="Select Prompt Type" style="width: 300px;">
+                    </sl-select>
+                    <span id="prompt-count" style="font-size: 12px; color: var(--gray-500);"></span>
+                </div>
                 <button id="prompts-refresh" class="secondary">Refresh</button>
             </div>
-            <sl-select id="prompt-select" filterable clearable hoist placeholder="Search prompt versions..." style="max-width: 520px;">
-                <sl-option value="" disabled>Select a prompt...</sl-option>
-            </sl-select>
-            <div id="prompt-meta-panel" style="border: 1px solid var(--gray-200); border-radius: 8px; padding: 16px; background: #ffffff; display: flex; flex-direction: column; gap: 12px;">
-                <div style="font-size: 13px; color: var(--gray-700);">Select a prompt to view metadata (version history, deployment status, scoring).</div>
+
+            <!-- Versions Table (Scrollable) -->
+            <div style="background: white; border: 1px solid var(--gray-200); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; max-height: 300px;">
+                <div style="padding: 12px 16px; background: var(--gray-50); border-bottom: 1px solid var(--gray-200); font-weight: 600; font-size: 12px; color: var(--gray-700); display: grid; grid-template-columns: 40px 40px 2fr 100px 140px 100px; gap: 12px;">
+                    <div>Base</div>
+                    <div>Comp</div>
+                    <div>Variant / Description</div>
+                    <div>Score</div>
+                    <div>Date</div>
+                    <div>Status</div>
+                </div>
+                <div id="versions-list" style="overflow-y: auto; flex: 1;">
+                    <div style="padding: 20px; text-align: center; color: var(--gray-500); font-size: 13px;">Select a prompt type to view versions using the dropdown above.</div>
+                </div>
             </div>
+
+            <!-- Learning Panel -->
             <div id="prompt-learning-panel" style="background: #ffffff; border: 1px solid var(--gray-200); border-radius: 8px; padding: 16px; display: none; flex-direction: column; gap: 12px;"></div>
-            <div id="prompt-output" style="font-family: monospace; font-size: 12px; background: var(--gray-50); padding: 16px; border-radius: 4px; min-height: 240px; max-height: 500px; overflow-y: auto; white-space: pre-wrap;">Select a prompt to view its details.</div>
+
+            <!-- Comparison View -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1; min-height: 400px;">
+                <div style="display: flex; flex-direction: column; gap: 0; border: 1px solid var(--gray-200); border-radius: 8px; overflow: hidden; background: white;">
+                     <div style="padding: 12px; background: var(--gray-50); border-bottom: 1px solid var(--gray-200); font-weight: 600; font-size: 13px; color: var(--gray-700);">Base Version</div>
+                     <div id="prompt-output-1" style="font-family: monospace; font-size: 12px; padding: 16px; height: 100%; overflow-y: auto; white-space: pre-wrap; border: 1px solid var(--gray-200);">Select a base version above...</div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 0; border: 1px solid var(--gray-200); border-radius: 8px; overflow: hidden; background: white;">
+                     <div style="padding: 12px; background: var(--gray-50); border-bottom: 1px solid var(--gray-200); font-weight: 600; font-size: 13px; color: var(--gray-700); display: flex; justify-content: space-between;">
+                        <span>Comparison Version</span>
+                        <span id="score-delta" style="font-weight: bold;"></span>
+                     </div>
+                     <div id="prompt-output-2" style="font-family: monospace; font-size: 12px; padding: 16px; height: 100%; overflow-y: auto; white-space: pre-wrap; border: 1px solid var(--gray-200);">Select a comparison version above...</div>
+                </div>
+            </div>
         </div>
     `;
 
-    const outputDiv = document.getElementById('prompt-output');
-    const promptSelect = document.getElementById('prompt-select');
-    const refreshButton = document.getElementById('prompts-refresh');
-    const metaPanel = document.getElementById('prompt-meta-panel');
-    let promptEntries = [];
+    const typeSelect = document.getElementById('prompt-type-select');
+    const versionsList = document.getElementById('versions-list');
+    const output1 = document.getElementById('prompt-output-1');
+    const output2 = document.getElementById('prompt-output-2');
+    const scoreDelta = document.getElementById('score-delta');
+    const promptCount = document.getElementById('prompt-count');
 
-    function setOutput(text) {
-        outputDiv.textContent = text;
-        outputDiv.scrollTop = outputDiv.scrollHeight;
+    function getPromptType(entry) {
+        // Heuristic to group prompts by type based on version string or name
+        if (!entry.version) return 'unknown';
+
+        const v = entry.version;
+        if (v.startsWith('unified')) return 'Unified Agent';
+        if (v.startsWith('doctor_summary')) return 'Doctor Summary';
+        if (v.startsWith('doctor_probe')) return 'Doctor Probe';
+        if (v.startsWith('enrichment')) return 'Enrichment';
+        if (v.startsWith('intent')) return 'Intent';
+        if (v.startsWith('companion_')) {
+            // Further breakdown for companions?
+            if (v.includes('patient_optimizer')) return 'Companion: Patient Optimizer';
+            if (v.includes('doctor_optimizer')) return 'Companion: Doctor Optimizer';
+            if (v.includes('empathy')) return 'Companion: Empathy';
+            if (v.includes('input')) return 'Companion: Input Understanding';
+            if (v.includes('clinical')) return 'Companion: Clinical';
+            return 'Companion System';
+        }
+
+        // Fallback checks on name
+        const name = (entry.name || '').toLowerCase();
+        if (name.includes('unified')) return 'Unified Agent';
+        if (name.includes('doctor') && name.includes('summary')) return 'Doctor Summary';
+
+        return 'Other';
     }
 
-    function renderLearningSignalsPanel() {
-        const panel = document.getElementById('prompt-learning-panel');
-        if (!panel) return;
-        if (!LEARNING_SIGNALS.length) {
-            panel.style.display = 'none';
-            panel.innerHTML = '';
+    function renderVersionsTable(type) {
+        if (!type || !groupedPrompts[type]) {
+            versionsList.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--gray-500); font-size: 13px;">No versions found for this type.</div>`;
             return;
         }
 
-        const cards = LEARNING_SIGNALS.map(signal => `
-            <div style="border: 1px solid var(--gray-200); border-radius: 8px; padding: 12px; background: var(--gray-50); display: flex; flex-direction: column; gap: 6px;">
-                <div style="font-weight: 600; color: #202124; font-size: 13px;">${signal.title}</div>
-                <div style="font-size: 12px; color: #0b8043;">Reward: ${signal.positive}</div>
-                <div style="font-size: 12px; color: #d93025;">Penalty: ${signal.negative}</div>
-                <div style="font-size: 11px; color: #5f6368;">Source: ${signal.source}</div>
-            </div>
-        `).join('');
+        const entries = groupedPrompts[type]; // Already sorted by date desc
 
-        panel.style.display = 'flex';
-        panel.style.flexDirection = 'column';
-        panel.innerHTML = `
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-                <div style="font-weight: 600; color: #202124; font-size: 14px;">How the scorer rewards or penalises agent prompts</div>
-                <div style="font-size: 12px; color: #5f6368;">
-                    Signals originate from the simulation scorer and LLM audits. Use them to compare prompt variants with real optimisation criteria.
-                </div>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px;">
-                    ${cards}
-                </div>
-            </div>
-        `;
-    }
+        versionsList.innerHTML = entries.map(entry => {
+            const isDeployed = !!entry.deployed_at;
+            const score = typeof entry.performance_score === 'number' ? entry.performance_score.toFixed(2) : '0.00';
+            const date = new Date(entry.created_at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const description = entry.description || 'No description';
+            // Parse "Why" from description if possible, or use full description
 
-    function renderPromptMetadata(entry = null) {
-        if (!metaPanel) return;
+            const isBase = selectedBaseFn === entry.version;
+            const isComp = selectedCompareFn === entry.version;
 
-        if (!entry) {
-            metaPanel.innerHTML = `<div style="font-size: 13px; color: var(--gray-700);">Select a prompt to view metadata (version history, deployment status, scoring).</div>`;
-            return;
-        }
+            const bg = isDeployed ? '#f0f9ff' : (isBase || isComp ? '#fff8f0' : 'white');
 
-        const formatDate = (value) => {
-            if (!value) return '—';
-            try {
-                return new Date(value).toLocaleString('en-US', {
-                    weekday: 'short',
-                    month: 'short',
-                    day: 'numeric',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-            } catch {
-                return value;
-            }
-        };
-
-        const score = typeof entry.performance_score === 'number' ? entry.performance_score.toFixed(2) : '0.00';
-        const deployedBadge = entry.deployed_at
-            ? `<span style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:#e6f4ea; color:#188038; font-size:12px;">✅ Deployed ${formatDate(entry.deployed_at)}</span>`
-            : `<span style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; background:#f1f3f4; color:#5f6368; font-size:12px;">Not deployed</span>`;
-
-        metaPanel.innerHTML = `
-            <div style="display:flex; flex-direction:column; gap:12px;">
-                <div style="display:flex; flex-direction:column; gap:6px;">
-                    <div style="font-size:16px; font-weight:600; color:#202124;">${entry.name || 'Unnamed prompt'}</div>
-                    <div style="font-size:12px; color:#5f6368;">${entry.description || 'No description provided.'}</div>
-                </div>
-                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px; font-size:12px; color:#202124;">
-                    <div style="border:1px solid var(--gray-200); border-radius:8px; padding:12px;">
-                        <div style="font-weight:600; color:#5f6368;">Version</div>
-                        <div style="margin-top:4px; font-family:monospace;">${entry.version}</div>
+            return `
+                <div class="version-row" style="padding: 10px 16px; border-bottom: 1px solid var(--gray-100); display: grid; grid-template-columns: 40px 40px 2fr 100px 140px 100px; gap: 12px; align-items: center; font-size: 13px; background: ${bg};">
+                    <div>
+                        <input type="radio" name="base-select" value="${entry.version}" ${isBase ? 'checked' : ''} style="cursor: pointer;">
                     </div>
-                    <div style="border:1px solid var(--gray-200); border-radius:8px; padding:12px;">
-                        <div style="font-weight:600; color:#5f6368;">Created</div>
-                        <div style="margin-top:4px;">${formatDate(entry.created_at)}</div>
+                    <div>
+                        <input type="radio" name="compare-select" value="${entry.version}" ${isComp ? 'checked' : ''} style="cursor: pointer;">
                     </div>
-                    <div style="border:1px solid var(--gray-200); border-radius:8px; padding:12px;">
-                        <div style="font-weight:600; color:#5f6368;">Performance score</div>
-                        <div style="margin-top:4px; font-family:monospace;">${score}</div>
+                    <div>
+                        <div style="font-weight: 500; color: var(--gray-900);">${entry.name || 'Untitled'}</div>
+                        <div style="font-size: 11px; color: var(--gray-500); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${description}</div>
                     </div>
-                    <div style="border:1px solid var(--gray-200); border-radius:8px; padding:12px;">
-                        <div style="font-weight:600; color:#5f6368;">Deployment</div>
-                        <div style="margin-top:6px;">${deployedBadge}</div>
+                    <div style="font-family: monospace; font-weight: 600; color: var(--gray-700);">${score}</div>
+                    <div style="color: var(--gray-600); font-size: 12px;">${date}</div>
+                    <div>
+                        ${isDeployed ? '<span style="background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: 600;">ACTIVE</span>' : ''}
                     </div>
                 </div>
-                <div style="font-size:12px; color:#5f6368;">
-                    Use the dropdown to compare versions. Prompt content is shown below; optimisation signals are summarised in the learning panel.
-                </div>
-            </div>
-        `;
-    }
+            `;
+        }).join('');
 
-    function populatePromptSelect() {
-        promptSelect.innerHTML = '';
-        const placeholder = document.createElement('sl-option');
-        placeholder.value = '';
-        placeholder.disabled = true;
-        placeholder.textContent = promptEntries.length ? 'Select a prompt...' : 'No prompts available';
-        promptSelect.appendChild(placeholder);
-
-        promptEntries.forEach(entry => {
-            const option = document.createElement('sl-option');
-            option.value = encodeURIComponent(entry.version);
-            option.dataset.version = entry.version;
-            option.textContent = entry.displayLabel;
-            promptSelect.appendChild(option);
+        // Re-attach listeners based on new DOM
+        versionsList.querySelectorAll('input[name="base-select"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                selectedBaseFn = e.target.value;
+                loadContent(selectedBaseFn, 'base');
+            });
         });
 
-        promptSelect.value = '';
+        versionsList.querySelectorAll('input[name="compare-select"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                selectedCompareFn = e.target.value;
+                loadContent(selectedCompareFn, 'compare');
+            });
+        });
     }
 
-    async function loadPromptList(showStatus = true) {
-        if (showStatus) setOutput('Loading prompts...');
+    async function loadContent(version, target) {
+        if (!version) return;
+
+        const div = target === 'base' ? output1 : output2;
+        div.textContent = 'Loading...';
 
         try {
-            const { prompts = [] } = await window.api.getPrompts(150);
-            promptEntries = prompts.map((prompt) => ({
-                ...prompt,
-                displayLabel: prompt.name ? `${prompt.name} (${prompt.version})` : prompt.version
-            }));
-
-            populatePromptSelect();
-            if (showStatus) {
-                setOutput(promptEntries.length ? 'Select a prompt to view its content.' : 'No prompts available.');
+            let content = '';
+            // Check cache
+            if (contentCache.has(version)) {
+                content = contentCache.get(version);
+            } else {
+                // Fetch
+                await new Promise((resolve) => {
+                    let buffer = '';
+                    executor.execute('prompts', { command: 'show', version },
+                        (chunk) => buffer += chunk,
+                        () => { } // ignore errors
+                    ).then(() => {
+                        content = buffer;
+                        contentCache.set(version, buffer);
+                        resolve();
+                    });
+                });
             }
-            renderPromptMetadata(null);
-        } catch (error) {
-            setOutput(`❌ Error loading prompts: ${error.message}`);
-            renderPromptMetadata(null);
+            div.textContent = content;
+
+            // Update Delta logic if both present
+            updateScoreDelta();
+
+        } catch (e) {
+            div.textContent = 'Error: ' + e.message;
         }
     }
 
-    async function loadPrompt(version) {
-        if (!version) {
-            setOutput('Select a prompt to view its details.');
-            renderPromptMetadata(null);
+    function updateScoreDelta() {
+        if (!selectedBaseFn || !selectedCompareFn) {
+            scoreDelta.textContent = '';
             return;
         }
 
-        const selected = promptEntries.find(entry => entry.version === version);
-        renderPromptMetadata(selected || null);
+        const base = groupedPrompts[currentType].find(p => p.version === selectedBaseFn);
+        const comp = groupedPrompts[currentType].find(p => p.version === selectedCompareFn);
 
-        setOutput(`Loading prompt ${version}...\n`);
-        let outputBuffer = '';
-
-        try {
-            await executor.execute('prompts', {
-                command: 'show',
-                version
-            }, (chunk) => {
-                outputBuffer += chunk;
-                setOutput(outputBuffer);
-            }, (errChunk) => {
-                outputBuffer += errChunk;
-                setOutput(outputBuffer);
-            });
-        } catch (error) {
-            setOutput(`❌ Error: ${error.message}`);
+        if (base && comp) {
+            const diff = (comp.performance_score || 0) - (base.performance_score || 0);
+            const color = diff > 0 ? 'var(--green-600)' : (diff < 0 ? 'var(--red-600)' : 'var(--gray-600)');
+            const sign = diff > 0 ? '+' : '';
+            scoreDelta.textContent = `${sign}${diff.toFixed(2)}`;
+            scoreDelta.style.color = color;
         }
     }
 
-    promptSelect.addEventListener('sl-change', (event) => {
-        const encoded = event.target.value;
-        const version = encoded ? decodeURIComponent(encoded) : '';
-        loadPrompt(version);
+    async function loadData() {
+        try {
+            const { prompts = [] } = await window.api.getPrompts(200);
+            promptEntries = prompts;
+
+            // Group
+            groupedPrompts = {};
+            prompts.forEach(p => {
+                const type = getPromptType(p);
+                if (!groupedPrompts[type]) groupedPrompts[type] = [];
+                groupedPrompts[type].push(p);
+            });
+
+            // Populate Filter
+            typeSelect.innerHTML = '';
+            Object.keys(groupedPrompts).sort().forEach(type => {
+                const opt = document.createElement('sl-option');
+                opt.value = type;
+                opt.textContent = `${type} (${groupedPrompts[type].length})`;
+                typeSelect.appendChild(opt);
+            });
+
+            // Auto-select type if empty
+            if (!currentType && Object.keys(groupedPrompts).length > 0) {
+                // Prefer 'Unified Agent' if exists
+                if (groupedPrompts['Unified Agent']) currentType = 'Unified Agent';
+                else currentType = Object.keys(groupedPrompts)[0];
+                typeSelect.value = currentType;
+            } else {
+                typeSelect.value = currentType; // Restore selection
+            }
+
+            renderVersionsTable(currentType);
+
+            // Select active one as base by default if none selected
+            if (currentType && !selectedBaseFn && groupedPrompts[currentType].length > 0) {
+                const deployed = groupedPrompts[currentType].find(p => p.deployed_at);
+                const base = deployed || groupedPrompts[currentType][0];
+                selectedBaseFn = base.version;
+                // Trigger UI update logic for radio
+                renderVersionsTable(currentType);
+                loadContent(selectedBaseFn, 'base');
+            }
+
+        } catch (e) {
+            console.error(e);
+            versionsList.innerHTML = `<div style="padding: 20px; color: red;">Error loading prompts: ${e.message}</div>`;
+        }
+    }
+
+    typeSelect.addEventListener('sl-change', (e) => {
+        currentType = e.target.value;
+        // Reset selections on type change? User expectation: yes usually.
+        selectedBaseFn = null;
+        selectedCompareFn = null;
+        output1.textContent = 'Select a base version...';
+        output2.textContent = 'Select a comparison version...';
+        scoreDelta.textContent = '';
+        renderVersionsTable(currentType);
+
+        // Auto-select active
+        const deployed = groupedPrompts[currentType]?.find(p => p.deployed_at);
+        if (deployed) {
+            selectedBaseFn = deployed.version;
+            renderVersionsTable(currentType); // update radios
+            loadContent(selectedBaseFn, 'base');
+        }
     });
 
-    refreshButton.addEventListener('click', async () => {
-        await loadPromptList(true);
-    });
+    document.getElementById('prompts-refresh').addEventListener('click', loadData);
 
-    renderLearningSignalsPanel();
-    loadPromptList(false);
+    // Initial Load
+    loadData();
+
+    // Learning signals (static) if needed
+    // renderLearningSignalsPanel(); // kept from previous code if useful, or remove if clutter. User asked for specific "Why".
 }
 
 export default initPromptComparison;
-

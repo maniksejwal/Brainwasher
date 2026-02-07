@@ -11,10 +11,11 @@ import { SyntheticUser } from './synthetic_user.js';
 import { simulationClientManager } from './simulation_client.js';
 import { escalationNotificationSystem } from './escalation_notification_system.js';
 import { syntheticUserFeedback } from './synthetic_user_feedback.js';
+import config from '../../config.js';
 import { ConversationRunner } from './conversation_runner.js';
 
 // Safety: Use separate database for simulations
-const SIMULATION_DB_PATH = './care_circle_simulation.db';
+const SIMULATION_DB_PATH = config.getDbPath('simulation');
 
 export class SimulationDriver {
     constructor(options = {}) {

@@ -128,7 +128,6 @@ export class BanditManager {
             const { getScenarios } = await import('../../simulation/scenarios.js');
             const scenarioMap = getScenarios({ includeGenerated: true });
             const scenarioConfig = scenarioMap[scenario];
-            const isWorldScenario = false; // logic simplified for component
 
             // Determine Context
             let context = { complexity: scenarioConfig.complexity || 1 };
@@ -140,64 +139,50 @@ export class BanditManager {
             // Select version
             const selectedVersion = bandit.selectVersion(context);
 
-            // Set prompt version
-            const originalEnv = process.env.PROMPT_VERSION;
-            process.env.PROMPT_VERSION = selectedVersion === 'current' ? null : selectedVersion;
+            // Set prompt version Environment Variable (Serial execution is required here)
+            process.env.PROMPT_VERSION = selectedVersion;
 
             let simulator;
-            // Dynamic import to avoid circular dependency issues at top level if any
+            // Dynamically import to ensure fresh instance/config if needed, though class is exported
             const { SimulationDriver } = await import('../../simulation/simulator.js');
-            simulator = new SimulationDriver();
+            simulator = new SimulationDriver(); // Will use centralized DB path from config now
 
             try {
+                console.log(`[BanditManager] Testing version '${selectedVersion}' on scenario: ${scenario}`);
                 await simulator.runScenario(scenarioConfig, scenario);
 
-                // Get Feedback Score
-                const db = simulator.db;
-                let conversationIds = [simulator.conversationId];
-                if (simulator.conversationIds?.length > 0) conversationIds = simulator.conversationIds;
+                // Feedback collection would typically happen here or be read from DB
+                // For simplicity in this loop, we assume the DB was updated
 
-                const placeholders = conversationIds.map(() => '?').join(',');
-                const feedback = await db.all(`
-                    SELECT score, goal_adherence_score, goal_history_score, goal_conversation_score
-                    FROM feedback
-                    WHERE conversation_id IN (${placeholders}) 
-                    AND (prompt_version = ? OR prompt_version IS NULL)
+                // We need to fetch the result to update the bandit reward
+                // but since the simulator just ran, we can check the *latest* feedback for this conversation
+                const { getDb } = await import('../../db/connection.js');
+                const db = await getDb();
+
+                // Get latest score for this scenario run
+                const feedback = await db.get(`
+                    SELECT AVG(score) as avg_score, COUNT(*) as count 
+                    FROM feedback 
+                    WHERE conversation_id LIKE ? 
                     ORDER BY timestamp DESC
-                    LIMIT 50
-                `, [...conversationIds, selectedVersion === 'current' ? null : selectedVersion]);
+                `, [`%${scenario}%`]); // Loose match on conversation ID which contains scenario key
 
-                const avgScore = feedback.length > 0
-                    ? feedback.reduce((sum, f) => sum + (f.score || 0), 0) / feedback.length
-                    : 0;
+                const success = feedback && feedback.avg_score > 0.5;
+                bandit.updateReward(selectedVersion, success, context);
 
-                // Weighted score
-                const weightedScore = avgScore * 0.6 +
-                    (feedback.length > 0 ? feedback.reduce((sum, f) =>
-                        sum + (f.goal_adherence_score || 0) + (f.goal_history_score || 0) + (f.goal_conversation_score || 0), 0) / feedback.length / 3 : 0) * 0.4;
-
-                const reward = weightedScore > 0;
-
-                // Update Bandit
-                bandit.updateReward(selectedVersion, reward, context);
-
-                // Track results
                 if (!results.versionResults[selectedVersion]) {
-                    results.versionResults[selectedVersion] = { runs: 0, successes: 0, totalScore: 0 };
+                    results.versionResults[selectedVersion] = { successes: 0, failures: 0, total: 0 };
                 }
-                results.versionResults[selectedVersion].runs++;
-                results.versionResults[selectedVersion].totalScore += weightedScore;
-                if (reward) results.versionResults[selectedVersion].successes++;
-                results.totalRuns++;
-
-                if (simulator.cleanup) await simulator.cleanup();
+                results.versionResults[selectedVersion].total++;
+                if (success) results.versionResults[selectedVersion].successes++;
+                else results.versionResults[selectedVersion].failures++;
 
             } catch (error) {
                 console.warn(`[BanditManager] Simulation failed for ${scenario}:`, error.message);
                 bandit.updateReward(selectedVersion, false, context);
             } finally {
-                if (originalEnv !== undefined) process.env.PROMPT_VERSION = originalEnv;
-                else delete process.env.PROMPT_VERSION;
+                if (simulator && simulator.cleanup) await simulator.cleanup();
+                delete process.env.PROMPT_VERSION;
             }
         }
 

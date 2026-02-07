@@ -143,20 +143,25 @@ export class TrainingDatabaseManager {
             console.error('[TrainingDB] Error reading training_log.jsonl:', error.message);
             // Fallback to feedback table if training_log.jsonl doesn't exist
             const db = this.getDb();
+            const cutoffTime = Date.now() - (days * 24 * 60 * 60 * 1000);
+
+            console.log(`[TrainingDB] Checking conversations after ${cutoffTime} (Now: ${Date.now()})`);
+
             const result = await db.get(`
                 SELECT COUNT(DISTINCT conversation_id) as count 
                 FROM feedback 
-                WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
-            `);
+                WHERE timestamp > ?
+            `, [cutoffTime]);
             let count = result?.count || 0;
+            console.log(`[TrainingDB] Found ${count} conversations in DB fallback`);
 
             // DB Fallback logic
             if (count < minCount) {
                 const fallbackResult = await db.get(`
                     SELECT COUNT(DISTINCT conversation_id) as count FROM (
-                        SELECT conversation_id FROM feedback ORDER BY timestamp DESC LIMIT ${minCount * 10} 
+                        SELECT conversation_id FROM feedback ORDER BY timestamp DESC LIMIT ?
                     )
-                `);
+                `, [minCount * 10]);
                 // Note: Multiplying limit by 10 to ensure we get enough unique IDs if there are multiple feedbacks per conv
                 if (fallbackResult?.count > count) {
                     console.log(`[TrainingDB] DB Shortage of recent data (${count}), using count-based fallback.`);
@@ -177,6 +182,7 @@ export class TrainingDatabaseManager {
         const columns = await db.all("PRAGMA table_info(feedback)");
         const hasGoalColumns = columns.some(col => col.name === 'goal_adherence_score');
 
+        const cutoffTime = Date.now() - (days * 24 * 60 * 60 * 1000);
         let query;
         if (hasGoalColumns) {
             query = `
@@ -187,7 +193,7 @@ export class TrainingDatabaseManager {
                     AVG(goal_conversation_score) as conversationScore,
                     AVG(CASE WHEN critical_failure = 1 THEN 1 ELSE 0 END) as failureRate
                 FROM feedback 
-                WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
+                WHERE timestamp > ?
             `;
         } else {
             query = `
@@ -198,11 +204,11 @@ export class TrainingDatabaseManager {
                     0 as conversationScore,
                     AVG(CASE WHEN critical_failure = 1 THEN 1 ELSE 0 END) as failureRate
                 FROM feedback 
-                WHERE timestamp > (strftime('%s', 'now') - ${days * 24 * 60 * 60}) * 1000
+                WHERE timestamp > ?
             `;
         }
 
-        const result = await db.get(query);
+        const result = await db.get(query, [cutoffTime]);
 
         return {
             averageScore: result?.averageScore || 0,

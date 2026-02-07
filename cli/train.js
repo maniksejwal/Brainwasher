@@ -10,9 +10,18 @@ import { trainingDb } from '../training/core/database_manager.js';
 import { getProductionDb } from '../db/connection.js';
 import chalk from 'chalk';
 
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { PROMPT_CONFIGS } from '../training/rl/prompt_optimizer_multi.js';
+import { getPromptVersion } from '../db/index.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 const COMMANDS = {
     'run': 'Run a complete training cycle',
     'status': 'Show training pipeline status',
+    'deploy': 'Deploy an optimized prompt version',
     'force': 'Force optimization regardless of thresholds',
     'analyze-only': 'Run analysis on existing data without running simulations',
     'loop': 'Run continuous training loop',
@@ -41,6 +50,9 @@ async function main() {
                 break;
             case 'status':
                 await showStatus();
+                break;
+            case 'deploy':
+                await deployPrompt();
                 break;
             case 'force':
                 await forceOptimization();
@@ -264,6 +276,129 @@ function showUsage() {
     console.log('  - doctor_probe: Question generation from doctor requests');
     console.log('  - enrichment: Context re-evaluation after entity resolution');
     console.log('  - intent: Intent classification');
+    console.log('');
+    console.log('Deploy:');
+    console.log('  node cli/train.js deploy --version <version>   # Preview changes');
+    console.log('  node cli/train.js deploy --version <version> --execute  # Apply changes');
+}
+
+async function deployPrompt() {
+    const args = process.argv.slice(3);
+    const versionIndex = args.indexOf('--version');
+    const version = versionIndex !== -1 ? args[versionIndex + 1] : null;
+
+    if (!version) {
+        console.error(chalk.red('❌ Error: --version argument is required'));
+        console.log('Usage: node cli/train.js deploy --version <version_id>');
+        process.exit(1);
+    }
+
+    const execute = args.includes('--execute') || args.includes('--force');
+
+    console.log(chalk.cyan(`🔍 Fetching prompt version: ${version}...`));
+
+    // Fetch from DB
+    const promptVersion = await getPromptVersion(version);
+    if (!promptVersion) {
+        console.error(chalk.red(`❌ Error: Version '${version}' not found in database`));
+        process.exit(1);
+    }
+
+    // Identify Prompt Config
+    // Attempt to match version prefix to prompt config key
+    // version format: prompt_key_vTIMESTAMP or just version string
+    let matchedKey = null;
+    let config = null;
+
+    for (const [key, conf] of Object.entries(PROMPT_CONFIGS)) {
+        // Check if version starts with key (heuristic)
+        // Adjust for potential file-based mapping logic in optimizer
+        // The optimizer uses: promptConfig.file.replace('.js', '') + '_v' + timestamp
+        const fileKey = conf.file.replace('.js', '');
+        if (version.startsWith(fileKey)) {
+            matchedKey = key;
+            config = conf;
+            break;
+        }
+    }
+
+    if (!config) {
+        console.log(chalk.yellow('⚠️  Could not auto-detect prompt type from version string.'));
+        console.log('Available types: ' + Object.keys(PROMPT_CONFIGS).join(', '));
+        // Fallback: Check if it looks like a unified prompt
+        if (version.startsWith('v')) {
+            config = PROMPT_CONFIGS.unified;
+            console.log(chalk.yellow('Assuming "unified" prompt based on short version format.'));
+        } else {
+            console.error(chalk.red(`❌ Error: Unknown prompt type for version '${version}'`));
+            process.exit(1);
+        }
+    }
+
+    const promptsDir = path.join(__dirname, '../prompts');
+    const targetPath = path.join(promptsDir, config.file);
+
+    console.log(chalk.gray(`Target File: ${config.file}`));
+    console.log(chalk.gray(`Meta Name: ${promptVersion.name}`));
+    console.log('');
+
+    // Read current file
+    let currentContent = '';
+    try {
+        currentContent = fs.readFileSync(targetPath, 'utf8');
+    } catch (e) {
+        console.warn(chalk.yellow(`Warning: Could not read current file (${e.message}). Treating as new file.`));
+    }
+
+    // Show Diff Summary
+    const newContent = promptVersion.content;
+    const linesCurrent = currentContent.split('\n');
+    const linesNew = newContent.split('\n');
+
+    console.log(chalk.bold('📊 comparison:'));
+    console.log(`Current Lines: ${linesCurrent.length}`);
+    console.log(`New Lines:     ${linesNew.length}`);
+    console.log('');
+
+    // Simple line diff visualization (first 5 differences)
+    let diffCount = 0;
+    const maxDiffsToShow = 10;
+
+    console.log(chalk.cyan('--- Diff Preview ---'));
+    for (let i = 0; i < Math.max(linesCurrent.length, linesNew.length); i++) {
+        if (linesCurrent[i] !== linesNew[i]) {
+            diffCount++;
+            if (diffCount <= maxDiffsToShow) {
+                console.log(chalk.gray(`Line ${i + 1}:`));
+                if (linesCurrent[i] !== undefined) console.log(chalk.red(`- ${linesCurrent[i].substring(0, 100)}${linesCurrent[i].length > 100 ? '...' : ''}`));
+                if (linesNew[i] !== undefined) console.log(chalk.green(`+ ${linesNew[i].substring(0, 100)}${linesNew[i].length > 100 ? '...' : ''}`));
+            }
+        }
+    }
+
+    if (diffCount > maxDiffsToShow) {
+        console.log(chalk.gray(`... and ${diffCount - maxDiffsToShow} more differing lines.`));
+    } else if (diffCount === 0) {
+        console.log(chalk.green('No changes detected (Archives match).'));
+    }
+    console.log('');
+
+    if (execute) {
+        // Backup
+        const backupPath = `${targetPath}.bak.${Date.now()}`;
+        fs.writeFileSync(backupPath, currentContent);
+        console.log(chalk.gray(`Backup saved to: ${path.basename(backupPath)}`));
+
+        // Write
+        fs.writeFileSync(targetPath, newContent);
+        console.log(chalk.green(`✅ Successfully deployed version '${version}' to ${config.file}`));
+        process.exit(0);
+    } else {
+        console.log(chalk.yellow('⚠️  Dry Run - No changes made.'));
+        console.log(chalk.white('To apply these changes, run:'));
+        console.log(chalk.cyan(`node cli/train.js deploy --version ${version} --execute`));
+        process.exit(0);
+    }
 }
 
 // Run the CLI
