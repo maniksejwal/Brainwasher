@@ -9,7 +9,14 @@
  */
 
 const config = {
-    ORCHESTRATOR_URL: ''  // Empty = same origin as GUI (no CORS!)
+    // API URL: If empty, uses same origin. 
+    // In production (Amplify), this needs to point to the ALB URL.
+    // We can inject this during deployment or via a global var.
+    ORCHESTRATOR_URL: window.ENV_API_URL || '',
+
+    // Auth Config
+    COGNITO_USER_POOL_ID: window.ENV_COGNITO_POOL_ID || '',
+    COGNITO_CLIENT_ID: window.ENV_COGNITO_CLIENT_ID || ''
 };
 
 export default config;

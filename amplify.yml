@@ -1,0 +1,15 @@
+version: 1
+frontend:
+  phases:
+    build:
+      commands:
+        - echo "Injecting Environment Variables..."
+        - echo "window.ENV_API_URL = '$API_URL';" > gui/env.js
+        - echo "window.ENV_COGNITO_POOL_ID = '$COGNITO_POOL_ID';" >> gui/env.js
+        - echo "window.ENV_COGNITO_CLIENT_ID = '$COGNITO_CLIENT_ID';" >> gui/env.js
+  artifacts:
+    baseDirectory: gui
+    files:
+      - '**/*'
+  cache:
+    paths: []

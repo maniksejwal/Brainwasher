@@ -20,6 +20,8 @@
     "jsonwebtoken": "^9.0.3",
     "openai": "^4.28.4",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "cors": "^2.8.5",
+    "aws-jwt-verify": "^4.0.0"
   }
 }

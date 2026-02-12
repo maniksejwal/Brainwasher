@@ -131,7 +131,11 @@ const config = {
 
     // ICD API
     ICD_API_URL: process.env.ICD_API_URL || '',
-    ICD_API_KEY: process.env.ICD_API_KEY || ''
+    ICD_API_KEY: process.env.ICD_API_KEY || '',
+
+    // Cognito
+    COGNITO_USER_POOL_ID: process.env.COGNITO_USER_POOL_ID || '',
+    COGNITO_CLIENT_ID: process.env.COGNITO_CLIENT_ID || ''
 };
 
 // Construct the URL from HOST and PORT

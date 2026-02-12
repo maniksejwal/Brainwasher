@@ -5,6 +5,7 @@
 
 import express from 'express';
 import path from 'path';
+import cors from 'cors';
 import { fileURLToPath } from 'url';
 import config from './config.js';
 import { initializeDatabase } from './db/index.js';
@@ -26,7 +27,11 @@ import notificationsRouter from './routes/notifications.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
+app.use(cors()); // Allow all origins for now (Refine for production)
 app.use(express.json());
+
+// Trust Proxy for ALB
+app.enable('trust proxy');
 
 // Initialize Logger
 setupLogger();
@@ -115,6 +120,9 @@ events.on('analysis_progress', (payload) => {
 });
 
 // ========== ROUTE MOUNTING ==========
+
+// Health Check
+app.get('/api/auth/health', (req, res) => res.status(200).send('OK'));
 
 // Auth
 app.use('/api/auth', authRouter);

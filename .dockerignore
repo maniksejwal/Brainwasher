@@ -1,0 +1,7 @@
+node_modules
+.git
+.env
+local.db
+data/dbs/*.db
+!data/dbs/schema.sql
+logs
