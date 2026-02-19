@@ -7,6 +7,10 @@ frontend:
         - echo "window.ENV_API_URL = '$API_URL';" > gui/env.js
         - echo "window.ENV_COGNITO_POOL_ID = '$COGNITO_POOL_ID';" >> gui/env.js
         - echo "window.ENV_COGNITO_CLIENT_ID = '$COGNITO_CLIENT_ID';" >> gui/env.js
+        - echo "Copying Shared Code..."
+        - cp -r shared gui/shared
+        - echo "Fixing Import Paths..."
+        - sed -i 's|\.\./shared/|\./shared/|g' gui/app.js
   artifacts:
     baseDirectory: gui
     files:
