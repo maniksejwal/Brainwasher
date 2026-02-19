@@ -1,0 +1,24 @@
+{
+  "file": "20250227_101509.jpg",
+  "document_type": "bill",
+  "confidence": "expert_confidence",
+  "patient_name": "Manik",
+  "icd_codes": [],
+  "cpt_codes": [],
+  "medications": [],
+  "purchases": [
+    {"name": "MONOCEF 1 GM INJ", "dosage": "1 g", "price": 69.87, "pack": "1 g", "type": "injection", "tab count": 0, "set":10, "total": 698.70}, 
+    {"name": "SYRINGE 10ML (UNOLOK)", "dosage": "", "price": 50.50, "pack": "1x10ml", "type": "syringe", "tab count": 0, "set":10, "total": 505.00}, 
+    {"name": "PARAGEE 650 PLUS TAB", "dosage": "650 mg", "price": 33.60, "pack": 15, "type": "tablet", "tab count": 6, "set":0, "total": 13.44}, 
+    {"name": "MAXORIL COLD PLUS TAB", "dosage": "650 mg", "price": 45.90, "pack": 10, "type": "tablet", "tab count": 6, "set":0, "total": 27.54}, 
+    {"name": "PANTOZEC 40 TAB", "dosage": "40 mg", "price": 100.60, "pack": 10, "type": "tablet", "tab count": 5, "set":0, "total": 50.30}, 
+    {"name": "VENFLON NO. 20", "dosage": "", "price": 311.50, "pack": 1, "type": "syringe", "tab count": 0, "set":1, "total": 311.50}, 
+    {"name": "CANFIX", "dosage": "", "price": 80.00, "pack": 1, "type": "syringe", "tab count": 0, "set":1, "total": 80.00}
+  ],
+  "total_amount": 1505.78,
+  "tax_amount": 180.70,
+  "total_with_tax": 1686.00,
+  "total_cash_paid": 0.00,
+  "balance_amount": 1686.00,
+  "notes": ""
+}

@@ -16,7 +16,7 @@ aws cloudformation deploy `
   --template-file infrastructure.yaml `
   --stack-name $STACK_NAME `
   --capabilities CAPABILITY_NAMED_IAM `
-  --parameter-overrides EnvironmentName=prod
+  --parameter-overrides EnvironmentName=research ProjectName=yourbhai
 
 # 3. Get Outputs
 $outputs = aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --output json | ConvertFrom-Json

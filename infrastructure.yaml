@@ -4,8 +4,8 @@ Description: 'Brainwasher 3: ECS Fargate Backend + Cognito Auth'
 Parameters:
   EnvironmentName:
     Type: String
-    Default: 'production'
-    Description: 'Environment name (e.g. production, staging)'
+    Default: 'research'
+    Description: 'Environment name (e.g. production, staging, research)'
   ContainerPort:
     Type: Number
     Default: 3000
@@ -17,6 +17,10 @@ Parameters:
     Type: String
     NoEcho: true
     Description: 'API Key for Llama 4'
+  ProjectName:
+    Type: String
+    Default: 'yourbhai'
+    Description: 'Project identifier tag'
 
 Resources:
   # ============================================================================
@@ -31,6 +35,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-vpc
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   InternetGateway:
     Type: AWS::EC2::InternetGateway
@@ -38,6 +46,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-igw
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   InternetGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
@@ -55,6 +67,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-public-subnet-1
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   PublicSubnet2:
     Type: AWS::EC2::Subnet
@@ -66,6 +82,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-public-subnet-2
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -74,6 +94,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-public-rt
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   PublicRoute:
     Type: AWS::EC2::Route
@@ -109,6 +133,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-alb-sg
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   # Security Group for ECS Tasks
   EcsSecurityGroup:
@@ -124,6 +152,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-ecs-sg
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   # ============================================================================
   # LOAD BALANCER
@@ -141,6 +173,10 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-alb
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   TargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
@@ -157,6 +193,9 @@ Resources:
       UnhealthyThresholdCount: 2
       Matcher:
         HttpCode: '200'
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -175,11 +214,21 @@ Resources:
     Type: AWS::ECS::Cluster
     Properties:
       ClusterName: !Sub ${EnvironmentName}-cluster
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   ECRRepository:
     Type: AWS::ECR::Repository
     Properties:
       RepositoryName: !Sub ${EnvironmentName}-repo
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
       LifecyclePolicy:
         LifecyclePolicyText: |
           {
@@ -211,6 +260,11 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   TaskRole:
     Type: AWS::IAM::Role
@@ -233,10 +287,18 @@ Resources:
                   - s3:GetObject
                   - s3:ListBucket
                 Resource: '*'
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   ECSTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
       Family: !Sub ${EnvironmentName}-task
       NetworkMode: awsvpc
       RequiresCompatibilities:
@@ -271,6 +333,11 @@ Resources:
     Properties:
       LogGroupName: !Sub /ecs/${EnvironmentName}-app
       RetentionInDays: 7
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
 
   ECSService:
     Type: AWS::ECS::Service
@@ -293,6 +360,9 @@ Resources:
           ContainerPort: !Ref ContainerPort
           TargetGroupArn: !Ref TargetGroup
       DesiredCount: 1
+      Tags:
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   # ============================================================================
   # COGNITO
@@ -312,6 +382,9 @@ Resources:
           RequireNumbers: false
           RequireSymbols: false
           RequireUppercase: false
+      UserPoolTags:
+        Environment: !Ref EnvironmentName
+        project: !Ref ProjectName
 
   CognitoUserPoolClient:
     Type: AWS::Cognito::UserPoolClient

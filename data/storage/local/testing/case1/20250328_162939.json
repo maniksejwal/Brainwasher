@@ -1,0 +1,22 @@
+{
+  "file": "20250328_162939.jpg",
+  "document_type": "Hematology Lab Report",
+  "confidence": "",
+  "patient_name": "Manik",
+  "icd_codes": [
+    {
+      "code": "D72.828",
+      "description": "Other elevated white blood cell count"
+    },
+    {
+      "code": "D72.810",
+      "description": "Lymphocytopenia"
+    }
+  ],
+  "snomed_codes": [
+    "165510003"
+  ],
+  "cpt_codes": [],
+  "medications": [],
+  "notes": ""
+}

@@ -1,0 +1,103 @@
+{
+  "file": "20250302_185802.jpg",
+  "document_type": "prescription",
+  "confidence": "",
+  "patient_name": "NA",
+  "date": "2025-Feb-25",
+  "chief complaint": [
+    "Fever with chills - 2 days",
+    "Cough with expectoration - 2 days"
+  ],
+  "tests": [
+    {
+      "temperature": "103.0 F"
+    },
+    {
+      "CBC": ""
+    }
+  ],
+  "diagnosis": [
+    {
+      "diagnosis": "Fever",
+      "icd_cm_code": "R50.9",
+      "infered_from": "HOPI"
+    },
+    {
+      "diagnosis": "Chills",
+      "icd_cm_code": "R68.83 ",
+      "infered_from": "HOPI"
+    },
+    {
+      "diagnosis": "Cough, unspecified",
+      "icd_cm_code": "R05.9",
+      "infered_from": "Cough with expectoration"
+    },
+    {
+      "diagnosis": "Abnormal sputum",
+      "icd_cm_code": "R09.3",
+      "infered_from": "Cough with expectoration"
+    }
+  ],
+  "treatment": [
+    {
+      "type": "Injection",
+      "name": "Monocef",
+      "dosage": "1 g",
+      "method": "intravenous",
+      "frequency": "BD",
+      "duration": "5 days"
+    },
+    {
+      "type": "Tablet",
+      "name": "Dolo",
+      "dosage": "650 mg",
+      "method": "oral",
+      "frequency": "BD",
+      "duration": "2 days",
+      "count_per_dose": 1,
+      "API": "Paracetamol"
+    },
+    {
+      "type": "Tablet",
+      "name": "Cheston Cold",
+      "dosage": "Cetirizine (5 Mg) + Paracetamol/acetaminophen (325 Mg) + Phenylephrine (10 Mg)",
+      "method": "oral",
+      "frequency": "BD",
+      "duration": "3 days",
+      "count_per_dose": 1,
+      "API": "Cetirizine, Paracetamol/acetaminophen, Phenylephrine"
+    },
+    {
+      "type": "Tablet",
+      "name": "Pan 40",
+      "dosage": "40 mg",
+      "method": "oral",
+      "frequency": "OD",
+      "duration": "5 days",
+      "count_per_dose": 1,
+      "API": "Pantoprazole"
+    },
+    {
+      "type": "Activity",
+      "name": "Warm saline gargles",
+      "dosage": "",
+      "method": "",
+      "frequency": "BD",
+      "duration": "",
+      "count_per_dose": ""
+    }
+  ],
+  "icd_cm_codes": [
+    "R50.9",
+    "R68.83",
+    "R05",
+    "R09.3"
+  ],
+  "icd_pcs_codes": [
+    "3E03329"
+  ],
+  "cpt_codes": [
+    "99601"
+  ],
+  "notes": ""
+}

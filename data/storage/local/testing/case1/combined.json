@@ -1,0 +1,9 @@
+{
+    "icd_codes": [
+        "R50.9",
+        "R68.83",
+        "R05",
+        "R09.3"
+    ],
+    "infered_from": "treatment notes and hematology report"
+}

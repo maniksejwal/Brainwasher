@@ -17,9 +17,9 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: brainwasher3-repo
-  ECS_SERVICE: production-service
-  ECS_CLUSTER: production-cluster
-  ECS_TASK_DEFINITION: production-task
+  ECS_SERVICE: research-service
+  ECS_CLUSTER: research-cluster
+  ECS_TASK_DEFINITION: research-task
   CONTAINER_NAME: app
 
 jobs:
@@ -60,7 +60,7 @@ jobs:
             --template-file infrastructure.yaml \
             --stack-name Brainwasher3-Stack \
             --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides EnvironmentName=production  \
+            --parameter-overrides EnvironmentName=research ProjectName=yourbhai \
             --no-fail-on-empty-changeset
 
       - name: Update ECS Service
