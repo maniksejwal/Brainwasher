@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - research
     paths:
       - 'server.js'
       - 'package.json'
