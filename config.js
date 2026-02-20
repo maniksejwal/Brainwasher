@@ -84,8 +84,8 @@ const config = {
     COMPANION_AB_TEST_ENABLED: true,                // A/B test Companion vs unified agent
     COMPANION_AB_TEST_RATIO: 0.5,                    // 50% Companion, 50% unified (when enabled)
 
-    HOST: '127.0.0.1',
-    PORT: 5000,
+    HOST: process.env.HOST || '127.0.0.1',
+    PORT: process.env.PORT || 5000,
 
     // Database Configuration
     NODE_ENV: process.env.NODE_ENV || 'development',
@@ -139,7 +139,7 @@ const config = {
 };
 
 // Construct the URL from HOST and PORT
-config.ORCHESTRATOR_URL = `http://${config.HOST}:${config.PORT}`;
+config.ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || `http://${config.HOST}:${config.PORT}`;
 
 export default config;
 
