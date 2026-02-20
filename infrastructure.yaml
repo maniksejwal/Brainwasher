@@ -138,24 +138,57 @@ Resources:
         - Key: project
           Value: !Ref ProjectName
 
-  # Security Group for ECS Tasks
-  EcsSecurityGroup:
+  # Security Group for EFS
+  EfsSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Allow traffic from ALB to ECS tasks
+      GroupDescription: Allow NFS access from ECS tasks
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: !Ref ContainerPort
-          ToPort: !Ref ContainerPort
-          SourceSecurityGroupId: !Ref AlbSecurityGroup
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref EcsSecurityGroup
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-ecs-sg
+          Value: !Sub ${EnvironmentName}-efs-sg
         - Key: Environment
           Value: !Ref EnvironmentName
         - Key: project
           Value: !Ref ProjectName
+
+  # ============================================================================
+  # EFS FILE SYSTEM
+  # ============================================================================
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      Encrypted: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-efs
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
+
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  MountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
 
   # ============================================================================
   # LOAD BALANCER
@@ -327,6 +360,17 @@ Resources:
               awslogs-group: !Ref CloudWatchLogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: ecs
+          MountPoints:
+            - SourceVolume: efs-storage
+              ContainerPath: /app/data
+              ReadOnly: false
+      Volumes:
+        - Name: efs-storage
+          EFSVolumeConfiguration:
+            FileSystemId: !Ref FileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              IAM: ENABLED
 
   CloudWatchLogGroup:
     Type: AWS::Logs::LogGroup

@@ -90,7 +90,7 @@ const config = {
     // Database Configuration
     NODE_ENV: process.env.NODE_ENV || 'development',
     DB_PATHS: {
-        production: process.env.DB_PATH_PRODUCTION || './data/dbs/care_circle_prod.db',
+        production: process.env.DB_PATH_PRODUCTION || '/app/data/dbs/care_circle_prod.db',
         development: process.env.DB_PATH_DEVELOPMENT || './data/dbs/care_circle_dev.db',
         simulation: process.env.DB_PATH_SIMULATION || './data/dbs/care_circle_simulation.db',
         test: process.env.DB_PATH_TEST || ':memory:'
@@ -115,7 +115,7 @@ const config = {
 
     // Storage Configuration
     STORAGE_TYPE: process.env.STORAGE_TYPE || 'local', // 'local', 's3', 'gcp'
-    STORAGE_LOCAL_PATH: process.env.STORAGE_LOCAL_PATH || './data/storage/local',
+    STORAGE_LOCAL_PATH: process.env.STORAGE_LOCAL_PATH || '/app/data/storage/local',
 
     // S3 Storage (future)
     STORAGE_S3_BUCKET: process.env.STORAGE_S3_BUCKET || '',
