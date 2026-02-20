@@ -1,12 +1,21 @@
 version: 1
 frontend:
   phases:
+    preBuild:
+      commands:
+        - |
+          if [ -z "$API_URL" ]; then
+            echo "ERROR: API_URL environment variable is not set in Amplify Console!"
+            echo "Go to: Amplify Console > App Settings > Environment Variables"
+            echo "Add: API_URL = http://<your-alb-dns-name>"
+            exit 1
+          fi
     build:
       commands:
         - echo "Injecting Environment Variables..."
         - echo "window.ENV_API_URL = '$API_URL';" > gui/env.js
-        - echo "window.ENV_COGNITO_POOL_ID = '$COGNITO_POOL_ID';" >> gui/env.js
-        - echo "window.ENV_COGNITO_CLIENT_ID = '$COGNITO_CLIENT_ID';" >> gui/env.js
+        - echo "window.ENV_COGNITO_POOL_ID = '${COGNITO_POOL_ID:-}';" >> gui/env.js
+        - echo "window.ENV_COGNITO_CLIENT_ID = '${COGNITO_CLIENT_ID:-}';" >> gui/env.js
         - echo "Copying Shared Code..."
         - cp -r shared gui/shared
         - echo "Fixing Import Paths..."
