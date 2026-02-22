@@ -1,5 +1,5 @@
 param(
-    [string]$Llama4EndpointName = ($env:LLAMA4_ENDPOINT_NAME ?? "emm-llama4-dev")
+    [string]$Llama4EndpointName = $(if ($env:LLAMA4_ENDPOINT_NAME) { $env:LLAMA4_ENDPOINT_NAME } else { "emm-llama4-dev" })
 )
 
 $ErrorActionPreference = "Stop"

@@ -135,6 +135,25 @@ Resources:
         - Key: project
           Value: !Ref ProjectName
 
+  # Security Group for ECS Tasks
+  EcsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow traffic to ECS tasks from ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref AlbSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ecs-sg
+        - Key: Environment
+          Value: !Ref EnvironmentName
+        - Key: project
+          Value: !Ref ProjectName
+
   # Security Group for EFS
   EfsSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -450,10 +469,10 @@ Outputs:
   LoadBalancerDNS:
     Value: !GetAtt LoadBalancer.DNSName
     Description: DNS Name of the ALB
-  UserPoolId:
+  CognitoUserPoolId:
     Value: !Ref CongitoUserPool
     Description: Cognito User Pool ID
-  UserPoolClientId:
+  CognitoClientId:
     Value: !Ref CognitoUserPoolClient
     Description: Cognito User Pool Client ID
   ECRRepoUri:
