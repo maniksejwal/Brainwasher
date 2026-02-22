@@ -1,20 +1,18 @@
 param(
-    [string]$LlamaApiUrl = $env:LLAMA_API_URL,
-    [string]$LlamaApiKey = $env:LLAMA_API_KEY
+    [string]$Llama4EndpointName = ($env:LLAMA4_ENDPOINT_NAME ?? "emm-llama4-dev")
 )
 
 $ErrorActionPreference = "Stop"
 
 # Configuration
-$AWS_REGION   = "us-east-1"
+$AWS_REGION   = "ap-south-1"
 $STACK_NAME   = "Brainwasher3-Stack"
 $IMAGE_TAG    = "latest"
 $GITHUB_REPO  = "https://github.com/maniksejwal/Brainwasher"
 $GITHUB_BRANCH = "research"
 
 # ─── Validate Required Params ──────────────────────────────────────────────────
-if (-not $LlamaApiUrl) { throw "Missing -LlamaApiUrl or LLAMA_API_URL env var" }
-if (-not $LlamaApiKey) { throw "Missing -LlamaApiKey or LLAMA_API_KEY env var" }
+Write-Host "  Using SageMaker Endpoint: $Llama4EndpointName (ap-south-1)"
 
 # ─── 1. Check Requirements ─────────────────────────────────────────────────────
 Write-Host "`n[1/7] Checking AWS CLI & Docker..."
@@ -27,11 +25,11 @@ aws cloudformation deploy `
   --template-file infrastructure.yaml `
   --stack-name $STACK_NAME `
   --capabilities CAPABILITY_NAMED_IAM `
+  --region $AWS_REGION `
   --parameter-overrides `
     EnvironmentName=research `
     ProjectName=yourbhai `
-    LlamaApiUrl="$LlamaApiUrl" `
-    LlamaApiKey="$LlamaApiKey" `
+    Llama4EndpointName="$Llama4EndpointName" `
   --no-fail-on-empty-changeset
 
 # ─── 3. Get Stack Outputs ──────────────────────────────────────────────────────
@@ -91,8 +89,9 @@ if ($existingApps.Count -gt 0) {
 Write-Host "  Setting Amplify env vars..."
 aws amplify update-app `
     --app-id $AMPLIFY_APP_ID `
+    --region $AWS_REGION `
     --environment-variables `
-        API_URL="http://$albDns",COGNITO_POOL_ID="$cognitoPool",COGNITO_CLIENT_ID="$cognitoClient" | Out-Null
+        "API_URL=http://$albDns","COGNITO_POOL_ID=$cognitoPool","COGNITO_CLIENT_ID=$cognitoClient" | Out-Null
 
 # Trigger a build
 Write-Host "  Triggering Amplify build..."

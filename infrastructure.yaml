@@ -10,13 +10,10 @@ Parameters:
     Type: Number
     Default: 3000
     Description: 'Port the container listens on'
-  LlamaApiUrl:
+  Llama4EndpointName:
     Type: String
-    Description: 'URL for Llama 4 API'
-  LlamaApiKey:
-    Type: String
-    NoEcho: true
-    Description: 'API Key for Llama 4'
+    Default: 'emm-llama4-dev'
+    Description: 'SageMaker endpoint name for Llama 4'
   ProjectName:
     Type: String
     Default: 'yourbhai'
@@ -320,6 +317,14 @@ Resources:
                   - s3:GetObject
                   - s3:ListBucket
                 Resource: '*'
+        - PolicyName: SageMakerInvoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sagemaker:InvokeEndpoint
+                Resource: !Sub 'arn:aws:sagemaker:ap-south-1:${AWS::AccountId}:endpoint/${Llama4EndpointName}'
       Tags:
         - Key: Environment
           Value: !Ref EnvironmentName
@@ -348,10 +353,10 @@ Resources:
           Environment:
             - Name: NODE_ENV
               Value: production
-            - Name: LLAMA_API_URL
-              Value: !Ref LlamaApiUrl
-            - Name: LLAMA_API_KEY
-              Value: !Ref LlamaApiKey
+            - Name: LLAMA4_ENDPOINT_NAME
+              Value: !Ref Llama4EndpointName
+            - Name: AWS_REGION_SAGEMAKER
+              Value: 'ap-south-1'
             - Name: PORT
               Value: !Ref ContainerPort
           LogConfiguration:
