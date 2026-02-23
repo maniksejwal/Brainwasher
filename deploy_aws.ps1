@@ -34,7 +34,7 @@ aws cloudformation deploy `
 
 # ─── 3. Get Stack Outputs ──────────────────────────────────────────────────────
 Write-Host "`n[3/7] Retrieving Stack Outputs..."
-$outputs    = aws cloudformation describe-stacks --stack-name $STACK_NAME --query "Stacks[0].Outputs" --output json | ConvertFrom-Json
+$outputs    = aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION --query "Stacks[0].Outputs" --output json | ConvertFrom-Json
 $ecrRepoUri = ($outputs | Where-Object { $_.OutputKey -eq "ECRRepoUri" }).OutputValue
 $albDns     = ($outputs | Where-Object { $_.OutputKey -eq "LoadBalancerDNS" }).OutputValue
 $cognitoPool   = ($outputs | Where-Object { $_.OutputKey -eq "CognitoUserPoolId" }).OutputValue
@@ -57,48 +57,39 @@ docker push "${ecrRepoUri}:${IMAGE_TAG}"
 # ─── 6. Force ECS Deployment ──────────────────────────────────────────────────
 Write-Host "`n[6/7] Updating ECS Service..."
 aws ecs update-service `
-  --cluster "${STACK_NAME}-cluster" `
-  --service "${STACK_NAME}-service" `
-  --force-new-deployment
+  --region $AWS_REGION `
+  --cluster "research-cluster" `
+  --service "research-service" `
+  --force-new-deployment | Out-Null
 
 # ─── 7. Amplify Frontend Setup ────────────────────────────────────────────────
 Write-Host "`n[7/7] Setting up Amplify Frontend..."
 
 # Check if app already exists
-$existingApps = aws amplify list-apps --query "apps[?name=='Brainwasher3-Frontend'].appId" --output json | ConvertFrom-Json
+$existingApps = aws amplify list-apps --region $AWS_REGION --query "apps[?name=='Brainwasher3-Frontend'].appId" --output json | ConvertFrom-Json
 if ($existingApps.Count -gt 0) {
     $AMPLIFY_APP_ID = $existingApps[0]
-    Write-Host "  Using existing Amplify app: $AMPLIFY_APP_ID"
-} else {
-    Write-Host "  Creating new Amplify app..."
-    $newApp = aws amplify create-app `
-        --name "Brainwasher3-Frontend" `
-        --repository $GITHUB_REPO `
-        --platform WEB `
-        --tags "Environment=research,project=yourbhai" `
-        --output json | ConvertFrom-Json
-    $AMPLIFY_APP_ID = $newApp.app.appId
+    Write-Host "  Found Amplify app: $AMPLIFY_APP_ID"
 
-    # Connect the branch
-    aws amplify create-branch `
+    # Set environment variables on the Amplify app
+    Write-Host "  Setting Amplify env vars (API_URL, Cognito)..."
+    aws amplify update-app `
         --app-id $AMPLIFY_APP_ID `
-        --branch-name $GITHUB_BRANCH | Out-Null
+        --region $AWS_REGION `
+        --environment-variables "API_URL=http://$albDns,COGNITO_POOL_ID=$cognitoPool,COGNITO_CLIENT_ID=$cognitoClient" | Out-Null
+
+    # Trigger a build
+    Write-Host "  Triggering Amplify build on branch: $GITHUB_BRANCH..."
+    aws amplify start-job `
+        --app-id $AMPLIFY_APP_ID `
+        --region $AWS_REGION `
+        --branch-name $GITHUB_BRANCH `
+        --job-type RELEASE | Out-Null
+} else {
+    Write-Host "  No Amplify app found. Create it manually in the AWS Console"
+    Write-Host "  then re-run this script to auto-set API_URL."
+    Write-Host "  Create URL: https://ap-south-1.console.aws.amazon.com/amplify/create"
 }
-
-# Set environment variables on the Amplify app
-Write-Host "  Setting Amplify env vars..."
-aws amplify update-app `
-    --app-id $AMPLIFY_APP_ID `
-    --region $AWS_REGION `
-    --environment-variables `
-        "API_URL=http://$albDns","COGNITO_POOL_ID=$cognitoPool","COGNITO_CLIENT_ID=$cognitoClient" | Out-Null
-
-# Trigger a build
-Write-Host "  Triggering Amplify build..."
-aws amplify start-job `
-    --app-id $AMPLIFY_APP_ID `
-    --branch-name $GITHUB_BRANCH `
-    --job-type RELEASE | Out-Null
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 Write-Host "`n=== DEPLOYMENT COMPLETE ==="
