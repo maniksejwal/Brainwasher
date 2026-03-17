@@ -3,25 +3,27 @@ name: Deploy Backend to ECS
 on:
   push:
     branches:
-      - main
       - research
     paths:
       - 'server.js'
       - 'package.json'
       - 'Dockerfile'
-      - 'infrastructure.yaml'
+      - 'deploy/infrastructure.yaml'
       - 'routes/**'
       - 'handlers/**'
       - 'db/**'
       - 'middleware/**'
+      - '.github/workflows/deploy-backend.yml'
 
 env:
-  AWS_REGION: us-east-1
-  ECR_REPOSITORY: brainwasher3-repo
+  AWS_REGION: ap-south-1
+  # Must match the repository created by deploy/infrastructure.yaml
+  ECR_REPOSITORY: research-repo
   ECS_SERVICE: research-service
   ECS_CLUSTER: research-cluster
-  ECS_TASK_DEFINITION: research-task
   CONTAINER_NAME: app
+  STACK_NAME: Brainwasher3-Stack
+  IMAGE_TAG: latest
 
 jobs:
   deploy:
@@ -48,22 +50,23 @@ jobs:
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} .
+          docker tag  $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }} $ECR_REGISTRY/$ECR_REPOSITORY:${IMAGE_TAG}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:${IMAGE_TAG}
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" >> $GITHUB_OUTPUT
 
       - name: Deploy Infrastructure (CloudFormation)
         # Optional: Update infrastructure on push
         run: |
           aws cloudformation deploy \
-            --template-file infrastructure.yaml \
-            --stack-name Brainwasher3-Stack \
+            --template-file deploy/infrastructure.yaml \
+            --stack-name $STACK_NAME \
             --capabilities CAPABILITY_NAMED_IAM \
-            --parameter-overrides EnvironmentName=research ProjectName=yourbhai \
+            --parameter-overrides EnvironmentName=research ProjectName=yourbhai Llama4EndpointName=emm-llama4-dev EcsDesiredCount=0 \
             --no-fail-on-empty-changeset
 
       - name: Update ECS Service
         run: |
-          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment
+          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --desired-count 1 --force-new-deployment
