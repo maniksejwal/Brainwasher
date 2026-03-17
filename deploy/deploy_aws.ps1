@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 # Configuration
 $AWS_REGION   = "ap-south-1"
 $STACK_NAME   = "Brainwasher3-Stack"
+$LOCAL_IMAGE_NAME = "brainwasher3-stack"
 $IMAGE_TAG    = "latest"
 $GITHUB_REPO  = "https://github.com/maniksejwal/Brainwasher"
 $GITHUB_BRANCH = "research"
@@ -18,11 +19,32 @@ Write-Host "  Using SageMaker Endpoint: $Llama4EndpointName (ap-south-1)"
 Write-Host "`n[1/7] Checking AWS CLI & Docker..."
 aws --version
 docker --version
+docker info | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Docker daemon is not running (docker info failed). Start Docker Desktop (or the Docker service) and re-run deploy/deploy_aws.ps1."
+    exit 1
+}
 
 # ─── 2. Deploy CloudFormation ──────────────────────────────────────────────────
 Write-Host "`n[2/7] Deploying Infrastructure (CloudFormation)..."
+
+$env:AWS_PAGER = ""
+try {
+    aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION 2> $null
+    if ($LASTEXITCODE -eq 0) {
+        # Only start tasks if the image already exists in ECR; otherwise CF/ECS may flap on first deploy.
+        aws ecr describe-images --repository-name "research-repo" --region $AWS_REGION --image-ids imageTag=$IMAGE_TAG 2> $null | Out-Null
+        $desiredCount = if ($LASTEXITCODE -eq 0) { 1 } else { 0 }
+    } else {
+        $desiredCount = 0
+    }
+} catch {
+    # Stack does not exist yet – start with 0 tasks so ECR can be populated first
+    $desiredCount = 0
+}
+Write-Host "  Initial ECS Desired Count: $desiredCount (0 avoids CF failure on empty ECR)"
 aws cloudformation deploy `
-  --template-file infrastructure.yaml `
+  --template-file deploy/infrastructure.yaml `
   --stack-name $STACK_NAME `
   --capabilities CAPABILITY_NAMED_IAM `
   --region $AWS_REGION `
@@ -30,19 +52,30 @@ aws cloudformation deploy `
     EnvironmentName=research `
     ProjectName=yourbhai `
     Llama4EndpointName="$Llama4EndpointName" `
-  --no-fail-on-empty-changeset
+    EcsDesiredCount=$desiredCount `
+  --no-fail-on-empty-changeset `
+  --disable-rollback
 
 # ─── 3. Get Stack Outputs ──────────────────────────────────────────────────────
 Write-Host "`n[3/7] Retrieving Stack Outputs..."
-$outputs    = aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION --query "Stacks[0].Outputs" --output json | ConvertFrom-Json
+$stackInfo = aws cloudformation describe-stacks --stack-name $STACK_NAME --region $AWS_REGION --output json | ConvertFrom-Json
+$stackStatus = $stackInfo.Stacks[0].StackStatus
+if ($stackStatus -notmatch "COMPLETE") {
+    Write-Error "CloudFormation stack is in state '$stackStatus'. Cannot proceed. Check the AWS Console for details."
+    exit 1
+}
+$outputs    = $stackInfo.Stacks[0].Outputs
 $ecrRepoUri = ($outputs | Where-Object { $_.OutputKey -eq "ECRRepoUri" }).OutputValue
 $albDns     = ($outputs | Where-Object { $_.OutputKey -eq "LoadBalancerDNS" }).OutputValue
 $cognitoPool   = ($outputs | Where-Object { $_.OutputKey -eq "CognitoUserPoolId" }).OutputValue
 $cognitoClient = ($outputs | Where-Object { $_.OutputKey -eq "CognitoClientId" }).OutputValue
+$ecsCluster    = ($outputs | Where-Object { $_.OutputKey -eq "ECSClusterName" }).OutputValue
+$ecsService    = ($outputs | Where-Object { $_.OutputKey -eq "ECSServiceName" }).OutputValue
 
 Write-Host "  ECR Repo : $ecrRepoUri"
 Write-Host "  ALB DNS  : $albDns"
 Write-Host "  Cognito  : $cognitoPool / $cognitoClient"
+Write-Host "  ECS      : $ecsCluster / $ecsService"
 
 # ─── 4. Login to ECR ──────────────────────────────────────────────────────────
 Write-Host "`n[4/7] Logging into ECR..."
@@ -50,17 +83,72 @@ aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --
 
 # ─── 5. Build & Push Docker Image ─────────────────────────────────────────────
 Write-Host "`n[5/7] Building & Pushing Docker Image..."
-docker build -t $STACK_NAME .
-docker tag "${STACK_NAME}:latest" "${ecrRepoUri}:${IMAGE_TAG}"
+docker build -t $LOCAL_IMAGE_NAME .
+docker tag "${LOCAL_IMAGE_NAME}:latest" "${ecrRepoUri}:${IMAGE_TAG}"
 docker push "${ecrRepoUri}:${IMAGE_TAG}"
 
-# ─── 6. Force ECS Deployment ──────────────────────────────────────────────────
-Write-Host "`n[6/7] Updating ECS Service..."
+# ─── 6. Update ECS Task Definition with Cognito Config & Deploy ───────────────
+Write-Host "`n[6/7] Registering new Task Definition with Cognito config..."
+
+# Get the current task definition (created by CloudFormation)
+$taskDefArn = (aws ecs describe-services `
+    --region $AWS_REGION `
+    --cluster $ecsCluster `
+    --services $ecsService `
+    --query "services[0].taskDefinition" --output text)
+
+$taskDefJson = aws ecs describe-task-definition `
+    --region $AWS_REGION `
+    --task-definition $taskDefArn `
+    --query "taskDefinition" | ConvertFrom-Json
+
+# Inject Cognito env vars into the container definition
+$container = $taskDefJson.containerDefinitions[0]
+$existingEnv = if ($container.environment) { $container.environment } else { @() }
+
+# Remove any old Cognito vars and add fresh ones
+$newEnv = $existingEnv | Where-Object { $_.name -notin @("COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID") }
+$newEnv += [PSCustomObject]@{ name = "COGNITO_USER_POOL_ID"; value = $cognitoPool }
+$newEnv += [PSCustomObject]@{ name = "COGNITO_CLIENT_ID";    value = $cognitoClient }
+$container.environment = $newEnv
+
+# Build the register-task-definition call
+$registerParams = @{
+    family               = $taskDefJson.family
+    networkMode          = $taskDefJson.networkMode
+    requiresCompatibilities = $taskDefJson.requiresCompatibilities
+    cpu                  = $taskDefJson.cpu
+    memory               = $taskDefJson.memory
+    executionRoleArn     = $taskDefJson.executionRoleArn
+    taskRoleArn          = $taskDefJson.taskRoleArn
+    containerDefinitions = $taskDefJson.containerDefinitions
+    volumes              = $taskDefJson.volumes
+}
+$registerJson = $registerParams | ConvertTo-Json -Depth 20 -Compress
+
+# Write to a temp file to avoid command-line length issues
+$tmpFile = [System.IO.Path]::GetTempFileName() + ".json"
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($tmpFile, $registerJson, $utf8NoBom)
+
+$newTaskDefArn = (aws ecs register-task-definition `
+    --region $AWS_REGION `
+    --cli-input-json "file://$tmpFile" `
+    --query "taskDefinition.taskDefinitionArn" --output text)
+
+Remove-Item $tmpFile -ErrorAction SilentlyContinue
+Write-Host "  New Task Definition: $newTaskDefArn"
+
+Write-Host "  Updating ECS Service (DesiredCount=1)..."
 aws ecs update-service `
   --region $AWS_REGION `
-  --cluster "research-cluster" `
-  --service "research-service" `
+  --cluster $ecsCluster `
+  --service $ecsService `
+  --task-definition $newTaskDefArn `
+  --desired-count 1 `
   --force-new-deployment | Out-Null
+
+Write-Host "  ECS service update initiated. Tasks will start shortly."
 
 # ─── 7. Amplify Frontend Setup ────────────────────────────────────────────────
 Write-Host "`n[7/7] Setting up Amplify Frontend..."
