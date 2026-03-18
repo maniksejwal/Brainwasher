@@ -59,6 +59,7 @@ jobs:
 
       - name: Deploy Infrastructure (CloudFormation)
         # Optional: Update infrastructure on push
+        continue-on-error: true
         run: |
           aws cloudformation deploy \
             --template-file deploy/infrastructure.yaml \
