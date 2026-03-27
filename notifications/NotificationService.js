@@ -143,6 +143,57 @@ class NotificationService {
             return [];
         }
     }
+
+    /**
+     * Get unread notification summary for a user
+     * @param {string} userId - User ID
+     * @returns {Promise<Object>} Summary of unread notifications
+     */
+    async getUnreadSummary(userId) {
+        try {
+            // Import database functions dynamically to avoid circular imports
+            const { getDb } = await import('../db/index.js');
+            const db = await getDb();
+
+            // Get unread in-app notifications
+            const unreadNotifications = await db.all(
+                'SELECT type, COUNT(*) as count FROM in_app_notifications WHERE user_id = ? AND is_read = 0 GROUP BY type',
+                [userId]
+            );
+
+            // Get unread direct messages
+            const unreadDMs = await db.get(
+                'SELECT COUNT(*) as count FROM direct_messages WHERE receiver_id = ? AND read_at IS NULL',
+                [userId]
+            );
+
+            // Get unread escalations
+            const unreadEscalations = await db.get(
+                'SELECT COUNT(*) as count FROM escalations WHERE circle_id IN (SELECT circle_id FROM care_circle_members WHERE user_id = ?) AND is_read = 0',
+                [userId]
+            );
+
+            const summary = {
+                total: 0,
+                notifications: {},
+                direct_messages: unreadDMs?.count || 0,
+                escalations: unreadEscalations?.count || 0
+            };
+
+            // Process notification counts by type
+            for (const notif of unreadNotifications) {
+                summary.notifications[notif.type] = notif.count;
+                summary.total += notif.count;
+            }
+
+            summary.total += summary.direct_messages + summary.escalations;
+
+            return summary;
+        } catch (error) {
+            console.error('[NotificationService] Error getting unread summary:', error);
+            return { total: 0, notifications: {}, direct_messages: 0, escalations: 0 };
+        }
+    }
 }
 
 // Export singleton

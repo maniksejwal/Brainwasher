@@ -17,7 +17,7 @@ The architecture consists of three primary layers: the Clients, the Web Server, 
   - **AI Agents** (`agents/`): Manages all interactions with the external Gemini Large Language Model (LLM), including message analysis, reply generation, and intent classification.
   - **State Manager** (`state_manager.js`): Tracks the conversational state for each user (e.g., if the system is awaiting a response to a consent question).
 
-- **Database** (`db/`): A SQLite database that provides persistence for all users, messages, facts, and application states.
+- **Database** (`db/`): A SQLite database that provides persistence for all users, messages, facts, and application states. **See [DATABASE_INTEGRITY.md](DATABASE_INTEGRITY.md) for critical data protection rules.**
 
 ## 2. Core Component Deep Dive
 

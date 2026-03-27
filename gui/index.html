@@ -121,7 +121,7 @@
                         <label style="display: block; margin-bottom: 4px; font-weight: 500;">Simulation Type:</label>
                         <select id="simulation-type"
                             style="width: 100%; padding: 8px; border: 1px solid var(--gray-300); border-radius: 4px; margin-bottom: 8px;">
-                            <option value="regular">Regular Simulation</option>
+                            <option value="regular" selected>Regular Simulation</option>
                             <option value="world">World Simulation (Multi-Circle)</option>
                         </select>
                     </div>
@@ -174,7 +174,11 @@
                         </label>
                     </div>
 
-                    <button id="run-simulation" class="primary" style="width: 100%;">🔬 Run Simulation</button>
+                    <div style="display: flex; gap: 8px; width: 100%;">
+                        <button id="run-simulation" class="primary" style="flex: 1;">🔬 Run Simulation</button>
+                        <button id="stop-simulation" class="secondary" style="flex: 0 0 auto; display: none;">⏹️ Stop</button>
+                        <button id="restart-simulation" class="secondary" style="flex: 0 0 auto; display: none;">🔄 Restart</button>
+                    </div>
                     <div id="network-visualization-container"
                         style="display: none; margin-top: 16px; padding: 20px; background: white; border-radius: 12px; border: 1px solid var(--gray-300);">
                         <div

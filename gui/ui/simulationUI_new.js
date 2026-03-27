@@ -38,6 +38,7 @@ import {
 } from './simulationState.js';
 
 let networkViz = null;
+let currentExecutor = null;
 
 // Track conversation messages for feedback
 const conversationMessages = [];
@@ -78,6 +79,8 @@ function buildScenarioLookup(data) {
 
 export function initSimulationUI(api, state) {
     const runButton = document.getElementById('run-simulation');
+    const stopButton = document.getElementById('stop-simulation');
+    const restartButton = document.getElementById('restart-simulation');
     const scenarioSelect = document.getElementById('scenario-select');
     const turnsSelect = document.getElementById('turns-select');
     const resultsDiv = document.getElementById('simulation-results');
@@ -97,6 +100,7 @@ export function initSimulationUI(api, state) {
     }
     
     const executor = new CommandExecutor('');
+    currentExecutor = executor;
     
     // Initialize network visualization
     if (document.getElementById('network-canvas')) {
@@ -244,9 +248,11 @@ export function initSimulationUI(api, state) {
         startDiv.innerHTML = `🔬 Starting ${simType === 'world' ? 'world' : ''} simulation...`;
         resultsDiv.appendChild(startDiv);
         
+        // Update button states
         runButton.disabled = true;
-        const originalButtonLabel = runButton.textContent;
-        runButton.textContent = '⏳ Running...';
+        runButton.style.display = 'none';
+        stopButton.style.display = 'inline-block';
+        restartButton.style.display = 'none';
         
         try {
             if (simType === 'world') {
@@ -310,8 +316,39 @@ export function initSimulationUI(api, state) {
         } catch (error) {
             resultsDiv.innerHTML += `<div style="color: red; padding: 16px; margin-top: 8px;">❌ Error: ${error.message}</div>`;
         } finally {
+            // Reset button states
             runButton.disabled = false;
-            runButton.textContent = originalButtonLabel;
+            runButton.style.display = 'inline-block';
+            stopButton.style.display = 'none';
+            restartButton.style.display = 'inline-block';
+            currentExecutor = null;
+        }
+    });
+
+    // Stop simulation
+    stopButton.addEventListener('click', () => {
+        if (currentExecutor) {
+            currentExecutor.abort();
+            resultsDiv.innerHTML += `<div style="color: orange; padding: 16px; margin-top: 8px;">⏹️ Simulation stopped by user</div>`;
+        }
+    });
+
+    // Restart simulation  
+    restartButton.addEventListener('click', () => {
+        // Clear results and reset state
+        resultsDiv.innerHTML = '';
+        conversationMessages.length = 0;
+        parsedMessages = [];
+        resetState();
+        
+        // Reset button states
+        runButton.style.display = 'inline-block';
+        stopButton.style.display = 'none';
+        restartButton.style.display = 'none';
+        
+        // Clear network if exists
+        if (networkViz) {
+            networkViz.clear();
         }
     });
 }
@@ -877,6 +914,10 @@ function handleRescheduleLine(line) {
 function handleRoleMessage(line) {
     const personaMatch = line.match(/^(PATIENT|CAREGIVER|DOCTOR|USER)\s*\(([^)]+)\):\s*(.+)$/i);
     if (!personaMatch) return false;
+    
+    // Don't process messages if participants aren't ready
+    if (!areParticipantsReady()) return false;
+    
     const roleRaw = personaMatch[1].toLowerCase();
     const personaName = personaMatch[2].trim();
     const message = personaMatch[3].trim();
@@ -894,6 +935,10 @@ function handleRoleMessage(line) {
 function handleAgentMessage(line) {
     const agentMatch = line.match(/^(PATIENT_AGENT|CAREGIVER_AGENT|DOCTOR_AGENT|COMPANION_AGENT|AGENT):\s*(.+)$/i);
     if (!agentMatch) return false;
+    
+    // Don't process messages if participants aren't ready
+    if (!areParticipantsReady()) return false;
+    
     const agentRoleRaw = agentMatch[1].toLowerCase();
     const message = agentMatch[2].trim();
     let baseRole = agentRoleRaw.replace('_agent', '');
@@ -918,6 +963,10 @@ function handleAgentMessage(line) {
 function handleSimpleRoleMessage(line) {
     const simpleMatch = line.match(/^(PATIENT|CAREGIVER|DOCTOR|USER|COMPANION):\s*(.+)$/i);
     if (!simpleMatch) return false;
+    
+    // Don't process messages if participants aren't ready
+    if (!areParticipantsReady()) return false;
+    
     const roleRaw = simpleMatch[1].toLowerCase();
     const message = simpleMatch[2].trim();
     const userId = getLastSpeaker(roleRaw) || (lastRoleSpoken ? getLastSpeaker(lastRoleSpoken) : null);

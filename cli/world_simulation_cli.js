@@ -133,7 +133,7 @@ class WorldSimulationCLI {
         }
     }
 
-    async runScenario(scenarioKey) {
+    async runScenario(scenarioKey, options = {}) {
         const scenario = SCENARIOS[scenarioKey];
         if (!scenario || !isWorldScenario(scenario)) {
             console.log(chalk.red(`❌ World scenario '${scenarioKey}' not found`));
@@ -147,7 +147,7 @@ class WorldSimulationCLI {
 
         this.simulator = new WorldSimulator({
             logResults: true,
-            autoFeedback: true
+            autoFeedback: !options.skipFeedback
         });
 
         try {

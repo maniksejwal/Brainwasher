@@ -278,6 +278,11 @@ export async function performAiAnalysis(userId, role, message, circleId) {
     const members = await getCircleMembers(circleId);
     const memberUsernames = members.map(m => m.username);
 
+    // Get user profile and notification summary for context
+    const { getUserProfile } = await import('../../db/queries_users.js');
+    const userProfile = await getUserProfile(userId);
+    const unreadSummary = await notificationService.getUnreadSummary(userId);
+
     let analysis = await processUserMessage(userId, role, message, memberUsernames, circleId, null, { userProfile, unreadSummary });
     analysis.system_used = 'unified'; // Track which system was used
     console.log(`[AIAnalysisHandler] Initial analysis complete. Mentioned entities: ${analysis.mentioned_usernames?.join(', ')}`);

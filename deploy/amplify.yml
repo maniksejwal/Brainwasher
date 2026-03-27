@@ -7,7 +7,7 @@ frontend:
           if [ -z "$API_URL" ]; then
             echo "ERROR: API_URL environment variable is not set in Amplify Console!"
             echo "Go to: Amplify Console > App Settings > Environment Variables"
-            echo "Add: API_URL = http://<your-alb-dns-name>"
+            echo "Add: API_URL = https://api.research.easemymed.com"
             exit 1
           fi
     build:
@@ -16,13 +16,16 @@ frontend:
         - echo "window.ENV_API_URL = '$API_URL';" > gui/env.js
         - echo "window.ENV_COGNITO_POOL_ID = '${COGNITO_POOL_ID:-}';" >> gui/env.js
         - echo "window.ENV_COGNITO_CLIENT_ID = '${COGNITO_CLIENT_ID:-}';" >> gui/env.js
-        - echo "Copying Shared Code..."
-        - cp -r shared gui/shared
-        - echo "Fixing Import Paths..."
-        - sed -i 's|\.\./shared/|\./shared/|g' gui/app.js
+        - echo "Publishing GUI at site root..."
+        - cp -r gui/* .
   artifacts:
-    baseDirectory: gui
+    baseDirectory: .
     files:
-      - '**/*'
+      - 'shared/**'
+      - 'index.html'
+      - 'env.js'
+      - 'styles.css'
+      - 'app.js'
+      - 'ui/**'
   cache:
     paths: []

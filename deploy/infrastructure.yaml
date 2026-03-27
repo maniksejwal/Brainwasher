@@ -369,6 +369,13 @@ Resources:
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:latest
           PortMappings:
             - ContainerPort: !Ref ContainerPort
+          # EFS mounts over /app/data, so ensure expected subfolders exist before app startup.
+          Command:
+            - sh
+            - -c
+            - >-
+              mkdir -p /app/data/dbs /app/data/storage/local
+              && node server.js
           Environment:
             - Name: NODE_ENV
               Value: production
@@ -423,6 +430,7 @@ Resources:
       ServiceName: !Sub ${EnvironmentName}-service
       LaunchType: FARGATE
       TaskDefinition: !Ref ECSTaskDefinition
+      HealthCheckGracePeriodSeconds: 180
       NetworkConfiguration:
         AwsvpcConfiguration:
           Subnets:

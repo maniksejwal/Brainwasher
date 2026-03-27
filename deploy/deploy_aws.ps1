@@ -4,6 +4,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Known issues (do not confuse with "not deployed"):
+# - CloudFormation uses --disable-rollback; replacing ECSTaskDefinition can fail ("Replacement type updates
+#   not supported on stack with disable-rollback") → stack may sit in UPDATE_FAILED while ECS still runs.
+# - Script step [2] then exits at [3] if StackStatus is not *COMPLETE*, so full push may not run until stack is fixed.
+# - Cognito + ECS env injection + Amplify vars are applied in later steps; use deploy/enable_alb_https.ps1 for HTTPS
+#   on the live ALB without touching the fragile stack (needs a cert whose domain points at this ALB).
+#
 # Configuration
 $AWS_REGION   = "ap-south-1"
 $STACK_NAME   = "Brainwasher3-Stack"

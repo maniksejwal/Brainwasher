@@ -112,28 +112,44 @@ export async function initializeDatabase() {
         );
         
         CREATE TABLE IF NOT EXISTS feedback (
-            feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
             conversation_id TEXT,
             message_id INTEGER,
-            user_id TEXT NOT NULL,
+            user_id TEXT,
             circle_id TEXT,
-            score INTEGER NOT NULL,
+            score INTEGER,
             comment TEXT,
+            timestamp INTEGER,
+            source TEXT DEFAULT 'user',
+            feedback_id INTEGER,
             category TEXT,
             prompt_version TEXT,
             prompt_type TEXT,
             system_used TEXT,
-            timestamp INTEGER NOT NULL,
+            scenario_name TEXT,
+            persona_name TEXT,
+            goal_adherence_score REAL,
+            goal_history_score REAL,
+            goal_conversation_score REAL,
+            critical_failure INTEGER,
+            model_used TEXT,
+            model_version TEXT,
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         );
         
         CREATE TABLE IF NOT EXISTS detailed_feedback (
             report_id INTEGER PRIMARY KEY AUTOINCREMENT,
             conversation_id TEXT,
+            message_id INTEGER,
             user_id TEXT NOT NULL,
             circle_id TEXT,
             category TEXT NOT NULL,
-            details TEXT NOT NULL,
+            details TEXT,
+            description TEXT,
+            context TEXT,
+            source TEXT DEFAULT 'simulation',
+            scenario_name TEXT,
+            persona_name TEXT,
             prompt_version TEXT,
             timestamp INTEGER NOT NULL,
             FOREIGN KEY (user_id) REFERENCES users(user_id)
@@ -293,6 +309,57 @@ async function migrateDatabase(db) {
             );
             CREATE INDEX IF NOT EXISTS idx_notif_user ON in_app_notifications(user_id);
         `);
+
+        // Migration for feedback table - add all missing columns
+        const feedbackInfo = await db.all('PRAGMA table_info(feedback)');
+        if (feedbackInfo.length > 0) {
+            const feedbackColumns = feedbackInfo.map(col => col.name);
+            
+            // List of all required feedback columns
+            const requiredColumns = [
+                { name: 'source', type: 'TEXT', default: '"user"' },
+                { name: 'prompt_version', type: 'TEXT', default: null },
+                { name: 'category', type: 'TEXT', default: null },
+                { name: 'goal_adherence_score', type: 'REAL', default: null },
+                { name: 'goal_history_score', type: 'REAL', default: null },
+                { name: 'goal_conversation_score', type: 'REAL', default: null },
+                { name: 'critical_failure', type: 'INTEGER', default: null }
+            ];
+            
+            // Add missing columns
+            for (const column of requiredColumns) {
+                if (!feedbackColumns.includes(column.name)) {
+                    console.log(`[Migration] Adding ${column.name} column to feedback table...`);
+                    const defaultClause = column.default ? ` DEFAULT ${column.default}` : '';
+                    await db.run(`ALTER TABLE feedback ADD COLUMN ${column.name} ${column.type}${defaultClause}`);
+                }
+            }
+        }
+
+        // Migration for detailed_feedback table - add all missing columns
+        const detailedFeedbackInfo = await db.all('PRAGMA table_info(detailed_feedback)');
+        if (detailedFeedbackInfo.length > 0) {
+            const detailedFeedbackColumns = detailedFeedbackInfo.map(col => col.name);
+            
+            // List of all required detailed_feedback columns
+            const requiredDetailedColumns = [
+                { name: 'message_id', type: 'INTEGER', default: null },
+                { name: 'description', type: 'TEXT', default: null },
+                { name: 'context', type: 'TEXT', default: null },
+                { name: 'source', type: 'TEXT', default: '"simulation"' },
+                { name: 'scenario_name', type: 'TEXT', default: null },
+                { name: 'persona_name', type: 'TEXT', default: null }
+            ];
+            
+            // Add missing columns
+            for (const column of requiredDetailedColumns) {
+                if (!detailedFeedbackColumns.includes(column.name)) {
+                    console.log(`[Migration] Adding ${column.name} column to detailed_feedback table...`);
+                    const defaultClause = column.default ? ` DEFAULT ${column.default}` : '';
+                    await db.run(`ALTER TABLE detailed_feedback ADD COLUMN ${column.name} ${column.type}${defaultClause}`);
+                }
+            }
+        }
 
     } catch (error) {
         console.warn('[Schema Migration] Error migrating database:', error.message);
