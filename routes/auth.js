@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { getDb } from '../db/index.js';
 import { handleLogin } from '../handlers/loginHandler.js';
 import { authenticate, generateToken, DEFAULT_PERMISSIONS } from '../middleware/auth.js';
@@ -6,6 +7,21 @@ import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import config from '../config.js';
 
 const router = express.Router();
+
+/** When REQUIRE_COGNITO_LOGIN=true, username-only login is rejected in production if Cognito is configured (except localhost). */
+function allowsLegacyUsernameLogin(req) {
+    if (process.env.REQUIRE_COGNITO_LOGIN !== 'true') {
+        return true;
+    }
+    if (!verifier) {
+        return true;
+    }
+    const host = (req.get('host') || '').split(':')[0].toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+        return true;
+    }
+    return false;
+}
 
 let verifier;
 
@@ -56,6 +72,12 @@ router.post('/login', async (req, res) => {
 
         // 2. Legacy/Fallback Validation
         if (!isCognitoAuth) {
+            if (!allowsLegacyUsernameLogin(req)) {
+                return res.status(401).json({
+                    error: 'Cognito login required',
+                    hint: 'Set REQUIRE_COGNITO_LOGIN=false for migration, or send a valid Cognito id token in body.token'
+                });
+            }
             if (!username) {
                 return res.status(400).json({ error: 'Username required' });
             }
@@ -94,7 +116,7 @@ router.post('/login', async (req, res) => {
         // Even with Cognito, we create an internal session for our specialized middleware
         const sessionToken = generateToken(userId, finalUsername);
         const sessionExpiresAt = Date.now() + (7 * 24 * 60 * 60 * 1000); // 7 days
-        const sessionId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2);
+        const sessionId = randomUUID();
 
         await db.run('INSERT INTO sessions (session_id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)',
             [sessionId, userId, sessionToken, sessionExpiresAt, Date.now()]);
