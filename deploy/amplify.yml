@@ -26,6 +26,10 @@ frontend:
       - 'env.js'
       - 'styles.css'
       - 'app.js'
+      - 'config.js'
+      - 'config/**'
       - 'ui/**'
+      - 'utils/**'
+      - 'components/**'
   cache:
     paths: []

@@ -4,6 +4,7 @@
  */
 
 import CommandExecutor from '../utils/commandExecutor.js';
+import config from '../config.js';
 
 export function initAnalysisUI() {
     const controls = document.getElementById('analysis-controls');
@@ -53,7 +54,7 @@ async function runAnalysis(command) {
         </div>
     `;
 
-    const executor = new CommandExecutor('');
+    const executor = new CommandExecutor(config.ORCHESTRATOR_URL);
     let output = '';
 
     try {

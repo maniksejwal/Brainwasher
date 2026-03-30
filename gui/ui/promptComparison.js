@@ -4,6 +4,7 @@
  */
 
 import CommandExecutor from '../utils/commandExecutor.js';
+import config from '../config.js';
 
 const LEARNING_SIGNALS = [
     {
@@ -36,7 +37,7 @@ export function initPromptComparison() {
     const container = document.getElementById('prompt-comparison');
     if (!container) return;
 
-    const executor = new CommandExecutor('');
+    const executor = new CommandExecutor(config.ORCHESTRATOR_URL);
 
     // Cache for loaded prompt contents
     const contentCache = new Map();

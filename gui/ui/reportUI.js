@@ -4,6 +4,7 @@
  */
 
 import CommandExecutor from '../utils/commandExecutor.js';
+import config from '../config.js';
 
 export function initReportUI() {
     const generateBtn = document.getElementById('generate-report-btn');
@@ -35,7 +36,7 @@ export async function generateAndShowReport() {
         </div>
     `;
 
-    const executor = new CommandExecutor('');
+    const executor = new CommandExecutor(config.ORCHESTRATOR_URL);
     let output = '';
 
     try {

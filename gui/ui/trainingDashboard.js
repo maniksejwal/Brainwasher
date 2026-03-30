@@ -4,12 +4,13 @@
  */
 
 import CommandExecutor from '../utils/commandExecutor.js';
+import config from '../config.js';
 
 export function initTrainingDashboard() {
     const container = document.getElementById('training-dashboard');
     if (!container) return;
 
-    const executor = new CommandExecutor('');
+    const executor = new CommandExecutor(config.ORCHESTRATOR_URL);
 
     // Create UI
     container.innerHTML = `
@@ -137,7 +138,7 @@ export function initTrainingDashboard() {
 
     async function loadMetrics() {
         try {
-            const response = await fetch('/api/simulation/analysis/stats');
+            const response = await fetch(config.apiUrl('/api/simulation/analysis/stats'));
             const data = await response.json();
 
             if (data.success) {

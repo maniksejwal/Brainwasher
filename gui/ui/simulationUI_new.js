@@ -36,6 +36,7 @@ import {
     hasRosterSeed,
     consumeRosterBuffer
 } from './simulationState.js';
+import config from '../config.js';
 
 let networkViz = null;
 let currentExecutor = null;
@@ -99,7 +100,7 @@ export function initSimulationUI(api, state) {
         return;
     }
     
-    const executor = new CommandExecutor('');
+    const executor = new CommandExecutor(api.baseUrl ?? config.ORCHESTRATOR_URL);
     currentExecutor = executor;
     
     // Initialize network visualization
