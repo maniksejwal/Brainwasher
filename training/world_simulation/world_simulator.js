@@ -19,11 +19,13 @@ import { ConversationRunner } from '../simulation/conversation_runner.js';
 import { SimulationFeedback } from '../simulation/simulation_feedback.js';
 import { SyntheticUser } from '../simulation/synthetic_user.js';
 import { getPersona } from '../simulation/personas.js';
+import config from '../../config.js';
+import { migrateDatabase } from '../../db/schema.js';
 
 export class WorldSimulator {
     constructor(options = {}) {
-        // Use the same simulation database as regular simulations
-        this.dbPath = options.dbPath || './care_circle_simulation.db';
+        // Same path as SimulationDriver (config simulation DB), not legacy ./care_circle_simulation.db at repo root
+        this.dbPath = options.dbPath || config.getDbPath('simulation');
         this.db = null;
         this.worldUsers = []; // Users who exist across multiple circles
         this.circles = []; // Multiple care circles in the world
@@ -235,6 +237,9 @@ export class WorldSimulator {
                 FOREIGN KEY (world_user_id) REFERENCES world_users(world_user_id)
             );
         `);
+
+        // Existing DBs may predate columns like feedback.source; CREATE TABLE IF NOT EXISTS does not ALTER
+        await migrateDatabase(this.db);
     }
 
     /**

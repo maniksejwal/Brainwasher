@@ -188,9 +188,10 @@ export async function initializeDatabase() {
 }
 
 /**
- * Migrate existing database tables to add missing columns
+ * Migrate existing database tables to add missing columns.
+ * Exported for simulation code that opens its own SQLite file (e.g. WorldSimulator).
  */
-async function migrateDatabase(db) {
+export async function migrateDatabase(db) {
     try {
         // Check and add trigger_type to future_plans if missing
         const futurePlansInfo = await db.all('PRAGMA table_info(future_plans)');

@@ -12,6 +12,7 @@ import { simulationClientManager } from './simulation_client.js';
 import { escalationNotificationSystem } from './escalation_notification_system.js';
 import { syntheticUserFeedback } from './synthetic_user_feedback.js';
 import config from '../../config.js';
+import { migrateDatabase } from '../../db/schema.js';
 import { ConversationRunner } from './conversation_runner.js';
 
 // Safety: Use separate database for simulations
@@ -240,6 +241,8 @@ export class SimulationDriver {
                 metadata TEXT
             );
         `);
+
+        await migrateDatabase(this.db);
 
         // Suppress schema logs unless in debug mode
         if (process.env.SIMULATION_DEBUG === 'true') {

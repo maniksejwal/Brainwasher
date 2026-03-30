@@ -79,7 +79,7 @@ router.post('/simulate', async (req, res) => {
             instructions: scenarioDef.instructions
         };
 
-        const sim = new SimulationDriver('./care_circle_simulation.db', true, true);
+        const sim = new SimulationDriver({ logResults: true, autoFeedback: true });
 
         sim.progressCallback = (progress) => {
             broadcastToAll({

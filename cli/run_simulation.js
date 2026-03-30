@@ -19,6 +19,7 @@ import { SCENARIOS, getRandomScenario, isWorldScenario as isWorldScenarioHelper,
 import { getScenarioCategories, displayScenariosByCategory, displayPersonasByCategory } from '../training/simulation/scenario_categories.js';
 import { displayWorldScenariosByCategory } from '../training/world_simulation/world_scenarios.js';
 import { getDb } from '../db/connection.js';
+import config from '../config.js';
 import fs from 'fs';
 import { readlineManager } from './readline_manager.js';
 import chalk from 'chalk';
@@ -159,7 +160,7 @@ async function runSimulation() {
     }
     
     // Regular simulation
-    console.log(chalk.gray(`📊 Using simulation database: ./care_circle_simulation.db`));
+    console.log(chalk.gray(`📊 Using simulation database: ${config.getDbPath('simulation')}`));
     const sim = new SimulationDriver({ autoFeedback: true, logResults: true });
     
     console.log(chalk.cyan.bold(`📋 Scenario: ${selectedScenario.name}`));
@@ -195,7 +196,7 @@ async function runSimulation() {
         specialty: user.specialty
     }));
     
-    const config = {
+    const scenarioConfig = {
         name: selectedScenario.name,
         users: userConfigs,
         turns: finalTurns,
@@ -208,7 +209,7 @@ async function runSimulation() {
     
     try {
         console.log('=' .repeat(80));
-        await sim.runScenario(config, selectedScenario.key);
+        await sim.runScenario(scenarioConfig, selectedScenario.key);
         console.log('=' .repeat(80));
         console.log('\n✅ Simulation completed successfully!');
         
