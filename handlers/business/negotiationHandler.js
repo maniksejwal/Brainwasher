@@ -129,5 +129,3 @@ async function parseNegotiationIntent(message) {
     return { type: 'QUESTION' };
 }
 
-export { handleBusinessNegotiation };
-

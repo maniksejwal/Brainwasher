@@ -13,6 +13,24 @@ The system is currently pre-optimization ("Cold Start"). The goal is to reach th
 
 ---
 
+## 🚀 Priority: Organizational Coordination System
+
+### Unified Companion Architecture 🤖
+- [x] **Unified Companion Router**: Route messages with intelligent context sharing between medical/business domains
+- [ ] **Comprehensive Role System**: Support organizational hierarchies, multiple roles, dynamic assignment
+- [ ] **Document Collaboration**: Markdown document drafting with git-like diffs and approval workflows  
+- [ ] **Information Discovery**: Internet-based competitive intelligence and market research
+- [ ] **Meeting Analysis**: Call/meeting transcription with action item extraction
+- [ ] **Cross-Domain Context Sharing**: Smart information sharing based on user preferences and sensitivity
+
+### Companion Behavior Profiles 👥
+- [ ] **Medical Profile**: Empathetic, patient-focused behavior for healthcare contexts
+- [ ] **Business Profile**: Strategic, empathetic, negotiation-focused behavior for organizational contexts
+- [ ] **Role Switching**: Same person (e.g., clinician) with different behaviors in different contexts
+- [ ] **Context Filtering**: Share relevant insights while protecting sensitive information
+
+---
+
 ## Up Next
 
 ### Notifications & Communication (New) 📢

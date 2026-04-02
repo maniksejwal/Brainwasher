@@ -123,5 +123,3 @@ function stageEmoji(stage) {
     return emojis[stage] || '📌';
 }
 
-export { handleCRMCommand };
-

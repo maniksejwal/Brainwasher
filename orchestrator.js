@@ -3,10 +3,11 @@ import { EventEmitter } from 'events';
 // FIX: Update import path to the new db package index
 import { clearDatabase, findUserById, findCircleByPatientId, getCircleMembers, addEscalation } from './db/index.js';
 
-// Import the new handlers
+// Import the context-aware companion router for intelligent context sharing
 import { handleLogin } from './handlers/loginHandler.js';
 import { handleCommand } from './handlers/commandHandler.js';
 import { handleMessage } from './handlers/messageHandler.js';
+import { routeMessage } from './handlers/contextAwareCompanionRouter.js';
 
 // The orchestrator's main job is to provide a central event bus.
 export const events = new EventEmitter();
@@ -80,6 +81,6 @@ events.on('future_plan_executed', async (planData) => {
     }
 });
 
-// Export the handlers so the server can use them.
-export { handleLogin, handleCommand, handleMessage };
+// Export the handlers and unified router so the server can use them.
+export { handleLogin, handleCommand, handleMessage, routeMessage };
 
