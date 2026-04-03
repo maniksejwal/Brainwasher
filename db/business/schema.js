@@ -352,6 +352,112 @@ export async function initializeBusinessSchema(db) {
             created_at INTEGER,
             updated_at INTEGER
         );
+
+        -- Business Forms System
+        CREATE TABLE IF NOT EXISTS forms (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT,
+            form_structure TEXT, -- JSON: form fields configuration
+            organization_id TEXT,
+            created_by TEXT,
+            created_at INTEGER,
+            updated_at INTEGER,
+            status TEXT DEFAULT 'active', -- 'active', 'draft', 'archived'
+            settings TEXT, -- JSON: form settings (anonymous, multiple responses, etc.)
+            approval_required INTEGER DEFAULT 0,
+            approval_workflow TEXT, -- JSON: approval workflow configuration
+            FOREIGN KEY(organization_id) REFERENCES organizations(id),
+            FOREIGN KEY(created_by) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS form_responses (
+            id TEXT PRIMARY KEY,
+            form_id TEXT,
+            respondent_id TEXT,
+            response_data TEXT, -- JSON: field_id -> value mapping
+            submitted_at INTEGER,
+            status TEXT DEFAULT 'submitted', -- 'draft', 'submitted', 'approved', 'rejected'
+            reviewed_by TEXT,
+            reviewed_at INTEGER,
+            reviewer_comment TEXT,
+            metadata TEXT, -- JSON: IP, user agent, etc.
+            FOREIGN KEY(form_id) REFERENCES forms(id),
+            FOREIGN KEY(respondent_id) REFERENCES users(user_id),
+            FOREIGN KEY(reviewed_by) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS form_fields (
+            id TEXT PRIMARY KEY,
+            form_id TEXT,
+            field_type TEXT, -- 'text', 'textarea', 'select', 'multiselect', 'checkbox', 'radio', 'file', 'audio', 'video', 'signature', 'date', 'number'
+            field_label TEXT,
+            field_key TEXT, -- unique within form
+            field_order INTEGER,
+            required INTEGER DEFAULT 0,
+            validation_rules TEXT, -- JSON: validation configuration
+            field_options TEXT, -- JSON: for select/radio/checkbox options
+            conditional_logic TEXT, -- JSON: show/hide based on other fields
+            default_value TEXT,
+            placeholder_text TEXT,
+            help_text TEXT,
+            media_settings TEXT, -- JSON: audio/video recording settings (duration, quality, format)
+            FOREIGN KEY(form_id) REFERENCES forms(id)
+        );
+
+        -- Enhanced file storage for multimedia
+        CREATE TABLE IF NOT EXISTS form_file_uploads (
+            id TEXT PRIMARY KEY,
+            response_id TEXT,
+            field_id TEXT,
+            original_filename TEXT,
+            stored_filename TEXT,
+            file_type TEXT, -- 'document', 'image', 'audio', 'video'
+            mime_type TEXT,
+            file_size INTEGER,
+            duration_ms INTEGER, -- for audio/video files
+            metadata TEXT, -- JSON: additional file metadata (resolution, codec, etc.)
+            transcription TEXT, -- for audio/video files
+            thumbnail_path TEXT, -- for video files
+            upload_status TEXT DEFAULT 'completed', -- 'uploading', 'processing', 'completed', 'failed'
+            processing_info TEXT, -- JSON: processing status and errors
+            uploaded_at INTEGER,
+            FOREIGN KEY(response_id) REFERENCES form_responses(id),
+            FOREIGN KEY(field_id) REFERENCES form_fields(id)
+        );
+
+        -- Digital Signatures
+        CREATE TABLE IF NOT EXISTS signatures (
+            id TEXT PRIMARY KEY,
+            document_id TEXT, -- can be form response ID or document ID
+            document_type TEXT, -- 'form', 'document'
+            signer_id TEXT,
+            signature_data TEXT, -- JSON: signature image data, metadata
+            signature_type TEXT, -- 'drawn', 'typed', 'uploaded', 'certificate'
+            signed_at INTEGER,
+            ip_address TEXT,
+            user_agent TEXT,
+            verification_hash TEXT, -- for integrity checking
+            certificate_info TEXT, -- JSON: for certificate-based signatures
+            status TEXT DEFAULT 'valid', -- 'valid', 'invalid', 'revoked'
+            FOREIGN KEY(signer_id) REFERENCES users(user_id)
+        );
+
+        -- Form Analytics & Reporting
+        CREATE TABLE IF NOT EXISTS form_analytics (
+            id TEXT PRIMARY KEY,
+            form_id TEXT,
+            metric_type TEXT, -- 'view', 'start', 'complete', 'abandon'
+            user_id TEXT,
+            session_id TEXT,
+            timestamp INTEGER,
+            field_id TEXT, -- specific field for field-level analytics
+            value_before TEXT, -- for tracking changes
+            value_after TEXT,
+            time_spent INTEGER, -- milliseconds
+            FOREIGN KEY(form_id) REFERENCES forms(id),
+            FOREIGN KEY(user_id) REFERENCES users(user_id)
+        );
     `);
 
     // Insert default role definitions

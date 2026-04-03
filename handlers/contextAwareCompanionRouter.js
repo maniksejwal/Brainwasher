@@ -14,6 +14,7 @@ import { handleProposeCommand } from './business/commands/proposeCommand.js';
 import { handleAcceptCommand } from './business/commands/acceptCommand.js';
 import { handleERPCommand } from './business/commands/erpCommands.js';
 import { DocumentAgent } from '../agents/business/documentAgent.js';
+import { FormsAgent } from '../agents/business/formsAgent.js';
 import sessionManager from '../sessions/sessionManager.js';
 import { events } from '../orchestrator.js';
 import { getDb } from '../db/connection.js';
@@ -22,7 +23,7 @@ import { getDb } from '../db/connection.js';
 const BUSINESS_COMMANDS = [
     '/negotiate', '/propose', '/counter', '/accept', '/reject',
     '/crm', '/legal', '/inventory', '/order', '/invoice', 
-    '/doc', '/meeting', '/discover', '/research', '/org'
+    '/doc', '/form', '/meeting', '/discover', '/research', '/org'
 ];
 
 // Medical command prefixes (existing)
@@ -248,6 +249,8 @@ async function routeBusinessCommand(userId, circleId, message, parts, command, s
         await handleLegalCommand(userId, parts, sendMessage);
     } else if (command === '/doc') {
         await handleDocumentCommand(userId, parts, sendMessage);
+    } else if (command === '/form') {
+        await handleFormCommand(userId, parts, sendMessage);
     } else if (command === '/meeting') {
         await handleMeetingCommand(userId, parts, sendMessage);
     } else if (command === '/discover' || command === '/research') {
@@ -405,6 +408,139 @@ For full editing capabilities, use: \`node cli/document_manager.js\``);
     } catch (error) {
         console.error('[DocumentCommand] Error:', error);
         sendMessage(userId, `❌ Document error: ${error.message}`);
+    }
+}
+
+/**
+ * Handle form commands (/form)
+ */
+async function handleFormCommand(userId, parts, sendMessage) {
+    const formsAgent = new FormsAgent(userId, null);
+    const subcommand = parts[1]?.toLowerCase();
+
+    try {
+        if (subcommand === 'create') {
+            const templateType = parts[2]?.toLowerCase();
+            
+            if (['contact', 'feedback', 'application', 'video_application', 'incident_report', 'customer_testimonial', 'training_feedback'].includes(templateType)) {
+                const formId = await formsAgent.createTemplate(templateType);
+                sendMessage(userId, `📋 Created ${templateType.replace('_', ' ')} form (ID: ${formId.substring(0, 8)})\nUse CLI for full management: \`node cli/forms_manager.js\``);
+            } else {
+                sendMessage(userId, `📋 **Form Templates Available:**
+
+**Standard Templates:**
+- \`/form create contact\` - Contact information form
+- \`/form create feedback\` - User feedback form  
+- \`/form create application\` - Job application with signature
+
+**Multimedia Templates:**
+- \`/form create video_application\` - Video application with introduction
+- \`/form create incident_report\` - Incident report with evidence
+- \`/form create customer_testimonial\` - Video/audio testimonials
+- \`/form create training_feedback\` - Training feedback with recordings
+
+For custom forms, use: \`node cli/forms_manager.js\``);
+            }
+            
+        } else if (subcommand === 'list') {
+            const forms = await formsAgent.getUserForms();
+            
+            if (forms.length === 0) {
+                sendMessage(userId, '📋 No forms found. Create one with `/form create [template]`');
+                return;
+            }
+            
+            let response = '📋 **Your Forms:**\n\n';
+            forms.slice(0, 5).forEach(form => {
+                response += `**${form.title}** (${form.id.substring(0, 8)})\n`;
+                response += `Status: ${form.status} | Responses: ${form.response_count}\n`;
+                response += `Created: ${new Date(form.created_at).toLocaleDateString()}\n\n`;
+            });
+            
+            if (forms.length > 5) {
+                response += `...and ${forms.length - 5} more forms.\n\n`;
+            }
+            
+            response += `Use CLI for full management: \`node cli/forms_manager.js\``;
+            sendMessage(userId, response);
+            
+        } else if (subcommand === 'view') {
+            const formId = parts[2];
+            if (!formId) {
+                sendMessage(userId, '❌ Please provide form ID: `/form view <id>`');
+                return;
+            }
+            
+            const form = await formsAgent.getForm(formId);
+            const analytics = await formsAgent.getFormAnalytics(formId);
+            
+            let response = `📋 **${form.title}**\n\n`;
+            response += `Description: ${form.description}\n`;
+            response += `Status: ${form.status}\n`;
+            response += `Fields: ${form.fields.length}\n`;
+            response += `Responses: ${analytics.totalCompletions}\n`;
+            response += `Completion Rate: ${analytics.completionRate}\n\n`;
+            
+            response += `**Fields:**\n`;
+            form.fields.slice(0, 3).forEach((field, index) => {
+                response += `${index + 1}. ${field.field_label} (${field.field_type})${field.required ? ' *' : ''}\n`;
+            });
+            
+            if (form.fields.length > 3) {
+                response += `...and ${form.fields.length - 3} more fields.\n\n`;
+            } else {
+                response += '\n';
+            }
+            
+            response += `Use CLI for detailed view: \`node cli/forms_manager.js\``;
+            sendMessage(userId, response);
+            
+        } else if (subcommand === 'responses') {
+            const formId = parts[2];
+            if (!formId) {
+                sendMessage(userId, '❌ Please provide form ID: `/form responses <id>`');
+                return;
+            }
+            
+            const responses = await formsAgent.getFormResponses(formId);
+            
+            if (responses.length === 0) {
+                sendMessage(userId, '📊 No responses yet for this form.');
+                return;
+            }
+            
+            let response = `📊 **Form Responses (${responses.length})**\n\n`;
+            responses.slice(0, 3).forEach((resp, index) => {
+                response += `**Response ${index + 1}** (${resp.id.substring(0, 8)})\n`;
+                response += `Submitted: ${new Date(resp.submitted_at).toLocaleDateString()}\n`;
+                response += `Status: ${resp.status}\n`;
+                
+                const responseCount = Object.keys(resp.response_data).length;
+                response += `Fields completed: ${responseCount}\n\n`;
+            });
+            
+            if (responses.length > 3) {
+                response += `...and ${responses.length - 3} more responses.\n\n`;
+            }
+            
+            response += `Use CLI for detailed analysis: \`node cli/forms_manager.js\``;
+            sendMessage(userId, response);
+            
+        } else {
+            sendMessage(userId, `📋 **Form Commands:**
+- \`/form create [template]\` - Create form from template
+- \`/form list\` - List your forms
+- \`/form view <id>\` - View form details
+- \`/form responses <id>\` - View form responses
+
+**Templates:** contact, feedback, application, video_application, incident_report, customer_testimonial, training_feedback
+
+For full form management: \`node cli/forms_manager.js\``);
+        }
+        
+    } catch (error) {
+        console.error('[FormCommand] Error:', error);
+        sendMessage(userId, `❌ Form error: ${error.message}`);
     }
 }
 
