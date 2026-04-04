@@ -5,3 +5,19 @@ care_circle.db*
 .idea/*
 
 gui/env.js
+
+# Temporary files and directories
+*.log
+*.db
+*.db-shm
+*.db-wal
+temp/
+logs/
+debug/
+events*.json
+deploy_output.txt
+*_error.log
+cf_events.json
+iam_policy.json
+id.json
+stack.json

@@ -1,0 +1,149 @@
+/**
+ * @fileoverview Spreadsheet Database Schema
+ * Database tables for spreadsheet functionality
+ */
+
+// SPREADSHEET SCHEMA PLAN:
+// =========================
+
+// Core Tables:
+// - spreadsheets: Metadata, schema, permissions
+// - spreadsheet_cells: Individual cell data with formulas
+// - spreadsheet_versions: Version history for rollback
+// - spreadsheet_collaborators: User permissions and roles
+
+// Integration Tables:  
+// - spreadsheet_data_sources: External data connections (CRM, ERP, Forms)
+// - spreadsheet_charts: Chart configurations and metadata
+// - spreadsheet_comments: Cell-level comments and discussions
+
+export function addSpreadsheetSchema(db) {
+    // TODO: Implement spreadsheet database schema
+    console.log('[SpreadsheetSchema] TODO: Add spreadsheet tables to business schema');
+    
+    return `
+        -- PHASE 1: Core Spreadsheet Tables
+        CREATE TABLE IF NOT EXISTS spreadsheets (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            schema_definition TEXT, -- JSON: column definitions, types, constraints
+            organization_id TEXT,
+            created_by TEXT,
+            created_at INTEGER,
+            updated_at INTEGER,
+            settings TEXT, -- JSON: formatting, display options
+            status TEXT DEFAULT 'active', -- 'active', 'archived', 'shared'
+            FOREIGN KEY(organization_id) REFERENCES organizations(id),
+            FOREIGN KEY(created_by) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS spreadsheet_cells (
+            id TEXT PRIMARY KEY,
+            spreadsheet_id TEXT,
+            row_index INTEGER,
+            col_index INTEGER,
+            cell_value TEXT,
+            cell_formula TEXT,
+            data_type TEXT, -- 'text', 'number', 'date', 'boolean', 'formula'
+            formatting TEXT, -- JSON: font, color, alignment, etc.
+            validation_rules TEXT, -- JSON: data validation constraints
+            last_modified_by TEXT,
+            last_modified_at INTEGER,
+            UNIQUE(spreadsheet_id, row_index, col_index),
+            FOREIGN KEY(spreadsheet_id) REFERENCES spreadsheets(id),
+            FOREIGN KEY(last_modified_by) REFERENCES users(user_id)
+        );
+
+        -- PHASE 2: Collaboration Tables
+        CREATE TABLE IF NOT EXISTS spreadsheet_collaborators (
+            id TEXT PRIMARY KEY,
+            spreadsheet_id TEXT,
+            user_id TEXT,
+            role TEXT, -- 'owner', 'editor', 'viewer', 'commenter'
+            permissions TEXT, -- JSON: specific permissions
+            invited_by TEXT,
+            invited_at INTEGER,
+            FOREIGN KEY(spreadsheet_id) REFERENCES spreadsheets(id),
+            FOREIGN KEY(user_id) REFERENCES users(user_id),
+            FOREIGN KEY(invited_by) REFERENCES users(user_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS spreadsheet_comments (
+            id TEXT PRIMARY KEY,
+            spreadsheet_id TEXT,
+            row_index INTEGER,
+            col_index INTEGER,
+            user_id TEXT,
+            comment TEXT,
+            parent_comment_id TEXT, -- For threaded discussions
+            created_at INTEGER,
+            resolved_at INTEGER,
+            FOREIGN KEY(spreadsheet_id) REFERENCES spreadsheets(id),
+            FOREIGN KEY(user_id) REFERENCES users(user_id),
+            FOREIGN KEY(parent_comment_id) REFERENCES spreadsheet_comments(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS spreadsheet_versions (
+            id TEXT PRIMARY KEY,
+            spreadsheet_id TEXT,
+            version_number INTEGER,
+            changes TEXT, -- JSON: what changed
+            created_by TEXT,
+            created_at INTEGER,
+            snapshot_data TEXT, -- JSON: full spreadsheet state if needed
+            FOREIGN KEY(spreadsheet_id) REFERENCES spreadsheets(id),
+            FOREIGN KEY(created_by) REFERENCES users(user_id)
+        );
+
+        -- PHASE 3: Business Integration Tables
+        CREATE TABLE IF NOT EXISTS spreadsheet_data_sources (
+            id TEXT PRIMARY KEY,
+            spreadsheet_id TEXT,
+            source_type TEXT, -- 'crm', 'erp', 'forms', 'external_api'
+            source_config TEXT, -- JSON: connection details, queries
+            mapping_rules TEXT, -- JSON: how to map source data to cells
+            sync_frequency TEXT, -- 'manual', 'hourly', 'daily', 'weekly'
+            last_sync_at INTEGER,
+            sync_status TEXT, -- 'success', 'error', 'pending'
+            FOREIGN KEY(spreadsheet_id) REFERENCES spreadsheets(id)
+        );
+
+        -- PHASE 4: AI Analysis Tables
+        CREATE TABLE IF NOT EXISTS spreadsheet_charts (
+            id TEXT PRIMARY KEY,
+            spreadsheet_id TEXT,
+            chart_type TEXT, -- 'line', 'bar', 'pie', 'scatter', 'heatmap'
+            data_range TEXT, -- 'A1:D10' or similar
+            chart_config TEXT, -- JSON: styling, axes, legends
+            ai_generated INTEGER DEFAULT 0, -- Was this auto-generated by AI?
+            created_at INTEGER,
+            FOREIGN KEY(spreadsheet_id) REFERENCES spreadsheets(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS spreadsheet_analysis (
+            id TEXT PRIMARY KEY,
+            spreadsheet_id TEXT,
+            analysis_type TEXT, -- 'trend', 'forecast', 'correlation', 'summary'
+            target_columns TEXT, -- JSON: which columns were analyzed
+            results TEXT, -- JSON: analysis results and insights
+            confidence_score REAL, -- AI confidence in analysis
+            created_at INTEGER,
+            FOREIGN KEY(spreadsheet_id) REFERENCES spreadsheets(id)
+        );
+
+        -- PHASE 5: Import/Export Tables
+        CREATE TABLE IF NOT EXISTS spreadsheet_imports (
+            id TEXT PRIMARY KEY,
+            spreadsheet_id TEXT,
+            source_file_path TEXT,
+            source_type TEXT, -- 'excel', 'csv', 'google_sheets'
+            import_mapping TEXT, -- JSON: how data was mapped during import
+            imported_by TEXT,
+            imported_at INTEGER,
+            status TEXT, -- 'success', 'partial', 'failed'
+            error_log TEXT,
+            FOREIGN KEY(spreadsheet_id) REFERENCES spreadsheets(id),
+            FOREIGN KEY(imported_by) REFERENCES users(user_id)
+        );
+    `;
+}
