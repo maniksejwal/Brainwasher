@@ -15,7 +15,7 @@ export async function initializeDatabase() {
         PRAGMA foreign_keys = ON;
 
         CREATE TABLE IF NOT EXISTS users ( user_id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL, profile_data TEXT, preferences TEXT );
-        CREATE TABLE IF NOT EXISTS care_circles ( circle_id TEXT PRIMARY KEY, primary_patient_id TEXT NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY (primary_patient_id) REFERENCES users(user_id) );
+        CREATE TABLE IF NOT EXISTS care_circles ( circle_id TEXT PRIMARY KEY, primary_patient_id TEXT NOT NULL, created_at INTEGER NOT NULL, circle_type TEXT DEFAULT 'medical', organization_context TEXT, coordination_engine TEXT DEFAULT 'medical_care', FOREIGN KEY (primary_patient_id) REFERENCES users(user_id) );
         CREATE TABLE IF NOT EXISTS care_circle_members ( member_id INTEGER PRIMARY KEY AUTOINCREMENT, circle_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, relationship_type TEXT, consent_level TEXT DEFAULT 'none', session_state TEXT, UNIQUE(circle_id, user_id), FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id), FOREIGN KEY (user_id) REFERENCES users(user_id) );
         CREATE TABLE IF NOT EXISTS messages ( message_id INTEGER PRIMARY KEY AUTOINCREMENT, circle_id TEXT NOT NULL, user_id TEXT NOT NULL, role TEXT NOT NULL, message TEXT NOT NULL, privacy_level TEXT NOT NULL, criticality_level TEXT NOT NULL, timestamp INTEGER NOT NULL, FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id) );
         CREATE TABLE IF NOT EXISTS facts ( fact_key TEXT NOT NULL, circle_id TEXT NOT NULL, reported_by TEXT NOT NULL, value TEXT, timestamp INTEGER NOT NULL, UNIQUE(fact_key, circle_id, reported_by) );

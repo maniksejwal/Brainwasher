@@ -15,6 +15,7 @@ import { handleAcceptCommand } from './business/commands/acceptCommand.js';
 import { handleERPCommand } from './business/commands/erpCommands.js';
 import { DocumentAgent } from '../agents/business/documentAgent.js';
 import { FormsAgent } from '../agents/business/formsAgent.js';
+import { BusinessCoordinationEngine } from '../agents/business/businessCoordinationEngine.js';
 import sessionManager from '../sessions/sessionManager.js';
 import { events } from '../orchestrator.js';
 import { getDb } from '../db/connection.js';
