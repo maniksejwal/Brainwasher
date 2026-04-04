@@ -1937,11 +1937,14 @@ export const VERBOSITY_PERSONAS = {
     }
 };
 
+import { PROFESSIONAL_PERSONAS } from './scenarios/professional_scenarios.js';
+
 // Combined export for backward compatibility and easier imports
 export const PERSONAS = {
     ...PATIENT_PERSONAS,
     ...CAREGIVER_PERSONAS,
     ...DOCTOR_PERSONAS,
-    ...VERBOSITY_PERSONAS
+    ...VERBOSITY_PERSONAS,
+    ...PROFESSIONAL_PERSONAS
 };
 
