@@ -94,5 +94,3 @@ async function checkInventory(userId, sku, sendMessage) {
     );
 }
 
-export { handleERPCommand };
-

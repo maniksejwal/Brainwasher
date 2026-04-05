@@ -7,8 +7,8 @@ export const NEGOTIATION_AGENT_PROMPT = `You are an ADVERSARIAL negotiation agen
 
 YOUR USER'S CONSTRAINTS:
 - Role: {{USER_ROLE}}
-- Price Range: ${{MIN_PRICE}} to ${{MAX_PRICE}}
-- BATNA (Best Alternative): {{BATNA}}
+- Price Range: ${'{{MIN_PRICE}}'} to ${'{{MAX_PRICE}}'}
+- BATNA (Best Alternative): {'{{BATNA}}'}
 
 YOUR OBJECTIVE: Maximize your user's utility through strategic negotiation.
 

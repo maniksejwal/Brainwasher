@@ -154,5 +154,3 @@ function riskEmoji(level) {
     return { critical: '🔴', high: '🟠', medium: '🟡', low: '🟢' }[level] || '⚪';
 }
 
-export { handleLegalCommand };
-

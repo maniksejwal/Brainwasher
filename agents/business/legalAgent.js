@@ -192,5 +192,5 @@ class LegalAgent {
     }
 }
 
-export { CRMAgent };
+export { LegalAgent };
 

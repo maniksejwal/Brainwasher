@@ -53,5 +53,3 @@ export async function handleProposeCommand(userId, sessionId, parts, sendMessage
     console.log(`[Business] ${proposerUser.username} proposed $${value} in session ${session.id}`);
 }
 
-export { handleProposeCommand };
-

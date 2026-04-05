@@ -69,5 +69,3 @@ export async function handleAcceptCommand(userId, sessionId, sendMessage) {
     console.log(`[Business] Deal closed: ${session.topic} for $${agreedValue}`);
 }
 
-export { handleAcceptCommand };
-
