@@ -31,7 +31,15 @@ export function getScenarioCategories() {
         '👑 Family Dynamics Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'family_dynamics'),
         '💄 Psychology Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'psychology'),
         '🏊‍♀️ Lifestyle Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'lifestyle'),
-        '📅 Future Planning Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'future_planning')
+        '📅 Future Planning Scenarios': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'future_planning'),
+        '🏢 Professional Basic': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'professional_basic'),
+        '🤝 Professional Complex': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'professional_complex'),
+        '⚖️ Professional Conflict': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'professional_conflict'),
+        '📄 Document Collaboration': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'document_collaboration'),
+        '📋 Document Negotiation': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'document_negotiation'),
+        '✅ Document Approval': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'document_approval'),
+        '🔒 Document Privacy': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'document_privacy'),
+        '🤝 Professional + Document': Object.entries(SCENARIOS).filter(([_, s]) => s.category === 'professional_document_hybrid'),
     };
 }
 

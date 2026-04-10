@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import config from '../config.js';
+import config from '../../config.js';
 
 // A helper class to manage the state of a simulated user
 class TestUser {

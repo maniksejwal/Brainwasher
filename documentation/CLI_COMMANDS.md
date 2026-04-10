@@ -2,6 +2,8 @@
 
 This document lists all available commands for the command-line chat interface (`cli/chat/main.js`).
 
+For comprehensive CLI testing instructions including professional circles, business simulations, and document management, see [CLI_TESTING_GUIDE.md](CLI_TESTING_GUIDE.md).
+
 ## Messaging & Communication
 
 ### `/dm <username> <message>`
@@ -35,8 +37,29 @@ Add a member to the current care circle.
 - `/doc`: Adds a doctor.
 **Usage:**
 ```bash
-/care mom_jane
-/doc dr_jones
+/care mom_jane as mother
+/doc dr_jones as cardiologist
+```
+
+## Professional Circle Management
+
+### `/target <username>`, `/support <username>`, `/expert <username>`
+Add members to your professional circle with specific roles.
+- `/target`: Adds a target (buyer, client, project owner)
+- `/support`: Adds support (champion, facilitator, project manager)  
+- `/expert`: Adds expert (technical architect, domain expert, legal counsel)
+**Usage:**
+```bash
+/target john_smith as project_owner
+/support alice_jones as project_manager
+/expert bob_wilson as technical_architect
+```
+
+### `/professional`
+List all members of your professional circles and their roles.
+**Usage:**
+```bash
+/professional
 ```
 
 ### `/circle`

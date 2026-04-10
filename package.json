@@ -6,7 +6,14 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/test_basic.js && node tests/test_circles.js && node tests/test_conflict.js && node tests/test_consent.js && node tests/test_escalation.js"
+    "test": "node tests/unit/test_basic.js && node tests/unit/test_circles.js && node tests/integration/test_conflict.js && node tests/unit/test_consent.js && node tests/integration/test_escalation.js && node tests/cli/batch_tester.js",
+    "test:unit": "node tests/unit/test_basic.js && node tests/unit/test_circles.js && node tests/unit/test_consent.js && node tests/unit/test_doctor.js && node tests/unit/test_fact_reporting.js",
+    "test:integration": "node tests/integration/test_enhanced_routing_system.js && node tests/integration/test_professional_circles.js && node tests/integration/test_conflict.js && node tests/integration/test_escalation.js",
+    "test:e2e": "node tests/e2e/test_simulation_api.js && node tests/e2e/test_document_collaboration.js && node tests/e2e/test_business_forms.js",
+    "test:cli": "node tests/cli/batch_tester.js",
+    "test:simulation": "node tests/simulation/run_test_scenario.js",
+    "test:verify": "node tests/verification/verify_storage.js && node tests/verification/verify_db_config.js",
+    "test:all": "node tests/run_all_tests.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.975.0",

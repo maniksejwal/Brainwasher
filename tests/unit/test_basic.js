@@ -1,4 +1,4 @@
-import { TestRunner } from './test_runner.js';
+import { TestRunner } from '../integration/test_runner.js';
 
 async function runBasicTests() {
     const runner = new TestRunner();

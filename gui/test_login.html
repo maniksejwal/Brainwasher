@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login Test</title>
+</head>
+<body>
+    <input id="username" value="testuser" />
+    <select id="role-select">
+        <option value="user">User</option>
+    </select>
+    <input id="password" value="" />
+    <button id="login-btn">Login</button>
+    
+    <div id="result"></div>
+    
+    <script>
+        document.getElementById('login-btn').addEventListener('click', async () => {
+            console.log('Button clicked');
+            const username = document.getElementById('username').value;
+            const role = document.getElementById('role-select').value;
+            const password = document.getElementById('password').value;
+            
+            console.log('Data:', {username, role, password});
+            
+            try {
+                const response = await fetch('http://127.0.0.1:5000/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, role, password })
+                });
+                
+                console.log('Response:', response);
+                const data = await response.json();
+                console.log('Data received:', data);
+                
+                document.getElementById('result').innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            } catch (error) {
+                console.error('Login error:', error);
+                document.getElementById('result').innerHTML = `Error: ${error.message}`;
+            }
+        });
+    </script>
+</body>
+</html>

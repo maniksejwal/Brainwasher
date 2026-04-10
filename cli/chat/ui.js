@@ -55,6 +55,17 @@ ${chalk.bold.magenta('Doctor Commands:')}
      ${chalk.gray('- Want precision? Use /agent ask <username> "topic" to force a specific prompt')}
 `;
 
+const professionalCommands = `
+${chalk.bold.cyan('Professional Commands:')}
+  ${chalk.yellow('/target <username> as <role>')}    - Add target to professional circle (buyer, client, project owner)
+  ${chalk.yellow('/support <username> as <role>')}   - Add support to professional circle (facilitator, project manager)  
+  ${chalk.yellow('/expert <username> as <role>')}    - Add expert to professional circle (technical architect, legal counsel)
+  ${chalk.yellow('/professional')}                   - Show professional circle members and roles
+  ${chalk.italic('Professional interactions:')}
+     ${chalk.gray('- Use business language naturally for negotiations, coordination, approvals')}
+     ${chalk.gray('- Reference roles like @target, @support, @expert for structured communication')}
+`;
+
 function getWelcomeMessage(isNewUser, username, roles) {
     if (isNewUser) {
         return `
@@ -112,6 +123,9 @@ function showCommandsByRoles(roles) {
     if (roles.includes('doctor')) {
         console.log(doctorCommands);
     }
+    
+    // Show professional commands for all users (since anyone can have professional context)
+    console.log(professionalCommands);
     
     console.log(chalk.bold.green('═'.repeat(60)));
     console.log(chalk.italic.gray('Tip: Just type naturally - your AI agent understands conversation!\n'));

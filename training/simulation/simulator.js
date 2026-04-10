@@ -264,9 +264,25 @@ export class SimulationDriver {
             const userId = config.userId || `sim_${config.role}_${Date.now()}`;
             const { role, personaKey, persona, personaOptions } = config;
             const normalizedRole = typeof role === 'string' ? role.toLowerCase() : '';
+            
+            // PROFESSIONAL ROLE MAPPING: target→patient, support→caregiver, expert→doctor
+            const professionalRoleMapping = {
+                'target': 'patient',
+                'support': 'caregiver', 
+                'expert': 'doctor'
+            };
+            
             const supportedRoles = ['patient', 'caregiver', 'doctor'];
-            const personaCategory = supportedRoles.includes(normalizedRole) ? normalizedRole : 'patient';
-            if (!supportedRoles.includes(normalizedRole)) {
+            let mappedRole = normalizedRole;
+            
+            // Apply professional role mapping if needed
+            if (professionalRoleMapping[normalizedRole]) {
+                mappedRole = professionalRoleMapping[normalizedRole];
+                console.log(`[Simulator] Professional role mapping: ${normalizedRole} → ${mappedRole}`);
+            }
+            
+            const personaCategory = supportedRoles.includes(mappedRole) ? mappedRole : 'patient';
+            if (!supportedRoles.includes(mappedRole) && !professionalRoleMapping[normalizedRole]) {
                 console.warn(`[Simulator] Unknown or missing role "${role}". Defaulting persona category to 'patient'.`);
             }
 
@@ -287,7 +303,10 @@ export class SimulationDriver {
             // Create run-specific user ID to prevent contamination
             const runSpecificUserId = `${userId}_run_${this.runId}`;
 
-            const syntheticUser = new SyntheticUser(runSpecificUserId, role, selectedPersonaKey, personaData);
+            const syntheticUser = new SyntheticUser(runSpecificUserId, mappedRole, selectedPersonaKey, personaData);
+            // Preserve original professional role for display purposes
+            syntheticUser.originalRole = role;
+            syntheticUser.professionalRole = normalizedRole;
             this.syntheticUsers.push(syntheticUser);
 
             // Create simulation client for this user to receive notifications

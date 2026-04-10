@@ -1310,6 +1310,14 @@ export function getPersona(category, key) {
         console.warn(`[Personas] Warning: ${key} found in VERBOSITY_PERSONAS, not ${category}`);
         return { key, ...VERBOSITY_PERSONAS[key] };
     }
+    if (PROFESSIONAL_PERSONAS[key]) {
+        console.warn(`[Personas] Warning: ${key} found in PROFESSIONAL_PERSONAS, not ${category}`);
+        return { key, ...PROFESSIONAL_PERSONAS[key] };
+    }
+    if (DOCUMENT_PERSONAS[key]) {
+        console.warn(`[Personas] Warning: ${key} found in DOCUMENT_PERSONAS, not ${category}`);
+        return { key, ...DOCUMENT_PERSONAS[key] };
+    }
     
     throw new Error(`Persona ${key} not found in any category`);
 }
@@ -1938,6 +1946,7 @@ export const VERBOSITY_PERSONAS = {
 };
 
 import { PROFESSIONAL_PERSONAS } from './scenarios/professional_scenarios.js';
+import { DOCUMENT_PERSONAS } from './scenarios/document_scenarios.js';
 
 // Combined export for backward compatibility and easier imports
 export const PERSONAS = {
@@ -1945,6 +1954,7 @@ export const PERSONAS = {
     ...CAREGIVER_PERSONAS,
     ...DOCTOR_PERSONAS,
     ...VERBOSITY_PERSONAS,
-    ...PROFESSIONAL_PERSONAS
+    ...PROFESSIONAL_PERSONAS,
+    ...DOCUMENT_PERSONAS
 };
 

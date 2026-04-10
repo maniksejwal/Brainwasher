@@ -15,6 +15,8 @@ import { handleAcceptCommand } from './business/commands/acceptCommand.js';
 import { handleERPCommand } from './business/commands/erpCommands.js';
 import { DocumentAgent } from '../agents/business/documentAgent.js';
 import { FormsAgent } from '../agents/business/formsAgent.js';
+import ProfessionalCircleRouter from './routing/professionalCircleRouter.js';
+import { CompanionCoordinator } from '../companions/CompanionCoordinator.js';
 import { BusinessCoordinationEngine } from '../agents/business/businessCoordinationEngine.js';
 import sessionManager from '../sessions/sessionManager.js';
 import { events } from '../orchestrator.js';
@@ -31,6 +33,11 @@ const BUSINESS_COMMANDS = [
 const MEDICAL_COMMANDS = [
     '/care', '/doc', '/switch', '/consent', '/log', '/spec',
     '/agent', '/circle', '/yes', '/no', '/score', '/report', '/feedback'
+];
+
+// Professional circle commands (new)
+const PROFESSIONAL_COMMANDS = [
+    '/target', '/support', '/expert', '/professional'
 ];
 
 // Context-aware commands (work across domains)
@@ -60,6 +67,10 @@ class UserProfile {
             businessToMedical: 'filtered',
             sensitivityLevel: 'medium'
         };
+        
+        // Initialize routing systems
+        this.professionalRouter = new ProfessionalCircleRouter();
+        this.companionCoordinator = new CompanionCoordinator();
     }
 
     async loadFromDatabase() {
@@ -134,10 +145,33 @@ async function getUserProfile(userId) {
 
 /**
  * Main context-aware router - determines context and enables intelligent routing
+ * @param {string} userId - User ID
+ * @param {string} circleId - Circle ID  
+ * @param {string} message - Message content
+ * @param {boolean} isolationMode - When true, enforces strict domain separation (legacy domainRouter behavior)
  */
-export async function routeMessage(userId, circleId, message) {
+export async function routeMessage(userId, circleId, message, isolationMode = false) {
     const userProfile = await getUserProfile(userId);
     const isCommand = message.startsWith('/');
+
+    if (isolationMode) {
+        console.log('[Router] ISOLATION MODE: Enforcing strict domain separation');
+        // In isolation mode, route based on command prefix only - no cross-domain sharing
+        if (isCommand) {
+            const commandPrefix = message.split(' ')[0].toLowerCase();
+            if (BUSINESS_COMMANDS.includes(commandPrefix)) {
+                return await routeBusinessCommand(userId, circleId, message, message.split(' '), commandPrefix, null, true);
+            } else {
+                // All non-business commands go to medical
+                const { handleMessage: handleMedicalMessage } = await import('./messageHandler.js');
+                return await handleMedicalMessage(userId, circleId, message);
+            }
+        } else {
+            // In isolation mode, non-command messages always go to medical (no AI context analysis)
+            const { handleMessage: handleMedicalMessage } = await import('./messageHandler.js');
+            return await handleMedicalMessage(userId, circleId, message);
+        }
+    }
 
     // Check for active business sessions
     const businessSessions = await sessionManager.getUserSessions(userId);
@@ -213,6 +247,13 @@ async function handleCommandMessage(userId, circleId, message, userProfile, cont
             return;
         }
 
+        // Professional circle commands
+        if (PROFESSIONAL_COMMANDS.some(cmd => command.startsWith(cmd))) {
+            const sharedContext = userProfile.getSharedContext('medical', 'business');
+            await handleProfessionalCircleCommand(userId, circleId, message, command, parts);
+            return;
+        }
+
         // Medical commands
         if (MEDICAL_COMMANDS.some(cmd => command.startsWith(cmd))) {
             const sharedContext = userProfile.getSharedContext('business', 'medical');
@@ -232,7 +273,7 @@ async function handleCommandMessage(userId, circleId, message, userProfile, cont
 /**
  * Route business commands with shared context
  */
-async function routeBusinessCommand(userId, circleId, message, parts, command, sharedContext) {
+async function routeBusinessCommand(userId, circleId, message, parts, command, sharedContext, isolationMode = false) {
     const sendMessage = (targetUserId, msg) => {
         events.emit('broadcast', {
             targetUsers: [targetUserId],
@@ -551,6 +592,250 @@ async function handleMeetingCommand(userId, parts, sendMessage) {
 
 async function handleDiscoveryCommand(userId, parts, sendMessage) {
     sendMessage(userId, '🔍 Information discovery system coming soon. This will research competitive intelligence and market data.');
+}
+
+/**
+ * Handle professional circle commands (/target, /support, /expert)
+ */
+async function handleProfessionalCircleCommand(userId, circleId, message, command, parts) {
+    const { findUserByUsername } = await import('../db/index.js');
+    const { events } = await import('../orchestrator.js');
+    
+    const targetUsername = parts[1];
+    
+    if (!targetUsername) {
+        events.emit('broadcast', { 
+            targetUsers: [userId], 
+            reply: `Invalid format. Use: ${command} <username> as <title/role/specialty>`, 
+            from: 'system', 
+            circleId 
+        });
+        return;
+    }
+
+    let role, relationship;
+
+    if (command === '/target') {
+        // Format: /target <username> as <title>
+        if (parts.length < 4 || parts[2] !== 'as') {
+            events.emit('broadcast', { 
+                targetUsers: [userId], 
+                reply: `Invalid format. Use: /target <username> as <title>`, 
+                from: 'system', 
+                circleId 
+            });
+            return;
+        }
+        role = 'target';
+        relationship = parts.slice(3).join(' '); // Everything after 'as'
+    } else if (command === '/support') {
+        // Format: /support <username> as <role>
+        if (parts.length < 4 || parts[2] !== 'as') {
+            events.emit('broadcast', { 
+                targetUsers: [userId], 
+                reply: `Invalid format. Use: /support <username> as <role>`, 
+                from: 'system', 
+                circleId 
+            });
+            return;
+        }
+        role = 'support';
+        relationship = parts.slice(3).join(' ');
+    } else if (command === '/expert') {
+        // Format: /expert <username> as <specialty>
+        if (parts.length < 4 || parts[2] !== 'as') {
+            events.emit('broadcast', { 
+                targetUsers: [userId], 
+                reply: `Invalid format. Use: /expert <username> as <specialty>`, 
+                from: 'system', 
+                circleId 
+            });
+            return;
+        }
+        role = 'expert';
+        relationship = parts.slice(3).join(' ');
+    } else {
+        events.emit('broadcast', { 
+            targetUsers: [userId], 
+            reply: `Unknown professional command: ${command}. Use /target, /support, or /expert`, 
+            from: 'system', 
+            circleId 
+        });
+        return;
+    }
+
+    try {
+        const { addMemberToCircle } = await import('../db/index.js');
+        const targetUser = await findUserByUsername(targetUsername);
+
+        if (!targetUser) {
+            events.emit('broadcast', { 
+                targetUsers: [userId], 
+                reply: `User '${targetUsername}' not found. They need to register first.`, 
+                from: 'system', 
+                circleId 
+            });
+            return;
+        }
+
+        // Add member to professional circle (like medical circle)
+        await addMemberToCircle(circleId, targetUser.user_id, role, relationship);
+        
+        const roleEmoji = role === 'target' ? '🎯' : role === 'support' ? '🤝' : '🎓';
+        
+        events.emit('broadcast', { 
+            targetUsers: [userId], 
+            reply: `${roleEmoji} Added ${targetUsername} as ${role} (${relationship}) to your professional circle.`, 
+            from: 'system', 
+            circleId 
+        });
+
+        console.log(`[ProfessionalCircle] Added ${targetUsername} as ${role} to circle ${circleId}`);
+
+    } catch (error) {
+        console.error('[ProfessionalCircle] Error adding member:', error);
+        events.emit('broadcast', { 
+            targetUsers: [userId], 
+            reply: `Failed to add ${targetUsername} to professional circle. Please try again.`, 
+            from: 'system', 
+            circleId 
+        });
+    }
+}
+
+/**
+ * Route messages with strong professional context
+ * @param {string} userId - User ID
+ * @param {string} circleId - Circle ID
+ * @param {string} message - Message content
+ * @param {object} professionalContext - Professional context analysis
+ */
+async function routeProfessionalContextMessage(userId, circleId, message, professionalContext) {
+    const router = new ContextAwareCompanionRouter();
+    
+    // Get actual AI analysis instead of empty objects
+    const { handleMessage: handleMedicalMessage } = await import('./messageHandler.js');
+    
+    try {
+        // Get proper AI analysis for the message
+        const { processUserMessage } = await import('../agents/index.js');
+        const { getCircleMembers } = await import('../db/index.js');
+        
+        const members = await getCircleMembers(circleId);
+        const aiAnalysis = await processUserMessage(
+            userId,
+            'user',
+            message,
+            members,
+            circleId,
+            null,
+            {
+                analysisMode: 'professional_routing',
+                focusAreas: ['professional_context', 'cross_circle_routing'],
+                enableRouting: true
+            }
+        );
+        
+        // Use AI-enhanced professional context analysis
+        const enhancedProfessionalContext = await router.professionalRouter.analyzeProfessionalContext(
+            message,
+            aiAnalysis,
+            userId,
+            circleId
+        );
+        
+        // Route based on AI analysis
+        const routingResult = await router.professionalRouter.routeProfessionalInformation(
+            userId, 
+            circleId, 
+            aiAnalysis, 
+            enhancedProfessionalContext
+        );
+        
+        // Send AI-powered companion confidential messages if cross-circle routing needed
+        if (routingResult.routingResults && routingResult.routingResults.length > 0) {
+            for (const result of routingResult.routingResults) {
+                await router.companionCoordinator.sendCompanionMessage(
+                    'medical_companion',
+                    'professional_companion', 
+                    userId,
+                    `AI detected professional context: ${message.substring(0, 200)}`,
+                    router.companionCoordinator.confidentialLevels.CROSS_USER_COMPANION,
+                    { 
+                        professionalContext: enhancedProfessionalContext, 
+                        routingReason: result.routingReason,
+                        aiConfidence: enhancedProfessionalContext.confidenceScore || 0.8,
+                        aiPowered: true
+                    },
+                    result.targetMember.user_id
+                );
+                
+                console.log(`[Router] AI-powered professional routing: ${result.routingReason} (confidence: ${result.confidenceScore})`);
+            }
+        }
+        
+        // Also process through medical system for comprehensive AI analysis
+        await handleMedicalMessage(userId, circleId, message);
+        
+    } catch (error) {
+        console.error('[Router] AI-powered professional routing failed, using fallback:', error.message);
+        
+        // Fallback to basic routing
+        await handleMedicalMessage(userId, circleId, message);
+    }
+}
+
+/**
+ * Handle mixed medical/professional context messages
+ * @param {string} userId - User ID
+ * @param {string} circleId - Circle ID
+ * @param {string} message - Message content
+ * @param {object} professionalContext - Professional context analysis
+ */
+async function handleMixedContextMessage(userId, circleId, message, professionalContext) {
+    const router = new ContextAwareCompanionRouter();
+    
+    // Initiate companion coordination for mixed context
+    const coordinationResult = await router.companionCoordinator.coordinateCompanionDecision(
+        `Mixed context message routing: ${message.substring(0, 100)}`,
+        userId,
+        circleId,
+        message
+    );
+    
+    // Send confidential intelligence sharing
+    await router.companionCoordinator.shareIntelligenceBetweenCompanions(
+        'medical_companion',
+        'professional_companion',
+        userId,
+        'cross_context_awareness',
+        JSON.stringify({
+            message: message.substring(0, 300),
+            professionalContext,
+            medicalKeywords: extractMedicalKeywords(message),
+            coordinationResult
+        }),
+        0.8
+    );
+    
+    // Process through both systems with coordination
+    const { handleMessage: handleMedicalMessage } = await import('./messageHandler.js');
+    await handleMedicalMessage(userId, circleId, message);
+}
+
+/**
+ * Extract medical keywords for analysis
+ * @param {string} message - Message content
+ * @returns {Array} Medical keywords found
+ */
+function extractMedicalKeywords(message) {
+    const medicalKeywords = [
+        'health', 'medical', 'doctor', 'medication', 'symptoms', 'treatment',
+        'diagnosis', 'therapy', 'stress', 'anxiety', 'depression', 'pain'
+    ];
+    
+    const lowerMessage = message.toLowerCase();
+    return medicalKeywords.filter(keyword => lowerMessage.includes(keyword));
 }
 
 export default { routeMessage };

@@ -55,6 +55,7 @@
                 <button id="circle-btn" class="icon-button" title="Current Circle">👥</button>
                 <button id="mycircles-btn" class="icon-button" title="My Circles">🔄</button>
                 <button id="patients-btn" class="icon-button" title="My Patients">🩺</button>
+                <button id="business-btn" class="icon-button" title="Business Tools">🏢</button>
                 <button id="feedback-btn" class="icon-button" title="Admin">⚙️</button>
                 <span id="username-display" class="username"></span>
             </div>
@@ -297,6 +298,112 @@
                 </div>
                 <div id="patients-list" class="scrollable-content"></div>
             </div>
+
+            <!-- Business View -->
+            <div id="business-view" class="view">
+                <div class="view-header">
+                    <h3>Business Tools</h3>
+                    <button id="back-to-chat-business" class="secondary">Back to Chat</button>
+                </div>
+                
+                <!-- Business Sub-Navigation -->
+                <div class="business-tabs">
+                    <button id="professional-circles-tab" class="tab-button active" data-tab="professional-circles">
+                        👥 Professional Circles
+                    </button>
+                    <button id="documents-tab" class="tab-button" data-tab="documents">
+                        📄 Documents
+                    </button>
+                    <button id="negotiations-tab" class="tab-button" data-tab="negotiations">
+                        🤝 Negotiations
+                    </button>
+                </div>
+
+                <!-- Professional Circles Section -->
+                <div id="professional-circles-section" class="business-section active">
+                    <div class="section-header">
+                        <h4>Professional Circles</h4>
+                        <button id="add-professional-member-btn" class="primary">Add Member</button>
+                    </div>
+                    
+                    <div class="circle-grid">
+                        <div class="circle-card">
+                            <div class="circle-icon">🎯</div>
+                            <h5>My Target Roles</h5>
+                            <p class="circle-description">Circles where you are the decision maker</p>
+                            <div id="target-circles-list" class="scrollable-content"></div>
+                        </div>
+                        
+                        <div class="circle-card">
+                            <div class="circle-icon">🤝</div>
+                            <h5>My Support Roles</h5>
+                            <p class="circle-description">Circles where you facilitate coordination</p>
+                            <div id="support-circles-list" class="scrollable-content"></div>
+                        </div>
+                        
+                        <div class="circle-card">
+                            <div class="circle-icon">🎓</div>
+                            <h5>My Expert Roles</h5>
+                            <p class="circle-description">Circles where you provide specialist knowledge</p>
+                            <div id="expert-circles-list" class="scrollable-content"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Documents Section -->
+                <div id="documents-section" class="business-section">
+                    <div class="section-header">
+                        <h4>Documents</h4>
+                        <div class="workspace-actions">
+                            <button id="new-document-btn" class="primary">📄 New Document</button>
+                            <input type="search" id="doc-search" placeholder="🔍 Search documents..." style="margin-left: 12px; padding: 6px 12px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                        </div>
+                    </div>
+                    
+                    <!-- Document List with Filters -->
+                    <div class="document-simple-view">
+                        <div class="doc-filters-bar">
+                            <button class="filter-btn active" data-filter="all">📋 All Documents</button>
+                            <button class="filter-btn" data-filter="mine">📝 My Documents</button>
+                            <button class="filter-btn" data-filter="shared">👥 Shared with Me</button>
+                            <button class="filter-btn" data-filter="pending">⏰ Pending Approval</button>
+                        </div>
+                        
+                        <div class="documents-unified-list">
+                            <div id="documents-list" class="scrollable-content">
+                                <!-- Document items will be populated here -->
+                                <div class="empty-docs">
+                                    <h5>📄 No documents yet</h5>
+                                    <p>Create your first document to get started</p>
+                                    <button class="create-first-doc primary">Create Document</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Negotiations Section -->
+                <div id="negotiations-section" class="business-section">
+                    <div class="section-header">
+                        <h4>Active Negotiations</h4>
+                        <button id="start-negotiation-btn" class="primary">Start Negotiation</button>
+                    </div>
+                    
+                    <div class="negotiations-grid">
+                        <div class="negotiation-card">
+                            <div class="negotiation-icon">💼</div>
+                            <h5>My Negotiations</h5>
+                            <div id="my-negotiations-list" class="scrollable-content"></div>
+                        </div>
+                        
+                        <div class="negotiation-card">
+                            <div class="negotiation-icon">📊</div>
+                            <h5>Recent Outcomes</h5>
+                            <div id="negotiation-outcomes-list" class="scrollable-content"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -452,6 +559,93 @@
             <p><strong>Conversation:</strong> Full chat session (multiple interactions grouped together)</p>
             <p><strong>World Simulation:</strong> Multi-care circle simulation with overlapping users and role
                 inversions</p>
+        </div>
+    </div>
+
+    <!-- Add Professional Member Modal (Like Add Medical Member) -->
+    <div id="create-professional-circle-modal" class="modal">
+        <div class="modal-content">
+            <h3>Add Member to Professional Circle</h3>
+            <p style="font-size: 14px; color: #666;">Choose member role:</p>
+            <div style="margin: 16px 0;">
+                <button id="add-target-btn" class="primary" style="margin-right: 8px;">🎯 Add Target</button>
+                <button id="add-support-btn" class="primary" style="margin-right: 8px;">🤝 Add Support</button>
+                <button id="add-expert-btn" class="primary">🎓 Add Expert</button>
+            </div>
+            <div id="target-form" style="display:none; margin-top: 16px;">
+                <input type="text" id="target-username" placeholder="Username"
+                    style="width: 100%; margin-bottom: 8px;">
+                <input type="text" id="target-title" placeholder="Title (e.g., Product Manager, CEO)"
+                    style="width: 100%; margin-bottom: 8px;">
+                <p style="font-size: 12px; color: #999;">Command: /target username as title</p>
+                <small>Target = Decision maker who owns outcomes</small>
+            </div>
+            <div id="support-form" style="display:none; margin-top: 16px;">
+                <input type="text" id="support-username" placeholder="Username"
+                    style="width: 100%; margin-bottom: 8px;">
+                <input type="text" id="support-role" placeholder="Role (e.g., Project Manager, Coordinator)"
+                    style="width: 100%; margin-bottom: 8px;">
+                <p style="font-size: 12px; color: #999;">Command: /support username as role</p>
+                <small>Support = Facilitator who coordinates work</small>
+            </div>
+            <div id="expert-form" style="display:none; margin-top: 16px;">
+                <input type="text" id="expert-username" placeholder="Username"
+                    style="width: 100%; margin-bottom: 8px;">
+                <input type="text" id="expert-specialty" placeholder="Specialty (e.g., Frontend, Legal, Marketing)"
+                    style="width: 100%; margin-bottom: 8px;">
+                <p style="font-size: 12px; color: #999;">Command: /expert username as specialty</p>
+                <small>Expert = Specialist who provides knowledge</small>
+            </div>
+            <div class="modal-actions" style="margin-top: 16px;">
+                <button id="submit-add-professional-member" class="primary">Add</button>
+                <button id="cancel-add-professional-member" class="secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Document Editor Modal -->
+    <div id="document-editor-modal" class="modal">
+        <div class="modal-content large">
+            <div class="modal-header">
+                <h3 id="doc-modal-title">📄 Create Document</h3>
+                <button class="modal-close" onclick="closeDocumentModal()">×</button>
+            </div>
+            
+            <div class="document-editor-modal">
+                <div class="doc-modal-toolbar">
+                    <input type="text" id="doc-title-input" placeholder="Document Title" style="flex: 1; margin-right: 12px; padding: 6px 12px; border: 1px solid var(--gray-300); border-radius: 4px;">
+                    <button id="doc-save-btn" class="tool-btn primary">💾 Save</button>
+                    <button id="doc-preview-toggle" class="tool-btn">👁️ Preview</button>
+                </div>
+                
+                <div class="doc-modal-editor">
+                    <div class="editor-pane">
+                        <textarea id="doc-modal-editor" placeholder="# Document Title
+
+Start writing in markdown...
+
+## Getting Started
+- Use **bold** and *italic* formatting
+- Add lists and links
+- Create headers with # ## ###
+
+## Your Content
+Write your content here..."></textarea>
+                    </div>
+                    
+                    <div class="preview-pane" id="doc-modal-preview">
+                        <div class="preview-placeholder">
+                            <h2>📝 Live Preview</h2>
+                            <p>Start typing to see your content rendered here...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="modal-actions">
+                <button type="button" class="secondary" onclick="closeDocumentModal()">Cancel</button>
+                <button id="doc-save-and-close" class="primary">Save & Close</button>
+            </div>
         </div>
     </div>
 

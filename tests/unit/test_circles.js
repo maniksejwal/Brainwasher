@@ -1,4 +1,4 @@
-import { TestRunner } from './test_runner.js';
+import { TestRunner } from '../integration/test_runner.js';
 
 async function runCircleManagementTests() {
     const runner = new TestRunner();

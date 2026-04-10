@@ -7,7 +7,14 @@ import { initAnalysisUI } from './analysisUI.js';
 import { initReportUI } from './reportUI.js';
 
 export function setupLoginHandler(api, state) {
-    document.getElementById('login-btn').addEventListener('click', async () => {
+    const loginBtn = document.getElementById('login-btn');
+    
+    if (!loginBtn) {
+        console.error('[LoginLogic] Login button not found!');
+        return;
+    }
+    
+    loginBtn.addEventListener('click', async () => {
         const username = document.getElementById('username').value.trim();
         const role = document.getElementById('role-select').value;
         const password = document.getElementById('password').value;

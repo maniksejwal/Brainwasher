@@ -23,6 +23,7 @@ import { handleScoreCommand } from './commands/scoreCommand.js';
 import { handleReportCommand } from './commands/reportCommand.js';
 import { handleFeedbackCommand } from './commands/feedbackCommand.js';
 import { handleDMCommand, handleInboxCommand } from './commands/messageCommands.js';
+import { handleProfessionalAddCommand, handleShowProfessionalCircle } from './commands/addProfessionalMember.js';
 
 export async function handleCommand(userId, circleId, message) {
     const parts = message.toLowerCase().split(' ');
@@ -87,6 +88,14 @@ export async function handleCommand(userId, circleId, message) {
             break;
         case '/mycircles':
             await handleShowMyCirclesCommand(userId, circleId);
+            break;
+        case '/target':
+        case '/support': 
+        case '/expert':
+            await handleProfessionalAddCommand(userId, circleId, message);
+            break;
+        case '/professional':
+            await handleShowProfessionalCircle(userId, circleId);
             break;
         case '/spec':
             if (currentUserInfo.role !== 'doctor') {

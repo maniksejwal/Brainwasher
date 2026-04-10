@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Test</title>
+</head>
+<body>
+    <h1>JavaScript Test</h1>
+    <button id="test-btn">Test Button</button>
+    <div id="output"></div>
+    
+    <script>
+        console.log('JavaScript is loading...');
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('DOM loaded');
+            
+            const button = document.getElementById('test-btn');
+            console.log('Button found:', button);
+            
+            if (button) {
+                button.addEventListener('click', () => {
+                    console.log('Button clicked!');
+                    document.getElementById('output').innerHTML = 'Button works!';
+                });
+            }
+        });
+        
+        console.log('Script finished loading');
+    </script>
+</body>
+</html>

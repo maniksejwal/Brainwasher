@@ -1,4 +1,4 @@
-import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs } from './dataLoaders.js';
+import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs, loadBusinessData, loadBusinessSectionData } from './dataLoaders.js';
 import { loadConversationLogs } from './simulationLogsUI.js';
 
 export function setupNavigationHandlers(api, state) {
@@ -22,6 +22,11 @@ export function setupNavigationHandlers(api, state) {
         loadPatientsData(api, state.userId);
     });
 
+    document.getElementById('business-btn').addEventListener('click', () => {
+        switchView('business');
+        loadBusinessData(api, state.userId);
+    });
+
     document.getElementById('feedback-btn').addEventListener('click', () => {
         switchView('feedback');
         loadFeedbackData(api, state.userId);
@@ -42,6 +47,34 @@ export function setupNavigationHandlers(api, state) {
 
     document.getElementById('back-to-chat-patients').addEventListener('click', () => {
         switchView('chat');
+    });
+
+    document.getElementById('back-to-chat-business').addEventListener('click', () => {
+        switchView('chat');
+    });
+
+    // ====== BUSINESS TAB SWITCHING ======
+    document.addEventListener('click', (e) => {
+        if (e.target.matches('.business-tabs .tab-button')) {
+            // Remove active class from all business tabs
+            document.querySelectorAll('.business-tabs .tab-button').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Hide all business sections
+            document.querySelectorAll('.business-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            
+            // Activate clicked tab and corresponding section
+            e.target.classList.add('active');
+            const sectionId = e.target.dataset.tab + '-section';
+            document.getElementById(sectionId).classList.add('active');
+            
+            // Load data for the active section
+            const sectionType = e.target.dataset.tab;
+            loadBusinessSectionData(api, state.userId, sectionType);
+        }
     });
 
     // ====== FEEDBACK TAB SWITCHING ======

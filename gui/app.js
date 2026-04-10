@@ -10,6 +10,8 @@ import { displayMessage, addUserMessage, addSystemMessage, displayEscalation, di
 import { displaySimulationMessage } from './ui/simulationUI_new.js';
 import { setupCommandSuggestions } from './ui/commandSuggestions.js';
 import { setupFeedbackModal } from './ui/feedback.js';
+import { setupBusinessEventListeners } from './ui/dataLoaders.js';
+import { initializeSpeech } from './ui/speechManager.js';
 import NotificationCenter from './ui/NotificationCenter.js';
 
 // Logic Modules
@@ -74,8 +76,8 @@ function connectToEventSource() {
 // Listen for login success to trigger SSE
 window.addEventListener('loginSuccess', () => {
     connectToEventSource();
-    // Initialize Notification Center
-    new NotificationCenter(state.userId);
+    // Initialize Notification Center (commented out to fix duplicate bells)
+    // new NotificationCenter(state.userId);
 });
 
 // ====== SEND MESSAGE ======
@@ -117,3 +119,9 @@ setupCommandSuggestions(document.getElementById('message-input'));
 
 // Setup feedback modal
 setupFeedbackModal(sendMessage);
+
+// Setup business event listeners
+setupBusinessEventListeners();
+
+// Initialize speech functionality
+initializeSpeech();

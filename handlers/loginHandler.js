@@ -12,7 +12,9 @@ import {
     findCircleByPatientId,
     getUserCircles
 } from '../db/index.js';
+import { ProfessionalCircleManager } from '../agents/social/SpecializedCircleManagers.js';
 import { randomUUID } from 'crypto';
+// import { ProfessionalCircleManager } from '../agents/social/SpecializedCircleManagers.js';
 
 export async function handleLogin(username) {
     let user = await findUserByUsername(username);
@@ -31,9 +33,11 @@ export async function handleLogin(username) {
 
     const personalCircle = await findCircleByPatientId(userId);
     const allCircles = await getUserCircles(userId);
-    // FIX: Determine all roles the user has to inform the client UI.
-    const allRoles = [...new Set(allCircles.map(c => c.role))];
-
+    
+    // Get medical and professional roles separately, then combine
+    const medicalRoles = [...new Set(allCircles.filter(c => c.circle_type !== 'professional').map(c => c.role))];
+    const professionalRoles = [...new Set(professionalCircles.map(c => c.relationship_type))];
+    const allRoles = [...new Set([...medicalRoles, ...professionalRoles])];
 
     return {
         success: true,
@@ -41,8 +45,9 @@ export async function handleLogin(username) {
         userId: userId,
         activeCircleId: personalCircle.circle_id,
         patientUsername: username,
-        allRoles: allRoles, // Send all roles to the client
-        isNewUser: isNewUser // Indicate if this is their first login
+        allRoles: allRoles, // Medical roles only for now
+        professionalCircles: 0, // Temporarily disabled
+        isNewUser: isNewUser
     };
 }
 
