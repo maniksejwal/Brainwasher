@@ -108,6 +108,29 @@ Approve a document (if you have approval permissions).
 /doc approve 123
 ```
 
+### `/doc edit <doc_id>`
+Edit a document with AI companion assistance.
+**Usage:**
+```bash
+/doc edit 123
+```
+
+### `/doc discuss <doc_id> [question]`
+Discuss a document with your AI companion for insights and suggestions.
+**Usage:**
+```bash
+/doc discuss 123                           # Enter discussion mode
+/doc discuss 123 "What are the key risks?" # Ask specific question
+```
+
+### `/messages [username]`
+View DM conversations.
+**Usage:**
+```bash
+/messages              # List all conversations
+/messages alice_smith  # View conversation with alice_smith
+```
+
 ### `/circle`
 List all members of the current care circle and their roles.
 
@@ -130,7 +153,7 @@ Set your medical specialty (Doctors only).
 ```
 
 ### `/consent <username> <level>`
-Set the consent level for a user (1-3).
+Set the consent level for a user (1-3) - **MEDICAL/CARE FOCUSED**.
 **Usage:**
 ```bash
 /consent mom_jane 3
@@ -139,17 +162,18 @@ Set the consent level for a user (1-3).
 ## Privacy & Data Management
 
 ### `/privacy level <level>`
-Set your privacy level (1-3: public, limited, private).
+Set your global privacy level (1-3: public, limited, private) - **CROSS-DOMAIN**.
 **Usage:**
 ```bash
 /privacy level 2
 ```
 
 ### `/privacy share <username> <data_type>`
-Grant specific data sharing permissions to a user.
+Grant specific data sharing permissions to a user - **GRANULAR CONTROL**.
 **Usage:**
 ```bash
 /privacy share dr_smith medical_history
+/privacy share alice_jones professional_projects
 ```
 
 ### `/privacy revoke <username> <data_type>`
@@ -158,6 +182,10 @@ Revoke specific data sharing permissions from a user.
 ```bash
 /privacy revoke old_doctor medical_history
 ```
+
+**🔍 Privacy vs Consent Difference:**
+- **Consent**: Medical-focused, circle-specific, 3 levels (NONE/MEDIUM/FULL)
+- **Privacy**: Cross-domain, user-specific, granular data types (medical_history, professional_projects, personal_info, etc.)
 
 ## System & Debugging
 

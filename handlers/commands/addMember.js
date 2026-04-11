@@ -1,5 +1,5 @@
 /**
- * @fileoverview Handles the simplified '/care' and '/doc' command logic.
+ * @fileoverview Handles the simplified '/care' and '/doctor' command logic.
  * This module is responsible for parsing the commands and adding a new user
  * to the patient's personal care circle with the correct role.
  */
@@ -22,8 +22,8 @@ export async function handleAddCommand(userId, circleId, message) {
         }
         role = 'caregiver';
         relationship = parts.slice(3).join(' '); // Allow multi-word relationships
-    } else if (command === '/doc') {
-        // Format: /doc <username> or /doc <username> as <specialty>
+    } else if (command === '/doctor') {
+        // Format: /doctor <username> or /doctor <username> as <specialty>
         role = 'doctor';
         // If 'as' is provided, use specialty as relationship, otherwise null (will be set via /spec)
         if (parts.length >= 4 && parts[2] === 'as') {

@@ -104,11 +104,13 @@ export async function handleCreateCircleCommand(userId, circleId, parts, sendMes
  */
 export async function handleDocumentCommand(userId, circleId, parts, sendMessageToUser) {
     if (parts.length < 2) {
-        sendMessageToUser(userId, `**Document Commands:**
-/doc create <title>     - Create new document
-/doc list              - List your documents  
-/doc share <id> <user> - Share document with user
-/doc approve <id>      - Approve document`);
+        sendMessageToUser(userId, `    **Document Commands:**
+/doc create <title>       - Create new document
+/doc list                - List your documents  
+/doc share <id> <user>   - Share document with user
+/doc approve <id>        - Approve document
+/doc edit <id>           - Edit document with AI companion help
+/doc discuss <id> [question] - Discuss document with AI companion`);
         return;
     }
 
@@ -149,6 +151,29 @@ export async function handleDocumentCommand(userId, circleId, parts, sendMessage
             }
             const approveDocId = parts[2];
             sendMessageToUser(userId, `✅ Document ${approveDocId} approved.\n(Note: Full document system integration pending)`);
+            break;
+
+        case 'edit':
+            if (parts.length < 3) {
+                sendMessageToUser(userId, 'Usage: /doc edit <doc_id>\nExample: /doc edit 101');
+                return;
+            }
+            const editDocId = parts[2];
+            sendMessageToUser(userId, `📝 Editing document ${editDocId}...\n✨ **Companion Available**: Ask me questions about the document!\nTry: "What's the main risk in this contract?" or "Help me improve the conclusion"\n(Note: Full document system integration pending)`);
+            break;
+
+        case 'discuss':
+            if (parts.length < 3) {
+                sendMessageToUser(userId, 'Usage: /doc discuss <doc_id> [question]\nExample: /doc discuss 101 "What are the key points?"');
+                return;
+            }
+            const discussDocId = parts[2];
+            const question = parts.slice(3).join(' ');
+            if (question) {
+                sendMessageToUser(userId, `🤖 **Companion Analysis of Document ${discussDocId}:**\n"${question}"\n\n💡 Based on the document, here are the key insights:\n• [Companion would analyze document context here]\n• [Provide relevant suggestions]\n• [Answer specific questions]\n\n(Note: Full AI analysis integration pending)`);
+            } else {
+                sendMessageToUser(userId, `💬 **Document Discussion Mode** for Doc ${discussDocId}\nAsk me anything about this document:\n• "Summarize the main points"\n• "What risks should I consider?"\n• "Help me rewrite section 3"\n• "Is this legally sound?"`);
+            }
             break;
 
         default:

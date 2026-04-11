@@ -92,20 +92,24 @@ export async function handleProfessionalAddCommand(userId, circleId, message) {
         // Use ProfessionalCircleManager to add member
         const manager = new ProfessionalCircleManager(userId);
         
-        // Find or create user's professional circle
+        // Find user's professional circles
         const circles = await manager.getUserCircles(userId);
-        const personalProfessionalCircle = circles.find(c => c.owner_id === userId && c.circle_type === 'professional');
+        const professionalCircles = circles.filter(c => c.owner_id === userId && c.circle_type === 'professional');
         
-        if (!personalProfessionalCircle) {
-            throw new Error('Professional circle not found. Please create one first.');
+        if (professionalCircles.length === 0) {
+            throw new Error('No professional circles found. Use /create-circle professional <name> to create one first.');
         }
+
+        // If multiple professional circles exist, use the most recently created one
+        // TODO: Later we can add logic to specify which circle to add to
+        const targetCircle = professionalCircles.sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
         
         // Add member to user's professional circle using base class method
-        await manager.addMember(personalProfessionalCircle.circle_id, targetUser.user_id, role, relationship);
+        await manager.addMember(targetCircle.circle_id, targetUser.user_id, role, relationship);
 
         events.emit('broadcast', { 
             targetUsers: [userId], 
-            reply: `Added '${targetUsername}' to your professional circle as '${role}' (${relationship}).`, 
+            reply: `Added '${targetUsername}' to professional circle '${targetCircle.circle_name || 'Professional'}' as '${role}' (${relationship}).`, 
             from: 'system', 
             circleId 
         });

@@ -22,7 +22,7 @@ import { handleSetSpecialtyCommand } from './commands/setSpecialty.js';
 import { handleScoreCommand } from './commands/scoreCommand.js';
 import { handleReportCommand } from './commands/reportCommand.js';
 import { handleFeedbackCommand } from './commands/feedbackCommand.js';
-import { handleDMCommand, handleInboxCommand } from './commands/messageCommands.js';
+import { handleDMCommand, handleInboxCommand, handleMessagesCommand } from './commands/messageCommands.js';
 import { handleProfessionalAddCommand, handleShowProfessionalCircle } from './commands/addProfessionalMember.js';
 import { handleShowAllCircles, handleCreateCircleCommand, handleDocumentCommand } from './commands/circleCommands.js';
 
@@ -168,6 +168,17 @@ export async function handleCommand(userId, circleId, message) {
                 });
             };
             await handleInboxCommand(userId, circleId, sendInboxReply);
+            break;
+        case '/messages':
+            const sendMessagesReply = (targetUserId, msg) => {
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
+                });
+            };
+            await handleMessagesCommand(userId, circleId, parts, sendMessagesReply);
             break;
         case '/circles':
             const sendCirclesReply = (targetUserId, msg) => {
