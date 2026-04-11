@@ -862,6 +862,9 @@ export function setupBusinessEventListeners() {
 
     if (circleForm) {
         // Professional circle form submission
+        // ARCHITECTURAL NOTE: Using CLI commands for consistency with care circles
+        // Care circles use: GUI Modal → CLI Command (/care, /doctor) → Command Handler
+        // Professional circles now use: GUI Modal → CLI Command (/create-circle, /target) → Command Handler
         circleForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             
@@ -878,20 +881,45 @@ export function setupBusinessEventListeners() {
             };
 
             try {
-                const response = await window.api.post('/api/professional-circles/create', circleData);
+                // Use CLI commands instead of API calls for consistency
                 
-                if (response.success) {
-                    window.closeProfessionalCircleModal();
-                    addSystemMessage(`Professional circle "${circleData.name}" created successfully!`);
-                    
-                    // Refresh the professional circles view
-                    loadProfessionalCircles(window.api, window.state?.userId);
-                } else {
-                    addSystemMessage(`Error creating circle: ${response.error}`, 'error');
+                // Step 1: Create the circle via CLI command
+                const createCommand = `/create-circle professional ${circleData.name.replace(/\s+/g, '_')}`;
+                await window.sendMessage(createCommand);
+                
+                // Wait a moment for circle creation to complete
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Step 2: Add members via CLI commands (if provided)
+                if (circleData.members.target) {
+                    const addTargetCommand = `/target ${circleData.members.target} as project_lead`;
+                    await window.sendMessage(addTargetCommand);
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
+                
+                if (circleData.members.support) {
+                    const addSupportCommand = `/support ${circleData.members.support} as coordinator`;
+                    await window.sendMessage(addSupportCommand);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                if (circleData.members.expert) {
+                    const addExpertCommand = `/expert ${circleData.members.expert} as technical_expert`;
+                    await window.sendMessage(addExpertCommand);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                window.closeProfessionalCircleModal();
+                addSystemMessage(`Professional circle "${circleData.name}" created successfully! 🎉`);
+                
+                // Refresh the professional circles view
+                setTimeout(() => {
+                    loadProfessionalCircles(window.api, window.state?.userId);
+                }, 2000);
+                
             } catch (error) {
-                console.error('Error creating professional circle:', error);
-                addSystemMessage('Failed to create professional circle. Please try again.', 'error');
+                console.error('Error creating professional circle via CLI:', error);
+                addSystemMessage('Failed to create professional circle. Please check that all usernames are valid.', 'error');
             }
         });
     }
@@ -1286,28 +1314,52 @@ window.requestFeedback = function(docId) {
     console.log('Requesting feedback on document:', docId);
 };
 
-window.requestApproval = function(docId) {
-    showNotification('✅ Approval request sent to circle members!', 'success');
-    console.log('Requesting approval for document:', docId);
+window.requestApproval = async function(docId) {
+    try {
+        const command = `/doc share ${docId} approval_needed`;
+        await window.sendMessage(command);
+        showNotification('✅ Approval request sent via CLI!', 'success');
+    } catch (error) {
+        console.error('Error requesting approval:', error);
+        showNotification('Failed to request approval', 'error');
+    }
 };
 
-window.requestEdits = function(docId) {
-    showNotification('✏️ Edit request sent to circle members!', 'success');
-    console.log('Requesting edits on document:', docId);
+window.requestEdits = async function(docId) {
+    try {
+        const command = `/doc discuss ${docId} "Please review and suggest edits"`;
+        await window.sendMessage(command);
+        showNotification('✏️ Edit request sent via CLI!', 'success');
+    } catch (error) {
+        console.error('Error requesting edits:', error);
+        showNotification('Failed to request edits', 'error');
+    }
 };
 
-window.shareForReview = function(docId) {
-    showNotification('👀 Document shared for review with circle!', 'success');
-    console.log('Sharing document for review:', docId);
+window.shareForReview = async function(docId) {
+    try {
+        const command = `/doc share ${docId} circle_members`;
+        await window.sendMessage(command);
+        showNotification('👀 Document shared for review via CLI!', 'success');
+    } catch (error) {
+        console.error('Error sharing document:', error);
+        showNotification('Failed to share document', 'error');
+    }
 };
 
-window.approveDocument = function(docId) {
-    console.log('Approve document:', docId);
-    showNotification('Document approved! ✅', 'success');
-    // Refresh the list
-    setTimeout(() => {
-        loadDocuments(document.querySelector('.filter-btn.active')?.dataset.filter || 'all');
-    }, 1000);
+window.approveDocument = async function(docId) {
+    try {
+        const command = `/doc approve ${docId}`;
+        await window.sendMessage(command);
+        showNotification('Document approved via CLI! ✅', 'success');
+        // Refresh the document list
+        setTimeout(() => {
+            loadDocuments(document.querySelector('.filter-btn.active')?.dataset.filter || 'all');
+        }, 1000);
+    } catch (error) {
+        console.error('Error approving document:', error);
+        showNotification('Failed to approve document', 'error');
+    }
 };
 
 window.openDocument = function(doc) {
