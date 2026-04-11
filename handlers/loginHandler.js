@@ -36,6 +36,7 @@ export async function handleLogin(username) {
     
     // Get medical and professional roles separately, then combine
     const medicalRoles = [...new Set(allCircles.filter(c => c.circle_type !== 'professional').map(c => c.role))];
+    const professionalCircles = allCircles.filter(c => c.circle_type === 'professional');
     const professionalRoles = [...new Set(professionalCircles.map(c => c.relationship_type))];
     const allRoles = [...new Set([...medicalRoles, ...professionalRoles])];
 

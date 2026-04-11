@@ -100,10 +100,10 @@ export class TestRunner {
 
         try {
             await testFn(assert);
-            console.log(chalk.green(`¿ ${name}`));
+            console.log(chalk.green(`ï¿½ ${name}`));
             this.passed++;
         } catch (error) {
-            console.error(chalk.red(`¿ ${name}`));
+            console.error(chalk.red(`ï¿½ ${name}`));
             console.error(chalk.gray(`  ${error.message}`));
             this.failed++;
         }

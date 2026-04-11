@@ -24,6 +24,7 @@ import { handleReportCommand } from './commands/reportCommand.js';
 import { handleFeedbackCommand } from './commands/feedbackCommand.js';
 import { handleDMCommand, handleInboxCommand } from './commands/messageCommands.js';
 import { handleProfessionalAddCommand, handleShowProfessionalCircle } from './commands/addProfessionalMember.js';
+import { handleShowAllCircles, handleCreateCircleCommand, handleDocumentCommand } from './commands/circleCommands.js';
 
 export async function handleCommand(userId, circleId, message) {
     const parts = message.toLowerCase().split(' ');
@@ -53,7 +54,7 @@ export async function handleCommand(userId, circleId, message) {
             }
             break;
         case '/care':
-        case '/doc':
+        case '/doctor':
             await handleAddCommand(userId, circleId, message);
             break;
         case '/switch':
@@ -167,6 +168,39 @@ export async function handleCommand(userId, circleId, message) {
                 });
             };
             await handleInboxCommand(userId, circleId, sendInboxReply);
+            break;
+        case '/circles':
+            const sendCirclesReply = (targetUserId, msg) => {
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
+                });
+            };
+            await handleShowAllCircles(userId, circleId, sendCirclesReply);
+            break;
+        case '/create-circle':
+            const sendCreateCircleReply = (targetUserId, msg) => {
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
+                });
+            };
+            await handleCreateCircleCommand(userId, circleId, parts, sendCreateCircleReply);
+            break;
+        case '/doc':
+            const sendDocReply = (targetUserId, msg) => {
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
+                });
+            };
+            await handleDocumentCommand(userId, circleId, parts, sendDocReply);
             break;
         default:
             events.emit('broadcast', { targetUsers: [userId], reply: `Unknown command: ${command}`, from: 'system', circleId });

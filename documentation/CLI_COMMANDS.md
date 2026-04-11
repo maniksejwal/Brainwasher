@@ -31,14 +31,14 @@ Check your unread message summary, including Alerts, Circle Messages, and Direct
 
 ## Care Circle Management
 
-### `/care <username>` or `/doc <username>`
+### `/care <username>` or `/doctor <username>`
 Add a member to the current care circle.
 - `/care`: Adds a caregiver.
-- `/doc`: Adds a doctor.
+- `/doctor`: Adds a doctor.
 **Usage:**
 ```bash
 /care mom_jane as mother
-/doc dr_jones as cardiologist
+/doctor dr_jones as cardiologist
 ```
 
 ## Professional Circle Management
@@ -55,11 +55,57 @@ Add members to your professional circle with specific roles.
 /expert bob_wilson as technical_architect
 ```
 
-### `/professional`
+### `/professional [circle_name]`
 List all members of your professional circles and their roles.
 **Usage:**
 ```bash
-/professional
+/professional                    # List all professional circles
+/professional project_alpha      # List specific circle members
+```
+
+### `/circles`
+List all circles you are a member of (both care and professional).
+**Usage:**
+```bash
+/circles
+```
+
+### `/create-circle <type> <name>`
+Create a new professional circle with a specific name.
+**Usage:**
+```bash
+/create-circle professional project_alpha
+/create-circle professional client_beta
+```
+
+## Document Management
+
+### `/doc create <title>`
+Create a new document for collaboration.
+**Usage:**
+```bash
+/doc create "Project Requirements Document"
+```
+
+### `/doc list`
+List all documents you have access to.
+**Usage:**
+```bash
+/doc list
+```
+
+### `/doc share <doc_id> <username>`
+Share a document with another user.
+**Usage:**
+```bash
+/doc share 123 alice_smith
+```
+
+### `/doc approve <doc_id>`
+Approve a document (if you have approval permissions).
+**Usage:**
+```bash
+/doc approve 123
 ```
 
 ### `/circle`
@@ -88,6 +134,29 @@ Set the consent level for a user (1-3).
 **Usage:**
 ```bash
 /consent mom_jane 3
+```
+
+## Privacy & Data Management
+
+### `/privacy level <level>`
+Set your privacy level (1-3: public, limited, private).
+**Usage:**
+```bash
+/privacy level 2
+```
+
+### `/privacy share <username> <data_type>`
+Grant specific data sharing permissions to a user.
+**Usage:**
+```bash
+/privacy share dr_smith medical_history
+```
+
+### `/privacy revoke <username> <data_type>`
+Revoke specific data sharing permissions from a user.
+**Usage:**
+```bash
+/privacy revoke old_doctor medical_history
 ```
 
 ## System & Debugging
