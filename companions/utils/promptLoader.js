@@ -10,6 +10,12 @@ import { PROMPT_COMPANION_PATIENT_OPTIMIZER } from '../../prompts/companion_pati
 import { PROMPT_COMPANION_DOCTOR_OPTIMIZER } from '../../prompts/companion_doctor_optimizer.js';
 import { PROMPT_COMPANION_FUTURE_PLANNING } from '../../prompts/companion_future_planning.js';
 import { PROMPT_COMPANION_STATE_TRACKER } from '../../prompts/companion_state_tracker.js';
+import { 
+    PROMPT_BUSINESS_INPUT_UNDERSTANDING,
+    PROMPT_BUSINESS_COMPANION_OPTIMIZER,
+    PROMPT_BUSINESS_EMPATHY_HANDLER,
+    PROMPT_BUSINESS_PRIVACY_GUARD
+} from '../../prompts/business_companion.js';
 
 /**
  * Load and format a prompt with template variables
@@ -21,14 +27,23 @@ export function loadPrompt(promptName, variables = {}) {
         case 'input_understanding':
             prompt = PROMPT_COMPANION_INPUT_UNDERSTANDING;
             break;
+        case 'business_input_understanding':
+            prompt = PROMPT_BUSINESS_INPUT_UNDERSTANDING;
+            break;
         case 'empathy':
             prompt = PROMPT_COMPANION_EMPATHY;
+            break;
+        case 'business_empathy':
+            prompt = PROMPT_BUSINESS_EMPATHY_HANDLER;
             break;
         case 'clinical':
             prompt = PROMPT_COMPANION_CLINICAL;
             break;
         case 'patient_optimizer':
             prompt = PROMPT_COMPANION_PATIENT_OPTIMIZER;
+            break;
+        case 'business_optimizer':
+            prompt = PROMPT_BUSINESS_COMPANION_OPTIMIZER;
             break;
         case 'doctor_optimizer':
             prompt = PROMPT_COMPANION_DOCTOR_OPTIMIZER;

@@ -197,6 +197,11 @@ export function parseApiResponse(apiResponse) {
     } else if (apiResponse?._parsingFailed && apiResponse.reply) {
         // This is a failed JSON parse from api_client - the reply contains the raw text
         text = apiResponse.reply;
+        
+        // Special handling for input understanding responses that failed JSON parsing
+        if (text.includes('**Primary Intent**') || text.includes('**Mentioned Usernames**')) {
+            return parseNaturalLanguageInputUnderstanding(text);
+        }
     } else {
         // If it's an object but we can't extract text, check if it's a valid response structure
         if (typeof apiResponse === 'object') {
@@ -224,5 +229,62 @@ export function parseApiResponse(apiResponse) {
     
     // Use shared parser
     return parseJsonWithFixes(text, { logErrors: true, attempt: 1 });
+}
+
+/**
+ * Parse natural language input understanding response when JSON parsing fails
+ * Extracts structured data from Llama4's natural language format
+ * @param {string} text - Natural language response
+ * @returns {object|null} Parsed structure or null
+ */
+function parseNaturalLanguageInputUnderstanding(text) {
+    try {
+        const result = {
+            intent: 'ASKING_QUESTION',
+            mentioned_usernames: [],
+            facts: {}
+        };
+        
+        // Extract intent
+        const intentMatch = text.match(/\*\*Primary Intent\*\*:.*?(?:classify|intent|would be)\s*(?:as\s*)?\*\*([A-Z_]+)\*\*/i);
+        if (intentMatch) {
+            result.intent = intentMatch[1];
+        } else {
+            // Try alternate patterns
+            const altIntentMatch = text.match(/intent.*?(?:is|as|classify)\s*(?:as\s*)?"?([A-Z_]+)"?/i);
+            if (altIntentMatch) {
+                result.intent = altIntentMatch[1];
+            }
+        }
+        
+        // Extract mentioned usernames (usually says "no usernames mentioned" for simple cases)
+        const usernamesMatch = text.match(/\*\*Mentioned Usernames\*\*:.*?(?:\[(.*?)\]|no usernames|There are no)/i);
+        if (usernamesMatch && usernamesMatch[1]) {
+            // Parse usernames from array format like ["user1", "user2"]
+            const usernames = usernamesMatch[1].split(',').map(u => u.trim().replace(/['"]/g, ''));
+            result.mentioned_usernames = usernames.filter(u => u.length > 0);
+        }
+        
+        // Extract facts (usually says "no structured facts" for simple cases)
+        const factsMatch = text.match(/\*\*Key Facts\*\*:(.*?)(?:\n\*\*|$)/is);
+        if (factsMatch && factsMatch[1] && !factsMatch[1].includes('no structured facts')) {
+            // Try to extract any key:value patterns
+            const factText = factsMatch[1];
+            const keyValueMatches = factText.match(/"([^"]+)":\s*"([^"]+)"/g);
+            if (keyValueMatches) {
+                keyValueMatches.forEach(match => {
+                    const [, key, value] = match.match(/"([^"]+)":\s*"([^"]+)"/);
+                    result.facts[key] = value;
+                });
+            }
+        }
+        
+        console.log('[JSONParser] Successfully parsed natural language input understanding:', result);
+        return result;
+        
+    } catch (error) {
+        console.warn('[JSONParser] Failed to parse natural language input understanding:', error.message);
+        return null;
+    }
 }
 

@@ -556,12 +556,20 @@ function renderCircleRole(container, circles, role) {
             </p>
         `;
         div.addEventListener('click', () => {
-            // Switch to circle context and go to chat
-            window.api.post('/api/context/switch', { circleId: circle.id })
-                .then(() => {
-                    switchView('chat');
-                    addSystemMessage(`Switched to ${circle.circle_name} circle context`);
-                });
+            // ARCHITECTURAL CONSISTENCY: GUI buttons use API, manual commands use CLI
+            // This provides proper separation of concerns and supports both interaction methods
+            window.api.post('/api/context/switch', { 
+                circleId: circle.id, 
+                circleType: 'professional',
+                circleName: circle.circle_name 
+            }).then(() => {
+                // Server will process switch and emit context_switch event
+                // SSE will handle the UI updates automatically
+                switchView('chat');
+            }).catch(error => {
+                console.error('Failed to switch professional circle context:', error);
+                addSystemMessage(`Failed to switch to ${circle.circle_name}. Please try again.`);
+            });
         });
         container.appendChild(div);
     });

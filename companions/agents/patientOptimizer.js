@@ -7,20 +7,38 @@ import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { loadPrompt } from '../utils/promptLoader.js';
 import { validateAndAdjustResponse, shouldUseBlankTurn } from '../utils/responseStyleValidator.js';
+import { findCircleById } from '../../db/index.js';
 
 /**
- * Process patient optimization
+ * Process patient optimization with business context support
  * @param {string} userId - User ID
  * @param {string} role - User role
  * @param {string} message - User message
- * @param {string} circleId - Care circle ID
+ * @param {string} circleId - Circle ID
  * @param {object} context - Conversation context
- * @returns {Promise<object>} Optimized patient response
+ * @returns {Promise<object>} Optimized response
  */
 export async function processPatientOptimization(userId, role, message, circleId, context) {
-    if (role !== 'patient') {
+    // Check if this is a professional circle
+    let isProfessionalCircle = false;
+    try {
+        const circle = await findCircleById(circleId);
+        isProfessionalCircle = circle?.circle_type === 'professional';
+    } catch (error) {
+        console.warn('[PatientOptimizer] Could not determine circle type, using default logic');
+    }
+    
+    // For professional circles, optimize for professional roles instead of just patients
+    const shouldOptimize = isProfessionalCircle ? 
+        ['target', 'support', 'expert', 'creator', 'owner'].includes(role) :
+        role === 'patient';
+    
+    if (!shouldOptimize) {
         return { reply: null };
     }
+    
+    // Determine prompt type based on circle context
+    const promptType = isProfessionalCircle ? 'business_optimizer' : 'patient_optimizer';
     
     // Get repetition detection from history analyzer
     const historyAnalysis = context.historyAnalyzer || {};
@@ -53,7 +71,7 @@ export async function processPatientOptimization(userId, role, message, circleId
             'INTRODUCE THE TOPIC SHIFT NATURALLY: "Speaking of [current topic], I\'m curious about [new topic]..." or "Let\'s also talk about [new topic]..."';
     }
     
-    const prompt = loadPrompt('patient_optimizer', {
+    const prompt = loadPrompt(promptType, {
         MESSAGE: message,
         EMPATHY_LEVEL: context.empathyHandler?.level || context.empathyLevel || 'MEDIUM',
         CLINICAL_ASSESSMENT: context.clinicalAssessment?.assessment || 'No immediate concerns',
@@ -62,7 +80,10 @@ export async function processPatientOptimization(userId, role, message, circleId
         REPETITION_GUIDANCE: repetitionGuidance,
         TOPIC_SHIFT_GUIDANCE: topicShiftGuidance,
         TOPIC_SHIFT: topicShift,
-        CONVERSATION_HISTORY: conversationHistoryText
+        CONVERSATION_HISTORY: conversationHistoryText,
+        ROLE: role,
+        CIRCLE_TYPE: isProfessionalCircle ? 'professional' : 'care',
+        PROJECT_CONTEXT: context.projectContext || 'General discussion'
     });
 
     try {

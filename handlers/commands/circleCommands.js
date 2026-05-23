@@ -36,8 +36,11 @@ export async function handleShowAllCircles(userId, circleId, sendMessageToUser) 
             reply += `**💼 Professional Circles (${professionalCircles.length}):**\n`;
             for (const circle of professionalCircles) {
                 const members = await getCircleMembers(circle.circle_id);
-                reply += `• ${circle.circle_name || 'Professional'} (${members.length} members)\n`;
+                const contextData = circle.organization_context ? JSON.parse(circle.organization_context) : {};
+                const displayName = contextData.name ? contextData.name.replace('professional_', '') : 'Professional';
+                reply += `• **${displayName}** (${members.length} members) - ID: \`${circle.circle_id}\`\n`;
             }
+            reply += `\n💡 Use \`/switch <circle_id>\` to switch to a specific professional circle.\n`;
         } else {
             reply += `**💼 Professional Circles (0):**\n`;
             reply += `• No professional circles yet. Use /create-circle professional <name> to create one.\n`;
@@ -84,14 +87,18 @@ export async function handleCreateCircleCommand(userId, circleId, parts, sendMes
         }
 
         // Create new professional circle
-        const newCircle = await manager.createCircle({
+        const newCircleId = await manager.createCircle({
             name: `professional_${circleName}`,
             type: 'professional',
             scope: 'intra_org',
             ownerId: userId
         });
 
-        sendMessageToUser(userId, `✅ Created professional circle '${circleName}'.\nUse /target, /support, /expert commands to add members.`);
+        // CRITICAL: Add the creator as a member of their own professional circle
+        // This ensures they can see it in /circles and switch to it
+        await manager.addMember(newCircleId, userId, 'owner', 'creator');
+
+        sendMessageToUser(userId, `✅ Created professional circle '${circleName}'.\n💡 Tip: You can now add members with:\n• /target <username> as <role>\n• /support <username> as <role>\n• /expert <username> as <role>`);
 
     } catch (error) {
         console.error('Error creating professional circle:', error);

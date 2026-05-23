@@ -9,6 +9,16 @@ import readline from 'readline';
 import chalk from 'chalk';
 import { state } from './state.js';
 
+// Simple markdown to chalk converter for CLI system messages
+function markdownToChalk(text) {
+    return text
+        .replace(/\*\*(.*?)\*\*/g, chalk.bold('$1'))      // **bold** -> chalk.bold
+        .replace(/`(.*?)`/g, chalk.yellow('$1'))          // `code` -> chalk.yellow
+        .replace(/💼/g, chalk.cyan('💼'))                  // Professional icon in cyan
+        .replace(/🏥/g, chalk.green('🏥'))                 // Care icon in green  
+        .replace(/💡/g, chalk.yellow('💡'));              // Tip icon in yellow
+}
+
 export const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -138,9 +148,21 @@ export function showLoginMessage(message, isNewUser = false) {
 }
 
 export function updatePrompt() {
-    // FIX: Fallback logic to ensure the prompt never shows 'undefined'.
-    const patientName = state.currentPatientUsername || state.currentCircleId;
-    rl.setPrompt(chalk.bold(`${state.username}@${patientName}> `));
+    // Handle both care circles and professional circles in prompt
+    let contextName;
+    
+    if (state.circleType === 'professional' && state.currentCircleName) {
+        // Professional circle: show circle name without "professional_" prefix
+        contextName = state.currentCircleName.replace('professional_', '');
+    } else if (state.currentPatientUsername) {
+        // Care circle: show patient username  
+        contextName = state.currentPatientUsername;
+    } else {
+        // Fallback to circle ID
+        contextName = state.currentCircleId || 'system';
+    }
+    
+    rl.setPrompt(chalk.bold(`${state.username}@${contextName}> `));
     rl.prompt();
 }
 
@@ -163,7 +185,7 @@ export function displayMessage(data) {
         prefix = chalk.bold.blue(`[${data.from}@${patientName}]:`);
     }
     
-    console.log(`${prefix} ${data.reply || data.message}`);
+    console.log(`${prefix} ${markdownToChalk(data.reply || data.message)}`);
 }
 
 export function displayEscalations(escalations) {
@@ -177,17 +199,36 @@ export function displayEscalations(escalations) {
 
 export function displayContextSwitch(data) {
     console.log(chalk.green.bold('\n' + '═'.repeat(60)));
-    console.log(chalk.green(`✓ Switched to circle for patient: ${chalk.bold(data.patientUsername)}`));
-    console.log(chalk.green(`  Your role in this circle: ${chalk.bold(data.newRole)}`));
-    console.log(chalk.green.bold('═'.repeat(60) + '\n'));
     
-    // Show role-specific reminder
-    if (data.newRole === 'doctor') {
-        console.log(chalk.italic.gray('💡 Remember: Use /log for private notes, /order for prescriptions, and type natural instructions to have agents follow up for you.\n'));
-    } else if (data.newRole === 'caregiver') {
-        console.log(chalk.italic.gray('💡 Remember: Talk naturally - your agent coordinates with the patient\'s agent\n'));
-    } else if (data.newRole === 'patient') {
-        console.log(chalk.italic.gray('💡 Remember: Use /care to add caregivers, /doc to add doctors\n'));
+    if (data.circleType === 'professional' && data.circleName) {
+        // Professional circle context switch
+        const displayName = data.circleName.replace('professional_', '');
+        console.log(chalk.green(`✓ Switched to professional circle: ${chalk.bold(displayName)}`));
+        console.log(chalk.green(`  Your role in this circle: ${chalk.bold(data.newRole)}`));
+        console.log(chalk.green.bold('═'.repeat(60) + '\n'));
+        
+        // Show professional role-specific reminders
+        if (data.newRole === 'target') {
+            console.log(chalk.italic.gray('💡 Professional circle active: You can add members with /support, /expert commands\n'));
+        } else if (data.newRole === 'support') {
+            console.log(chalk.italic.gray('💡 Support role: Help coordinate and facilitate the professional objectives\n'));
+        } else if (data.newRole === 'expert') {
+            console.log(chalk.italic.gray('💡 Expert role: Provide specialized knowledge and technical guidance\n'));
+        }
+    } else {
+        // Care circle context switch (existing behavior)
+        console.log(chalk.green(`✓ Switched to circle for patient: ${chalk.bold(data.patientUsername)}`));
+        console.log(chalk.green(`  Your role in this circle: ${chalk.bold(data.newRole)}`));
+        console.log(chalk.green.bold('═'.repeat(60) + '\n'));
+        
+        // Show care role-specific reminders
+        if (data.newRole === 'doctor') {
+            console.log(chalk.italic.gray('💡 Remember: Use /log for private notes, /order for prescriptions, and type natural instructions to have agents follow up for you.\n'));
+        } else if (data.newRole === 'caregiver') {
+            console.log(chalk.italic.gray('💡 Remember: Talk naturally - your agent coordinates with the patient\'s agent\n'));
+        } else if (data.newRole === 'patient') {
+            console.log(chalk.italic.gray('💡 Remember: Use /care to add caregivers, /doc to add doctors\n'));
+        }
     }
 }
 

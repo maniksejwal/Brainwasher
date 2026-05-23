@@ -154,20 +154,26 @@ export class CompanionCoordinator {
     async initializeSchema() {
         const db = getDb();
         
-        // Companion confidential messages
+        // Companion confidential messages - FIXED: Match existing database schema
         await db.exec(`
             CREATE TABLE IF NOT EXISTS companion_confidential_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sender_companion_type TEXT NOT NULL,
-                receiver_companion_type TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                target_user_id TEXT,
+                message_id TEXT NOT NULL,
+                sender_companion_id TEXT NOT NULL,
+                sender_user_id TEXT NOT NULL,
+                recipient_companion_id TEXT,
+                recipient_user_id TEXT,
                 message_content TEXT NOT NULL,
                 confidential_level TEXT NOT NULL,
-                context_data TEXT,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                read_at DATETIME,
-                expires_at DATETIME
+                intelligence_type TEXT,
+                related_circle_id TEXT,
+                metadata TEXT,
+                requires_action BOOLEAN DEFAULT 0,
+                expires_at INTEGER,
+                created_at INTEGER NOT NULL,
+                read_at INTEGER,
+                FOREIGN KEY (sender_user_id) REFERENCES users(user_id),
+                FOREIGN KEY (recipient_user_id) REFERENCES users(user_id)
             )
         `);
 
@@ -213,15 +219,18 @@ export class CompanionCoordinator {
         const expirationHours = confidentialLevel === 'companion_only' ? 24 : 168;
         const expiresAt = new Date(Date.now() + expirationHours * 60 * 60 * 1000).toISOString();
 
+        const { randomUUID } = await import('crypto');
+        const messageId = randomUUID();
+        
         const result = await db.run(`
             INSERT INTO companion_confidential_messages (
-                sender_companion_type, receiver_companion_type, user_id, target_user_id,
-                message_content, confidential_level, context_data, expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        `, [senderType, receiverType, userId, targetUserId, messageContent, confidentialLevel, JSON.stringify(contextData), expiresAt]);
+                message_id, sender_companion_id, recipient_companion_id, sender_user_id, recipient_user_id,
+                message_content, confidential_level, metadata, expires_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [messageId, senderType, receiverType, userId, targetUserId, messageContent, confidentialLevel, JSON.stringify(contextData), expiresAt, Date.now()]);
 
         console.log(`[CompanionCoordinator] Confidential message sent: ${senderType} → ${receiverType} (Level: ${confidentialLevel})`);
-        return result.lastID;
+        return messageId;
     }
 
     /**
@@ -251,8 +260,13 @@ export class CompanionCoordinator {
         const professionalInput = await this.getCompanionDecisionInput('professional', userId, decisionContext, messageForAnalysis);
         const socialInput = await this.getCompanionDecisionInput('social', userId, decisionContext, messageForAnalysis);
 
-        // Analyze consensus
-        const consensus = this.analyzeCompanionConsensus([medicalInput, professionalInput, socialInput]);
+        // Analyze consensus using LLM
+        const companionInputsForConsensus = {
+            medical_companion: medicalInput,
+            professional_companion: professionalInput,
+            social_companion: socialInput
+        };
+        const consensus = await this.analyzeCompanionConsensus(companionInputsForConsensus, decisionContext);
         
         // Store decision coordination
         const result = await db.run(`
@@ -421,36 +435,34 @@ Please provide:
     }
 
     /**
-     * Analyze consensus between companion inputs
+     * Analyze consensus between companion inputs using LLM
      */
-    analyzeCompanionConsensus(companionInputs) {
-        // Simple consensus analysis - in real implementation, would use AI
-        const avgConfidence = companionInputs.reduce((sum, input) => sum + input.confidence, 0) / companionInputs.length;
+    async analyzeCompanionConsensus(companionInputs, decisionContext) {
+        // Use the dedicated CompanionConfidentialComm for LLM-powered consensus
+        const { default: CompanionConfidentialComm } = await import('./confidential/CompanionConfidentialComm.js');
+        const companionComm = new CompanionConfidentialComm();
         
-        // Check for conflicting recommendations (basic keyword analysis)
-        const recommendations = companionInputs.map(input => input.recommendation.toLowerCase());
-        const hasConflict = recommendations.some(rec => 
-            recommendations.some(other => 
-                rec.includes('not') !== other.includes('not') || 
-                rec.includes('avoid') !== other.includes('avoid')
-            )
-        );
-
-        const reached = avgConfidence > 0.6 && !hasConflict;
+        const consensus = await companionComm.analyzeCompanionConsensus(companionInputs, decisionContext);
         
+        // Transform to the expected format for backward compatibility
         return {
-            reached,
-            confidence: avgConfidence,
-            conflictsDetected: hasConflict,
-            decision: reached ? {
+            reached: consensus.reached,
+            confidence: consensus.confidence,
+            conflictsDetected: consensus.conflictingAreas && consensus.conflictingAreas.length > 0,
+            decision: consensus.reached ? {
                 action: 'proceed_with_coordination',
-                rationale: `Companions reached consensus with ${(avgConfidence * 100).toFixed(1)}% confidence`,
-                companionAlignment: 'aligned'
+                rationale: consensus.recommendation,
+                companionAlignment: consensus.unanimous ? 'unanimous' : 'aligned'
             } : {
                 action: 'require_human_input',
-                rationale: hasConflict ? 'Companions have conflicting perspectives' : 'Low confidence in decision',
-                companionAlignment: hasConflict ? 'conflicted' : 'uncertain'
-            }
+                rationale: consensus.reason,
+                companionAlignment: consensus.majorityPosition === 'neutral' ? 'uncertain' : 'conflicted'
+            },
+            // Additional fields from LLM analysis
+            supportCount: consensus.supportCount,
+            concernCount: consensus.concernCount,
+            nuances: consensus.nuances,
+            majorityPosition: consensus.majorityPosition
         };
     }
 
@@ -462,10 +474,10 @@ Please provide:
         
         let query = `
             SELECT * FROM companion_confidential_messages 
-            WHERE receiver_companion_type = ? AND user_id = ?
-            AND (expires_at IS NULL OR expires_at > datetime('now'))
+            WHERE recipient_companion_id = ? AND recipient_user_id = ?
+            AND (expires_at IS NULL OR expires_at > ?)
         `;
-        const params = [companionType, userId];
+        const params = [companionType, userId, Date.now()];
         
         if (unreadOnly) {
             query += ' AND read_at IS NULL';
@@ -487,9 +499,9 @@ Please provide:
         const db = getDb();
         await db.run(`
             UPDATE companion_confidential_messages 
-            SET read_at = datetime('now') 
-            WHERE id = ?
-        `, [messageId]);
+            SET read_at = ? 
+            WHERE message_id = ?
+        `, [Date.now(), messageId]);
     }
 
     /**
@@ -499,8 +511,8 @@ Please provide:
         const db = getDb();
         const result = await db.run(`
             DELETE FROM companion_confidential_messages 
-            WHERE expires_at IS NOT NULL AND expires_at < datetime('now')
-        `);
+            WHERE expires_at IS NOT NULL AND expires_at < ?
+        `, [Date.now()]);
         
         if (result.changes > 0) {
             console.log(`[CompanionCoordinator] Cleaned up ${result.changes} expired companion messages`);

@@ -43,17 +43,49 @@ Add a member to the current care circle.
 
 ## Professional Circle Management
 
-### `/target <username>`, `/support <username>`, `/expert <username>`
+### `/create-circle <type> <name>`
+Create a new professional circle with a specific name.
+**Usage:**
+```bash
+/create-circle professional project_alpha
+/create-circle professional client_beta
+```
+
+### `/target <username> as <role>`, `/support <username> as <role>`, `/expert <username> as <role>`
 Add members to your professional circle with specific roles.
 - `/target`: Adds a target (buyer, client, project owner)
 - `/support`: Adds support (champion, facilitator, project manager)  
 - `/expert`: Adds expert (technical architect, domain expert, legal counsel)
-**Usage:**
+
+**Three Ways to Specify Which Circle:**
+
+**Method 1 - Single Circle (automatic):**
 ```bash
+# If you have only one professional circle, members are added automatically
 /target john_smith as project_owner
 /support alice_jones as project_manager
-/expert bob_wilson as technical_architect
 ```
+
+**Method 2 - Explicit Naming (recommended):**
+```bash
+# Specify the circle name directly in the command - multiple formats supported
+/target john_smith as project_owner in project_alpha
+/support alice_jones as project_manager @marketing_dept  
+/expert bob_wilson as technical_architect #contract_review
+```
+
+**Method 3 - Context Switch (traditional):**
+```bash
+# First switch to the specific circle, then add members
+/switch professional_7c350dbd
+/target john_smith as project_owner
+/support alice_jones as project_manager
+```
+
+**Interactive Selection:**
+If you have multiple circles and don't specify one, the system will show all available methods.
+
+Use `/circles` to see your circle names and IDs.
 
 ### `/professional [circle_name]`
 List all members of your professional circles and their roles.
@@ -68,14 +100,6 @@ List all circles you are a member of (both care and professional).
 **Usage:**
 ```bash
 /circles
-```
-
-### `/create-circle <type> <name>`
-Create a new professional circle with a specific name.
-**Usage:**
-```bash
-/create-circle professional project_alpha
-/create-circle professional client_beta
 ```
 
 ## Document Management
@@ -138,7 +162,15 @@ List all members of the current care circle and their roles.
 List all patients you are caring for (if you are a caregiver/doctor).
 
 ### `/switch <patient_username>` or `/switch <circle_id>`
-Switch context to another patient's care circle.
+Switch context to another patient's care circle or professional circle.
+**Usage:**
+```bash
+# Switch to a care circle by patient username
+/switch alice_smith
+
+# Switch to a professional circle by circle ID  
+/switch 123
+```
 
 ### `/mycircles`
 List all circles you are a member of.

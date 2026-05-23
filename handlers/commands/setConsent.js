@@ -1,19 +1,32 @@
 /**
  * @fileoverview Handles the '/consent' command logic.
- * This module allows a patient to set the consent level for another member
- * within their own personal care circle. It also allows caregivers to set
- * consent for the patient to view their updates.
+ * This module allows users to set consent levels for members within their circles.
+ * Supports both care circles (patient/caregiver model) and professional circles.
  */
 
-import { getCircleMembers, updateMemberConsent, findCircleByPatientId } from '../../db/index.js';
+import { getCircleMembers, updateMemberConsent, findCircleByPatientId, findCircleById } from '../../db/index.js';
 import { events } from '../../orchestrator.js';
 
 export async function handleConsentCommand(userId, circleId, parts) {
     const targetUsername = parts[1];
     const level = parts[2];
 
-    if (!targetUsername || !level || !['none', 'limited', 'full'].includes(level)) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `Invalid format. Use: /consent <username> <level>`, from: 'system', circleId });
+    // Professional circles may use different consent levels
+    const currentCircle = await findCircleById(circleId);
+    const isProfessional = currentCircle?.circle_type === 'professional';
+    
+    const validLevels = isProfessional 
+        ? ['none', 'limited', 'business_standard', 'full'] 
+        : ['none', 'limited', 'full'];
+
+    if (!targetUsername || !level || !validLevels.includes(level)) {
+        const levelOptions = validLevels.join('/');
+        events.emit('broadcast', { 
+            targetUsers: [userId], 
+            reply: `Invalid format. Use: /consent <username> <${levelOptions}>`, 
+            from: 'system', 
+            circleId 
+        });
         return;
     }
 
@@ -21,28 +34,75 @@ export async function handleConsentCommand(userId, circleId, parts) {
     const targetMember = members.find(m => m.username === targetUsername);
 
     if (!targetMember) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `Error: User '${targetUsername}' is not a member of this care circle.`, from: 'system', circleId });
+        const circleType = isProfessional ? 'professional circle' : 'care circle';
+        events.emit('broadcast', { 
+            targetUsers: [userId], 
+            reply: `Error: User '${targetUsername}' is not a member of this ${circleType}.`, 
+            from: 'system', 
+            circleId 
+        });
         return;
     }
 
-    const personalCircle = await findCircleByPatientId(userId);
-    const isMyCircle = personalCircle && personalCircle.circle_id === circleId;
+    // Professional circles: Check if user has permission to set consent
+    if (isProfessional) {
+        // In professional circles, the circle owner/creator can set consent for others
+        // Also, anyone can set their own consent level for the circle owner
+        const isOwner = currentCircle.primary_patient_id === userId;
+        const isSettingForOwner = targetMember.user_id === currentCircle.primary_patient_id;
+        
+        if (targetMember.user_id === userId) {
+            events.emit('broadcast', { 
+                targetUsers: [userId], 
+                reply: `You cannot set consent for yourself.`, 
+                from: 'system', 
+                circleId 
+            });
+            return;
+        }
+        
+        if (!isOwner && !isSettingForOwner) {
+            events.emit('broadcast', { 
+                targetUsers: [userId], 
+                reply: `You can only set consent for the circle owner, or if you are the circle owner.`, 
+                from: 'system', 
+                circleId 
+            });
+            return;
+        }
+    } else {
+        // Care circles: Original medical logic
+        const personalCircle = await findCircleByPatientId(userId);
+        const isMyCircle = personalCircle && personalCircle.circle_id === circleId;
 
-    // ** FIX: Updated business logic for consent **
-    // Rule: You can only set consent for OTHERS if it's your own circle.
-    // Rule: You can ALWAYS set consent for the PATIENT if you are a caregiver.
-    // Rule: You cannot set consent for yourself
-    if (targetMember.user_id === userId) {
-        events.emit('broadcast', { targetUsers: [userId], reply: `You cannot set consent for yourself.`, from: 'system', circleId });
-        return;
-    }
-    
-    if (!isMyCircle && targetMember.role !== 'patient') {
-         events.emit('broadcast', { targetUsers: [userId], reply: `You can only set consent for the patient in a circle you are a caregiver in.`, from: 'system', circleId });
-        return;
+        if (targetMember.user_id === userId) {
+            events.emit('broadcast', { 
+                targetUsers: [userId], 
+                reply: `You cannot set consent for yourself.`, 
+                from: 'system', 
+                circleId 
+            });
+            return;
+        }
+        
+        if (!isMyCircle && targetMember.role !== 'patient') {
+            events.emit('broadcast', { 
+                targetUsers: [userId], 
+                reply: `You can only set consent for the patient in a circle you are a caregiver in.`, 
+                from: 'system', 
+                circleId 
+            });
+            return;
+        }
     }
 
     await updateMemberConsent(circleId, targetMember.user_id, level);
-    events.emit('broadcast', { targetUsers: [userId], reply: `Consent for '${targetUsername}' in this circle set to '${level}'.`, from: 'system', circleId });
+    const circleType = isProfessional ? 'professional circle' : 'care circle';
+    events.emit('broadcast', { 
+        targetUsers: [userId], 
+        reply: `Consent for '${targetUsername}' in this ${circleType} set to '${level}'.`, 
+        from: 'system', 
+        circleId 
+    });
 }
 

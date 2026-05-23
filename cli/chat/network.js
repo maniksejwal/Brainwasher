@@ -57,11 +57,14 @@ export function connectToEventSource() {
                 console.error(chalk.red('Error fetching escalations:', error.message));
             }
         } else if (data.type === 'context_switched') {
-            // FIX: Ensure all state variables are correctly updated from the complete payload.
+            // Handle both care circles (patientUsername) and professional circles (circleName)
+            const contextName = data.patientUsername || data.circleName || 'unknown';
             updateUserState({
                 currentCircleId: data.newCircleId,
                 userRoleInCurrentCircle: data.newRole,
-                currentPatientUsername: data.patientUsername
+                currentPatientUsername: data.patientUsername,
+                currentCircleName: data.circleName,
+                circleType: data.circleType || 'medical'
             });
             displayContextSwitch(data);
         }

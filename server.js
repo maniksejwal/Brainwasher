@@ -91,6 +91,8 @@ events.on('context_switch', (payload) => {
             type: 'context_switched',
             newCircleId: payload.newCircleId,
             patientUsername: payload.patientUsername,
+            circleType: payload.circleType,
+            circleName: payload.circleName,
             newRole: payload.newRole
         });
     }

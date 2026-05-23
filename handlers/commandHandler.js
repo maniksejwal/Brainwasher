@@ -29,14 +29,21 @@ import { handleShowAllCircles, handleCreateCircleCommand, handleDocumentCommand 
 export async function handleCommand(userId, circleId, message) {
     const parts = message.toLowerCase().split(' ');
     const command = parts[0];
-    const currentUserInfo = await getMemberInfo(userId, circleId);
-
-    if (!currentUserInfo) {
-        console.error(`[CommandHandler] Could not find member info for user ${userId} in circle ${circleId}`);
-        return;
+    
+    // Commands that can be run without valid member info (context-switching commands)
+    const contextCommands = ['/switch', '/circles', '/circle'];
+    
+    let currentUserInfo = null;
+    if (!contextCommands.includes(command)) {
+        currentUserInfo = await getMemberInfo(userId, circleId);
+        
+        if (!currentUserInfo) {
+            console.error(`[CommandHandler] Could not find member info for user ${userId} in circle ${circleId}`);
+            return;
+        }
     }
 
-    if (currentUserInfo.role === 'doctor' && circleId === userId) {
+    if (currentUserInfo && currentUserInfo.role === 'doctor' && circleId === userId) {
         if (!['/switch', '/spec', '/circle'].includes(command)) {
             events.emit('broadcast', { targetUsers: [userId], reply: `Safety alert: You can only use /switch, /circle, or /spec in your personal circle.`, from: 'system', circleId });
             return;
@@ -68,14 +75,14 @@ export async function handleCommand(userId, circleId, message) {
             break;
         case '/log':
         case '/order':
-            if (currentUserInfo.role !== 'doctor') {
+            if (!currentUserInfo || currentUserInfo.role !== 'doctor') {
                 events.emit('broadcast', { targetUsers: [userId], reply: `This command is only available to doctors.`, from: 'system', circleId });
                 return;
             }
             await handleDirectiveCommand(userId, circleId, message, command);
             break;
         case '/agent':
-            if (currentUserInfo.role !== 'doctor') {
+            if (!currentUserInfo || currentUserInfo.role !== 'doctor') {
                 events.emit('broadcast', { targetUsers: [userId], reply: `This command is only available to doctors.`, from: 'system', circleId });
                 return;
             }
@@ -99,7 +106,7 @@ export async function handleCommand(userId, circleId, message) {
             await handleShowProfessionalCircle(userId, circleId);
             break;
         case '/spec':
-            if (currentUserInfo.role !== 'doctor') {
+            if (!currentUserInfo || currentUserInfo.role !== 'doctor') {
                 await updateMemberRole(circleId, userId, 'doctor');
                 events.emit('broadcast', { targetUsers: [userId], reply: `Your role in this circle has been updated to 'doctor'.`, from: 'system', circleId });
             }

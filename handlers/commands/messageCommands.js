@@ -119,7 +119,7 @@ export async function handleMessagesCommand(userId, circleId, parts, sendMessage
             for (const msg of messages.reverse()) { // Show chronologically
                 const isFromUser = msg.sender_id === userId;
                 const sender = isFromUser ? 'You' : targetUsername;
-                const timestamp = new Date(msg.created_at).toLocaleTimeString();
+                const timestamp = new Date(msg.timestamp).toLocaleTimeString();
                 reply += `[${timestamp}] **${sender}:** ${msg.message}\n`;
             }
             reply += `\n(Use /dm ${targetUsername} <message> to reply)`;
@@ -131,18 +131,18 @@ export async function handleMessagesCommand(userId, circleId, parts, sendMessage
             const conversations = await db.all(`
                 SELECT DISTINCT 
                     CASE 
-                        WHEN sender_id = ? THEN recipient_id 
+                        WHEN sender_id = ? THEN receiver_id 
                         ELSE sender_id 
                     END as other_user_id,
                     u.username,
-                    MAX(created_at) as last_message_time,
+                    MAX(timestamp) as last_message_time,
                     COUNT(*) as message_count
                 FROM direct_messages dm
                 JOIN users u ON u.user_id = CASE 
-                    WHEN dm.sender_id = ? THEN dm.recipient_id 
+                    WHEN dm.sender_id = ? THEN dm.receiver_id 
                     ELSE dm.sender_id 
                 END
-                WHERE sender_id = ? OR recipient_id = ?
+                WHERE sender_id = ? OR receiver_id = ?
                 GROUP BY other_user_id, u.username
                 ORDER BY last_message_time DESC
             `, [userId, userId, userId, userId]);

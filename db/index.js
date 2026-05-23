@@ -9,7 +9,7 @@
  */
 
 import { getDb, setGlobalDb } from './connection.js';
-import { initializeDatabase, clearDatabase } from './schema.js';
+import { initializeDatabase, clearDatabase, addConversationIntelligenceTables } from './schema.js';
 import {
     findUserByUsername,
     findUserById,
@@ -33,7 +33,11 @@ import {
     getRecentMessages,
     upsertFact,
     getLastFact,
-    getFactHistory
+    getFactHistory,
+    getTotalUnreadMessageCount,
+    markCircleRead,
+    getEnhancedConversationHistory,
+    getFactsByCategory
 } from './queries_messages.js';
 import {
     addEscalation,
@@ -86,6 +90,7 @@ export {
     setGlobalDb,
     initializeDatabase,
     clearDatabase,
+    addConversationIntelligenceTables,
     findUserByUsername,
     findUserById,
     findCircleByPatientId,
@@ -107,6 +112,10 @@ export {
     upsertFact,
     getLastFact,
     getFactHistory,
+    getTotalUnreadMessageCount,
+    markCircleRead,
+    getEnhancedConversationHistory,
+    getFactsByCategory,
     addEscalation,
     getUnreadEscalationsForCircle,
     getUnreadEscalationsForUser,

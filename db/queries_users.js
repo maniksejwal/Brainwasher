@@ -93,6 +93,9 @@ export async function getUserCircles(userId) {
         SELECT 
             c.circle_id, 
             c.primary_patient_id, 
+            c.circle_type,
+            c.organization_context,
+            c.created_at,
             p.username as patient_username, 
             m.role, 
             m.relationship_type,

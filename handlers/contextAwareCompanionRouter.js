@@ -17,6 +17,7 @@ import { DocumentAgent } from '../agents/business/documentAgent.js';
 import { FormsAgent } from '../agents/business/formsAgent.js';
 import ProfessionalCircleRouter from './routing/professionalCircleRouter.js';
 import { CompanionCoordinator } from '../companions/CompanionCoordinator.js';
+import CompanionConfidentialComm from '../companions/confidential/CompanionConfidentialComm.js';
 import { BusinessCoordinationEngine } from '../agents/business/businessCoordinationEngine.js';
 import sessionManager from '../sessions/sessionManager.js';
 import { events } from '../orchestrator.js';
@@ -71,6 +72,7 @@ class UserProfile {
         // Initialize routing systems
         this.professionalRouter = new ProfessionalCircleRouter();
         this.companionCoordinator = new CompanionCoordinator();
+        this.companionComm = new CompanionConfidentialComm();
     }
 
     async loadFromDatabase() {
@@ -795,28 +797,28 @@ async function routeProfessionalContextMessage(userId, circleId, message, profes
 async function handleMixedContextMessage(userId, circleId, message, professionalContext) {
     const router = new ContextAwareCompanionRouter();
     
-    // Initiate companion coordination for mixed context
-    const coordinationResult = await router.companionCoordinator.coordinateCompanionDecision(
-        `Mixed context message routing: ${message.substring(0, 100)}`,
-        userId,
-        circleId,
-        message
-    );
+    // Initiate companion coordination for mixed context using CompanionConfidentialComm
+    const coordinationResult = await router.companionComm.coordinateCompanionDecision({
+        userId: userId,
+        decisionContext: `Mixed context message routing: ${message.substring(0, 100)}`,
+        companions: ['medical_companion', 'professional_companion']
+    });
     
     // Send confidential intelligence sharing
-    await router.companionCoordinator.shareIntelligenceBetweenCompanions(
-        'medical_companion',
-        'professional_companion',
-        userId,
-        'cross_context_awareness',
-        JSON.stringify({
+    await router.companionComm.shareIntelligenceBetweenCompanions({
+        sourceCompanion: 'medical_companion',
+        targetCompanion: 'professional_companion', 
+        userId: userId,
+        summary: 'Cross-context awareness sharing',
+        detailedAnalysis: JSON.stringify({
             message: message.substring(0, 300),
             professionalContext,
             medicalKeywords: extractMedicalKeywords(message),
             coordinationResult
         }),
-        0.8
-    );
+        reason: 'Cross-context message routing coordination',
+        privacyLevel: 'COMPANION_CONFIDENTIAL'
+    });
     
     // Process through both systems with coordination
     const { handleMessage: handleMedicalMessage } = await import('./messageHandler.js');

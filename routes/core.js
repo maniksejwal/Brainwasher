@@ -58,4 +58,30 @@ router.post('/send', (req, res) => {
     res.status(202).send();
 });
 
+// Context Switch API - GUI buttons use this, manual commands use CLI
+router.post('/api/context/switch', authenticate, async (req, res) => {
+    try {
+        const { circleId, circleType } = req.body;
+        const userId = req.user.id;
+
+        if (!circleId) {
+            return res.status(400).json({ error: 'Missing circleId' });
+        }
+
+        // Use the existing CLI command internally - this maintains consistency
+        // GUI buttons → API → CLI command → Same processing as manual commands
+        const command = `/switch ${circleId}`;
+        handleCommand(userId, null, command);
+        
+        res.status(202).json({ 
+            success: true, 
+            message: `Context switch initiated for ${circleType || 'circle'} ${circleId}` 
+        });
+        
+    } catch (error) {
+        console.error('[API] Context switch error:', error);
+        res.status(500).json({ error: 'Failed to switch context' });
+    }
+});
+
 export default router;

@@ -12,7 +12,15 @@ export const MESSAGES = {
     
     // System messages
     CONNECTION_LOST: 'Connection lost. Reconnecting...',
-    CONTEXT_SWITCHED: (patientUsername, newRole) => `Switched to ${patientUsername}'s circle (you are: ${newRole})`,
+    CONTEXT_SWITCHED: (contextName, newRole, contextType = 'care') => {
+        if (contextType === 'professional') {
+            return `Switched to professional circle "${contextName}" (you are: ${newRole})`;
+        } else if (contextType === 'care') {
+            return `Switched to ${contextName}'s care circle (you are: ${newRole})`;
+        } else {
+            return `Switched to circle "${contextName}" (you are: ${newRole})`;
+        }
+    },
     ESCALATION: (details) => `🚨 Escalation: ${details}`,
     FEEDBACK_SUBMITTED: 'Feedback submitted!',
     

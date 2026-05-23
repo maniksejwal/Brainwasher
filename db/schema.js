@@ -185,6 +185,9 @@ export async function initializeDatabase() {
 
     // Migrate existing tables to add missing columns
     await migrateDatabase(db);
+    
+    // Create companion confidential communication tables
+    await createCompanionConfidentialTables();
 }
 
 /**
@@ -382,5 +385,158 @@ export async function clearDatabase() {
         DELETE FROM users;
     `);
     console.log('[Database] Cleared.');
+}
+
+/**
+ * Add metadata tables for conversation intelligence
+ * rich metadata tables to capture LLM analysis results
+ * 
+ * BACKWARDS COMPATIBILITY:
+ * - Existing 'messages' table unchanged - all existing queries work
+ * - New tables are LEFT JOINed - null metadata doesn't break existing functionality
+ * - All existing functions (getRecentMessages, etc.) continue to work exactly as before
+ * 
+ * FORWARDS COMPATIBILITY: 
+ * - New enhanced functions (getEnhancedConversationHistory) use rich metadata when available
+ * - System gracefully handles missing metadata (falls back to basic message data)
+ * - Future LLM improvements can add more metadata without breaking existing storage
+ * 
+ * ENSURING WE DON'T FORGET:
+ * - Schema function name clearly indicates purpose: addConversationIntelligenceTables()
+ * - Comments document exact purpose of each table
+ * - Migration pattern allows incremental adoption
+ */
+export async function addConversationIntelligenceTables() {
+    const db = await getDb();
+    
+    await db.exec(`
+        -- Store LLM analysis results for messages (complements existing facts_v2)
+        CREATE TABLE IF NOT EXISTS message_metadata (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            circle_id TEXT NOT NULL,
+            context_type TEXT, -- 'medical' or 'business' (from circle type)
+            intent TEXT, -- LLM-determined intent from inputUnderstanding handler
+            topics TEXT, -- JSON array of LLM-determined topics
+            urgency TEXT DEFAULT 'normal', -- LLM-determined urgency level
+            metadata_json TEXT, -- Full LLM analysis results as JSON
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (message_id) REFERENCES messages(message_id)
+        );
+
+        -- Link messages to documents (unified for medical reports and business documents)
+        CREATE TABLE IF NOT EXISTS documents (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            content TEXT,
+            document_type TEXT, -- LLM-determined type: 'medical_report', 'contract', etc.
+            circle_id TEXT NOT NULL,
+            created_by TEXT,
+            status TEXT DEFAULT 'draft',
+            context_type TEXT, -- 'medical' or 'business'
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS message_document_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id INTEGER NOT NULL,
+            document_id TEXT NOT NULL,
+            link_type TEXT, -- LLM-determined: 'creation_trigger', 'review_discussion', etc.
+            created_at INTEGER NOT NULL,
+            FOREIGN KEY (message_id) REFERENCES messages(message_id),
+            FOREIGN KEY (document_id) REFERENCES documents(id)
+        );
+
+        -- Performance indexes
+        CREATE INDEX IF NOT EXISTS idx_message_metadata_circle_context 
+        ON message_metadata(circle_id, context_type);
+        
+        CREATE INDEX IF NOT EXISTS idx_message_metadata_intent_topics 
+        ON message_metadata(intent, topics);
+    `);
+
+    console.log('[Schema] Conversation intelligence tables added - LLM analysis storage ready');
+}
+
+/**
+ * Add companion confidential communication tables
+ */
+async function createCompanionConfidentialTables() {
+    const db = await getDb();
+    
+    await db.exec(`
+        -- Companion-to-companion confidential messages
+        CREATE TABLE IF NOT EXISTS companion_confidential_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id TEXT NOT NULL,
+            sender_companion_id TEXT NOT NULL,      -- Which companion sent this
+            sender_user_id TEXT NOT NULL,           -- User the sender companion belongs to
+            recipient_companion_id TEXT,            -- Specific companion recipient (null for broadcast)
+            recipient_user_id TEXT,                 -- User the recipient companion belongs to
+            message_content TEXT NOT NULL,
+            confidential_level TEXT NOT NULL,       -- companion_only, companion_network, cross_user_companion
+            intelligence_type TEXT,                 -- context_sharing, risk_assessment, pattern_detection
+            related_circle_id TEXT,                 -- Related circle context
+            metadata TEXT,                          -- JSON metadata
+            requires_action BOOLEAN DEFAULT 0,     -- Whether this requires companion action
+            expires_at INTEGER,                     -- Auto-delete timestamp for sensitive intel
+            created_at INTEGER NOT NULL,
+            read_at INTEGER,
+            FOREIGN KEY (sender_user_id) REFERENCES users(user_id),
+            FOREIGN KEY (recipient_user_id) REFERENCES users(user_id)
+        );
+
+        -- Companion intelligence sharing logs
+        CREATE TABLE IF NOT EXISTS companion_intel_sharing (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sharing_id TEXT NOT NULL,
+            source_companion TEXT NOT NULL,         -- medical_companion, professional_companion, etc.
+            target_companion TEXT NOT NULL,
+            user_id TEXT NOT NULL,                  -- User whose companions are sharing intel
+            intelligence_summary TEXT NOT NULL,     -- High-level summary of shared intelligence
+            detailed_analysis TEXT,                 -- Detailed analysis (may be encrypted)
+            sharing_reason TEXT NOT NULL,           -- why this intelligence was shared
+            privacy_level TEXT NOT NULL,            -- COMPANION_CONFIDENTIAL, USER_INVISIBLE
+            user_consent_status TEXT DEFAULT 'not_required', -- explicit, implicit, not_required
+            shared_at INTEGER NOT NULL,
+            accessed_at INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+
+        -- Companion decision coordination
+        CREATE TABLE IF NOT EXISTS companion_decision_sync (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sync_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            decision_context TEXT NOT NULL,         -- What decision needs coordination
+            medical_companion_input TEXT,           -- Medical companion's perspective
+            professional_companion_input TEXT,     -- Professional companion's perspective
+            social_companion_input TEXT,           -- Social companion's perspective  
+            consensus_reached BOOLEAN DEFAULT 0,
+            final_recommendation TEXT,
+            confidence_score REAL,                  -- 0-1 confidence in recommendation
+            user_override TEXT,                     -- If user overrides companion decision
+            created_at INTEGER NOT NULL,
+            resolved_at INTEGER,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        );
+
+        -- Indexes for performance
+        CREATE INDEX IF NOT EXISTS idx_companion_messages_recipient 
+        ON companion_confidential_messages(recipient_user_id, recipient_companion_id);
+        
+        CREATE INDEX IF NOT EXISTS idx_companion_messages_sender 
+        ON companion_confidential_messages(sender_user_id, sender_companion_id);
+        
+        CREATE INDEX IF NOT EXISTS idx_companion_intel_user 
+        ON companion_intel_sharing(user_id);
+        
+        CREATE INDEX IF NOT EXISTS idx_companion_decisions 
+        ON companion_decision_sync(user_id, consensus_reached);
+    `);
+
+    console.log('[Schema] Companion confidential communication tables added');
 }
 

@@ -6,21 +6,33 @@
 import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { loadPrompt } from '../utils/promptLoader.js';
+import { findCircleById } from '../../db/index.js';
 
 /**
- * Process empathy decision
+ * Process empathy decision with context-aware prompts
  * @param {string} userId - User ID
  * @param {string} role - User role
  * @param {string} message - User message
- * @param {string} circleId - Care circle ID
+ * @param {string} circleId - Circle ID
  * @param {object} context - Conversation context
  * @returns {Promise<object>} Empathy decision and response
  */
 export async function processEmpathyDecision(userId, role, message, circleId, context) {
-    const prompt = loadPrompt('empathy', {
+    // Determine appropriate prompt based on circle type
+    let promptType = 'empathy';
+    try {
+        const circle = await findCircleById(circleId);
+        if (circle?.circle_type === 'professional') {
+            promptType = 'business_empathy';
+        }
+    } catch (error) {
+        console.warn('[EmpathyHandler] Could not determine circle type, using default prompt');
+    }
+    
+    const prompt = loadPrompt(promptType, {
         MESSAGE: message,
         ROLE: role,
-        CRITICALITY: context.clinicalAssessment?.criticality || 'NONE'
+        CRITICALITY: context.clinicalAssessment?.criticality || context.businessAssessment?.criticality || 'NONE'
     });
 
     try {

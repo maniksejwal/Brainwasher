@@ -7,23 +7,35 @@ import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { formatMemberListForPrompt, resolveMentionedUsers } from '../utils/entityResolver.js';
 import { loadPrompt } from '../utils/promptLoader.js';
+import { findCircleById } from '../../db/index.js';
 
 /**
- * Process input understanding
+ * Process input understanding with context-aware prompts
  * @param {string} userId - User ID
  * @param {string} role - User role
  * @param {string} message - User message
- * @param {string} circleId - Care circle ID
+ * @param {string} circleId - Circle ID
  * @param {object} context - Conversation context
  * @returns {Promise<object>} Understanding analysis
  */
 export async function processInputUnderstanding(userId, role, message, circleId, context) {
-    // Get care circle members for entity resolution
+    // Get circle members for entity resolution
     const members = context.members || [];
     const memberList = formatMemberListForPrompt(members);
     
-    // Load prompt from file with template variables
-    const prompt = loadPrompt('input_understanding', {
+    // Determine if this is a professional circle
+    let promptType = 'input_understanding';
+    try {
+        const circle = await findCircleById(circleId);
+        if (circle?.circle_type === 'professional') {
+            promptType = 'business_input_understanding';
+        }
+    } catch (error) {
+        console.warn('[InputUnderstanding] Could not determine circle type, using default prompt');
+    }
+    
+    // Load appropriate prompt based on circle type
+    const prompt = loadPrompt(promptType, {
         MEMBER_LIST: memberList,
         MESSAGE: message,
         ROLE: role,

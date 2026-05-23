@@ -221,7 +221,7 @@ export class CompanionConfidentialComm {
         }
 
         // Analyze consensus
-        const consensus = this.analyzeCompanionConsensus(companionInputs, decisionContext);
+        const consensus = await this.analyzeCompanionConsensus(companionInputs, decisionContext);
         
         // Update with final recommendation
         await db.run(`
@@ -253,118 +253,109 @@ export class CompanionConfidentialComm {
      */
     async getCompanionDecisionInput(companionType, userId, decisionContext) {
         try {
-            // Use your existing AI agents to generate companion perspective
-            const { processUserMessage } = await import('../../agents/index.js');
-            const { getCircleMembers } = await import('../../db/index.js');
+            // Use prompts from the prompts package
+            const { generateCompanionDecisionPrompt } = await import('../../prompts/companion_decision_analysis.js');
+            const companionPrompt = generateCompanionDecisionPrompt(companionType, decisionContext);
             
-            // Get user context
-            const userCircles = await this.getUserCircles(userId);
-            const relevantCircle = userCircles.find(c => 
-                companionType.includes('medical') ? c.circle_type === 'medical' : 
-                companionType.includes('professional') ? c.circle_type === 'professional' : true
-            ) || userCircles[0];
+            // Import the API client
+            const { makeApiCall } = await import('../../agents/api_client.js');
             
-            if (!relevantCircle) {
-                return `${companionType}: No relevant circle context available for decision analysis.`;
-            }
-            
-            const members = await getCircleMembers(relevantCircle.circle_id);
-            
-            // Create AI prompt for companion perspective
-            const companionPrompt = this.createCompanionDecisionPrompt(companionType, decisionContext);
-            
-            // Use your unified agent for AI-powered companion analysis
-            const aiResponse = await processUserMessage(
-                userId,
-                'companion', // role
+            // Use your API with optimized parameters for companion decision analysis
+            const aiResponse = await makeApiCall(
                 companionPrompt,
-                members,
-                relevantCircle.circle_id,
-                null, // promptVersion
-                {
-                    companionType: companionType,
-                    analysisMode: 'decision_support',
-                    focusAreas: this.getCompanionFocusAreas(companionType),
-                    decisionContext: decisionContext
-                }
+                [], // No history for decision analysis
+                false, // Expect text response, not JSON
+                0.4, // Lower temperature for more consistent analysis
+                400, // Increase token limit for comprehensive analysis
+                'companion_decision_analysis' // Specialized use case
             );
             
-            // Extract companion perspective from AI response
-            return this.extractCompanionPerspective(aiResponse, companionType, decisionContext);
+            // Extract the analysis text
+            const analysisText = aiResponse.reply || aiResponse.response || aiResponse;
+            
+            if (!analysisText || typeof analysisText !== 'string') {
+                throw new Error('Invalid AI response format');
+            }
+
+            // Add companion type prefix for clarity in consensus analysis
+            const formattedAnalysis = `**${companionType.replace('_', ' ').toUpperCase()} PERSPECTIVE:**\n${analysisText}`;
+            
+            if (process.env.DEBUG_COMPANION) {
+                console.log(`[CompanionComm] ${companionType} decision input:`, formattedAnalysis.substring(0, 200) + '...');
+            }
+
+            return formattedAnalysis;
             
         } catch (error) {
             console.error(`[CompanionComm] AI decision input failed for ${companionType}:`, error.message);
-            // Fallback to structured response
+            // Fallback to structured response from prompts package
             return this.getFallbackCompanionInput(companionType, decisionContext);
         }
     }
 
-    /**
-     * Create AI prompt for companion decision input
-     * @param {string} companionType - Type of companion
-     * @param {string} decisionContext - Decision context
-     * @returns {string} AI prompt
-     */
-    createCompanionDecisionPrompt(companionType, decisionContext) {
-        const prompts = {
-            medical_companion: `As a medical companion AI, analyze this decision from a health and wellbeing perspective: "${decisionContext}". Consider health impacts, medical priorities, stress factors, and long-term wellbeing. Provide your perspective on whether this decision supports or hinders the user's health goals.`,
-            
-            professional_companion: `As a professional companion AI, analyze this decision from a career and business perspective: "${decisionContext}". Consider career implications, professional relationships, business outcomes, and work-life balance. Provide your perspective on whether this decision advances or hinders professional goals.`,
-            
-            social_companion: `As a social companion AI, analyze this decision from a relationships and social perspective: "${decisionContext}". Consider impact on relationships, social dynamics, community effects, and personal fulfillment. Provide your perspective on whether this decision strengthens or weakens social connections.`
-        };
-        
-        return prompts[companionType] || `As a ${companionType}, analyze this decision: "${decisionContext}"`;
-    }
 
-    /**
-     * Get focus areas for different companion types
-     * @param {string} companionType - Type of companion
-     * @returns {Array} Focus areas for AI analysis
-     */
-    getCompanionFocusAreas(companionType) {
-        const focusAreas = {
-            medical_companion: ['health_impact', 'stress_factors', 'wellbeing_priorities', 'medical_considerations'],
-            professional_companion: ['career_impact', 'business_outcomes', 'professional_relationships', 'work_life_balance'],
-            social_companion: ['relationship_impact', 'social_dynamics', 'community_effects', 'personal_fulfillment']
-        };
-        
-        return focusAreas[companionType] || ['general_analysis'];
-    }
-
-    /**
-     * Extract companion perspective from AI response
-     * @param {object} aiResponse - AI response object
-     * @param {string} companionType - Type of companion
-     * @param {string} decisionContext - Decision context
-     * @returns {string} Extracted perspective
-     */
-    extractCompanionPerspective(aiResponse, companionType, decisionContext) {
-        // Extract the main reply/analysis from AI response
-        const perspective = aiResponse.reply || aiResponse.analysis || aiResponse.response || '';
-        
-        // Add companion type prefix if not already present
-        if (!perspective.toLowerCase().includes(companionType.replace('_', ' '))) {
-            return `${companionType.replace('_', ' ')} perspective: ${perspective}`;
-        }
-        
-        return perspective;
-    }
 
     /**
      * Get fallback companion input when AI is unavailable
      * @param {string} companionType - Type of companion
      * @param {string} decisionContext - Decision context
-     * @returns {string} Fallback response
+     * @returns {string} Enhanced fallback response
      */
     getFallbackCompanionInput(companionType, decisionContext) {
-        const fallbacks = {
-            medical_companion: `Medical perspective: Analyzing health and wellbeing implications for: ${decisionContext}. Recommending consideration of stress factors and long-term health impact.`,
-            professional_companion: `Professional perspective: Evaluating career and business outcomes for: ${decisionContext}. Suggesting analysis of professional relationships and work-life balance.`,
-            social_companion: `Social perspective: Assessing relationship and community impact for: ${decisionContext}. Advising consideration of social dynamics and personal fulfillment.`
+        // Inline fallback to keep it simple and synchronous
+        const fallbackMap = {
+            medical_companion: `**MEDICAL PERSPECTIVE:**
+
+**Impact Assessment:** This decision requires evaluation from a health and wellbeing perspective regarding: ${decisionContext}
+
+**Risk Analysis:** Key health concerns include potential stress factors, impact on medical treatment adherence, sleep patterns, and overall physical wellbeing. Without detailed analysis, recommend monitoring for signs of health impact.
+
+**Benefit Analysis:** Potential health benefits may include reduced stress, improved lifestyle balance, or enhanced treatment compliance, depending on the nature of the decision.
+
+**Recommendation:** Recommend careful consideration of health implications and consultation with healthcare providers if the decision impacts medical treatment, stress levels, or overall wellbeing.
+
+**Confidence Level:** 0.3 (Limited analysis without full medical context)
+
+**Alternative Considerations:** Consider timing relative to medical appointments, impact on medication schedules, and alignment with current health goals.`,
+
+            professional_companion: `**PROFESSIONAL PERSPECTIVE:**
+
+**Impact Assessment:** This decision requires evaluation from a career and business perspective regarding: ${decisionContext}
+
+**Risk Analysis:** Key professional concerns include potential impact on career trajectory, professional relationships, business outcomes, and work-life balance. Consider reputation management and opportunity costs.
+
+**Benefit Analysis:** Potential professional benefits may include career advancement opportunities, skill development, network expansion, or improved work-life integration.
+
+**Recommendation:** Recommend thorough analysis of career implications, stakeholder impact, and alignment with professional goals before proceeding.
+
+**Confidence Level:** 0.3 (Limited analysis without full professional context)
+
+**Alternative Considerations:** Consider timing relative to performance reviews, project deadlines, and strategic career planning objectives.`,
+
+            social_companion: `**SOCIAL PERSPECTIVE:**
+
+**Impact Assessment:** This decision requires evaluation from a social and relationship perspective regarding: ${decisionContext}
+
+**Risk Analysis:** Key social concerns include potential impact on relationships, community connections, social dynamics, and personal fulfillment. Consider effects on family, friends, and social commitments.
+
+**Benefit Analysis:** Potential social benefits may include strengthened relationships, community involvement, personal growth, or enhanced social wellbeing.
+
+**Recommendation:** Recommend considering the social implications and discussing with key relationships who may be affected by this decision.
+
+**Confidence Level:** 0.3 (Limited analysis without full social context)
+
+**Alternative Considerations:** Consider timing relative to social commitments, impact on family dynamics, and alignment with personal relationship goals.`
         };
 
-        return fallbacks[companionType] || `${companionType}: Decision analysis not available - using fallback assessment for: ${decisionContext}`;
+        return fallbackMap[companionType] || `**${companionType.replace('_', ' ').toUpperCase()} PERSPECTIVE:**
+
+**Impact Assessment:** Decision analysis not available for companion type "${companionType}" regarding: ${decisionContext}
+
+**Recommendation:** Unable to provide specialized analysis - recommend consulting appropriate domain experts.
+
+**Confidence Level:** 0.1 (No specialized analysis available)
+
+This is a fallback response due to system limitations.`;
     }
 
     /**
@@ -388,12 +379,12 @@ export class CompanionConfidentialComm {
     }
 
     /**
-     * Analyze consensus between companion inputs
+     * Analyze consensus between companion inputs using LLM
      * @param {object} companionInputs - Inputs from different companions
      * @param {string} decisionContext - Decision context
-     * @returns {object} Consensus analysis
+     * @returns {Promise<object>} Consensus analysis
      */
-    analyzeCompanionConsensus(companionInputs, decisionContext) {
+    async analyzeCompanionConsensus(companionInputs, decisionContext) {
         const inputs = Object.values(companionInputs).filter(input => input && input.length > 0);
         
         if (inputs.length === 0) {
@@ -401,13 +392,77 @@ export class CompanionConfidentialComm {
                 reached: false,
                 recommendation: 'Insufficient companion input',
                 confidence: 0,
-                reason: 'No companion perspectives available'
+                reason: 'No companion perspectives available',
+                supportCount: 0,
+                concernCount: 0
             };
         }
 
-        // Simple consensus analysis (in real implementation, would use AI)
-        const conflictKeywords = ['concern', 'risk', 'caution', 'advise against'];
-        const supportKeywords = ['recommend', 'positive', 'beneficial', 'good'];
+        // Use LLM for sophisticated consensus analysis
+        try {
+            const consensusAnalysis = await this.performLLMConsensusAnalysis(companionInputs, decisionContext);
+            return consensusAnalysis;
+        } catch (error) {
+            console.error('[CompanionComm] LLM consensus analysis failed, falling back to keyword analysis:', error.message);
+            return this.fallbackKeywordConsensus(inputs);
+        }
+    }
+
+    /**
+     * Perform LLM-powered consensus analysis
+     * @param {object} companionInputs - Inputs from different companions
+     * @param {string} decisionContext - Decision context
+     * @returns {Promise<object>} LLM consensus analysis
+     */
+    async performLLMConsensusAnalysis(companionInputs, decisionContext) {
+        const { makeApiCall } = await import('../../agents/api_client.js');
+        const { generateConsensusAnalysisPrompt } = await import('../../prompts/companion_decision_analysis.js');
+        
+        // Format companion inputs for analysis
+        const companionSummaries = Object.entries(companionInputs)
+            .filter(([_, input]) => input && input.length > 0)
+            .map(([companionType, input]) => `**${companionType.replace('_', ' ').toUpperCase()}:**\n${input}`)
+            .join('\n\n');
+
+        const consensusPrompt = generateConsensusAnalysisPrompt(decisionContext, companionSummaries);
+
+        const result = await makeApiCall(consensusPrompt, [], true, 0.3, 300, 'companion_consensus');
+        
+        // Validate and structure the response
+        if (!result || typeof result !== 'object') {
+            throw new Error('Invalid LLM response format');
+        }
+
+        // Ensure required fields exist
+        const consensusAnalysis = {
+            reached: result.reached || false,
+            recommendation: result.recommendation || 'Unable to determine consensus',
+            confidence: Math.min(Math.max(result.confidence || 0, 0), 1),
+            reason: result.reason || 'LLM analysis completed',
+            supportCount: result.supportCount || 0,
+            concernCount: result.concernCount || 0,
+            nuances: result.nuances || null,
+            unanimous: result.unanimous || false,
+            majorityPosition: result.majorityPosition || 'neutral',
+            conflictingAreas: result.conflictingAreas || []
+        };
+
+        // Log the analysis for debugging
+        if (process.env.DEBUG_COMPANION) {
+            console.log('[CompanionComm] LLM Consensus Analysis:', JSON.stringify(consensusAnalysis, null, 2));
+        }
+
+        return consensusAnalysis;
+    }
+
+    /**
+     * Fallback keyword-based consensus analysis
+     * @param {Array} inputs - Companion input texts
+     * @returns {object} Basic consensus analysis
+     */
+    fallbackKeywordConsensus(inputs) {
+        const conflictKeywords = ['concern', 'risk', 'caution', 'advise against', 'warning', 'problem'];
+        const supportKeywords = ['recommend', 'positive', 'beneficial', 'good', 'support', 'approve'];
         
         let supportCount = 0;
         let concernCount = 0;
@@ -426,14 +481,18 @@ export class CompanionConfidentialComm {
         const agreementRatio = Math.max(supportCount, concernCount) / totalInputs;
         
         return {
-            reached: agreementRatio >= 0.6,  // 60% agreement threshold
+            reached: agreementRatio >= 0.6,
             recommendation: supportCount > concernCount ? 
                 'Companions generally support this decision' : 
                 'Companions have concerns about this decision',
             confidence: agreementRatio,
-            reason: `${supportCount} supportive, ${concernCount} concerned out of ${totalInputs} companions`,
+            reason: `Fallback analysis: ${supportCount} supportive, ${concernCount} concerned out of ${totalInputs} companions`,
             supportCount,
-            concernCount
+            concernCount,
+            nuances: 'Using fallback keyword analysis',
+            unanimous: supportCount === totalInputs || concernCount === totalInputs,
+            majorityPosition: supportCount > concernCount ? 'support' : (concernCount > supportCount ? 'concern' : 'neutral'),
+            conflictingAreas: []
         };
     }
 

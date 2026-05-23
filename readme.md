@@ -91,7 +91,7 @@ See [GUI Guide](documentation/gui_guide.md) for details.
 In separate terminals, run:
 
 ```bash
-node client/main.js
+node cli/chat/main.js
 ```
 
 You will be prompted to log in with a username (e.g., `alice`, `bob`, `dr_evans`).

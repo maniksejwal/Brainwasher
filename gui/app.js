@@ -57,10 +57,33 @@ function connectToEventSource() {
         } else if (data.type === 'context_switched') {
             state.currentCircleId = data.newCircleId;
             state.currentPatientUsername = data.patientUsername;
+            state.currentCircleName = data.circleName;
+            state.circleType = data.circleType || 'medical';
             window.currentCircleId = data.newCircleId; // Make available globally for consent dropdown
-            document.getElementById('current-context').textContent = `@${data.patientUsername}`;
-            document.title = `${state.username} (${data.newRole}) - Care Circles`;
-            addSystemMessage(MESSAGES.CONTEXT_SWITCHED(data.patientUsername, data.newRole));
+            
+            // Handle both care circles and professional circles in UI
+            let contextDisplay, windowTitle;
+            
+            if (data.circleType === 'professional' && data.circleName) {
+                // Professional circle: show circle name without "professional_" prefix
+                const displayName = data.circleName.replace('professional_', '');
+                contextDisplay = `@${displayName}`;
+                windowTitle = `${state.username} (${data.newRole}) - Professional Circle: ${displayName}`;
+                addSystemMessage(MESSAGES.CONTEXT_SWITCHED(displayName, data.newRole, 'professional'));
+            } else if (data.patientUsername) {
+                // Care circle: show patient username (existing behavior)
+                contextDisplay = `@${data.patientUsername}`;
+                windowTitle = `${state.username} (${data.newRole}) - Care Circle: ${data.patientUsername}`;
+                addSystemMessage(MESSAGES.CONTEXT_SWITCHED(data.patientUsername, data.newRole, 'care'));
+            } else {
+                // Fallback
+                contextDisplay = `@${data.newCircleId}`;
+                windowTitle = `${state.username} (${data.newRole}) - Circle: ${data.newCircleId}`;
+                addSystemMessage(MESSAGES.CONTEXT_SWITCHED(data.newCircleId, data.newRole, 'unknown'));
+            }
+            
+            document.getElementById('current-context').textContent = contextDisplay;
+            document.title = windowTitle;
         } else if (data.type === 'analysis_progress') {
             displayAnalysisProgress(data);
         } else if (data.type === 'simulation_progress') {
