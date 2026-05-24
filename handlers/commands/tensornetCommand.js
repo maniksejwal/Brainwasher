@@ -45,6 +45,12 @@ import {
     getSessionHint,
     judgeDialogueTurn,
 } from '../../companions/physio/tensornetsBridge.js';
+import {
+    listBenchmarkRuns,
+    getBenchmarkRun,
+    compareBenchmarkArms,
+    getRunScenarioBreakdown,
+} from '../../db/queries_benchmarks.js';
 import { getDb } from '../../db/connection.js';
 
 export async function handleTensornetCommand(userId, circleId, parts, send) {
@@ -90,6 +96,27 @@ export async function handleTensornetCommand(userId, circleId, parts, send) {
                 break;
             default:
                 send(userId, `Unknown /mcts sub-command: ${sub}\n\n${_help()}`);
+        }
+        return;
+    }
+
+    // ── /benchmark ────────────────────────────────────────────────────────────
+    if (parts[0] === '/benchmark') {
+        switch (sub) {
+            case 'list':
+                await _benchmarkList(parts, send);
+                break;
+            case 'show':
+                await _benchmarkShow(parts, send);
+                break;
+            case 'compare':
+                await _benchmarkCompare(parts, send);
+                break;
+            case 'breakdown':
+                await _benchmarkBreakdown(parts, send);
+                break;
+            default:
+                send(userId, `Unknown /benchmark sub-command: ${sub}\n\n${_help()}`);
         }
         return;
     }
@@ -404,6 +431,116 @@ function _help() {
         `SETUP:`,
         `  cd tensornets`,
         `  uvicorn server:app --port 8765 --reload`,
+        ``,
+        `BENCHMARKS:`,
+        `  /benchmark list [arm]           — list runs (filter by arm: htn_mcts|oldschool|hysteresis_prompt)`,
+        `  /benchmark show <run_id>        — show episodes for a run`,
+        `  /benchmark compare <scenario>   — compare all arms on a scenario set`,
+        `  /benchmark breakdown <run_id>   — per-scenario breakdown for a run`,
         `─────────────────────────────────────────────────────────`,
     ].join('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /benchmark handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _benchmarkList(parts, send) {
+    const arm = parts[2] || null;
+    try {
+        const runs = await listBenchmarkRuns({ arm, limit: 20 });
+        if (!runs.length) {
+            send(null, arm
+                ? `No benchmark runs found for arm=${arm}.`
+                : `No benchmark runs in DB yet. Run comparison_runner.py or benchmarks/runner.py first.`);
+            return;
+        }
+        const label = arm ? ` [${arm}]` : '';
+        const lines = [`Benchmark runs${label} (newest first):`, ''];
+        for (const r of runs) {
+            const dt = new Date(r.started_at).toISOString().slice(0, 16);
+            const done = r.completed_at ? `✓ ${r.episode_count} ep` : '…running';
+            const rew = r.mean_reward != null ? `  reward=${r.mean_reward.toFixed(3)}` : '';
+            lines.push(`  ${r.run_id.slice(0, 8)}  ${r.arm.padEnd(20)} ${dt}  ${done}${rew}`);
+            if (r.label) lines.push(`           ${r.label}`);
+        }
+        send(null, lines.join('\n'));
+    } catch (e) {
+        send(null, `benchmark list error: ${e.message}`);
+    }
+}
+
+async function _benchmarkShow(parts, send) {
+    const run_id = parts[2];
+    if (!run_id) { send(null, 'Usage: /benchmark show <run_id>'); return; }
+    try {
+        const run = await getBenchmarkRun(run_id);
+        if (!run) { send(null, `Run ${run_id} not found.`); return; }
+        const lines = [
+            `Run: ${run.run_id}`,
+            `Arm: ${run.arm}  Scenario set: ${run.scenario_set}`,
+            run.label ? `Label: ${run.label}` : null,
+            `Episodes: ${run.episodes?.length ?? 0}`,
+            run.mean_reward != null ? `Mean reward: ${run.mean_reward.toFixed(4)}` : null,
+            run.goal_achieved_pct != null ? `Goal rate: ${(run.goal_achieved_pct * 100).toFixed(1)}%` : null,
+            '',
+            'Episodes:',
+        ].filter(Boolean);
+        for (const e of (run.episodes || []).slice(0, 15)) {
+            const goal = e.goal_achieved ? '✓' : '✗';
+            const rew = e.cumulative_reward != null ? e.cumulative_reward.toFixed(3) : '—';
+            lines.push(`  ${goal} ${e.scenario_id.padEnd(30)} reward=${rew}  turns=${e.turn_count}`);
+        }
+        if ((run.episodes?.length ?? 0) > 15) lines.push(`  … and ${run.episodes.length - 15} more`);
+        send(null, lines.join('\n'));
+    } catch (e) {
+        send(null, `benchmark show error: ${e.message}`);
+    }
+}
+
+async function _benchmarkCompare(parts, send) {
+    const scenario_set = parts[2] || '';
+    try {
+        const rows = await compareBenchmarkArms(scenario_set);
+        if (!rows.length) {
+            send(null, `No benchmark data for scenario_set="${scenario_set}". Run a comparison first.`);
+            return;
+        }
+        const lines = [
+            `Arm comparison${scenario_set ? ` — ${scenario_set}` : ''}:`,
+            '',
+            'Arm                   Episodes  Reward   Goal%   Turns  Tokens',
+            '─'.repeat(65),
+        ];
+        for (const r of rows) {
+            lines.push([
+                r.arm.padEnd(22),
+                String(r.episodes).padEnd(10),
+                (r.mean_reward ?? 0).toFixed(3).padEnd(9),
+                ((r.goal_rate ?? 0) * 100).toFixed(1).padEnd(8) + '%',
+                (r.mean_turns ?? 0).toFixed(1).padEnd(7),
+                Math.round(r.mean_tokens ?? 0),
+            ].join(''));
+        }
+        send(null, lines.join('\n'));
+    } catch (e) {
+        send(null, `benchmark compare error: ${e.message}`);
+    }
+}
+
+async function _benchmarkBreakdown(parts, send) {
+    const run_id = parts[2];
+    if (!run_id) { send(null, 'Usage: /benchmark breakdown <run_id>'); return; }
+    try {
+        const rows = await getRunScenarioBreakdown(run_id);
+        if (!rows.length) { send(null, `No episodes for run ${run_id}.`); return; }
+        const lines = [`Per-scenario breakdown for run ${run_id.slice(0, 8)}:`, ''];
+        for (const r of rows) {
+            const goal = r.goal_achieved ? '✓' : '✗';
+            lines.push(`  ${goal} ${(r.scenario_id || '').padEnd(32)} reward=${(r.cumulative_reward ?? 0).toFixed(3)}  turns=${r.turns_to_goal ?? '—'}`);
+        }
+        send(null, lines.join('\n'));
+    } catch (e) {
+        send(null, `benchmark breakdown error: ${e.message}`);
+    }
 }

@@ -948,3 +948,138 @@ def session_longitudinal_hint(subject_id: str):
     mgr = _get_session_manager()
     return mgr.longitudinal_mcts_hint(subject_id)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BENCHMARK RECORDING ENDPOINTS
+# The DB (via JS bridge) is the source of truth.
+# These endpoints are called by comparison_runner.py and benchmarks/runner.py.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BenchmarkRunIn(BaseModel):
+    arm:          str               # 'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
+    label:        str = ""
+    scenario_set: str = "canonical"
+    config:       dict = {}
+
+
+class BenchmarkEpisodeIn(BaseModel):
+    run_id:      str
+    scenario_id: str
+    persona_id:  str = ""
+    arm:         str
+
+
+class BenchmarkTurnIn(BaseModel):
+    episode_id:    str
+    run_id:        str
+    arm:           str
+    turn_number:   int
+    action:        str = ""
+    response:      str = ""
+    hrv_ms:        float | None = None
+    stress_label:  str = ""
+    stress_index:  float | None = None
+    reward:        dict = {}    # {stress, trust, goal, info, consistency}
+    judge:         dict = {}    # {clinical, empathy, safety, goal, strategy}
+    linguistic_stress: float | None = None
+    discrepancy_flag:  bool = False
+    tokens_scout:   int = 0
+    tokens_maverick: int = 0
+    latency_ms:     int | None = None
+
+
+class BenchmarkFinaliseIn(BaseModel):
+    run_id:      str | None = None
+    episode_id:  str | None = None
+    metrics:     dict = {}
+
+
+class BenchmarkQueryIn(BaseModel):
+    scenario_set: str = ""
+    arm:          str = ""
+    limit:        int = 50
+
+
+def _get_benchmark_url() -> str:
+    """URL of the JS server for benchmark DB writes."""
+    import os
+    return os.environ.get('JS_SERVER_URL', 'http://localhost:3000')
+
+
+def _post_to_js(path: str, payload: dict) -> dict:
+    """
+    Forward a benchmark record to the JS server which writes to the shared DB.
+    This avoids duplicating SQLite logic in Python — the JS layer owns the DB.
+    Falls back gracefully if JS server is not running.
+    """
+    import urllib.request, json as _json
+    url = _get_benchmark_url() + path
+    data = _json.dumps(payload).encode()
+    req = urllib.request.Request(url, data=data,
+                                  headers={'Content-Type': 'application/json'},
+                                  method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            return _json.loads(resp.read())
+    except Exception as e:
+        return {'error': str(e), 'stored': False}
+
+
+@app.post("/benchmark/run/create")
+def benchmark_run_create(req: BenchmarkRunIn):
+    """
+    Create a benchmark run record in the DB (via JS bridge).
+    Called at the start of benchmarks/runner.py or comparison_runner.py.
+    Returns run_id.
+    """
+    result = _post_to_js('/api/benchmarks/run', req.model_dump())
+    return result
+
+
+@app.post("/benchmark/run/finalise")
+def benchmark_run_finalise(req: BenchmarkFinaliseIn):
+    """Finalise a benchmark run with aggregate metrics."""
+    result = _post_to_js('/api/benchmarks/run/finalise',
+                          {'run_id': req.run_id, **req.metrics})
+    return result
+
+
+@app.post("/benchmark/episode/create")
+def benchmark_episode_create(req: BenchmarkEpisodeIn):
+    """Create an episode record. Called at the start of each episode."""
+    result = _post_to_js('/api/benchmarks/episode', req.model_dump())
+    return result
+
+
+@app.post("/benchmark/episode/finalise")
+def benchmark_episode_finalise(req: BenchmarkFinaliseIn):
+    """Finalise an episode with aggregate metrics."""
+    result = _post_to_js('/api/benchmarks/episode/finalise',
+                          {'episode_id': req.episode_id, **req.metrics})
+    return result
+
+
+@app.post("/benchmark/turn")
+def benchmark_turn(req: BenchmarkTurnIn):
+    """
+    Record one turn. This is the per-turn equivalent of the jsonl log —
+    stored in htn_benchmark_turns via the JS DB bridge.
+    """
+    payload = req.model_dump()
+    payload.update(req.reward)   # flatten reward dict into top-level fields
+    payload.update({f'judge_{k}': v for k, v in req.judge.items()})
+    result = _post_to_js('/api/benchmarks/turn', payload)
+    return result
+
+
+@app.post("/benchmark/query")
+def benchmark_query(req: BenchmarkQueryIn):
+    """
+    Query benchmark comparison data.
+    Returns arm-level aggregates for a scenario set.
+    """
+    result = _post_to_js('/api/benchmarks/compare',
+                          {'scenario_set': req.scenario_set,
+                           'arm': req.arm, 'limit': req.limit})
+    return result
+

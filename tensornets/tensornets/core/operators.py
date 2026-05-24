@@ -70,44 +70,80 @@ def build_Gamma(
     coupling: float = 0.05,
     dtype: torch.dtype = torch.complex128,
     device: torch.device | str = "cpu",
+    # C5.4 — PK/PD: optional DrugRegimen applied at current time
+    drug_regimen=None,      # tensornets.physio.pkpd.DrugRegimen | None
+    # C6.1 — ReactivityProfile: per-subject archetype
+    reactivity_profile=None,  # tensornets.physio.reactivity.ReactivityProfile | None
+    # C7.1 — HystereticBaseline: longitudinal trigger history
+    hysteretic_baseline=None,  # tensornets.physio.hysteresis.HystereticBaseline | None
+    active_trigger_id: str | None = None,  # current conversation trigger key for C7.1
 ) -> torch.Tensor:
     """
-    Build the dissipation matrix Γ from the current physiological state.
+    Build the dissipation matrix Γ from physiological state + optional modifiers.
 
     Structure
     ---------
     Γ is a real symmetric positive-semidefinite matrix of shape
     [physio_dim, physio_dim]. Its eigenvalues are the per-channel decay rates.
 
-    Diagonal entries: derived from the γ scalar (HRV + EDA + location), scaled
-    across the physio_dim channels according to the 5 physiological signals.
+    Diagonal entries: derived from the γ scalar (HRV + EDA + location), then
+    multiplied by three optional modifier layers:
+      1. PK/PD   (C5.4): drug_regimen.gamma_modifier() — time-dependent drug effect
+      2. Reactivity (C6.1): reactivity_profile.gamma_modifier(stress_index) — archetype
+      3. Hysteresis (C7.1): hysteretic_baseline.gamma_modifier(trigger_id) — extinction state
 
     Off-diagonal entries: small coupling terms (controlled by `coupling`)
     that allow cross-signal effects — e.g., high EDA amplifying glucose decay.
-    These keep Γ positive semi-definite while capturing co-activation.
 
     Parameters
     ----------
-    physio_dim : int
-        Size of the physiological subspace in the MPS bond dimension.
-        Must be ≥ 5 (one channel per physiological signal).
-    state : PhysiologicalState
-        Current physiological measurement.
-    baseline_ms : float, optional
-        Subject HRV baseline for γ computation.
-    coupling : float
-        Off-diagonal coupling strength. Default 0.05 (weak but non-zero).
+    physio_dim        : int — bond dimension of physiological subspace (≥ 5)
+    state             : PhysiologicalState — current measurements
+    baseline_ms       : float, optional — subject HRV baseline
+    coupling          : float — off-diagonal coupling strength (default 0.05)
+    drug_regimen      : DrugRegimen | None — C5.4 PK/PD modifier
+    reactivity_profile: ReactivityProfile | None — C6.1 archetype modifier
+    hysteretic_baseline: HystereticBaseline | None — C7.1 longitudinal modifier
+    active_trigger_id : str | None — trigger key for C7.1 lookup
     """
     if physio_dim < 5:
         raise ValueError(
             f"physio_dim must be ≥ 5 (one channel per signal), got {physio_dim}"
         )
 
+    # Base gamma from HRV + EDA + sleep + location
     gamma = gamma_from_state(state, baseline_ms=baseline_ms)
+
+    # ── C5.4: PK/PD drug modifier ─────────────────────────────────────────────
+    if drug_regimen is not None:
+        try:
+            pkpd_mod = drug_regimen.gamma_modifier()
+            gamma *= pkpd_mod
+        except Exception:
+            pass  # PK/PD modifier is optional — never crash Gamma build
+
+    # ── C6.1: Reactivity profile modifier ────────────────────────────────────
+    if reactivity_profile is not None:
+        try:
+            react_mod = reactivity_profile.gamma_modifier(state.stress_index())
+            gamma *= react_mod
+        except Exception:
+            pass
+
+    # ── C7.1: Hysteretic baseline modifier ───────────────────────────────────
+    if hysteretic_baseline is not None:
+        try:
+            hyst_mod = hysteretic_baseline.gamma_modifier(trigger_id=active_trigger_id)
+            gamma *= hyst_mod
+        except Exception:
+            pass
+
+    gamma = max(GAMMA_MIN if hasattr(gamma, 'item') else 1e-4,
+                gamma.item() if hasattr(gamma, 'item') else float(gamma))
+
     vec = state.to_vector()  # 5 normalised signals
 
     # Diagonal: each physio channel decays at γ scaled by its signal amplitude.
-    # Channels beyond 5 copy the composite stress_index to fill the dimension.
     diag_vals = torch.zeros(physio_dim, dtype=torch.float64)
     for i in range(physio_dim):
         if i < 5:

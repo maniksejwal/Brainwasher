@@ -9,7 +9,7 @@
  */
 
 import { getDb, setGlobalDb } from './connection.js';
-import { initializeDatabase, clearDatabase, addConversationIntelligenceTables, addDialogGraphSchemaTables } from './schema.js';
+import { initializeDatabase, clearDatabase, addConversationIntelligenceTables, addDialogGraphSchemaTables, addHTNBenchmarkTables } from './schema.js';
 import {
     findUserByUsername,
     findUserById,
@@ -174,5 +174,7 @@ export {
     createDialogGraphRun,
     appendRunStep,
     finalizeDialogGraphRun,
+    // HTN benchmarks
+    addHTNBenchmarkTables,
 };
 

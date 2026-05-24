@@ -190,19 +190,26 @@ def gamma_from_state(
     state: PhysiologicalState,
     baseline_ms: Optional[float] = None,
     alpha: float = ALPHA_DEFAULT,
+    reactivity_profile=None,   # C6.1: ReactivityProfile | None
+    drug_regimen=None,          # C5.4: DrugRegimen | None
+    hysteretic_baseline=None,   # C7.1: HystereticBaseline | None
+    active_trigger_id: Optional[str] = None,
 ) -> float:
     """
     Derive γ from a full PhysiologicalState, incorporating all available signals.
 
-    The base HRV-derived γ is modulated by three additional stressors:
+    The base HRV-derived γ is modulated by:
       - EDA (sympathetic co-activation): slows recovery by up to 10%
-      - Sleep pressure: slows recovery by up to 20% (chronic fatigue impairs
-        parasympathetic rebound — Irwin et al. 2016, Sleep Medicine Reviews)
+      - Sleep pressure: slows recovery by up to 20% (Irwin et al. 2016)
       - Location prior: slows recovery by up to 5%
 
-    Sleep pressure has a larger weight than in the previous version because
-    sleep deprivation is the single most reproducible HRV suppressor outside
-    of acute illness (Cedernaes et al. 2015, JCEM).
+    Optional modifier layers (C5.4 / C6.1 / C7.1):
+      - drug_regimen.gamma_modifier(): PK/PD time-dependent drug effect
+      - reactivity_profile.gamma_modifier(stress_index): archetype scaling
+      - hysteretic_baseline.gamma_modifier(trigger_id): extinction state
+
+    Note: when calling build_Gamma() directly, pass the modifiers there —
+    they will be applied after gamma_from_state to avoid double application.
     """
     if baseline_ms is None:
         baseline_ms = HRV_RMSSD_BASELINE_MS
@@ -213,5 +220,26 @@ def gamma_from_state(
     sleep_suppression    = 0.20 * state.sleep_pressure()
     location_suppression = 0.05 * state.location_stress_index
 
-    gamma_adjusted = gamma_hrv * (1.0 - eda_suppression - sleep_suppression - location_suppression)
-    return max(GAMMA_MIN, gamma_adjusted)
+    gamma = gamma_hrv * (1.0 - eda_suppression - sleep_suppression - location_suppression)
+    gamma = max(GAMMA_MIN, gamma)
+
+    # Optional modifier layers (C5.4 / C6.1 / C7.1) — applied when build_Gamma is NOT used
+    if drug_regimen is not None:
+        try:
+            gamma *= drug_regimen.gamma_modifier()
+        except Exception:
+            pass
+
+    if reactivity_profile is not None:
+        try:
+            gamma *= reactivity_profile.gamma_modifier(state.stress_index())
+        except Exception:
+            pass
+
+    if hysteretic_baseline is not None:
+        try:
+            gamma *= hysteretic_baseline.gamma_modifier(trigger_id=active_trigger_id)
+        except Exception:
+            pass
+
+    return max(GAMMA_MIN, gamma)

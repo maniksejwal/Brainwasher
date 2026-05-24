@@ -553,3 +553,97 @@ export async function addDialogGraphSchemaTables() {
     console.log('[Schema] Dialog graph tables added');
 }
 
+/**
+ * Add HTN benchmark tables.
+ * Stores results from tensornets/benchmarks/runner.py via the FastAPI bridge.
+ * These replace the .md/.json file outputs — the DB is the source of truth.
+ *
+ * Tables:
+ *   htn_benchmark_runs    — one row per benchmark run (arm, scenario set, config)
+ *   htn_benchmark_episodes — one row per episode in a run (reward, physio, judge scores)
+ *   htn_benchmark_turns   — one row per turn in an episode (action, response, stress)
+ *
+ * Used by:
+ *   - tensornets/server.py POST /benchmark/record-*
+ *   - tensornetsBridge.js recordBenchmarkRun()
+ *   - GUI dashboard (benchmarks tab)
+ *   - CLI: node cli --tensornets benchmark list/show/export
+ */
+export async function addHTNBenchmarkTables(db) {
+    if (!db) {
+        const { getDb } = await import('./connection.js');
+        db = await getDb();
+    }
+
+    await db.exec(`
+        CREATE TABLE IF NOT EXISTS htn_benchmark_runs (
+            run_id          TEXT PRIMARY KEY,
+            arm             TEXT NOT NULL,   -- 'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
+            label           TEXT,            -- human-readable label
+            scenario_set    TEXT NOT NULL,   -- e.g. 'canonical_10' | 'deaddiction' | 'flooding'
+            config          TEXT,            -- JSON: model IDs, hyperparams, random seed
+            started_at      INTEGER NOT NULL,
+            completed_at    INTEGER,
+            episode_count   INTEGER DEFAULT 0,
+            mean_reward     REAL,
+            mean_stress_auc REAL,
+            goal_achieved_pct REAL,
+            notes           TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS htn_benchmark_episodes (
+            episode_id      TEXT PRIMARY KEY,
+            run_id          TEXT NOT NULL REFERENCES htn_benchmark_runs(run_id),
+            scenario_id     TEXT NOT NULL,
+            persona_id      TEXT,
+            arm             TEXT NOT NULL,
+            turn_count      INTEGER DEFAULT 0,
+            cumulative_reward REAL,
+            stress_auc      REAL,
+            goal_achieved   INTEGER DEFAULT 0,
+            turns_to_goal   INTEGER,
+            trust_delta_final REAL,
+            tokens_scout    INTEGER DEFAULT 0,
+            tokens_maverick INTEGER DEFAULT 0,
+            latency_ms_mean REAL,
+            started_at      INTEGER NOT NULL,
+            completed_at    INTEGER,
+            summary         TEXT   -- JSON: final state snapshot
+        );
+
+        CREATE TABLE IF NOT EXISTS htn_benchmark_turns (
+            turn_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            episode_id      TEXT NOT NULL REFERENCES htn_benchmark_episodes(episode_id),
+            run_id          TEXT NOT NULL,
+            arm             TEXT NOT NULL,
+            turn_number     INTEGER NOT NULL,
+            action          TEXT,            -- action_selector.js taxonomy action
+            response        TEXT,
+            hrv_ms          REAL,
+            stress_label    TEXT,
+            stress_index    REAL,
+            reward_stress   REAL,
+            reward_trust    REAL,
+            reward_goal     REAL,
+            reward_info     REAL,
+            reward_consistency REAL,
+            judge_clinical  REAL,
+            judge_empathy   REAL,
+            judge_safety    REAL,
+            judge_goal      REAL,
+            judge_strategy  REAL,
+            linguistic_stress REAL,
+            discrepancy_flag INTEGER DEFAULT 0,
+            tokens_scout    INTEGER DEFAULT 0,
+            tokens_maverick INTEGER DEFAULT 0,
+            latency_ms      INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bench_runs_arm     ON htn_benchmark_runs(arm);
+        CREATE INDEX IF NOT EXISTS idx_bench_episodes_run ON htn_benchmark_episodes(run_id);
+        CREATE INDEX IF NOT EXISTS idx_bench_turns_ep     ON htn_benchmark_turns(episode_id);
+    `);
+
+    console.log('[Schema] HTN benchmark tables added');
+}
+
