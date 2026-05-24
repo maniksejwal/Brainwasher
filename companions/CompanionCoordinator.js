@@ -9,6 +9,7 @@ import { processCompanionHandlers } from './handlers/index.js';
 import { aggregateResponses, resolveConflicts } from './utils/responseAggregator.js';
 import { getDb } from '../db/connection.js';
 import { processUserMessage, performContextEnrichment } from '../agents/unifiedAgent.js';
+import { getLongitudinalHint } from './physio/tensornetsBridge.js';
 
 /**
  * Main coordinator that coordinates all Companion components
@@ -62,6 +63,15 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
         let selectedAction = null;
         let framesComponent = null;
         try {
+            // Fetch longitudinal session hint from the Python server (non-blocking).
+            // Injects cross-session memory context (phase, alliance, secrets) as a
+            // short natural-language prefix into the action selector prompt.
+            // Falls back silently to empty string if the server is unavailable.
+            const longitudinalHint = await getLongitudinalHint(userId).catch(() => '');
+            if (longitudinalHint) {
+                enhancedContext.longitudinalHint = longitudinalHint;
+            }
+
             const empathyLevel = enhancedContext.empathyHandler?.level || 'MEDIUM';
             const stressState   = context.physioState;
             const stressLevel   = stressState

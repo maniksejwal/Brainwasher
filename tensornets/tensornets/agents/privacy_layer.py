@@ -477,20 +477,42 @@ class PrivacyLayer:
                 result[agent_id] = {'stress_label': _hrv_to_label(hrv_ms)}
         return result
 
-    def can_propagate_hrv(
+    def can_share(
         self,
-        sender_id:    str,
-        receiver_id:  str,
-        sender_role:  str,
+        field:         str,
+        info_class:    InfoClass,
+        sender_id:     str,
+        receiver_id:   str,
+        sender_role:   str,
         receiver_role: str,
-        subject_id:   str,
+        subject_id:    str,
     ) -> bool:
         """
-        Called inside SharedDialogueState.update_physio_prediction() for V_int gating.
+        Generic gate for any cross-agent information share.
+        Replaces the former can_propagate_hrv() — that method was too narrow
+        (tied to HRV only) and not generalisable.
+
+        Use this for ALL inter-agent propagation decisions, regardless of
+        whether the field is hrv_delta, eda_normalized, glucose, location,
+        document clause, or any future physiological or contextual signal.
+
+        Parameters
+        ----------
+        field        : Name of the information field being shared (for audit log).
+        info_class   : Information sensitivity class (I–IV).
+        sender_id    : Agent / companion sending the data.
+        receiver_id  : Agent / companion receiving the data.
+        sender_role  : Role string of the sender ('patient', 'clinician', etc.).
+        receiver_role: Role string of the receiver.
+        subject_id   : The human subject whose data this concerns.
+
+        Returns
+        -------
+        bool — True if sharing is permitted.
         """
         return self.allow(
-            sender_role, receiver_role, f'hrv_delta_{sender_id}',
-            subject_id, InfoClass.II,
+            sender_role, receiver_role, field,
+            subject_id, info_class,
             sender_id=sender_id, receiver_id=receiver_id,
         )
 

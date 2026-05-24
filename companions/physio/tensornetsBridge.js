@@ -669,3 +669,31 @@ export async function auditJudgeDiscrepancy({
     }
     return null;
 }
+
+/**
+ * Fetch the longitudinal prompt hint for a subject from the Python session manager.
+ *
+ * Returns a short natural-language string that summarises the subject's persistent
+ * state across sessions: session count, therapeutic alliance, behaviour-change phase,
+ * and known sensitive topics. Empty string if the server is offline or the subject
+ * has no persistent record yet.
+ *
+ * Called by CompanionCoordinator before the action selector so the action selection
+ * prompt is aware of the longitudinal context — effectively extending the effective
+ * memory beyond the K-turn hot window.
+ *
+ * @param {string} subjectId
+ * @returns {Promise<string>}
+ */
+export async function getLongitudinalHint(subjectId) {
+    try {
+        // GET endpoint already exists: /therapy/prompt-hint/{subject_id}
+        const base = process.env.TENSORNETS_URL || 'http://127.0.0.1:8765';
+        const resp = await fetch(`${base}/therapy/prompt-hint/${encodeURIComponent(subjectId)}`);
+        if (!resp.ok) return '';
+        const data = await resp.json();
+        return data?.hint ?? '';
+    } catch {
+        return '';
+    }
+}

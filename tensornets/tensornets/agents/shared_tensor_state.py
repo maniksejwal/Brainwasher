@@ -297,7 +297,11 @@ class SharedTensorBuffer:
                 # Privacy gate: can this coupling propagate?
                 if privacy_layer is not None:
                     from tensornets.agents.privacy_layer import InfoClass
-                    allowed = privacy_layer.can_propagate_hrv(
+                    # Use generic can_share() instead of the former HRV-specific gate.
+                    # HRV delta is InfoClass.II (de-identified physiological signal).
+                    allowed = privacy_layer.can_share(
+                        field='hrv_delta',
+                        info_class=InfoClass.II,
                         sender_id=sender_id,
                         receiver_id=rcv_id,
                         sender_role=sender_role,

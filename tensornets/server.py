@@ -1,4 +1,4 @@
-"""
+﻿"""
 FastAPI microservice bridge for tensornets.
 
 Exposes the Python MPS / physiological engine to the Node.js companion system.
@@ -13,10 +13,10 @@ companions/physio/tensornetsBridge.js.
 Endpoints
 ---------
 GET  /health
-POST /physio/state          → compute stress_index, gamma, to_vector
-POST /physio/history/append → add state to subject's history, return updated trajectory
-POST /mcts/score-candidates → score N candidate responses by projected stress impact
-POST /mps/project           → apply constraint projection (requires mps_state in body)
+POST /physio/state          -> compute stress_index, gamma, to_vector
+POST /physio/history/append -> add state to subject's history, return updated trajectory
+POST /mcts/score-candidates -> score N candidate responses by projected stress impact
+POST /mps/project           -> apply constraint projection (requires mps_state in body)
 """
 
 from __future__ import annotations
@@ -577,8 +577,8 @@ def agents_clear_session(session_id: str):
 #
 # These endpoints are distinct from the JS judge (training/simulation/js_judge.js).
 #
-# JS judge  → real-time, in-process, Scout/Maverick, no MPS check
-# THIS judge → offline, batch, Maverick or 405B, includes MPS constraint check
+# JS judge  -> real-time, in-process, Scout/Maverick, no MPS check
+# THIS judge -> offline, batch, Maverick or 405B, includes MPS constraint check
 # ─────────────────────────────────────────────────────────────────────────────
 
 class JudgeTurnIn(BaseModel):
@@ -603,12 +603,9 @@ def judge_turn(req: JudgeTurnIn):
     HTN Judge: evaluate a single companion turn (real-time, uses Maverick).
     Returns 6-dimension rubric scores + DPO counterfactual hint.
     Call from tensornetsBridge.judgeDialogueTurn() after each companion response.
-    """
-
-    Uses boto3 → Bedrock Maverick (default) or 405B.
+    Uses boto3 -> Bedrock Maverick (default) or 405B.
     Includes MPS constraint satisfaction check if an MPS state is available.
-
-    Called by tensornetsBridge.js  judgeDialogueTurn().
+    Called by tensornetsBridge.js judgeDialogueTurn().
     """
     try:
         from tensornets.training.judge import JudgeConfig, evaluate_turn, build_judge_prompt
