@@ -39,11 +39,8 @@ export function getNextProvider(useCase = 'basic_responses') {
         // This ensures resilience even if "OpenAI Only" mode was requested but is broken
     }
 
-    // PRIORITY 1: Llama 4 (AWS)
-    // If configured and not marked as failed, use it.
-    if (config.LLAMA_API_URL && !providerState.llamaFailed) {
-        // Simple return - no load balancing needed for single Llama endpoint yet 
-        // (unless we add multiple keys later)
+    // PRIORITY 1: Llama 4 via AWS Bedrock (direct SDK, no API URL needed)
+    if (!providerState.llamaFailed) {
         return { type: PROVIDERS.LLAMA };
     }
 

@@ -1,75 +1,51 @@
 /**
- * @fileoverview Verification script for Llama 4 API Integration
+ * @fileoverview Verification script for Llama 4 via AWS Bedrock
+ *
+ * Tests the new direct Bedrock integration that replaced the old Lambda endpoint.
+ *
+ * Usage:
+ *   node tests/verification/verify_llama_api.js
+ *
+ * Requires AWS credentials in environment or ~/.aws/credentials.
  */
 
-import { makeApiCall } from '../agents/api_client.js';
-import config from '../config.js';
+import { callLlama } from '../../agents/api/providers/llama.js';
+import { makeApiCall } from '../../agents/api_client.js';
 
 async function testLlamaIntegration() {
-    console.log('🦙 Testing Llama 4 API Integration...\n');
+    console.log('Testing Llama 4 via AWS Bedrock...\n');
 
-    if (!config.LLAMA_API_URL) {
-        console.error('❌ Error: LLAMA_API_URL is not defined in config.');
-        return;
+    // ── Test 1: Direct provider call ─────────────────────────────────────────
+    console.log('Test 1: Direct callLlama() → Bedrock Converse API');
+    try {
+        const { text, usage } = await callLlama(
+            'In one sentence, what is HRV?',
+            0.5,
+            80
+        );
+        console.log(`  OK — response: "${text.substring(0, 120)}"`);
+        console.log(`  Tokens: ${usage.prompt_tokens} in / ${usage.completion_tokens} out`);
+    } catch (err) {
+        console.error(`  FAIL: ${err.message}`);
     }
 
-    console.log(`Endpoint: ${config.LLAMA_API_URL}`);
-    console.log('Sending test prompt ("Hello, are you functional?")...\n');
+    console.log('');
 
+    // ── Test 2: Full stack through makeApiCall ────────────────────────────────
+    console.log('Test 2: makeApiCall() with useCase=conversational_agent (should route to Llama)');
     try {
-        // We can force a specific provider if we modify getNextProvider logic or 
-        // rely on the random round-robin if enabled. 
-        // For verification, it's best to hack config.USE_ONLY_OPENAI temporarily or 
-        // mock the other providers failure to ensure Llama is picked, 
-        // OR add a forceProvider param to makeApiCall (which we didn't do yet).
-
-        // Alternatively, we can directly call the internal function if we exported it, 
-        // but since we didn't export `callLlama`, we'll try to rely on the generic call 
-        // or temporarily disable others.
-
-        // Let's rely on the fact that if we have a special model name 'llama4' mapping,
-        // (which isn't implemented in model selection, but let's see).
-
-        // Actually, makeApiCall uses getNextProvider which round-robins. 
-        // To strictly test Llama, let's look at the logs to see if it was used.
-
-        // BETTER: Manually invoke a fetch to be 100% sure we are hitting the endpoint first.
-
-        console.log(`Checking: ${config.LLAMA_API_URL}`);
-
-        const payload = {
-            prompt: "Explain diabetes",
-            max_new_tokens: 512,
-            temperature: 0.7
-        };
-
-        const response = await fetch(config.LLAMA_API_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (response.ok) {
-            console.log(`✅ SUCCESS! Found valid endpoint: ${config.LLAMA_API_URL}`);
-            const data = await response.json();
-            console.log('Response:', data);
-        } else {
-            console.log(`❌ Failed: ${response.status} ${response.statusText}`);
-            const text = await response.text();
-            console.log('   Body:', text);
-            return;
-        }
-
-        console.log('\n--- Now testing via makeApiCall (might pick other providers) ---');
-        const agentResponse = await makeApiCall("Test message for Llama 4", [], false, 0.7, 50);
-        console.log('Agent Response:', agentResponse);
-        console.log('Metadata:', {
-            modelUsed: agentResponse.modelUsed,
-            provider: agentResponse.modelProvider
-        });
-
-    } catch (error) {
-        console.error('❌ Test Exception:', error);
+        const result = await makeApiCall(
+            'Reply with exactly three words: healthy, calm, focused.',
+            [],
+            false,
+            0.3,
+            20,
+            'conversational_agent'
+        );
+        console.log(`  OK — reply: "${result.reply?.substring(0, 120)}"`);
+        console.log(`  Provider: ${result.modelProvider}, Model: ${result.modelUsed}`);
+    } catch (err) {
+        console.error(`  FAIL: ${err.message}`);
     }
 }
 

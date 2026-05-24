@@ -232,3 +232,139 @@ Submit feedback about the AI's response.
 
 ### `/score`
 (Internal testing command)
+
+---
+
+## Tensornets Physiological Engine (HTN Framework)
+
+These commands connect to the Python tensornets server (`tensornets/server.py`).
+They let you test the physiological engine, MCTS, and LLM judge from the same CLI
+without switching terminals.
+
+> **Prerequisites:** Start the Python server first:
+> ```bash
+> cd tensornets
+> uvicorn server:app --port 8765 --reload
+> ```
+> All commands degrade gracefully if the server is not running.
+
+---
+
+### `/physio status`
+Check if the tensornets Python server is reachable.
+```
+/physio status
+→ ✅ tensornets Python server is ONLINE
+     URL: http://localhost:8765
+     Smoke test: stress_index=0.382, label=moderate_stress
+```
+
+### `/physio state`
+Show the current physiological state (HRV, stress index, gamma, lambda, half-life).
+```
+/physio state
+→ 📊 Physiological State  [manik]
+     HRV (RMSSD):   30 ms
+     Stress index:  0.571
+     Stress label:  high_stress
+     Gamma (Γ):     0.2143
+     Lambda1 (λ₁):  0.1987
+     Half-life:     5 turns
+     Prompt hint:   "Patient is in high stress. Avoid complex information."
+```
+
+### `/physio set hrv <value>`
+Manually inject an HRV value for testing (5–120 ms).
+```
+/physio set hrv 22
+→ ✅ HRV manually set to 22ms for this test.
+     Stress index: 0.686  (high_stress)
+```
+
+### `/physio simulate <n_turns>`
+Run a short OU-process HRV simulation and print the trajectory (max 30 turns).
+```
+/physio simulate 10
+→ 📈 HRV Simulation (10 turns, OU process)
+   Turn   HRV(ms)  Stress   Label
+    1      32.4    0.536   moderate_stress  █████
+    2      29.8    0.574   high_stress      ██████
+   ...
+```
+
+---
+
+### `/mcts action <action1> <action2> [action3] [action4]`
+Ask BaseMCTS/DialogMCTS to select the best action from candidates.
+The candidates must be valid action names from `action_selector.js`.
+```
+/mcts action open_question empathic_reflection challenger_insight affirmation
+→ 🎯 MCTS Action Selection
+     Candidates:   open_question, empathic_reflection, challenger_insight, affirmation
+     Best action:  empathic_reflection
+     Q-value:      0.5231
+     Iterations:   80
+     Elapsed:      14.2 ms
+     FRAMES:       Empathy + Self-efficacy
+     MCTS dim:     trust_delta
+```
+
+Valid action names:
+`open_question`, `empathic_reflection`, `affirmation`, `challenger_insight`,
+`give_facts`, `give_options`, `validate`, `develop_discrepancy`, `loss_frame`,
+`summarise`, `socratic_probe`, `flooding_hold`, `flooding_deepen`, `spike_step`
+
+---
+
+### `/mcts session hint`
+Show the longitudinal MCTS recommendation for your next session (deaddiction phase,
+recommended mode, alliance score, sessions until flooding is safe).
+```
+/mcts session hint
+→ 📋 Longitudinal Session Hint  [manik]
+     Sessions completed:     4
+     Recommended phase:      ambivalence
+     Recommended mode:       deaddiction
+     Alliance:               0.520
+     Readiness score:        0.150
+     Sessions until flooding: 3
+     Rationale: Alliance strong (0.52), trend positive. Advance to ambivalence.
+```
+
+---
+
+### `/mcts judge [n]`
+Judge the last `n` turns (default 1, max 5) using the Python LLM-as-judge (Maverick).
+
+This adds **tensornets-specific dimensions** that the existing simulation scorer does not cover:
+- `physio_alignment` — was the response appropriate given the patient's HRV/stress level?
+- `clinical_accuracy` — factual correctness of medical claims (Maverick-quality)
+- `persona_consistency` — is the response in the correct therapeutic role?
+
+The existing JS simulation scorer (`llm_scorer.js` + `SimulationScorer`) already handles
+urgency detection, denial patterns, probing questions, and empathy balance — use the
+**Training Dashboard** or `ConversationRunner` for those. `/mcts judge` is the
+tensornets-specific layer on top.
+
+```
+/mcts judge 2
+→ 📝 Turn 1 — HTN Judge (Maverick)
+     Therapeutic quality: 4/5
+     Empathy:             4/5
+     Goal alignment:      3/5
+     Non-manipulation:    5/5
+     Info density:        3/5
+     ─────────────────
+     Overall:             4/5  ✅ PASS
+     Reasoning: ...
+```
+Cost: ~$0.02 per 8-turn session using Maverick on Bedrock.
+
+**Scoring layer summary:**
+
+| Layer | File | When | Covers |
+|---|---|---|---|
+| SimulationScorer | `training/simulation/simulation_scorer.js` | Every simulation turn | Urgency, denial, probing questions, generic responses |
+| ConversationQualityAssessor | `training/simulation/llm_scorer.js` | Every simulation turn | Empathy/solution balance, conversation quality |
+| Python judge (`/mcts judge`) | `tensornets/tensornets/training/judge.py` | CLI / batch experiments | Physio-alignment, clinical accuracy, persona consistency |
+

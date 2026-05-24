@@ -22,3 +22,22 @@ cf_events.json
 iam_policy.json
 id.json
 stack.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+*.so
+
+# Benchmark run outputs — stored in DB and tracked as scratch only
+tensornets/benchmarks/results/
+tensornets/training/runs/

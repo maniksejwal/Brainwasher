@@ -1,0 +1,409 @@
+/**
+ * @fileoverview handlers/commands/tensornetCommand.js
+ *
+ * CLI commands for the tensornets physiological engine and MCTS.
+ * These commands let you test the Python tensornets bridge from the
+ * SAME CLI you use for regular chat — no separate terminal needed.
+ *
+ * COMMANDS
+ * --------
+ * /physio status
+ *   Show whether the tensornets Python server is reachable.
+ *
+ * /physio state
+ *   Show the current physiological state for your user (HRV, stress, gamma).
+ *
+ * /physio set hrv <value>
+ *   Manually inject an HRV value for testing (e.g. /physio set hrv 22).
+ *
+ * /physio simulate <n_turns>
+ *   Run a short OU HRV simulation and print the trajectory.
+ *   Example: /physio simulate 10
+ *
+ * /mcts action <candidate1> <candidate2> ...
+ *   Ask the MCTS engine to pick the best action from the given candidates.
+ *   Example: /mcts action open_question empathic_reflection challenger_insight affirmation
+ *
+ * /mcts session hint
+ *   Show the longitudinal MCTS recommendation for your next session.
+ *
+ * /mcts judge <last>
+ *   Judge the last N messages (default 1) using the Python judge (Maverick).
+ *   Example: /mcts judge 3
+ *
+ * SERVER SETUP (run once in a separate terminal)
+ * -----------------------------------------------
+ *   cd tensornets
+ *   uvicorn server:app --port 8765 --reload
+ *
+ * The commands fall back gracefully if the Python server is not running.
+ */
+
+import {
+    getPhysioSummary,
+    getMCTSAction,
+    getSessionHint,
+    judgeDialogueTurn,
+} from '../../companions/physio/tensornetsBridge.js';
+import { getDb } from '../../db/connection.js';
+
+export async function handleTensornetCommand(userId, circleId, parts, send) {
+    const sub = parts[1]?.toLowerCase();
+
+    if (!sub) {
+        send(userId, _help());
+        return;
+    }
+
+    // ── /physio ──────────────────────────────────────────────────────────────
+    if (parts[0] === '/physio') {
+        switch (sub) {
+            case 'status':
+                await _physioStatus(userId, send);
+                break;
+            case 'state':
+                await _physioState(userId, circleId, send);
+                break;
+            case 'set':
+                await _physioSet(userId, circleId, parts, send);
+                break;
+            case 'simulate':
+                await _physioSimulate(userId, parts, send);
+                break;
+            default:
+                send(userId, `Unknown /physio sub-command: ${sub}\n\n${_help()}`);
+        }
+        return;
+    }
+
+    // ── /mcts ─────────────────────────────────────────────────────────────────
+    if (parts[0] === '/mcts') {
+        switch (sub) {
+            case 'action':
+                await _mctsAction(userId, circleId, parts, send);
+                break;
+            case 'session':
+                await _mctsSessionHint(userId, send);
+                break;
+            case 'judge':
+                await _mctsJudge(userId, circleId, parts, send);
+                break;
+            default:
+                send(userId, `Unknown /mcts sub-command: ${sub}\n\n${_help()}`);
+        }
+        return;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /physio handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _physioStatus(userId, send) {
+    try {
+        const result = await getPhysioSummary({ hrv_rmssd_ms: 35, stress_index: 0.4 });
+        if (result) {
+            send(userId,
+                `✅ tensornets Python server is ONLINE\n` +
+                `   URL: ${process.env.TENSORNETS_URL || 'http://localhost:8765'}\n` +
+                `   Smoke test: stress_index=${result.stress_index?.toFixed(3)}, ` +
+                `label=${result.stress_label}`
+            );
+        } else {
+            send(userId,
+                `⚠️  tensornets server responded but returned null.\n` +
+                `   Check uvicorn logs.`
+            );
+        }
+    } catch (e) {
+        send(userId,
+            `❌ tensornets Python server is OFFLINE\n` +
+            `   Start it: cd tensornets && uvicorn server:app --port 8765 --reload\n` +
+            `   Error: ${e.message}`
+        );
+    }
+}
+
+async function _physioState(userId, circleId, send) {
+    // Pull the most recent HRV-like context from conversation state or DB
+    // For now, use a representative test state
+    const testState = {
+        hrv_rmssd_ms: 30,
+        stress_index: 0.55,
+        time_of_day: new Date().getHours() / 24,
+        subject_id: userId,
+    };
+
+    const result = await getPhysioSummary(testState);
+    if (!result) {
+        send(userId,
+            `⚠️  tensornets server not reachable — showing JS fallback values\n` +
+            `   HRV: 30ms | stress: 0.55 | label: moderate_stress`
+        );
+        return;
+    }
+
+    const lines = [
+        `📊 Physiological State  [${userId}]`,
+        `─────────────────────────────────`,
+        `  HRV (RMSSD):   ${testState.hrv_rmssd_ms} ms`,
+        `  Stress index:  ${result.stress_index?.toFixed(3)}`,
+        `  Stress label:  ${result.stress_label}`,
+        `  Gamma (Γ):     ${result.gamma?.toFixed(4) ?? 'n/a'}`,
+        `  Lambda1 (λ₁):  ${result.lambda1?.toFixed(4) ?? 'n/a'}`,
+        `  Half-life:     ${result.half_life_turns ?? 'n/a'} turns`,
+        ``,
+        `  Prompt hint:   "${result.prompt_hint ?? 'none'}"`,
+    ];
+    send(userId, lines.join('\n'));
+}
+
+async function _physioSet(userId, circleId, parts, send) {
+    // /physio set hrv 22
+    const field = parts[2]?.toLowerCase();
+    const value = parseFloat(parts[3]);
+    if (field !== 'hrv' || isNaN(value)) {
+        send(userId, `Usage: /physio set hrv <value>\nExample: /physio set hrv 22`);
+        return;
+    }
+    if (value < 5 || value > 120) {
+        send(userId, `❌ HRV value must be between 5 and 120 ms.`);
+        return;
+    }
+    const testState = { hrv_rmssd_ms: value, stress_index: _hrvToStress(value) };
+    const result = await getPhysioSummary(testState);
+    const label = result?.stress_label ?? _stressLabel(_hrvToStress(value));
+    send(userId,
+        `✅ HRV manually set to ${value}ms for this test.\n` +
+        `   Stress index: ${testState.stress_index.toFixed(3)}  (${label})\n` +
+        `   Note: this does not persist — it is a test injection.`
+    );
+}
+
+async function _physioSimulate(userId, parts, send) {
+    const nTurns = Math.min(parseInt(parts[2]) || 10, 30);
+    // Simple OU simulation in JS (mirror of Python OU)
+    let hrv = 35;
+    const theta = 0.1, mu = 35, sigma = 4;
+    const lines = [
+        `📈 HRV Simulation (${nTurns} turns, OU process)`,
+        `─────────────────────────────────────────────`,
+        `Turn   HRV(ms)  Stress   Label`,
+        `─────────────────────────────────────────────`,
+    ];
+    for (let t = 0; t < nTurns; t++) {
+        const noise = sigma * (Math.random() * 2 - 1) * Math.sqrt(0.1);
+        hrv = hrv + theta * (mu - hrv) + noise;
+        hrv = Math.max(8, Math.min(90, hrv));
+        const stress = _hrvToStress(hrv);
+        const label = _stressLabel(stress).padEnd(14);
+        const bar = '█'.repeat(Math.round(stress * 10));
+        lines.push(`${String(t+1).padStart(4)}   ${hrv.toFixed(1).padStart(7)}  ${stress.toFixed(3)}   ${label} ${bar}`);
+    }
+    send(userId, lines.join('\n'));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /mcts handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function _mctsAction(userId, circleId, parts, send) {
+    // /mcts action open_question empathic_reflection challenger_insight affirmation
+    const candidates = parts.slice(2).filter(Boolean);
+    if (candidates.length < 2) {
+        send(userId,
+            `Usage: /mcts action <action1> <action2> [action3] [action4]\n` +
+            `Example: /mcts action open_question empathic_reflection challenger_insight affirmation\n` +
+            `\nValid actions: open_question, empathic_reflection, affirmation, challenger_insight,\n` +
+            `               give_facts, give_options, validate, develop_discrepancy, loss_frame,\n` +
+            `               summarise, socratic_probe, flooding_hold, spike_step`
+        );
+        return;
+    }
+
+    const physioState = { hrv_ms: 28, stress_index: 0.6 };
+    const result = await getMCTSAction({
+        physio_state: physioState,
+        candidate_actions: candidates,
+        mode: 'deaddiction',
+        depth: 4,
+        iterations: 80,
+        context: `CLI test — user: ${userId}`,
+    });
+
+    if (!result) {
+        send(userId, `⚠️  tensornets server not reachable. Start: cd tensornets && uvicorn server:app --port 8765 --reload`);
+        return;
+    }
+
+    const stats = result.tree_stats || {};
+    const lines = [
+        `🎯 MCTS Action Selection`,
+        `─────────────────────────────────────────`,
+        `  Candidates:   ${candidates.join(', ')}`,
+        `  Best action:  ${result.action}`,
+        `  Q-value:      ${result.q_value}`,
+        `  Iterations:   ${stats.iterations ?? '?'}`,
+        `  Tree depth:   ${stats.depth ?? '?'}`,
+        `  Elapsed:      ${stats.elapsed_ms ?? '?'} ms`,
+        ``,
+        `  FRAMES:       ${_framesFor(result.action)}`,
+        `  MCTS dim:     ${_mctsCategory(result.action)}`,
+    ];
+    send(userId, lines.join('\n'));
+}
+
+async function _mctsSessionHint(userId, send) {
+    const result = await getSessionHint(userId);
+    if (!result) {
+        send(userId, `⚠️  tensornets server not reachable — no session state available.`);
+        return;
+    }
+    const lines = [
+        `📋 Longitudinal Session Hint  [${userId}]`,
+        `─────────────────────────────────────────`,
+        `  Sessions completed:     ${result.session_count ?? 0}`,
+        `  Recommended phase:      ${result.recommended_phase}`,
+        `  Recommended mode:       ${result.recommended_mode}`,
+        `  Alliance:               ${result.alliance?.toFixed(3) ?? 'n/a'}`,
+        `  Readiness score:        ${result.readiness_score}`,
+        `  Sessions until flooding: ${result.sessions_until_ready_for_flooding ?? 'ready now'}`,
+        ``,
+        `  Rationale: ${result.rationale}`,
+    ];
+    send(userId, lines.join('\n'));
+}
+
+async function _mctsJudge(userId, circleId, parts, send) {
+    const n = Math.min(parseInt(parts[2]) || 1, 5);
+    const db = await getDb();
+
+    const rows = await db.all(
+        `SELECT sender_id, message FROM messages
+         WHERE circle_id = ?
+         ORDER BY timestamp DESC LIMIT ?`,
+        [circleId, n * 2]
+    );
+
+    if (!rows || rows.length < 2) {
+        send(userId, `❌ Not enough messages to judge. Have at least 1 exchange.`);
+        return;
+    }
+
+    // Pair up patient input + companion reply
+    const turns = [];
+    for (let i = 0; i < rows.length - 1; i += 2) {
+        const a = rows[i], b = rows[i + 1];
+        if (a && b) {
+            turns.push({
+                patient_input: b.message,
+                companion_reply: a.message,
+                physio_context: { stress_index: 0.5 },
+            });
+        }
+    }
+
+    // Try Python judge first (adds physio_alignment + clinical_accuracy dimensions)
+    // Falls back to a note directing user to existing SimulationScorer
+    send(userId, `⏳ Judging ${turns.length} turn(s) using Python Maverick judge… (may take 5-10s)`);
+
+    for (let i = 0; i < turns.length; i++) {
+        const verdict = await judgeDialogueTurn({
+            ...turns[i],
+            mode: 'standard',
+            judge_model: 'maverick',
+        });
+
+        if (!verdict) {
+            send(userId,
+                `⚠️  Python judge unavailable (tensornets server offline).\n` +
+                `Use the existing simulation scorer: training/simulation/llm_scorer.js\n` +
+                `or run a simulation via the GUI Training Dashboard.`
+            );
+            return;
+        }
+
+        const scores = verdict.scores || {};
+        const lines = [
+            `\n📝 Turn ${i + 1} — Python Judge (Maverick)`,
+            `─────────────────────────────────────────`,
+            `  Patient said:   "${turns[i].patient_input?.slice(0, 60)}…"`,
+            `  Companion said: "${turns[i].companion_reply?.slice(0, 60)}…"`,
+            ``,
+            `  Therapeutic quality: ${scores.therapeutic_quality ?? '?'}/5`,
+            `  Empathy:             ${scores.empathy ?? '?'}/5`,
+            `  Goal alignment:      ${scores.goal_alignment ?? '?'}/5`,
+            `  Non-manipulation:    ${scores.non_manipulation ?? '?'}/5`,
+            `  Info density:        ${scores.information_density ?? '?'}/5`,
+            `  ─────────────────`,
+            `  Overall:             ${verdict.overall}/5  ${verdict.passed ? '✅ PASS' : '❌ FAIL'}`,
+            ``,
+            `  Reasoning: ${verdict.reasoning}`,
+            ``,
+            `  Note: For full simulation scoring (urgency, denial, probing questions),`,
+            `  use the Training Dashboard or ConversationRunner + SimulationScorer.`,
+        ];
+        send(userId, lines.join('\n'));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _hrvToStress(hrv) {
+    // Matches Python stress_index formula (approximate)
+    return Math.max(0, Math.min(1, 1 - (hrv - 10) / 70));
+}
+
+function _stressLabel(s) {
+    if (s >= 0.75) return 'critical';
+    if (s >= 0.55) return 'high_stress';
+    if (s >= 0.35) return 'moderate_stress';
+    return 'low_stress';
+}
+
+function _framesFor(action) {
+    const map = {
+        give_facts: 'Feedback', psychoeducation: 'Feedback', loss_frame: 'Feedback',
+        validate: 'Responsibility', develop_discrepancy: 'Responsibility',
+        give_options: 'Advice + Menu',
+        empathic_reflection: 'Empathy', affirmation: 'Empathy + Self-efficacy',
+        motivational_frame: 'Self-efficacy', flooding_hold: 'Self-efficacy',
+        challenger_insight: 'Feedback', socratic_probe: 'Responsibility',
+        open_question: 'Empathy', summarise: 'Empathy',
+    };
+    return map[action] || 'Standard';
+}
+
+function _mctsCategory(action) {
+    const map = {
+        open_question: 'info_coverage', empathic_reflection: 'trust_delta',
+        affirmation: 'trust_delta', challenger_insight: 'goal_progress',
+        give_options: 'goal_progress', flooding_hold: 'goal_progress',
+        validate: 'stress_reduction', develop_discrepancy: 'goal_progress',
+    };
+    return map[action] || 'info_coverage';
+}
+
+function _help() {
+    return [
+        `🧠 tensornets CLI Commands`,
+        `─────────────────────────────────────────────────────────`,
+        `PHYSIOLOGY:`,
+        `  /physio status              — ping the Python server`,
+        `  /physio state               — show your current physio state`,
+        `  /physio set hrv <value>     — inject an HRV value for testing`,
+        `  /physio simulate <n_turns>  — run a short HRV simulation`,
+        ``,
+        `MCTS:`,
+        `  /mcts action <a1> <a2>…     — pick best action (MCTS)`,
+        `  /mcts session hint          — show longitudinal session recommendation`,
+        `  /mcts judge [n]             — judge last n turns with Maverick`,
+        ``,
+        `SETUP:`,
+        `  cd tensornets`,
+        `  uvicorn server:app --port 8765 --reload`,
+        `─────────────────────────────────────────────────────────`,
+    ].join('\n');
+}

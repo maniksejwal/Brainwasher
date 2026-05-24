@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "tensornets"
+version = "0.1.0"
+description = "Hysteretic Tensor Negotiation (HTN) framework for physiologically-aware multi-agent conversational deliberation"
+authors = [{ name = "Manik Sejwal" }]
+requires-python = ">=3.11"
+dependencies = [
+    # Tensor computation — SVD, matrix_exp, GPU support
+    "torch>=2.3.0",
+    # LLM loading, activation extraction, tokenization
+    "transformers>=4.45.0",
+    "accelerate>=0.33.0",
+    # int4/int8 quantization for local model (Mistral 7B on D: drive)
+    "bitsandbytes>=0.43.0",
+    # Fast, safe tensor serialization
+    "safetensors>=0.4.3",
+    # AWS: Bedrock inference + EC2 spot jobs + S3 tensor storage
+    "boto3>=1.34.0",
+    # Linear algebra, eigenvalue decomposition, ODE solvers (PK/PD)
+    "numpy>=1.26.0",
+    "scipy>=1.13.0",
+    # CLI progress bars, benchmark tables
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-benchmark>=4.0.0",
+    "pytest-cov>=5.0.0",
+    "matplotlib>=3.9.0",   # singular value spectrum plots, stress decay curves
+    "pandas>=2.2.0",       # benchmark result tables
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tensornets*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.pytest-benchmark]
+min_rounds = 5
+sort = "mean"

@@ -125,9 +125,13 @@ const config = {
     STORAGE_GCP_BUCKET: process.env.STORAGE_GCP_BUCKET || '',
     STORAGE_GCP_PROJECT_ID: process.env.STORAGE_GCP_PROJECT_ID || '',
 
-    // External APIs
-    LLAMA_API_URL: process.env.LLAMA_API_URL || 'https://5p99qnahlb.execute-api.ap-south-1.amazonaws.com/api/llama/generate',
-    LLAMA_API_KEY: process.env.LLAMA_API_KEY || '',
+    // AWS Bedrock (Llama 4 / Llama 3 — replaces the old Lambda-backed API Gateway route)
+    AWS_REGION: process.env.AWS_REGION || 'us-east-1',
+    // LLAMA_API_URL / LLAMA_API_KEY removed — Bedrock is called directly via @aws-sdk/client-bedrock-runtime
+
+    // tensornets Python microservice (physio state + MCTS candidate scoring)
+    // Start with: cd tensornets && uvicorn server:app --port 8765 --reload
+    TENSORNETS_URL: process.env.TENSORNETS_URL || 'http://localhost:8765',
 
     // ICD API
     ICD_API_URL: process.env.ICD_API_URL || '',

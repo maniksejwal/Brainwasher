@@ -9,7 +9,7 @@
  */
 
 import { getDb, setGlobalDb } from './connection.js';
-import { initializeDatabase, clearDatabase, addConversationIntelligenceTables } from './schema.js';
+import { initializeDatabase, clearDatabase, addConversationIntelligenceTables, addDialogGraphSchemaTables } from './schema.js';
 import {
     findUserByUsername,
     findUserById,
@@ -84,6 +84,18 @@ import {
     logNotification,
     getNotificationHistory
 } from './queries_notifications.js';
+import {
+    listDialogGraphs,
+    getDialogGraph,
+    upsertDialogGraph,
+    getDialogGraphRuns,
+    getRunPath,
+    compareRunPaths,
+    importSimulationRunToGraph,
+    createDialogGraphRun,
+    appendRunStep,
+    finalizeDialogGraphRun,
+} from './queries_dialog_graphs.js';
 
 export {
     getDb,
@@ -150,6 +162,17 @@ export {
     setNotificationPreference,
     isNotificationEnabled,
     logNotification,
-    getNotificationHistory
+    getNotificationHistory,
+    // Dialog graphs
+    listDialogGraphs,
+    getDialogGraph,
+    upsertDialogGraph,
+    getDialogGraphRuns,
+    getRunPath,
+    compareRunPaths,
+    importSimulationRunToGraph,
+    createDialogGraphRun,
+    appendRunStep,
+    finalizeDialogGraphRun,
 };
 

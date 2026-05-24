@@ -184,4 +184,90 @@ router.post('/prompts', async (req, res) => {
     }
 });
 
+/**
+ * Export simulation runs from the simulation DB into dialog graphs.
+ *
+ * POST /api/cli/export-dialog-graphs
+ * Body: { graphId: string, limit?: number, domain?: string }
+ *
+ * Reads the most recent simulation runs from the simulation DB,
+ * maps each conversation to a dialog graph run, and imports it.
+ * Returns the list of created run IDs.
+ */
+router.post('/export-dialog-graphs', async (req, res) => {
+    try {
+        const { graphId, limit = 10, scenarioId } = req.body;
+        if (!graphId) {
+            return res.status(400).json({ error: 'graphId required' });
+        }
+
+        // Import simulation DB and dialog graph queries
+        const { open } = await import('sqlite');
+        const sqlite3Module = await import('sqlite3');
+        const sqlite3 = sqlite3Module.default;
+        const { importSimulationRunToGraph, getDialogGraph } = await import('../db/queries_dialog_graphs.js');
+        const config = await import('../config.js');
+
+        // Verify target graph exists
+        const graph = await getDialogGraph(graphId);
+        if (!graph) {
+            return res.status(404).json({ error: `Graph '${graphId}' not found` });
+        }
+
+        const simDbPath = config.default.getDbPath?.('simulation') || './data/dbs/simulation.db';
+        let simDb;
+        try {
+            simDb = await open({ filename: simDbPath, driver: sqlite3.Database });
+        } catch {
+            return res.status(404).json({ error: 'Simulation database not found. Run at least one simulation first.' });
+        }
+
+        // Pull recent conversation messages grouped by circle_id (= one sim run)
+        let query = `
+            SELECT m.circle_id, m.user_id, m.role, m.message, m.timestamp
+            FROM messages m
+            ORDER BY m.circle_id, m.timestamp ASC
+        `;
+        const rows = await simDb.all(query);
+        await simDb.close();
+
+        // Group by circle_id
+        const groups = {};
+        for (const row of rows) {
+            (groups[row.circle_id] = groups[row.circle_id] || []).push(row);
+        }
+
+        const circleIds = Object.keys(groups).slice(0, limit);
+        const importedRunIds = [];
+
+        for (const circleId of circleIds) {
+            const messages = groups[circleId].map((r, i) => ({
+                sender:  r.role,
+                content: r.message,
+                turn:    i,
+            }));
+            const simRun = {
+                id:        `sim_${circleId}`,
+                circleId,
+                scenarioId: scenarioId || null,
+                startedAt: messages[0] ? groups[circleId][0].timestamp : Date.now(),
+                outcome:   'complete',
+                messages,
+            };
+            const runId = await importSimulationRunToGraph(simRun, graphId);
+            importedRunIds.push(runId);
+        }
+
+        res.json({
+            ok: true,
+            graph_id: graphId,
+            imported: importedRunIds.length,
+            run_ids:  importedRunIds,
+        });
+    } catch (error) {
+        console.error('[CLI] export-dialog-graphs error:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 export default router;

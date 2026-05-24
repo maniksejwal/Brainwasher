@@ -37,6 +37,104 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
         // Step 3: Re-process handlers that need enhanced context (like privacyGuard)
         // For now, privacyGuard gets enhanced context inline
         const componentResults = initialResults;
+
+        // Step 2.5: ACTION SELECTION (MCTS planning layer)
+        // Runs the action_selector prompt to decide WHAT action to take this turn,
+        // before the patient optimizer decides HOW to phrase it.
+        //
+        // FRAMES mapping: each selected action carries a FRAMES component
+        // (Feedback, Responsibility, Advice, Menu, Empathy, Self-efficacy)
+        // which is injected into the patient optimizer context.
+        //
+        // This step DOES NOT conflict with response generation — it adds
+        // `selectedAction` and `framesComponent` to enhancedContext.
+        // The patient optimizer reads these as guidance, not hard constraints.
+        //
+        // DIVERGENCE HANDLING: if the user's actual message deviates from the
+        // expected action trajectory (e.g. patient asks an off-topic question
+        // when we expected compliance), the action selector recalculates from
+        // the current message. MCTS backpropagation in the Python server also
+        // updates Q-values so future selection adapts. Unexpected actions are
+        // classified as:
+        //   - topic_shift  → change_topic or topic_from_stack selected
+        //   - off_message  → validate + acknowledge before returning to plan
+        //   - escalation   → safety_protocol if crisis signals detected
+        let selectedAction = null;
+        let framesComponent = null;
+        try {
+            const empathyLevel = enhancedContext.empathyHandler?.level || 'MEDIUM';
+            const stressState   = context.physioState;
+            const stressLevel   = stressState
+                ? _stressLevelFromIndex(stressState.stress_index)
+                : 'medium';
+            const therapeuticMode = context.therapeuticMode || 'standard';
+            const currentPhase    = context.deaddictionPhase || 'rapport';
+
+            // Available actions vary by stress level (mirrors BaseMCTS gates)
+            const availableActions = _availableActionsByStress(stressLevel);
+            const blockedActions   = _blockedActionsByStress(stressLevel);
+
+            const { PROMPT_ACTION_SELECTOR, ACTION_TO_FRAMES } = await import('../../prompts/action_selector.js');
+            const { processUserMessage } = await import('../agents/unifiedAgent.js');
+
+            const actionPrompt = PROMPT_ACTION_SELECTOR
+                .replace('{{STRESS_LEVEL}}', stressLevel)
+                .replace('{{HRV_NOTE}}', stressState ? `HRV ≈ ${stressState.hrv_rmssd_ms ?? '?'}ms` : 'unknown')
+                .replace('{{ACTIVITY_CONTEXT}}', context.activityContext || 'none')
+                .replace('{{AVAILABLE_ACTIONS}}', availableActions.join(', '))
+                .replace('{{BLOCKED_ACTIONS}}',   blockedActions.join(', '))
+                .replace('{{THERAPEUTIC_MODE}}',  therapeuticMode)
+                .replace('{{CURRENT_PHASE}}',     currentPhase)
+                .replace('{{SESSION_GOAL}}',      context.sessionGoal || 'general support')
+                .replace('{{TURNS_COMPLETED}}',   String(currentTurn - 1))
+                .replace('{{INFO_COVERAGE}}',     String(context.infoCoverage || 0.3))
+                .replace('{{REPETITION_DETECTED}}', String(!!enhancedContext.inputUnderstanding?.repetition_detected))
+                .replace('{{LAST_ACTION}}',       context.lastAction || 'none')
+                .replace('{{MESSAGE}}',           message)
+                .replace('{{CONVERSATION_HISTORY}}', _formatHistory(context.history, 4));
+
+            const actionResult = await processUserMessage(
+                userId, role, actionPrompt, circleId,
+                { ...enhancedContext, _action_selector_call: true }
+            );
+
+            if (actionResult?.reply) {
+                try {
+                    const parsed = JSON.parse(
+                        actionResult.reply.replace(/```json\n?/g, '').replace(/```/g, '').trim()
+                    );
+                    selectedAction  = parsed.action   || null;
+                    framesComponent = parsed.frames_component || (selectedAction && ACTION_TO_FRAMES[selectedAction]) || null;
+
+                    // Handle divergence: if stress_gate_check is 'blocked', override to safe action
+                    if (parsed.stress_gate_check === 'blocked' && selectedAction) {
+                        console.warn(
+                            `[CompanionCoordinator] Action ${selectedAction} blocked by stress gate ` +
+                            `(stress=${stressLevel}). Falling back to validate.`
+                        );
+                        selectedAction  = 'validate';
+                        framesComponent = 'Responsibility';
+                    }
+
+                    if (process.env.DEBUG_COMPANION) {
+                        console.log(
+                            `[CompanionCoordinator] Action selected: ${selectedAction} ` +
+                            `[FRAMES: ${framesComponent}] lookahead: ${parsed.lookahead_hint}`
+                        );
+                    }
+                } catch {
+                    // JSON parse failure — action selector output was not valid JSON
+                    // This is non-fatal; the patient optimizer runs without action guidance
+                }
+            }
+        } catch (actionSelectorError) {
+            // Action selector is advisory — never break a response because of it
+            console.warn('[CompanionCoordinator] Action selector skipped:', actionSelectorError.message);
+        }
+
+        // Inject action guidance into enhancedContext for use by the patient optimizer
+        enhancedContext.selectedAction   = selectedAction;
+        enhancedContext.framesComponent  = framesComponent;
         
         // Update privacyGuard with enhanced context if it didn't get it
         if (componentResults.privacyGuard && !componentResults.privacyGuard.result.sharingSuggestion) {
@@ -80,7 +178,52 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
         // Step 7: Add state_update from state tracker
         resolved.state_update = aggregated.state_update || initialResults.stateTracker?.result?.state_update || null;
         
-        // Step 8: Ensure we have required fields for compatibility
+        // Step 8: MCTS candidate scoring — rank candidate replies by projected stress impact.
+        // When the Python tensornets server is running, this replaces the default reply
+        // with the physiologically safest candidate response.
+        // Falls back to the aggregated reply when the server is unavailable (graceful).
+        if (context.physioState && resolved.reply) {
+            try {
+                const { scoreCandidates, getMCTSAction } = await import('../physio/tensornetsBridge.js');
+
+                // Build a small candidate set from the resolved reply + alternatives
+                const candidates = [resolved.reply];
+                if (aggregated.alternativeReplies?.length) {
+                    candidates.push(...aggregated.alternativeReplies.slice(0, 4));
+                }
+
+                if (candidates.length > 1) {
+                    const scored = await scoreCandidates({
+                        subject_id:   context.physioState.subject_id || userId,
+                        physio_state: context.physioState,
+                        candidates,
+                        n_lookahead:  3,
+                    });
+
+                    if (scored?.best) {
+                        if (process.env.DEBUG_COMPANION) {
+                            console.log(
+                                `[CompanionCoordinator] MCTS selected candidate #${scored.best.rank} ` +
+                                `(projected_stress=${scored.best.projected_stress}, ` +
+                                `keywords: ${scored.best.stress_keywords} stress / ${scored.best.calm_keywords} calm)`
+                            );
+                        }
+                        // Only swap to MCTS best if it differs meaningfully from the default
+                        if (scored.best.candidate_index !== 0) {
+                            resolved.reply = scored.best.candidate_text;
+                            resolved.mcts_applied = true;
+                        }
+                        resolved.mcts_score = scored.best.projected_stress;
+                        resolved.current_stress = scored.current_stress;
+                    }
+                }
+            } catch (mctsError) {
+                // MCTS is advisory — never break a response because of it
+                console.warn('[CompanionCoordinator] MCTS scoring skipped:', mctsError.message);
+            }
+        }
+
+        // Step 9: Ensure we have required fields for compatibility
         if (!resolved.intent) {
             resolved.intent = aggregated.intent || 'ASKING_QUESTION';
         }
@@ -88,7 +231,7 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
             resolved.reply = 'I understand. Can you tell me more?';
         }
         
-        // Step 9: Return final coordinated response
+        // Step 10: Return final coordinated response
         return resolved;
     } catch (error) {
         console.error('[CompanionCoordinator] Error:', error.message);
@@ -519,5 +662,47 @@ Please provide:
         }
         return result.changes;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Action selector helpers (module-level, used by coordinateCompanions)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function _stressLevelFromIndex(index) {
+    if (!index && index !== 0) return 'medium';
+    if (index >= 0.75) return 'critical';
+    if (index >= 0.55) return 'high';
+    if (index >= 0.35) return 'medium';
+    return 'low';
+}
+
+function _availableActionsByStress(level) {
+    const all = [
+        'open_question', 'empathic_reflection', 'affirmation', 'validate',
+        'give_facts', 'give_options', 'summarise', 'psychoeducation',
+        'challenger_insight', 'develop_discrepancy', 'loss_frame', 'socratic_probe',
+        'socratic_reframe', 'change_topic', 'topic_from_stack',
+    ];
+    if (level === 'critical')
+        return ['validate', 'empathic_reflection', 'safety_protocol', 'acknowledge_only'];
+    if (level === 'high')
+        return ['validate', 'empathic_reflection', 'give_facts', 'change_topic'];
+    if (level === 'medium')
+        return all.filter(a => !['challenger_insight', 'loss_frame', 'flooding_hold', 'flooding_deepen', 'spike_step'].includes(a));
+    return all;
+}
+
+function _blockedActionsByStress(level) {
+    if (level === 'critical') return ['challenger_insight', 'develop_discrepancy', 'loss_frame', 'psychoeducation', 'give_options', 'flooding_hold', 'spike_step'];
+    if (level === 'high')     return ['challenger_insight', 'develop_discrepancy', 'loss_frame', 'flooding_hold', 'spike_step'];
+    if (level === 'medium')   return ['flooding_hold', 'flooding_deepen', 'spike_step'];
+    return [];
+}
+
+function _formatHistory(history, n) {
+    if (!history?.length) return '(no history)';
+    return history.slice(-n * 2).map(m =>
+        `${m.role === 'assistant' ? 'Companion' : 'Patient'}: ${m.content?.slice(0, 120) ?? m.message?.slice(0, 120) ?? ''}`
+    ).join('\n');
 }
 

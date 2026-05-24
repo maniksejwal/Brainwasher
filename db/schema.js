@@ -188,6 +188,9 @@ export async function initializeDatabase() {
     
     // Create companion confidential communication tables
     await createCompanionConfidentialTables();
+
+    // Create dialog graph tables (supervised training + MCTS comparison)
+    await addDialogGraphSchemaTables();
 }
 
 /**
@@ -538,5 +541,15 @@ async function createCompanionConfidentialTables() {
     `);
 
     console.log('[Schema] Companion confidential communication tables added');
+}
+
+/**
+ * Add dialog graph tables for supervised training and MCTS comparison.
+ * Called once during database initialization.
+ */
+export async function addDialogGraphSchemaTables() {
+    const { addDialogGraphTables } = await import('./queries_dialog_graphs.js');
+    await addDialogGraphTables();
+    console.log('[Schema] Dialog graph tables added');
 }
 

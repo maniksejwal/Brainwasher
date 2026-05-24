@@ -25,6 +25,7 @@ import { handleFeedbackCommand } from './commands/feedbackCommand.js';
 import { handleDMCommand, handleInboxCommand, handleMessagesCommand } from './commands/messageCommands.js';
 import { handleProfessionalAddCommand, handleShowProfessionalCircle } from './commands/addProfessionalMember.js';
 import { handleShowAllCircles, handleCreateCircleCommand, handleDocumentCommand } from './commands/circleCommands.js';
+import { handleTensornetCommand } from './commands/tensornetCommand.js';
 
 export async function handleCommand(userId, circleId, message) {
     const parts = message.toLowerCase().split(' ');
@@ -219,6 +220,18 @@ export async function handleCommand(userId, circleId, message) {
                 });
             };
             await handleDocumentCommand(userId, circleId, parts, sendDocReply);
+            break;
+        case '/physio':
+        case '/mcts':
+            const sendTensornetReply = (targetUserId, msg) => {
+                events.emit('broadcast', {
+                    targetUsers: [targetUserId],
+                    reply: msg,
+                    from: 'system',
+                    circleId
+                });
+            };
+            await handleTensornetCommand(userId, circleId, parts, sendTensornetReply);
             break;
         default:
             events.emit('broadcast', { targetUsers: [userId], reply: `Unknown command: ${command}`, from: 'system', circleId });
