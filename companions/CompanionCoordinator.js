@@ -106,7 +106,7 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
             const availableActions = _availableActionsByStress(stressLevel);
             const blockedActions   = _blockedActionsByStress(stressLevel);
 
-            const { PROMPT_ACTION_SELECTOR, ACTION_TO_FRAMES } = await import('../../prompts/action_selector.js');
+            const { PROMPT_ACTION_SELECTOR, ACTION_TO_FRAMES } = await import('../prompts/action_selector.js');
             const { processUserMessage } = await import('../agents/unifiedAgent.js');
 
             const actionPrompt = PROMPT_ACTION_SELECTOR
