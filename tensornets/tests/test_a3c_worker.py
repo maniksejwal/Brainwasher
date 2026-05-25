@@ -285,16 +285,16 @@ class TestArmWorkers:
         assert summary["arm"] == "hysteresis_prompt"
 
     def test_stress_after_response_calming(self):
-        s = _stress_after_response(0.6, "REFLECT_FEELING")
+        s = _stress_after_response(0.6, "empathic_reflection")
         assert s < 0.6
 
     def test_stress_after_response_crisis(self):
-        s = _stress_after_response(0.4, "EMERGENCY_REFERRAL")
+        s = _stress_after_response(0.4, "escalate")
         assert s >= 0.4
 
     def test_synthetic_reward_keys(self):
         state = _make_state(0.5)
-        reward = _synthetic_reward(state, "REFLECT_FEELING", 0.45)
+        reward = _synthetic_reward(state, "empathic_reflection", 0.45)
         for dim in REWARD_DIMS:
             assert dim in reward
             assert 0.0 <= reward[dim] <= 1.0

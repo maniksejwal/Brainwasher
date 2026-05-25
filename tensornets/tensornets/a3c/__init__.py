@@ -13,6 +13,13 @@ from tensornets.a3c.worker import (
     REWARD_WEIGHTS,
 )
 from tensornets.a3c.arms import Arm1Worker, Arm2Worker, Arm3Worker
+from tensornets.a3c.scenarios import (
+    CANONICAL_SCENARIOS,
+    SCENARIO_BY_ID,
+    get_scenario,
+    scenarios_for_mode,
+    scenarios_for_domain,
+)
 
 __all__ = [
     "ActionBandit", "ACTION_TAXONOMY", "STRESS_BUCKETS",
@@ -20,4 +27,7 @@ __all__ = [
     "compute_advantage", "apply_update", "scalar_reward",
     "REWARD_DIMS", "REWARD_WEIGHTS",
     "Arm1Worker", "Arm2Worker", "Arm3Worker",
+    "CANONICAL_SCENARIOS", "SCENARIO_BY_ID",
+    "get_scenario", "scenarios_for_mode", "scenarios_for_domain",
 ]
+

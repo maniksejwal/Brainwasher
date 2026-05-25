@@ -51,18 +51,40 @@ from typing import Optional
 # ─────────────────────────────────────────────────────────────────────────────
 
 ACTION_TAXONOMY: list[str] = [
-    "validate_emotion",          # empathic reflection / validation
-    "explore_ambivalence",       # MI ambivalence surfacing
-    "build_alliance",            # therapeutic alliance reinforcement
-    "provide_information",       # psychoeducation / factual update
-    "reframe_perspective",       # cognitive reframe
-    "elicit_change_talk",        # evocation of motivation
-    "address_resistance",        # roll with resistance (MI)
-    "check_understanding",       # comprehension check / teach-back
-    "invite_reflection",         # Socratic open question
-    "suggest_coping_strategy",   # concrete coping tool
-    "clarify_goal",              # goal clarification / narrowing
-    "summarise_session",         # recap and next-step alignment
+    # ── Ask actions ───────────────────────────────────────────────────────────
+    "open_question",          # 5W question inviting extended narrative (OARS: O)
+    "specific_question",      # targeted closed-ended fact gathering
+    "probing_question",       # drill down on something mentioned
+    "socratic_probe",         # surfaces contradiction in patient's own statements
+    "topic_from_stack",       # reintroduce a prior topic patient didn't finish
+    # ── Answer / tell actions ─────────────────────────────────────────────────
+    "give_facts",             # share relevant clinical / practical information
+    "give_options",           # present 2-3 alternatives (FRAMES: Advice + Menu)
+    "psychoeducation",        # explain a mechanism (FRAMES: Feedback)
+    "summarise",              # OARS summary: collect and transition
+    # ── Empathy / relationship actions ───────────────────────────────────────
+    "empathic_reflection",    # OARS reflection: mirror meaning, not just words
+    "affirmation",            # OARS: specific genuine strength recognition
+    "validate",               # normalise experience without reinforcing it
+    "unconditional_regard",   # non-judgment signal (deaddiction rapport only)
+    # ── Strategic challenge actions ───────────────────────────────────────────
+    "challenger_insight",     # Challenger Sale: new perspective
+    "develop_discrepancy",    # MET: gap between values and behaviour
+    "socratic_reframe",       # patient discovers insight through questions
+    "loss_frame",             # Tversky-Kahneman: cost of NOT changing
+    # ── Topic management ──────────────────────────────────────────────────────
+    "change_topic",           # pivot (use when high stress OR repetition)
+    "introduce_new_angle",    # stay on topic but shift perspective
+    "acknowledge_only",       # brief ack, invite patient to continue
+    # ── Mode-gated technique-specific ─────────────────────────────────────────
+    "flooding_hold",          # [flooding] hold at exposure, prevent escape
+    "flooding_deepen",        # [flooding] intensify stimulus
+    "oars_summary",           # [session transitions] full OARS before topic change
+    # ── Meta actions ──────────────────────────────────────────────────────────
+    "escalate",               # hand to clinician / human
+    "safety_protocol",        # crisis or harm risk
+    "motivational_frame",     # MET self-efficacy framing
+    "end_conversation",       # natural close
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -326,51 +348,100 @@ def run_bandit_training(
 # Heuristic reward function (for offline training without the live LLM)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Domain knowledge priors: which actions are appropriate at which stress levels.
-# These are conservative starting estimates; A3C will refine them.
-# Values: expected reward ∈ [0, 1].
+# Domain knowledge priors: appropriate action at each stress level.
+# Rows = STRESS_BUCKETS; values = expected reward ∈ [0, 1].
+# Derived from action_selector.js SELECTION RULES + mcts_reward.py WEIGHTS.
+# A3C will refine these during training.
 _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
+    # ── Low stress: information and progress are most valuable ───────────────
     'low': {
-        'validate_emotion':      0.55,
-        'explore_ambivalence':   0.65,
-        'build_alliance':        0.60,
-        'provide_information':   0.70,
-        'reframe_perspective':   0.65,
-        'elicit_change_talk':    0.70,
-        'address_resistance':    0.55,
-        'check_understanding':   0.60,
-        'invite_reflection':     0.65,
-        'suggest_coping_strategy': 0.60,
-        'clarify_goal':          0.65,
-        'summarise_session':     0.55,
+        'open_question':        0.70,
+        'specific_question':    0.65,
+        'probing_question':     0.65,
+        'socratic_probe':       0.68,
+        'topic_from_stack':     0.60,
+        'give_facts':           0.72,
+        'give_options':         0.70,
+        'psychoeducation':      0.70,
+        'summarise':            0.60,
+        'empathic_reflection':  0.60,
+        'affirmation':          0.58,
+        'validate':             0.55,
+        'unconditional_regard': 0.55,
+        'challenger_insight':   0.68,
+        'develop_discrepancy':  0.65,
+        'socratic_reframe':     0.65,
+        'loss_frame':           0.60,
+        'change_topic':         0.40,
+        'introduce_new_angle':  0.55,
+        'acknowledge_only':     0.35,
+        'flooding_hold':        0.50,
+        'flooding_deepen':      0.45,
+        'oars_summary':         0.55,
+        'escalate':             0.20,
+        'safety_protocol':      0.20,
+        'motivational_frame':   0.62,
+        'end_conversation':     0.30,
     },
+    # ── Moderate stress: trust-building and reflection gain weight ────────────
     'moderate': {
-        'validate_emotion':      0.75,  # validation is high-value under stress
-        'explore_ambivalence':   0.55,
-        'build_alliance':        0.70,
-        'provide_information':   0.50,  # info dump under stress is counterproductive
-        'reframe_perspective':   0.55,
-        'elicit_change_talk':    0.50,
-        'address_resistance':    0.60,
-        'check_understanding':   0.55,
-        'invite_reflection':     0.65,
-        'suggest_coping_strategy': 0.70,
-        'clarify_goal':          0.55,
-        'summarise_session':     0.50,
+        'open_question':        0.60,
+        'specific_question':    0.55,
+        'probing_question':     0.55,
+        'socratic_probe':       0.55,
+        'topic_from_stack':     0.55,
+        'give_facts':           0.50,   # info dump under stress is counterproductive
+        'give_options':         0.58,
+        'psychoeducation':      0.50,
+        'summarise':            0.55,
+        'empathic_reflection':  0.75,   # high value under moderate stress
+        'affirmation':          0.72,
+        'validate':             0.78,
+        'unconditional_regard': 0.72,
+        'challenger_insight':   0.45,
+        'develop_discrepancy':  0.45,
+        'socratic_reframe':     0.50,
+        'loss_frame':           0.40,
+        'change_topic':         0.65,   # useful to break repetition / reduce stress
+        'introduce_new_angle':  0.55,
+        'acknowledge_only':     0.50,
+        'flooding_hold':        0.60,   # flooding: moderate stress is the target zone
+        'flooding_deepen':      0.55,
+        'oars_summary':         0.60,
+        'escalate':             0.30,
+        'safety_protocol':      0.25,
+        'motivational_frame':   0.62,
+        'end_conversation':     0.25,
     },
+    # ── High stress: only safety actions and direct de-escalation ─────────────
     'high': {
-        'validate_emotion':      0.85,  # distressed patient needs validation first
-        'explore_ambivalence':   0.35,  # complex cognitive task inappropriate
-        'build_alliance':        0.80,
-        'provide_information':   0.25,  # worst action under high stress
-        'reframe_perspective':   0.30,
-        'elicit_change_talk':    0.30,
-        'address_resistance':    0.55,
-        'check_understanding':   0.40,
-        'invite_reflection':     0.50,
-        'suggest_coping_strategy': 0.75,
-        'clarify_goal':          0.35,
-        'summarise_session':     0.45,
+        'open_question':        0.30,
+        'specific_question':    0.25,
+        'probing_question':     0.25,
+        'socratic_probe':       0.20,
+        'topic_from_stack':     0.25,
+        'give_facts':           0.20,   # worst choice under high stress
+        'give_options':         0.30,
+        'psychoeducation':      0.20,
+        'summarise':            0.40,
+        'empathic_reflection':  0.88,   # critical: de-escalate first
+        'affirmation':          0.82,
+        'validate':             0.90,
+        'unconditional_regard': 0.85,
+        'challenger_insight':   0.15,   # BLOCKED by stress gate in production
+        'develop_discrepancy':  0.15,
+        'socratic_reframe':     0.20,
+        'loss_frame':           0.10,   # BLOCKED
+        'change_topic':         0.70,
+        'introduce_new_angle':  0.45,
+        'acknowledge_only':     0.60,
+        'flooding_hold':        0.72,   # flooding: high stress is the target
+        'flooding_deepen':      0.65,
+        'oars_summary':         0.55,
+        'escalate':             0.65,
+        'safety_protocol':      0.80,
+        'motivational_frame':   0.55,
+        'end_conversation':     0.40,
     },
 }
 

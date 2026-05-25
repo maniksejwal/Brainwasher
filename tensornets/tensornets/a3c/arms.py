@@ -40,6 +40,14 @@ from tensornets.a3c.worker import (
     REWARD_DIMS,
     TurnState,
 )
+from tensornets.therapy.mcts_reward import (
+    WEIGHTS as MCTS_WEIGHTS,
+    GOAL_KEYWORDS,
+    TRUST_BUILD,
+    TRUST_ERODE,
+    score_candidate_multidim,
+)
+from tensornets.therapy.modes import TherapeuticMode, DeaddictionPhase
 
 log = logging.getLogger("tensornets.a3c.arms")
 
@@ -138,7 +146,7 @@ class Arm1Worker(A3CWorker):
 
         # Step 5: synthetic reward from stress delta
         next_stress = _stress_after_response(state.stress_index, action)
-        reward = _synthetic_reward(state, action, next_stress)
+        reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
         reward["safety"] = 1.0 if not fallback else 0.8
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
@@ -326,7 +334,7 @@ class Arm3Worker(A3CWorker):
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
         next_stress = _stress_after_response(state.stress_index, action)
-        reward = _synthetic_reward(state, action, next_stress)
+        reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
 
         return {
             "response":          response_text,
@@ -348,26 +356,31 @@ class Arm3Worker(A3CWorker):
 
 def _stress_after_response(current_stress: float, action: str) -> float:
     """
-    Heuristic stress transition: actions with a calming intent reduce stress.
+    Heuristic stress transition using the action taxonomy.
 
-    This is a *simulator* approximation used when the tensornets server is
+    This is a simulator approximation used when the tensornets server is
     unavailable or for Arm 2 (JS).  In the full K1 run, Arm 1 uses the
     PhysiologicalHistory trajectory from /physio/history/append instead.
 
-    Decay magnitude matches the OU simulator parameters (~5% per good turn).
+    Decay magnitudes match the OU simulator parameters (~5% per good turn).
     """
     calming_actions = {
-        "REFLECT_FEELING", "VALIDATE_EXPERIENCE", "NORMALISE_RESPONSE",
-        "PSYCHOEDUCATION", "BREATHING_EXERCISE", "MINDFULNESS_PROMPT",
-        "MOTIVATIONAL_AFFIRMATION",
+        "empathic_reflection", "affirmation", "validate", "unconditional_regard",
+        "acknowledge_only", "summarise", "oars_summary",
     }
     escalating_actions = {
-        "EMERGENCY_REFERRAL", "SAFETY_CHECK", "CRISIS_PROTOCOL",
+        "safety_protocol", "escalate",
     }
+    # In flooding mode the goal is to RAISE stress; calming is penalised.
+    # Arm callers are responsible for passing the right action label.
+    # Here we apply purely mechanical physics.
     if action in calming_actions:
         delta = -0.05
     elif action in escalating_actions:
         delta = +0.02
+    elif action in {"flooding_hold", "flooding_deepen", "challenger_insight",
+                    "develop_discrepancy", "loss_frame"}:
+        delta = +0.03   # intentionally stress-raising
     else:
         delta = -0.02   # neutral: mild natural decay
 
@@ -378,49 +391,116 @@ def _synthetic_reward(
     state: TurnState,
     action: str,
     next_stress: float,
+    response_text: str = "",
 ) -> dict[str, float]:
     """
-    Compute a synthetic multi-dim reward from real state signals.
+    Mode-conditional multi-dimensional reward using mcts_reward.py WEIGHTS.
 
-    Used inline during training when the offline HTN judge batch has not run yet.
-    Dimensions follow REWARD_DIMS and REWARD_WEIGHTS in worker.py.
+    The key insight is that *the same stress increase can be a reward or a
+    penalty depending on the therapeutic mode*:
 
-    goal_progress   — derived from info_coverage delta and whether a FRAMES
-                      component suggests forward progress (not just validate/hold)
-    info_coverage   — carried directly from state.info_coverage (real session value)
-    consistency     — penalised if the action repeats the last_action on non-repetition turns
-    trust_delta     — penalised if patient is repeating (sign of unresolved concern)
+    - STANDARD / NEGOTIATION / RAPPORT: stress reduction is rewarded.
+    - FLOODING                         : stress increase toward target is rewarded.
+    - DEADDICTION (AMBIVALENCE)        : mild productive tension (σ ~ 0.35) is rewarded.
+    - DEADDICTION (INSIGHT / STRIKE)   : controlled confrontation is rewarded.
+
+    Dimensions align with REWARD_DIMS and REWARD_WEIGHTS in worker.py.
     """
-    stress_delta    = state.stress_index - next_stress
-    stress_r        = max(0.0, min(1.0, 0.5 + stress_delta * 5.0))
+    mode_str  = state.therapeutic_mode or "standard"
+    phase_str = state.deaddiction_phase or "rapport"
 
-    # Trust: repetition signals unresolved concern → lower trust delta
-    trust_r = 0.4 if state.repetition_detected else (0.65 if stress_delta >= 0 else 0.35)
+    try:
+        mode  = TherapeuticMode(mode_str)
+        phase = DeaddictionPhase(phase_str)
+    except ValueError:
+        mode  = TherapeuticMode.STANDARD
+        phase = DeaddictionPhase.RAPPORT
 
-    # Goal progress: forward-action taxonomy advances the goal
-    advancing_actions = {
-        "PSYCHOEDUCATION", "MOTIVATIONAL_AFFIRMATION", "DEVELOP_DISCREPANCY",
-        "GIVE_OPTIONS", "SUMMARISE", "CHALLENGER_INSIGHT", "GIVE_FACTS",
-    }
-    holding_actions = {"VALIDATE_EXPERIENCE", "REFLECT_FEELING", "NORMALISE_RESPONSE"}
-    if action in advancing_actions:
-        goal_r = min(1.0, state.info_coverage + 0.15)   # advances topic coverage
-    elif action in holding_actions:
-        goal_r = state.info_coverage                      # holds, doesn't advance
+    # ── Dimension 1: Mode-conditional stress reward ───────────────────────────
+    stress_delta = state.stress_index - next_stress  # positive = stress went down
+
+    if mode == TherapeuticMode.FLOODING:
+        # Reward proximity to flooding target (0.80 default)
+        target     = getattr(state, "flooding_target_stress", 0.80)
+        stress_r   = max(0.0, 1.0 - abs(next_stress - target) * 2.0)
+    elif mode == TherapeuticMode.DEADDICTION and phase == DeaddictionPhase.AMBIVALENCE:
+        # Hold mild productive tension around σ = 0.35
+        stress_r   = max(0.0, 1.0 - abs(next_stress - 0.35) * 3.0)
+    elif mode == TherapeuticMode.DEADDICTION and phase in (
+        DeaddictionPhase.INSIGHT, DeaddictionPhase.STRIKE
+    ):
+        # Reward if stress is above 0.40 (controlled confrontation zone)
+        stress_r   = min(1.0, next_stress / 0.70)
     else:
-        goal_r = max(0.0, state.info_coverage - 0.05)    # other/unknown — slight drag
+        # Standard / rapport / negotiation: reward stress reduction
+        stress_r   = max(0.0, min(1.0, 0.5 + stress_delta * 5.0))
 
-    # Info coverage: use real session value
+    # ── CRITICAL stress gate enforcement ─────────────────────────────────────
+    # Mirrors action_selector.js rule #1 and #2.
+    if state.stress_index >= 0.85 and action not in {
+        "validate", "empathic_reflection", "safety_protocol", "acknowledge_only",
+        "escalate", "flooding_hold", "flooding_deepen",
+    }:
+        stress_r   = max(0.0, stress_r - 0.40)   # hard penalty for violating CRITICAL gate
+
+    # ── Dimension 2: Goal progress (mode keyword scan) ────────────────────────
+    weight_key  = phase_str if mode == TherapeuticMode.DEADDICTION else mode_str
+    goal_kws    = GOAL_KEYWORDS.get(weight_key, GOAL_KEYWORDS.get("standard", frozenset()))
+    words_lower = response_text.lower() if response_text else ""
+    goal_hits   = sum(1 for kw in goal_kws if kw in words_lower)
+    goal_r_text = min(1.0, goal_hits / max(1, len(goal_kws) * 0.3))
+
+    # Also consider forward action taxonomy (without text)
+    advancing = {
+        "psychoeducation", "motivational_frame", "develop_discrepancy",
+        "give_options", "summarise", "challenger_insight", "give_facts",
+        "oars_summary", "loss_frame", "socratic_reframe",
+    }
+    holding = {"validate", "empathic_reflection", "unconditional_regard", "acknowledge_only"}
+    if action in advancing:
+        goal_r = min(1.0, state.info_coverage + 0.15)
+    elif action in holding:
+        goal_r = state.info_coverage
+    else:
+        goal_r = max(0.0, state.info_coverage - 0.05)
+
+    # Blend text signal with action taxonomy signal
+    goal_r = 0.6 * goal_r + 0.4 * goal_r_text
+
+    # ── Dimension 3: Trust delta ──────────────────────────────────────────────
+    if words_lower:
+        build_hits = sum(1 for kw in TRUST_BUILD if kw in words_lower)
+        erode_hits = sum(1 for kw in TRUST_ERODE if kw in words_lower)
+        trust_raw  = (build_hits - 2 * erode_hits) / max(1, build_hits + erode_hits + 1)
+        trust_r    = max(0.0, min(1.0, 0.5 + trust_raw * 0.5))
+    elif state.repetition_detected:
+        trust_r    = 0.35
+    else:
+        trust_r    = 0.60 if stress_delta >= 0 else 0.40
+
+    # ── Dimension 4: Info coverage ────────────────────────────────────────────
     info_r = state.info_coverage
 
-    # Consistency: penalise repeating the exact same action when patient is not
-    # repeating (if the patient repeats, same action may be intentional)
+    # ── Dimension 5: Multi-agent consistency ─────────────────────────────────
     if action == state.last_action and not state.repetition_detected and state.turn_count > 1:
-        consistency_r = 0.4
+        consistency_r = 0.4   # repeating same action without reason
     else:
         consistency_r = 0.8
 
-    safety_r = 1.0
+    # ── Compose via mode weights ─────────────────────────────────────────────
+    weights    = MCTS_WEIGHTS.get(weight_key, MCTS_WEIGHTS["standard"])
+    # weights = [stress_reduction, goal_progress, trust_delta, info_coverage, consistency]
+    # Normalise trust from [0,1] to [-1,+1] for the RewardVector's shift
+    composite  = (
+        weights[0] * stress_r
+        + weights[1] * goal_r
+        + weights[2] * trust_r          # already [0,1] here (shifted from [-1,+1])
+        + weights[3] * info_r
+        + weights[4] * consistency_r
+    )
+
+    safety_r = 0.2 if action == "safety_protocol" and state.stress_index < 0.50 else 1.0
+
     return {
         "stress":        round(stress_r, 4),
         "trust_delta":   round(trust_r, 4),
@@ -428,6 +508,8 @@ def _synthetic_reward(
         "info_coverage": round(info_r, 4),
         "consistency":   round(consistency_r, 4),
         "safety":        round(safety_r, 4),
+        # Convenience scalar for logging
+        "_composite":    round(composite, 4),
     }
 
 

@@ -45,7 +45,7 @@ log = logging.getLogger("tensornets.a3c.worker")
 GAMMA_DISCOUNT: float = 0.95        # temporal discount for V(s')
 ALPHA_LR: float       = 0.05        # learning rate for log-bias update
 ENTROPY_COEF: float   = 0.01        # entropy bonus weight (prevents collapse)
-MAX_TURNS: int        = 20          # episode truncation
+MAX_TURNS: int        = 50          # episode truncation; individual scenarios may override
 
 
 # ── Reward dimensionality (must match HTN judge output schema) ────────────────
@@ -77,23 +77,32 @@ class TurnState:
 
     Fields present in the old framework that we must carry for fair comparison:
 
-    stress_index       float [0,1]   — from physio/empathyHandler
-    stress_bucket      str           — 'low' | 'moderate' | 'high'  (bandit buckets)
-    therapeutic_mode   str           — 'standard'|'flooding'|'skills'|'motivational'
-    deaddiction_phase  str           — 'rapport'|'exploration'|'action'|'maintenance'
-    last_action        str           — action taken on previous turn (for consistency)
-    session_goal       str           — e.g. 'reduce craving', 'general support'
-    turn_count         int           — number of completed turns this session
-    info_coverage      float [0,1]   — fraction of session goal topics covered so far
-    repetition_detected bool         — inputUnderstanding flagged patient is repeating
-    frames_component   str | None    — FRAMES element guiding current response
-    known_context      str           — RAG block from facts_v2 (longitudinal + session)
-    longitudinal_hint  str           — cross-session memory from tensornetsBridge
-    activity_context   str           — patient's current activity (sitting, exercising…)
-    conversation_history list[dict]  — last K turns {"role", "content"}
-    physio             dict          — raw physio snapshot for logging
-    session_id         str
-    subject_id         str
+    stress_index          float [0,1]   — from physio/empathyHandler
+    stress_bucket         str           — 'low' | 'moderate' | 'high'  (bandit buckets)
+    therapeutic_mode      str           — 'standard'|'flooding'|'deaddiction'|'negotiation'
+    deaddiction_phase     str           — 'rapport'|'ambivalence'|'insight'|'strike'
+    last_action           str           — action taken on previous turn (for consistency)
+    session_goal          str           — e.g. 'reduce craving', 'general support'
+    turn_count            int           — number of completed turns this session
+    info_coverage         float [0,1]   — fraction of session goal topics covered so far
+    repetition_detected   bool          — inputUnderstanding flagged patient is repeating
+    frames_component      str | None    — FRAMES element guiding current response
+    known_context         str           — RAG block from facts_v2 (longitudinal + session)
+    longitudinal_hint     str           — cross-session memory from tensornetsBridge
+    activity_context      str           — patient's current activity (sitting, exercising…)
+    archetype             str           — ReactivityProfile archetype key
+                                          ('standard'|'anxious'|'avoidant'|
+                                           'intellectualiser'|'reactive')
+    has_misconception     bool          — patient holds a specific factual misconception;
+                                          if True, psychoeducation actions should be
+                                          prioritised by the Actor
+    flooding_target_stress float        — target σ for flooding mode (default 0.80)
+    conversation_history  list[dict]    — last K turns {"role", "content"};
+                                          window size set by scenario['context_window']
+                                          (default 60 messages = 30 exchanges)
+    physio                dict          — raw physio snapshot for logging
+    session_id            str
+    subject_id            str
     """
     turn_idx:             int
     stress_index:         float
@@ -102,17 +111,22 @@ class TurnState:
     physio:               dict[str, Any]
 
     # Production-framework fields — required for fair A3C parity
-    therapeutic_mode:     str   = "standard"
-    deaddiction_phase:    str   = "rapport"
-    last_action:          str   = "none"
-    session_goal:         str   = "general support"
-    turn_count:           int   = 0
-    info_coverage:        float = 0.3
-    repetition_detected:  bool  = False
-    frames_component:     Optional[str] = None
-    known_context:        str   = ""        # RAG block injected into action prompt
-    longitudinal_hint:    str   = ""        # cross-session memory
-    activity_context:     str   = "none"
+    therapeutic_mode:       str   = "standard"
+    deaddiction_phase:      str   = "rapport"
+    last_action:            str   = "none"
+    session_goal:           str   = "general support"
+    turn_count:             int   = 0
+    info_coverage:          float = 0.3
+    repetition_detected:    bool  = False
+    frames_component:       Optional[str] = None
+    known_context:          str   = ""        # RAG block injected into action prompt
+    longitudinal_hint:      str   = ""        # cross-session memory
+    activity_context:       str   = "none"
+
+    # New fields for complete A3C coverage
+    archetype:              str   = "standard"   # ReactivityProfile archetype
+    has_misconception:      bool  = False        # patient has a factual misconception
+    flooding_target_stress: float = 0.80         # target σ for flooding mode
 
     session_id:   str = ""
     subject_id:   str = ""
@@ -150,13 +164,14 @@ class TurnState:
     @classmethod
     def from_scenario(cls, scenario: dict) -> "TurnState":
         """Construct the turn-0 state from a scenario dict."""
-        stress = scenario.get("initial_stress_index", 0.5)
+        initial_physio = scenario.get("initial_physio", {})
+        stress = initial_physio.get("stress_index", scenario.get("initial_stress_index", 0.5))
         return cls(
             turn_idx=0,
             stress_index=stress,
             stress_bucket=cls.bucket_from_stress(stress),
             conversation_history=[],
-            physio=scenario.get("initial_physio", {}),
+            physio=initial_physio,
             therapeutic_mode=scenario.get("therapeutic_mode", "standard"),
             deaddiction_phase=scenario.get("deaddiction_phase", "rapport"),
             last_action="none",
@@ -168,6 +183,9 @@ class TurnState:
             known_context=scenario.get("known_context", ""),
             longitudinal_hint=scenario.get("longitudinal_hint", ""),
             activity_context=scenario.get("activity_context", "none"),
+            archetype=scenario.get("archetype", "standard"),
+            has_misconception=scenario.get("has_misconception", False),
+            flooding_target_stress=scenario.get("flooding_target_stress", 0.80),
             session_id=scenario.get("session_id", str(uuid.uuid4())),
             subject_id=scenario.get("subject_id", "synthetic"),
         )
@@ -503,8 +521,14 @@ class A3CWorker:
         prev_state: TurnState,
         response_dict: dict,
         user_message: str,
+        context_window: int = 60,
     ) -> TurnState:
-        """Build the TurnState for the next turn from the previous state + response."""
+        """
+        Build the TurnState for the next turn from the previous state + response.
+
+        context_window controls how many messages to keep in conversation_history
+        (default 60 = 30 exchanges).  Pass scenario['context_window'] to override.
+        """
         new_history = list(prev_state.conversation_history) + [
             {"role": "assistant", "content": response_dict.get("response", "")},
             {"role": "user",      "content": user_message},
@@ -522,7 +546,7 @@ class A3CWorker:
             turn_idx=prev_state.turn_idx + 1,
             stress_index=new_stress,
             stress_bucket=TurnState.bucket_from_stress(new_stress),
-            conversation_history=new_history[-40:],  # keep last 20 exchanges (40 messages)
+            conversation_history=new_history[-context_window:],
             physio=new_physio,
             therapeutic_mode=new_mode,
             deaddiction_phase=new_phase,
@@ -535,6 +559,9 @@ class A3CWorker:
             known_context=prev_state.known_context,
             longitudinal_hint=prev_state.longitudinal_hint,
             activity_context=response_dict.get("activity_context", prev_state.activity_context),
+            archetype=prev_state.archetype,
+            has_misconception=prev_state.has_misconception,
+            flooding_target_stress=prev_state.flooding_target_stress,
             session_id=prev_state.session_id,
             subject_id=prev_state.subject_id,
         )
@@ -546,21 +573,26 @@ class A3CWorker:
         Execute one full episode.
 
         `scenario` is a dict with at minimum:
-            session_id         : str
-            subject_id         : str
-            initial_stress_index: float
-            turns              : list[{"user_message": str, ...}]
+            session_id          : str
+            subject_id          : str
+            turns               : list[{"user_message": str, ...}]
+
+        Scenario-level overrides (from CANONICAL_SCENARIOS):
+            max_turns           : int   — episode length ceiling (default MAX_TURNS=50)
+            context_window      : int   — max messages in conversation_history (default 60)
 
         Returns an EpisodeSummary dict suitable for jsonl logging.
         """
-        episode_id = str(uuid.uuid4())
+        episode_id      = str(uuid.uuid4())
         self._episode_log = []
-        cumulative_reward  = 0.0
-        turns = scenario.get("turns", [])
+        cumulative_reward = 0.0
+        turns           = scenario.get("turns", [])
+        max_turns_ep    = scenario.get("max_turns", MAX_TURNS)       # scenario can override
+        context_window  = scenario.get("context_window", 60)        # scenario can override
 
         state = self.build_initial_state(scenario)
 
-        for turn_data in turns[:MAX_TURNS]:
+        for turn_data in turns[:max_turns_ep]:
             t_start = time.perf_counter()
 
             # Actor selects action
@@ -576,7 +608,7 @@ class A3CWorker:
 
             # Next state
             user_msg   = turn_data.get("user_message", "")
-            next_state = self.next_state(state, resp_dict, user_msg)
+            next_state = self.next_state(state, resp_dict, user_msg, context_window=context_window)
             terminal   = (state.turn_idx >= len(turns) - 1)
 
             # J4 update
@@ -594,17 +626,20 @@ class A3CWorker:
                 turn_idx=state.turn_idx,
                 arm=self.ARM,
                 state={
-                    "stress_index":        state.stress_index,
-                    "stress_bucket":       state.stress_bucket,
-                    "therapeutic_mode":    state.therapeutic_mode,
-                    "deaddiction_phase":   state.deaddiction_phase,
-                    "last_action":         state.last_action,
-                    "session_goal":        state.session_goal,
-                    "turn_count":          state.turn_count,
-                    "info_coverage":       state.info_coverage,
-                    "repetition_detected": state.repetition_detected,
-                    "frames_component":    state.frames_component,
-                    "physio":              state.physio,
+                    "stress_index":          state.stress_index,
+                    "stress_bucket":         state.stress_bucket,
+                    "therapeutic_mode":      state.therapeutic_mode,
+                    "deaddiction_phase":     state.deaddiction_phase,
+                    "last_action":           state.last_action,
+                    "session_goal":          state.session_goal,
+                    "turn_count":            state.turn_count,
+                    "info_coverage":         state.info_coverage,
+                    "repetition_detected":   state.repetition_detected,
+                    "frames_component":      state.frames_component,
+                    "archetype":             state.archetype,
+                    "has_misconception":     state.has_misconception,
+                    "flooding_target_stress":state.flooding_target_stress,
+                    "physio":                state.physio,
                 },
                 action=action,
                 log_prob=round(log_prob, 5),
