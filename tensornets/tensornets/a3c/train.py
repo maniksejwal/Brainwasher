@@ -62,6 +62,7 @@ logging.basicConfig(
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _ARM_CLASSES = None   # lazy import to avoid circular deps at module load
+_TENSORNETS_URL = os.environ.get("TENSORNETS_URL", "http://localhost:8765")
 
 
 def _get_arm_classes():
@@ -70,6 +71,76 @@ def _get_arm_classes():
         from tensornets.a3c.arms import Arm1Worker, Arm2Worker, Arm3Worker
         _ARM_CLASSES = [Arm1Worker, Arm2Worker, Arm3Worker]
     return _ARM_CLASSES
+
+
+# ── Benchmark DB helpers (non-fatal — training continues if DB is down) ───────
+
+def _db_post(path: str, payload: dict) -> dict:
+    """Forward a benchmark record to the FastAPI bridge (which writes to JS DB)."""
+    import urllib.request as _ureq
+    url = f"{_TENSORNETS_URL}{path}"
+    data = json.dumps(payload).encode()
+    req = _ureq.Request(url, data=data,
+                        headers={"Content-Type": "application/json"},
+                        method="POST")
+    try:
+        with _ureq.urlopen(req, timeout=3) as resp:
+            return json.loads(resp.read())
+    except Exception as exc:
+        log.debug("DB write skipped (%s %s): %s", path, payload.get("arm", ""), exc)
+        return {}
+
+
+def _db_create_run(run_dir: str, arms: list[str], total_episodes: int,
+                   patient_mode: str) -> Optional[str]:
+    r = _db_post("/benchmark/run/create", {
+        "name":            Path(run_dir).name,
+        "description":     f"A3C training run: arms={arms}, episodes={total_episodes}",
+        "arms":            arms,
+        "scenarios":       [],
+        "total_episodes":  total_episodes,
+        "patient_mode":    patient_mode,
+    })
+    return r.get("run_id")
+
+
+def _db_create_episode(run_id: Optional[str], arm: str, scenario_id: str,
+                       episode_id: str) -> Optional[str]:
+    if not run_id:
+        return None
+    r = _db_post("/benchmark/episode/create", {
+        "run_id":      run_id,
+        "arm":         arm,
+        "scenario_id": scenario_id,
+        "episode_id":  episode_id,
+    })
+    return r.get("episode_id") or episode_id
+
+
+def _db_finalise_episode(db_episode_id: Optional[str], summary: dict) -> None:
+    if not db_episode_id:
+        return
+    _db_post("/benchmark/episode/finalise", {
+        "episode_id": db_episode_id,
+        "metrics": {
+            "n_turns":           summary.get("n_turns", 0),
+            "cumulative_reward": summary.get("cumulative_reward", 0.0),
+            "mean_reward":       summary.get("mean_reward", 0.0),
+        },
+    })
+
+
+def _db_finalise_run(run_id: Optional[str], total_eps: int,
+                     successful_eps: int) -> None:
+    if not run_id:
+        return
+    _db_post("/benchmark/run/finalise", {
+        "run_id": run_id,
+        "metrics": {
+            "total_episodes":      total_eps,
+            "successful_episodes": successful_eps,
+        },
+    })
 
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
@@ -201,16 +272,22 @@ def train(
         log.error("Could not load scenarios: %s — aborting.", exc)
         sys.exit(1)
 
-    # ── Manifest ─────────────────────────────────────────────────────────────
+    # ── Manifest + DB run record ─────────────────────────────────────────────
+    arm_names = [w.ARM for w in workers]
     _write_manifest(run_dir, {
         "run_dir":         str(run_dir),
         "total_episodes":  total_episodes,
         "patient_mode":    patient_mode,
-        "arms":            [w.ARM for w in workers],
+        "arms":            arm_names,
         "resumed_from":    latest_step,
         "start_episode":   start_episode,
         "timestamp_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
+    db_run_id = run_state.get("db_run_id") or _db_create_run(
+        str(run_dir), arm_names, total_episodes, patient_mode,
+    )
+    if db_run_id:
+        log.info("DB run record: %s", db_run_id)
 
     # ── Emergency checkpoint on interrupt ────────────────────────────────────
     _emergency_step = [start_episode - 1]  # mutable container for closure
@@ -234,6 +311,7 @@ def train(
     # ── Main loop ─────────────────────────────────────────────────────────────
     prior_session: Optional[dict] = run_state.get("last_session_memory")
     arm_cycle = list(range(len(workers)))
+    successful_eps = 0
 
     for ep in range(start_episode, total_episodes):
         worker = workers[ep % len(workers)]
@@ -242,6 +320,10 @@ def train(
         # Multi-session continuity: ~20% chance of continuing a prior session
         use_prior = (prior_session is not None) and (random.random() < 0.20)
         prior_arg = prior_session if use_prior else None
+
+        db_episode_id = _db_create_episode(
+            db_run_id, worker.ARM, scenario.get("scenario_id", ""), ""
+        )
 
         try:
             summary = worker.run_episode(
@@ -253,8 +335,11 @@ def train(
             log.error("Episode %d failed (%s %s): %s — skipping", ep, worker.ARM, scenario.get("scenario_id", "?"), exc)
             continue
 
+        successful_eps += 1
         prior_session = summary.get("session_memory")
         _emergency_step[0] = ep
+
+        _db_finalise_episode(db_episode_id or summary.get("episode_id"), summary)
 
         log.info(
             "ep=%04d  arm=%-18s  scenario=%-35s  reward=%.3f  turns=%d",
@@ -272,8 +357,11 @@ def train(
                 "last_completed_episode": ep,
                 "last_session_memory":   prior_session,
                 "arm_at_checkpoint":     worker.ARM,
+                "db_run_id":             db_run_id,
             })
             log.info("Checkpoint written at episode %d", ep)
+
+    _db_finalise_run(db_run_id, total_episodes, successful_eps)
 
     _write_manifest(run_dir, {
         "timestamp_end":  time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

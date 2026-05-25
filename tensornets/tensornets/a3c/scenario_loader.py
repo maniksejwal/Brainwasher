@@ -1,5 +1,5 @@
 """
-tensornets.a3c.scenario_loader — Python client for the Node.js /api/scenarios endpoint.
+tensornets.a3c.scenario_loader — Python client for the Node.js /api/training/scenarios endpoint.
 
 The JS server at _NODE_URL is the single source of truth for scenario definitions.
 Python never defines scenarios — it fetches them from Node.js via HTTP GET.
@@ -41,7 +41,7 @@ from typing import Any
 
 log = logging.getLogger("tensornets.a3c.scenario_loader")
 
-_NODE_URL  = os.environ.get("NODE_SERVER_URL", "http://localhost:3000")
+_NODE_URL  = os.environ.get("NODE_SERVER_URL", "http://localhost:8247")
 _CACHE: dict[str, Any] = {}
 
 
@@ -74,16 +74,23 @@ def load_scenarios(
     if not force_refresh and cache_key in _CACHE:
         return _CACHE[cache_key]
 
-    path = f"/api/scenarios?domain={domain}"
+    path = f"/api/training/scenarios?domain={domain}"
     try:
         data = _fetch(path)
-        scenarios = data.get("scenarios", [])
+        raw = data.get("scenarios", [])
+        # /api/scenarios may return a dict (keyed by scenario_id) or a list
+        if isinstance(raw, dict):
+            scenarios = list(raw.values())
+        else:
+            scenarios = list(raw)
         _CACHE[cache_key] = scenarios
         log.info("Loaded %d scenarios from Node.js (domain=%s)", len(scenarios), domain)
         return scenarios
     except Exception as exc:
-        log.error("Failed to load scenarios from %s: %s", _NODE_URL + path, exc)
-        return []
+        raise RuntimeError(
+            f"Cannot load scenarios from Node.js ({_NODE_URL}{path}): {exc}\n"
+            "Start the Node.js server before running training."
+        ) from exc
 
 
 def get_scenario(scenario_id: str, force_refresh: bool = False) -> dict | None:
@@ -96,7 +103,7 @@ def get_scenario(scenario_id: str, force_refresh: bool = False) -> dict | None:
     if not force_refresh and cache_key in _CACHE:
         return _CACHE[cache_key]
 
-    path = f"/api/scenarios?id={scenario_id}"
+    path = f"/api/training/scenarios?id={scenario_id}"
     try:
         data     = _fetch(path)
         scenario = data.get("scenario")

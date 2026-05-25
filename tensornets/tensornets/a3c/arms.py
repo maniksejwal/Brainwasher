@@ -54,7 +54,7 @@ log = logging.getLogger("tensornets.a3c.arms")
 # ── Environment defaults ──────────────────────────────────────────────────────
 
 _TENSORNETS_URL  = os.environ.get("TENSORNETS_URL",  "http://localhost:8765")
-_COMPANION_URL   = os.environ.get("COMPANION_URL",   "http://localhost:3000")
+_COMPANION_URL   = os.environ.get("COMPANION_URL",   "http://localhost:8247")
 _BEDROCK_REGION  = os.environ.get("AWS_REGION",      "us-east-1")
 
 # Scout (fast) for action selection; Maverick for value / judge
@@ -112,11 +112,11 @@ class Arm1Worker(A3CWorker):
         # Step 1: MCTS best action + M_trunc from tensornets bridge
         try:
             mcts_resp = _http_post(
-                f"{_TENSORNETS_URL}/mcts/best_action",
+                f"{_TENSORNETS_URL}/mcts/best-action",
                 {
-                    "state": state.physio,
-                    "candidates": [action],   # pre-selected by actor; MCTS refines
-                    "subject_id": state.subject_id,
+                    "physio_state":      state.physio,
+                    "candidate_actions": [action],
+                    "mode":              state.therapeutic_mode or "standard",
                 },
                 timeout=5.0,
             )
@@ -188,10 +188,12 @@ class Arm1Worker(A3CWorker):
                 {"system": system_prompt, "prompt": prompt, "max_tokens": 256},
                 timeout=20.0,
             )
-            return resp.get("text", "[Scout unavailable]")
+            text = resp.get("text", "").strip()
+            if not text:
+                raise ValueError("Empty response from /llm/scout")
+            return text
         except Exception as exc:
-            log.warning("Arm1: Scout call failed: %s", exc)
-            return f"[{action}] I hear you. Let's work through this together."
+            raise RuntimeError(f"Arm1: Scout call failed: {exc}") from exc
 
 
 # ── J6: Arm 2 — Old-school production JS ─────────────────────────────────────
@@ -230,30 +232,26 @@ class Arm2Worker(A3CWorker):
             "arm":        self.ARM,
         }
 
-        response_text = "[JS companion unavailable]"
-        deferred      = True
+        deferred = True
         try:
             resp = _http_post(
-                f"{_COMPANION_URL}/api/message",
+                f"{_COMPANION_URL}/api/benchmark/message",
                 payload,
-                timeout=30.0,
+                timeout=90.0,
             )
-            response_text = resp.get("response", resp.get("message", response_text))
+            response_text = resp.get("response", resp.get("message", "")).strip()
+            if not response_text:
+                raise ValueError("Empty response from JS companion")
             deferred = False
         except Exception as exc:
-            log.warning("Arm2: JS companion call failed: %s", exc)
+            raise RuntimeError(f"Arm2: JS companion call failed: {exc}") from exc
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
 
         next_stress = _stress_after_response(state.stress_index, action)
 
-        # Inline synthetic reward — same path as Arms 1 and 3.
-        # When JS is live, response_text carries the actual companion reply so
-        # text-based dimensions (goal keywords, trust language) are meaningful.
-        # When deferred (JS unreachable), response_text is the placeholder string,
-        # so text dims are neutral; the action-based and stress dims still fire.
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
-        reward["safety"] = 0.8 if deferred else 1.0
+        reward["safety"] = 1.0
 
         return {
             "response":          response_text,
@@ -314,7 +312,7 @@ class Arm3Worker(A3CWorker):
         )
         prompt = f"{history_text}\nUSER: {user_msg}\nASSISTANT:"
 
-        response_text = f"[{action}] I hear you. Let's work through this together."
+        response_text = ""
         scout_tokens  = 0
         try:
             resp = _http_post(
@@ -322,10 +320,12 @@ class Arm3Worker(A3CWorker):
                 {"system": system_prompt, "prompt": prompt, "max_tokens": 256},
                 timeout=20.0,
             )
-            response_text = resp.get("text", response_text)
-            scout_tokens  = len(response_text.split()) * 2
+            response_text = resp.get("text", "").strip()
+            if not response_text:
+                raise ValueError("Empty response from /llm/scout")
+            scout_tokens = len(response_text.split()) * 2
         except Exception as exc:
-            log.warning("Arm3: Scout call failed: %s", exc)
+            raise RuntimeError(f"Arm3: Scout call failed: {exc}") from exc
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
         next_stress = _stress_after_response(state.stress_index, action)

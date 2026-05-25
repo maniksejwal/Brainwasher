@@ -41,3 +41,7 @@ venv/
 # Benchmark run outputs — stored in DB and tracked as scratch only
 tensornets/benchmarks/results/
 tensornets/training/runs/
+
+# A3C training run directories (episode JSONLs, checkpoints, run state)
+# These are written to disk for emergency recovery but the canonical store is the DB.
+tensornets/runs/

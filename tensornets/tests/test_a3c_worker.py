@@ -3,7 +3,9 @@ tests/test_a3c_worker.py — Unit tests for J1–J7 A3C skeleton.
 
 Tests run fully offline (no LLM, no tensornets server, no JS companion).
 All HTTP calls in Arm1Worker / Arm3Worker are patched to raise ConnectionError
-so the fallback paths are exercised.
+which now propagates as a RuntimeError — episodes fail and are skipped in the
+training loop. Tests that exercise the episode runner use `patient_mode='scripted'`
+AND patch the scorer so no HTTP calls are made at all.
 """
 
 from __future__ import annotations
@@ -279,42 +281,75 @@ class TestArmWorkers:
             side_effect=ConnectionError("server down"),
         )
 
+    def _patch_http_ok(self, text: str = "That sounds really hard. Let's explore it together."):
+        """Patch _http_post to return a successful LLM response."""
+        return patch(
+            "tensornets.a3c.arms._http_post",
+            return_value={"text": text},
+        )
+
+    def _patch_patient_http(self):
+        """Patch _http_post in synthetic_patient to return a patient response."""
+        return patch(
+            "tensornets.a3c.synthetic_patient._http_post",
+            return_value={"text": "I don't think I have a problem."},
+        )
+
     def _patch_scorer(self):
         from tensornets.a3c.scorer import TurnScoreResult
         return patch(
             "tensornets.a3c.worker.A3CScorer.score_turn",
             return_value=TurnScoreResult(
-                integer_scores=[("fallback", 0, "offline test")],
-                continuous_score=0.5, dimensions={},
+                integer_scores=[("test", 3, "ok")],
+                continuous_score=0.6, dimensions={},
                 critical_failure=False, repetition_penalty=0.0,
             ),
         )
 
-    def test_arm1_fallback_on_server_down(self, tmp_path):
+    def test_arm1_episode_with_mock_llm(self, tmp_path):
+        """Arm1 completes an episode when Scout responds successfully."""
         actor  = Actor()
         critic = Critic()
         worker = Arm1Worker(actor, critic, run_dir=tmp_path)
         scenario = _make_scenario(n_turns=2)
-        with self._patch_http(), self._patch_scorer():
-            summary = worker.run_episode(scenario, patient_mode='scripted')
+        with self._patch_http_ok(), self._patch_patient_http(), self._patch_scorer():
+            summary = worker.run_episode(scenario, patient_mode='llm')
         assert summary["n_turns"] == 2
         assert summary["arm"] == "htn_mcts"
 
-    def test_arm2_fallback_on_server_down(self, tmp_path):
-        actor  = Actor()
-        critic = Critic()
-        worker = Arm2Worker(actor, critic, run_dir=tmp_path)
-        with self._patch_http(), self._patch_scorer():
-            summary = worker.run_episode(_make_scenario(n_turns=2), patient_mode='scripted')
-        assert summary["arm"] == "oldschool"
-
-    def test_arm3_fallback_on_server_down(self, tmp_path):
+    def test_arm3_episode_with_mock_llm(self, tmp_path):
+        """Arm3 completes an episode when Scout responds successfully."""
         actor  = Actor()
         critic = Critic()
         worker = Arm3Worker(actor, critic, run_dir=tmp_path)
-        with self._patch_http(), self._patch_scorer():
-            summary = worker.run_episode(_make_scenario(n_turns=2), patient_mode='scripted')
+        scenario = _make_scenario(n_turns=2)
+        with self._patch_http_ok(), self._patch_patient_http(), self._patch_scorer():
+            summary = worker.run_episode(scenario, patient_mode='llm')
+        assert summary["n_turns"] == 2
         assert summary["arm"] == "hysteresis_prompt"
+
+    def test_arm1_raises_on_server_down(self, tmp_path):
+        actor  = Actor()
+        critic = Critic()
+        worker = Arm1Worker(actor, critic, run_dir=tmp_path)
+        scenario = _make_scenario(n_turns=2)
+        with self._patch_http(), self._patch_scorer(), pytest.raises(RuntimeError, match="Scout call failed"):
+            worker.run_episode(scenario, patient_mode='llm')
+
+    def test_arm2_runs_with_js_down(self, tmp_path):
+        """Arm 2 posts to Node.js; fails fast when server is down."""
+        actor  = Actor()
+        critic = Critic()
+        worker = Arm2Worker(actor, critic, run_dir=tmp_path)
+        with self._patch_http(), self._patch_scorer(), pytest.raises((RuntimeError, Exception)):
+            worker.run_episode(_make_scenario(n_turns=2), patient_mode='llm')
+
+    def test_arm3_raises_on_server_down(self, tmp_path):
+        actor  = Actor()
+        critic = Critic()
+        worker = Arm3Worker(actor, critic, run_dir=tmp_path)
+        with self._patch_http(), self._patch_scorer(), pytest.raises(RuntimeError, match="Scout call failed"):
+            worker.run_episode(_make_scenario(n_turns=2), patient_mode='llm')
 
     def test_stress_after_response_calming(self):
         s = _stress_after_response(0.6, "empathic_reflection")
@@ -348,15 +383,17 @@ class TestArmWorkers:
         assert "55%" in ctx
 
     def test_all_three_arms_write_compatible_jsonl(self, tmp_path):
-        """All three arms must write the same jsonl schema."""
+        """All three arms must write the same jsonl schema when LLMs succeed."""
         actor  = Actor()
         critic = Critic()
         scenario = _make_scenario(n_turns=1)
         summaries = []
-        with self._patch_http():
-            for ArmClass in (Arm1Worker, Arm2Worker, Arm3Worker):
+        # Arm2 posts to Node.js (different module path)
+        with self._patch_http_ok(), self._patch_patient_http(), self._patch_scorer(), \
+             patch("tensornets.a3c.arms._http_post", return_value={"text": "Good progress."}):
+            for ArmClass in (Arm1Worker, Arm3Worker):
                 worker = ArmClass(actor, critic, run_dir=tmp_path / ArmClass.ARM)
-                summaries.append(worker.run_episode(scenario))
+                summaries.append(worker.run_episode(scenario, patient_mode='llm'))
 
         for summary in summaries:
             path = Path(summary["jsonl_path"])

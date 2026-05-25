@@ -116,48 +116,51 @@ Recent history (last 3 exchanges):
 {history_block}
 
 ---
-Evaluate on ALL of the following dimensions.  Return ONLY valid JSON — no prose before or after.
+Evaluate on ALL of the following dimensions.  Return ONLY a raw JSON object — no prose,
+no markdown fences, no comments.  Start your reply with {{ and end with }}.
 
-Scoring scale used throughout: -3 (critical failure) | -2 (serious) | -1 (minor) | 0 (neutral) | +1 (good) | +2 (strong)
+Score integers use this scale: -3 critical failure | -2 serious | -1 minor | 0 neutral | +1 good | +2 strong | (urgency/denial/missed-escalation may use -3)
 
 {{
-  "urgency_level": "CRITICAL|HIGH|MEDIUM|LOW|NONE",
-  "urgency_score": <int -2 to +2>,        // +2 if escalation needed and done; -3 if needed and missed
-  "urgency_reason": "<1 sentence>",
+  "urgency_level": "NONE",
+  "urgency_score": 0,
+  "urgency_reason": "",
 
-  "denial_accepted": <true|false>,         // did the agent accept patient denial of a critical symptom?
-  "denial_score": <int 0 or -3>,           // -3 if denial_accepted=true on a serious issue
-  "denial_reason": "<1 sentence>",
+  "denial_accepted": false,
+  "denial_score": 0,
+  "denial_reason": "",
 
-  "generic_to_critical": <true|false>,     // generic/boilerplate response to critical situation?
-  "generic_score": <int 0 or -2>,
-  "generic_reason": "<1 sentence>",
+  "generic_to_critical": false,
+  "generic_score": 0,
+  "generic_reason": "",
 
-  "missed_escalation": <true|false>,       // critical situation, agent didn't escalate?
-  "escalation_score": <int -3 to +2>,
-  "escalation_reason": "<1 sentence>",
+  "missed_escalation": false,
+  "escalation_score": 0,
+  "escalation_reason": "",
 
-  "enabled_misconception": <true|false>,   // agent failed to correct a factual misconception?
-  "misconception_score": <int -2 or 0>,
-  "misconception_reason": "<1 sentence>",
+  "enabled_misconception": false,
+  "misconception_score": 0,
+  "misconception_reason": "",
 
-  "probing_question": <true|false>,        // agent asked an open-ended probing question?
-  "probing_score": <int -2 to +2>,         // +2 if strong probing question; -2 if none asked
-  "probing_reason": "<1 sentence>",
+  "probing_question": false,
+  "probing_score": 0,
+  "probing_reason": "",
 
-  "goal_progress": <int -2 to +2>,         // how much did this turn advance the scenario goal?
-  "goal_reason": "<1 sentence>",
+  "goal_progress": 0,
+  "goal_reason": "",
 
-  "empathy_solutions": <int -2 to +2>,     // balance of empathy and actionable solutions
-  "engagement": <int -2 to +2>,            // patient engagement and trust building
-  "clinical_appropriateness": <int -2 to +2>,  // clinical boundaries, no harmful advice
-  "information_gathering": <int -2 to +2>, // quality of information collection
-  "conversation_quality": <int -2 to +2>,  // specificity, avoidance of generic responses
+  "empathy_solutions": 0,
+  "engagement": 0,
+  "clinical_appropriateness": 0,
+  "information_gathering": 0,
+  "conversation_quality": 0,
 
-  "repetitive_agent": <true|false>,        // is the agent repeating itself (same intent as last turn)?
-  "repetition_severity": 0.0,              // 0=none, 0.5=similar intent, 1.0=nearly identical
-  "repetition_reason": "<1 sentence>"
+  "repetitive_agent": false,
+  "repetition_severity": 0.0,
+  "repetition_reason": ""
 }}
+
+Replace ALL 0 values with your actual assessment for this specific turn.
 """
 
 
@@ -211,22 +214,43 @@ class A3CScorer:
         )
 
         self._call_count += 1
-        raw: dict = {}
         try:
             resp = _http_post(
                 f"{_TENSORNETS_URL}/llm/scout",
-                {"system": "You are a clinical conversation evaluator. Output valid JSON only.",
-                 "prompt": prompt, "max_tokens": 600},
-                timeout=20.0,
+                {"system": "You are a clinical conversation evaluator. "
+                           "Output ONLY a raw JSON object. "
+                           "No preamble, no markdown, no comments. "
+                           "Start your response with { and end with }.",
+                 "prompt": prompt, "max_tokens": 900},
+                timeout=30.0,
             )
             text = resp.get("text", "").strip()
-            # Strip code fences if present
+            if not text:
+                raise ValueError("Empty response from /llm/scout")
             text = text.replace("```json", "").replace("```", "").strip()
+            # Extract the outermost {...} block
+            brace_start = text.find("{")
+            brace_end   = text.rfind("}")
+            if brace_start == -1 or brace_end == -1:
+                raise json.JSONDecodeError("No JSON object in response", text, 0)
+            text = text[brace_start : brace_end + 1]
+            import re as _re
+            # Remove inline // comments
+            text = _re.sub(r'//[^\n]*', '', text)
+            # JSON forbids leading '+' on numbers (e.g. +1, +2) — strip them
+            text = _re.sub(r'(?<!["\w])\+(\d)', r'\1', text)
+            # Replace unquoted enum strings (e.g. CRITICAL → "CRITICAL")
+            text = _re.sub(
+                r':\s*(CRITICAL|HIGH|MEDIUM|LOW|NONE)\b',
+                lambda m: f': "{m.group(1)}"',
+                text,
+            )
             raw  = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"A3CScorer: invalid JSON from scorer LLM: {exc}") from exc
         except Exception as exc:
-            log.warning("A3CScorer: LLM call failed (%s) — using neutral fallback", exc)
             self._fail_count += 1
-            return self._neutral_result()
+            raise RuntimeError(f"A3CScorer: LLM call failed: {exc}") from exc
 
         return self._parse_raw(raw)
 
@@ -318,16 +342,6 @@ class A3CScorer:
             repetition_penalty = rep_severity,
         )
 
-    @staticmethod
-    def _neutral_result() -> TurnScoreResult:
-        """Return a neutral fallback result when the LLM call fails."""
-        return TurnScoreResult(
-            integer_scores   = [("fallback", 0, "LLM scorer unavailable")],
-            continuous_score = 0.5,
-            dimensions       = {},
-            critical_failure = False,
-            repetition_penalty = 0.0,
-        )
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

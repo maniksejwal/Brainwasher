@@ -16,6 +16,7 @@ import { addClient, removeClient, broadcast } from './lib/sse.js';
 // Route Modules
 import authRouter from './routes/auth.js';
 import coreRouter from './routes/core.js';
+import trainingRouter from './routes/training.js';
 import simulationRouter from './routes/simulation.js';
 import dataRouter from './routes/data.js';
 import guiRouter from './routes/gui.js';
@@ -134,6 +135,9 @@ app.use('/api/auth', authRouter);
 
 // CLI Endpoints
 app.use('/api/cli', cliRouter);
+
+// A3C training/benchmark endpoints (training scenarios, benchmark message)
+app.use('/api', trainingRouter);
 
 // Simulation & Scenarios
 app.use('/api', simulationRouter);

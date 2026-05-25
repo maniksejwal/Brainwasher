@@ -296,7 +296,7 @@ Return ONLY a single, valid JSON object in a markdown block:
   "analogy_used": true or false
 }
 
-`analogy_used`: set to true if the USER's message (not your reply) contains analogy-style language
+\`analogy_used\`: set to true if the USER's message (not your reply) contains analogy-style language
 ("like a...", "as if...", "it's similar to...", "imagine..." used to explain their own experience).
 Set to false if not. This is used to build a communication preference profile over time.
 `;

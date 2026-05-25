@@ -27,7 +27,8 @@ SyntheticParticipant
   One role (patient / caregiver / doctor).  Given a scenario and persona prompt,
   it generates contextually appropriate in-character messages.  Goals advance when
   the agent's response actually covers a required_element (coverage-driven, not
-  every-2-turns).  Falls back to a scripted message if Scout is unreachable.
+  every-2-turns).  In LLM mode, a failed or empty Scout call raises RuntimeError.
+  In scripted mode, canned turns from the scenario are used (offline/test only).
 
 CareCircleOrchestrator
   Wraps multiple SyntheticParticipants.  Selects the next speaker using adaptive
@@ -287,7 +288,6 @@ class SyntheticParticipant:
             f"YOUR TURN (1–3 sentences, in character, first-person, realistic):"
         )
 
-        fallback = self._scripted_message(turn_idx)
         try:
             resp = _http_post(
                 f"{_TENSORNETS_URL}/llm/scout",
@@ -295,17 +295,17 @@ class SyntheticParticipant:
                 timeout=15.0,
             )
             msg = resp.get("text", "").strip()
-            if msg:
-                return msg
+            if not msg:
+                raise ValueError("Empty response from /llm/scout")
+            return msg
         except Exception as exc:
-            log.warning("SyntheticParticipant LLM call failed (%s), using scripted fallback", exc)
-        return fallback
+            raise RuntimeError(f"SyntheticParticipant LLM call failed: {exc}") from exc
+
 
     def _scripted_message(self, turn_idx: int) -> str:
         """Return a scripted turn message (pre-written or generated from goal)."""
         if self.scripted_turns and turn_idx < len(self.scripted_turns):
             return self.scripted_turns[turn_idx]
-        # Minimal generic fallback keyed to current goal
         return f"I'm not sure about {self.current_goal}. Can you help me understand?"
 
 

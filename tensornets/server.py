@@ -57,7 +57,6 @@ app = FastAPI(
     title="tensornets bridge",
     description="Physiological state + MCTS services for the JS companion system",
     version="0.1.0",
-    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -109,6 +108,9 @@ async def _lifespan(app: FastAPI):
     _load_all_histories()
     yield
     _save_all_histories()
+
+
+app.router.lifespan_context = _lifespan
 
 
 # ── Request / response models ─────────────────────────────────────────────────
@@ -1054,7 +1056,7 @@ class BenchmarkQueryIn(BaseModel):
 def _get_benchmark_url() -> str:
     """URL of the JS server for benchmark DB writes."""
     import os
-    return os.environ.get('JS_SERVER_URL', 'http://localhost:3000')
+    return os.environ.get('JS_SERVER_URL', 'http://localhost:8247')
 
 
 def _post_to_js(path: str, payload: dict) -> dict:
@@ -1133,4 +1135,80 @@ def benchmark_query(req: BenchmarkQueryIn):
                           {'scenario_set': req.scenario_set,
                            'arm': req.arm, 'limit': req.limit})
     return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LLM passthrough endpoints — used by A3C arms, scorer, and synthetic_patient
+#
+# POST /llm/scout    → Llama 4 Scout  (fast, cheap, bulk generation)
+# POST /llm/maverick → Llama 4 Maverick (higher quality, value/judge)
+#
+# Request:  { "system": str, "prompt": str, "max_tokens": int }
+# Response: { "text": str, "input_tokens": int, "output_tokens": int }
+# ─────────────────────────────────────────────────────────────────────────────
+
+_LLM_MODELS = {
+    "scout":    "us.meta.llama4-scout-17b-instruct-v1:0",
+    "maverick": "us.meta.llama4-maverick-17b-instruct-v1:0",
+}
+
+class LLMRequestIn(BaseModel):
+    system:     str = ""
+    prompt:     str
+    max_tokens: int = 512
+    temperature: float = 0.7
+
+
+def _call_bedrock_llm(model_key: str, system: str, prompt: str,
+                      max_tokens: int, temperature: float) -> dict:
+    try:
+        import boto3 as _boto3
+    except ImportError:
+        raise HTTPException(status_code=500, detail="boto3 not installed")
+
+    model_id = _LLM_MODELS.get(model_key, _LLM_MODELS["scout"])
+    region   = os.environ.get("AWS_REGION", "us-east-1")
+    client   = _boto3.client("bedrock-runtime", region_name=region)
+
+    messages = [{"role": "user", "content": [{"text": prompt}]}]
+    system_list = [{"text": system}] if system else []
+
+    try:
+        kwargs: dict = {
+            "modelId":          model_id,
+            "messages":         messages,
+            "inferenceConfig":  {"maxTokens": max_tokens, "temperature": temperature},
+        }
+        if system_list:
+            kwargs["system"] = system_list
+
+        response = client.converse(**kwargs)
+        text    = response["output"]["message"]["content"][0]["text"]
+        usage   = response.get("usage", {})
+        return {
+            "text":          text,
+            "input_tokens":  usage.get("inputTokens",  0),
+            "output_tokens": usage.get("outputTokens", 0),
+        }
+    except Exception as exc:
+        log.error("Bedrock %s call failed: %s", model_key, exc)
+        raise HTTPException(status_code=502, detail=f"Bedrock error: {exc}")
+
+
+@app.post("/llm/scout")
+def llm_scout(req: LLMRequestIn):
+    """
+    Llama 4 Scout passthrough — used by A3C arms (response generation),
+    A3CScorer (inline reward), and SyntheticPatient (patient turn generation).
+    """
+    return _call_bedrock_llm("scout", req.system, req.prompt, req.max_tokens, req.temperature)
+
+
+@app.post("/llm/maverick")
+def llm_maverick(req: LLMRequestIn):
+    """
+    Llama 4 Maverick passthrough — used by A3C Critic value estimation
+    and offline HTN judge batch runs.
+    """
+    return _call_bedrock_llm("maverick", req.system, req.prompt, req.max_tokens, req.temperature)
 
