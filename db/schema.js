@@ -653,6 +653,31 @@ export async function addHTNBenchmarkTables(db) {
             description TEXT,
             set_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
         );
+
+        -- Full conversation transcripts for qualitative analysis and paper samples.
+        -- Populated during A3C runs for canonical scenarios only (is_canonical=1).
+        -- Each row = one complete episode transcript (all turns in order).
+        -- Separate from htn_benchmark_turns (which stores scores) — this stores
+        -- the actual text so transcripts can be read, annotated, and compared arm-by-arm.
+        -- Both regular and world scenarios are stored (scenario_type = 'regular'|'world').
+        CREATE TABLE IF NOT EXISTS htn_transcripts (
+            transcript_id   TEXT PRIMARY KEY,  -- = episode_id from htn_benchmark_episodes
+            run_id          TEXT NOT NULL,
+            arm             TEXT NOT NULL,     -- 'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
+            scenario_id     TEXT NOT NULL,
+            scenario_type   TEXT NOT NULL DEFAULT 'regular',  -- 'regular' | 'world'
+            persona_id      TEXT,
+            is_canonical    INTEGER DEFAULT 0, -- 1 = selected for paper / qualitative review
+            canonical_label TEXT,             -- human-readable label e.g. 'deaddiction_rapport'
+            transcript      TEXT NOT NULL,    -- full JSON array of {turn, role, message, action, scores}
+            summary         TEXT,             -- 2-3 sentence human-readable summary for paper
+            annotated       INTEGER DEFAULT 0,-- 1 = manually reviewed and annotated
+            created_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_transcripts_run      ON htn_transcripts(run_id);
+        CREATE INDEX IF NOT EXISTS idx_transcripts_scenario ON htn_transcripts(scenario_id, arm);
+        CREATE INDEX IF NOT EXISTS idx_transcripts_canonical ON htn_transcripts(is_canonical);
     `);
 
     // Mark the baseline cutoff: end of Saturday 2026-05-23 (day before yesterday).

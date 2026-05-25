@@ -10,6 +10,17 @@ const SAFETY_CRITICAL_CATEGORIES = new Set([
     'medication', 'allergy', 'diagnosis', 'emergency_contact', 'dnr', 'consent'
 ]);
 
+// Hysteresis-prone categories: facts that can appear resolved but are known to
+// relapse. For these, we show the FULL history trajectory (not just current),
+// and we do NOT suppress them from context even when marked is_current=0,
+// because a "resolved" cancer, managed trigger, or broken habit can return.
+// The LLM needs to know the history, not just the present state.
+const HYSTERESIS_PRONE_CATEGORIES = new Set([
+    'habit', 'trigger', 'addiction', 'behaviour_change', 'mental_health',
+    'relapse_risk', 'substance_use', 'eating_disorder', 'chronic_condition',
+    'trauma', 'phobia', 'grief'
+]);
+
 /**
  * Compute a recency weight for a fact.
  * Returns 1.0 for session-local facts (observed_at within current session window),
@@ -122,6 +133,7 @@ export async function retrieveRelevantFacts({
     const allowedLevels = SENSITIVITY_ORDER.slice(0, maxLevel + 1);
     const placeholders  = allowedLevels.map(() => '?').join(', ');
 
+    // Fetch current facts (is_current=1) — the live state
     const rows = await db.all(
         `SELECT * FROM facts_v2
          WHERE is_current = 1
@@ -134,20 +146,48 @@ export async function retrieveRelevantFacts({
         [circleId, minConfidence, subjectId, now, ...allowedLevels]
     );
 
+    // Also fetch recent history for hysteresis-prone categories.
+    // These are NOT necessarily is_current — a "resolved" addiction or managed trigger
+    // can relapse, so the LLM needs the temporal trajectory, not just the latest value.
+    const hysteresisKeys = rows
+        .filter(f => HYSTERESIS_PRONE_CATEGORIES.has((f.category || '').toLowerCase()))
+        .map(f => f.fact_key);
+
+    const historyByKey = {};
+    if (hysteresisKeys.length) {
+        const hPlaceholders = hysteresisKeys.map(() => '?').join(', ');
+        const histRows = await db.all(
+            `SELECT fact_key, value, confidence, valid_from, valid_until, observed_at, is_current
+             FROM facts_v2
+             WHERE circle_id = ?
+               AND (subject_id = ? OR subject_id IS NULL)
+               AND fact_key IN (${hPlaceholders})
+             ORDER BY valid_from DESC
+             LIMIT 50`,
+            [circleId, subjectId, ...hysteresisKeys]
+        );
+        histRows.forEach(h => {
+            if (!historyByKey[h.fact_key]) historyByKey[h.fact_key] = [];
+            historyByKey[h.fact_key].push(h);
+        });
+    }
+
     // Score each fact
     const scored = rows.map(f => {
-        const recency   = _recencyWeight(f, now, sessionStartMs);
-        const alignment = _mpsAlignment(f, mpsHint, currentTopic);
-        const score     = f.confidence * recency * alignment;
-        const isSession = f.observed_at && f.observed_at >= sessionStartMs;
-        const isSafety  = SAFETY_CRITICAL_CATEGORIES.has((f.category || '').toLowerCase());
-        return { ...f, _recency: recency, _alignment: alignment, _score: score, _isSession: isSession, _isSafety: isSafety };
+        const recency     = _recencyWeight(f, now, sessionStartMs);
+        const alignment   = _mpsAlignment(f, mpsHint, currentTopic);
+        const score       = f.confidence * recency * alignment;
+        const isSession   = f.observed_at && f.observed_at >= sessionStartMs;
+        const isSafety    = SAFETY_CRITICAL_CATEGORIES.has((f.category || '').toLowerCase());
+        const isHysteresis = HYSTERESIS_PRONE_CATEGORIES.has((f.category || '').toLowerCase());
+        return { ...f, _recency: recency, _alignment: alignment, _score: score,
+                 _isSession: isSession, _isSafety: isSafety, _isHysteresis: isHysteresis };
     });
 
     // Partition
-    const sessionFacts  = scored.filter(f => f._isSession);
-    const safetyFacts   = scored.filter(f => f._isSafety && !f._isSession);
-    const otherFacts    = scored
+    const sessionFacts    = scored.filter(f => f._isSession);
+    const safetyFacts     = scored.filter(f => f._isSafety && !f._isSession);
+    const otherFacts      = scored
         .filter(f => !f._isSession && !f._isSafety)
         .sort((a, b) => b._score - a._score)
         .slice(0, topK);
@@ -158,13 +198,32 @@ export async function retrieveRelevantFacts({
         return { block: '', facts: [] };
     }
 
-    // Build the structured output block
+    // Build the structured output block.
+    // Key design principle: the LLM should NOT see raw schema or differing values
+    // as a flat list. Conflicting/hysteresis facts are shown with temporal trajectory
+    // so the LLM can reason about change over time — not just current state.
     const formatFact = (f) => {
         const when = f.observed_at
             ? new Date(f.observed_at).toISOString().slice(0, 10)
             : (f.valid_from ? new Date(f.valid_from).toISOString().slice(0, 10) : 'unknown date');
         const conf = f.confidence < 0.7 ? ` [confidence: ${(f.confidence * 100).toFixed(0)}%]` : '';
         const obj  = f.target_object ? ` (${f.target_object})` : '';
+
+        // For hysteresis-prone facts, append a compact trajectory hint:
+        // "managed since 2026-01 (was: active 2025-03→2025-11, active 2024-06→2024-10)"
+        // This prevents the LLM from treating "managed" as "permanently resolved".
+        if (f._isHysteresis && historyByKey[f.fact_key]?.length > 1) {
+            const history = historyByKey[f.fact_key];
+            const resolved = history.filter(h => !h.is_current && h.valid_until);
+            const cycleHint = resolved.slice(0, 3).map(h => {
+                const from = h.valid_from ? new Date(h.valid_from).toISOString().slice(0, 7) : '?';
+                const to   = new Date(h.valid_until).toISOString().slice(0, 7);
+                return `${h.value || '?'} ${from}→${to}`;
+            }).join(', ');
+            const trajectoryNote = cycleHint ? ` [history: ${cycleHint}]` : '';
+            return `- ${f.fact_key}${obj}: ${f.value || '—'} [${when}]${conf}${trajectoryNote} ⚠ hysteresis-prone`;
+        }
+
         return `- ${f.fact_key}${obj}: ${f.value || '—'} [${when}]${conf}`;
     };
 
@@ -188,7 +247,8 @@ export async function retrieveRelevantFacts({
     };
 }
 
-
+/**
+ * Add a new structured fact (versioned).
  * This handles the bi-temporal aspect by setting valid_from/valid_until.
  * If a current fact exists for the key, it is marked as not current (soft invalidation) 
  * or we just rely on `is_current` flag.

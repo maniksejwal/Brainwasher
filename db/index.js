@@ -22,12 +22,17 @@ import {
     getRunScenarioBreakdown,
     getBenchmarkMeta,
     getBaselineStats,
+    saveTranscript,
+    markCanonical,
+    getCanonicalTranscripts,
+    getArmComparisonForScenario,
+    CANONICAL_SCENARIOS,
 } from './queries_benchmarks.js';
 import {
     addFact,
     getCurrentFact,
     getFacts,
-    getFactHistory,
+    getFactHistory as getFactVersionHistory,
     invalidateFact,
     retrieveRelevantFacts,
 } from './queries_facts.js';
@@ -208,11 +213,16 @@ export {
     getRunScenarioBreakdown,
     getBenchmarkMeta,
     getBaselineStats,
+    saveTranscript,
+    markCanonical,
+    getCanonicalTranscripts,
+    getArmComparisonForScenario,
+    CANONICAL_SCENARIOS,
     // Facts (RAG)
     addFact,
     getCurrentFact,
     getFacts,
-    getFactHistory,
+    getFactVersionHistory,
     invalidateFact,
     retrieveRelevantFacts,
 };
