@@ -474,7 +474,7 @@ def therapy_prompt_hint(subject_id: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Inter-agent communication endpoints (Phase 4)
+# Inter-agent communication endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 
 from tensornets.agents.inter_agent_comm import SharedDialogueState as _SharedDialogueState
@@ -698,7 +698,7 @@ def judge_audit(req: DiscrepancyAuditIn):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MCTS best-action endpoint (Phase 3)
+# MCTS best-action endpoint
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MCTSActionIn(BaseModel):
@@ -753,7 +753,7 @@ def mcts_best_action(req: MCTSActionIn):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Multi-session endpoints (Phase 3 extension)
+# Multi-session endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 
 _session_manager = None

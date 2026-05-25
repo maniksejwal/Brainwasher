@@ -18,7 +18,7 @@ This module manages:
 
 WHAT "MULTI-SESSION" MEANS HERE
 --------------------------------
-Single-session MCTS (Phase 3):
+Single-session MCTS:
   - Plans within ONE continuous login episode
   - State: (physio_t, w_t, h_t, alliance_t, phase_t) at current turn
   - Depth: 3-10 turns

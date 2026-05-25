@@ -33,15 +33,15 @@ WHAT IT SOLVES
 
 KEY COMPONENTS
 --------------
-G1 — SharedTensorBuffer: thread-safe per-agent MPS slot container.
-     One instance per session. Opened at /session/open, closed at /session/close.
+SharedTensorBuffer: thread-safe per-agent MPS slot container.
+  One instance per session. Opened at /session/open, closed at /session/close.
 
-G2 — partial_trace_physio(agent_id): marginalises over physio bond for privacy.
-     Falls through to MatrixProductState.partial_trace_physio() (core/mps.py).
+partial_trace_physio(agent_id): marginalises over physio bond for privacy.
+  Falls through to MatrixProductState.partial_trace_physio() (core/mps.py).
 
-G3 — v_int_propagate(sender_id, new_hrv_ms): propagates HRV delta to all other
-     agents using V_INT_PRIOR coupling strengths (literature-grounded priors).
-     Phase 5 A3C will learn per-session coupling values from trajectories.
+v_int_propagate(sender_id, new_hrv_ms): propagates HRV delta to all other
+  agents using V_INT_PRIOR coupling strengths (literature-grounded priors).
+  A3C will learn per-session coupling values from trajectories.
 
 INTEGRATION
 -----------

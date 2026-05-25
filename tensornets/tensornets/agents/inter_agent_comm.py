@@ -1,6 +1,6 @@
 """
-inter_agent_comm.py — MPS-based Inter-Agent Communication (Phase 4 stub)
-=========================================================================
+inter_agent_comm.py — MPS-based Inter-Agent Communication
+==========================================================
 
 PURPOSE
 -------
@@ -9,12 +9,12 @@ MPS state Ψ_p, Ψ_c, Ψ_cl.  Without this module they are entirely independent:
 the patient companion does not know that the clinician companion just said
 something sensitive, potentially causing contradictory or repetitive messages.
 
-This module implements Phase 4 of the paper (Section 4.6):
+This module implements multi-agent state sharing (Section 4.6 of the paper):
   G2 — Partial trace of the physio bond dimension to share arousal state.
   V_int — Social coupling matrix for multi-agent state influence.
 
-CURRENT STATUS: Phase 4 stub — mathematical definitions and endpoints.
-The full tensor contraction is in Phase 4 (pending chi SVD compression in Phase 2).
+CURRENT STATUS: mathematical definitions and endpoints complete. Full tensor
+contraction is pending SVD bond compression (core/mps.py).
 
 WHAT THIS ACHIEVES
 ------------------
@@ -40,7 +40,7 @@ WHAT THIS ACHIEVES
    more capable agent (e.g., from patient companion → clinician companion).
 
 4. MCTS ACROSS AGENTS
-   In multi-agent MCTS rollouts (Phase 3), each simulated turn includes
+   In multi-agent MCTS rollouts, each simulated turn includes
    the responding agent as a dimension. MCTS can find that:
      "patient companion says X at turn 3" + "clinician companion says Y at turn 4"
    has lower total cost than any single-agent sequence.

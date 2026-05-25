@@ -24,6 +24,14 @@ import {
     getBaselineStats,
 } from './queries_benchmarks.js';
 import {
+    addFact,
+    getCurrentFact,
+    getFacts,
+    getFactHistory,
+    invalidateFact,
+    retrieveRelevantFacts,
+} from './queries_facts.js';
+import {
     findUserByUsername,
     findUserById,
     findCircleByPatientId,
@@ -200,5 +208,12 @@ export {
     getRunScenarioBreakdown,
     getBenchmarkMeta,
     getBaselineStats,
+    // Facts (RAG)
+    addFact,
+    getCurrentFact,
+    getFacts,
+    getFactHistory,
+    invalidateFact,
+    retrieveRelevantFacts,
 };
 

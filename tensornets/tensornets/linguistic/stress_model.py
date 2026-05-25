@@ -43,9 +43,9 @@ four independent evidence streams:
 
 CURRENT IMPLEMENTATION
 ----------------------
-Phase 1 (this file): rule-weighted linear model using the four dimensions above.
-Phase 2 (pending E-008): fine-tuned Mistral 7B trained on (utterance, Δ RMSSD)
-pairs from WESAD + MIMIC clinical notes.
+Rule-weighted linear model using the four dimensions above (this file).
+Pending upgrade (Experiment E-008): fine-tuned Mistral 7B trained on
+(utterance, Δ RMSSD) pairs from WESAD + MIMIC clinical notes.
 
 All weights are prior-based, drawn from cited effect sizes.  They will be
 replaced by regression coefficients from the WESAD calibration.

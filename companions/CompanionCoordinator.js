@@ -10,6 +10,7 @@ import { aggregateResponses, resolveConflicts } from './utils/responseAggregator
 import { getDb } from '../db/connection.js';
 import { processUserMessage, performContextEnrichment } from '../agents/unifiedAgent.js';
 import { getLongitudinalHint } from './physio/tensornetsBridge.js';
+import { retrieveRelevantFacts } from '../db/queries_facts.js';
 
 /**
  * Main coordinator that coordinates all Companion components
@@ -72,6 +73,27 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
                 enhancedContext.longitudinalHint = longitudinalHint;
             }
 
+            // Retrieve relevant facts from facts_v2 (RAG retrieval with MPS-guided filtering).
+            // Uses recency decay + MPS alignment to suppress stale false positives and
+            // promote session-local facts to prevent false negatives from the current message.
+            // Output is a structured block (not raw schema) injected into enhancedContext.
+            if (circleId) {
+                const factResult = await retrieveRelevantFacts({
+                    circleId,
+                    subjectId:     userId,
+                    mpsHint:       longitudinalHint,
+                    currentTopic:  enhancedContext.inputUnderstanding?.topic || '',
+                    sensitivity:   context.privacyClearance || 'circle',
+                    sessionStartMs: context.sessionStartMs || (Date.now() - 3_600_000),
+                    topK: 6,
+                }).catch(() => null);
+
+                if (factResult?.block) {
+                    enhancedContext.knownContextBlock = factResult.block;
+                    enhancedContext.retrievedFacts    = factResult.facts;  // for audit log
+                }
+            }
+
             const empathyLevel = enhancedContext.empathyHandler?.level || 'MEDIUM';
             const stressState   = context.physioState;
             const stressLevel   = stressState
@@ -101,7 +123,15 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
                 .replace('{{REPETITION_DETECTED}}', String(!!enhancedContext.inputUnderstanding?.repetition_detected))
                 .replace('{{LAST_ACTION}}',       context.lastAction || 'none')
                 .replace('{{MESSAGE}}',           message)
-                .replace('{{CONVERSATION_HISTORY}}', _formatHistory(context.history, 4));
+                .replace('{{CONVERSATION_HISTORY}}', _formatHistory(context.history, 4))
+                .replace('{{KNOWN_CONTEXT}}',
+                    enhancedContext.knownContextBlock
+                        ? `\n---\n${enhancedContext.knownContextBlock}\n---`
+                        : '')
+                .replace('{{LONGITUDINAL_HINT}}',
+                    enhancedContext.longitudinalHint
+                        ? `\nSession history: ${enhancedContext.longitudinalHint}`
+                        : '');
 
             const actionResult = await processUserMessage(
                 userId, role, actionPrompt, circleId,

@@ -1,14 +1,14 @@
 """
-base.py — BaseMCTS: Phase 3 Core MCTS Infrastructure
-=====================================================
+base.py — BaseMCTS: Core MCTS Infrastructure
+=============================================
 
-PHASE 3 OBJECTIVES (from RL_ENVIRONMENT.md / TODO.md)
-------------------------------------------------------
+OBJECTIVES
+----------
   1. MCTSNode  — state node with UCB1 scoring
   2. BaseMCTS  — abstract tree search class shared by all MCTS instances:
                    DialogMCTS, ClauseMCTS, SchedulingMCTS
-  3. SVD compression hook  — M_trunc (deferred to Phase 2 completion)
-  4. Latency test          — tree search must complete < 300ms for 3-depth
+  3. SVD compression hook  — M_trunc (pending bond compression in core/mps.py)
+  4. Latency constraint    — tree search must complete < 300ms for 3-depth
 
 WHY A BASE CLASS?
 -----------------

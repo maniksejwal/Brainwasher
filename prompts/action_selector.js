@@ -54,12 +54,14 @@ You SELECT the best action type for this conversational turn.
 - Info collected so far: {{INFO_COVERAGE}} (0-1, 1=all key facts gathered)
 - Repetition detected: {{REPETITION_DETECTED}}
 - Last action taken: {{LAST_ACTION}}
+{{LONGITUDINAL_HINT}}
 
 **USER MESSAGE:**
 "{{MESSAGE}}"
 
 **CONVERSATION HISTORY (last 4 turns):**
 {{CONVERSATION_HISTORY}}
+{{KNOWN_CONTEXT}}
 
 ---
 
