@@ -116,8 +116,7 @@
 - [x] **E5** `expectation_value(mps, operator, site)` — `⟨Ψ|Ô|Ψ⟩` scalar, `physio_energy()` — **DONE** `core/mps.py`
 - [x] **E6** ALS localized update + sweep (`als_update`, `als_sweep`) — **DONE** `core/mps.py`
 - [x] **E6b** `partial_trace_physio()` (Phase 4 preview) — **DONE** `core/mps.py`
-- [ ] **E7** Integration test: 10-turn conversation, physio state updates per turn, verify decay and safety hold
-  - *Smoke test passes. Full integration test with operators pending.*
+- [x] **E7** Integration test: 10-turn conversation, physio state updates per turn, verify decay and safety hold — **DONE** `tests/test_e7_integration.py` (8/8 tests pass)
 
 **Benchmark E**: Scaling test — N ∈ {10, 50, 100, 500} turns, confirm O(Ndχ²) wall time.
 
@@ -128,8 +127,8 @@
 
 - [x] **F1** `MCTSNode`: state, parent, children, visit count, value — **DONE** `mcts/base.py`
 - [x] **F2** `DialogMCTS`: UCB1 selection, expansion, multi-dim reward, backprop — **DONE** `mcts/base.py`
-- [ ] **F3** SVD compress MCTS path → constraint matrix `M_trunc` (requires Phase 2 MPS)
-- [ ] **F4** Tactical agent: Bedrock Llama + `M_trunc` projection via `project_constraint()`
+- [x] **F3** SVD compress MCTS path → constraint matrix `M_trunc` — **DONE** `mcts/base.py` `_build_M_trunc()` + `best_action()` now returns `M_trunc`
+- [x] **F4** Tactical agent: `project_constraint()` — **DONE** `core/operators.py`, soft-steers token logits toward MCTS-preferred action subspace
 - [ ] **F5** Latency test: MCTS background + generation foreground < 200ms TTFT
   - *(Current smoke test: 13.9ms for 120 iterations / depth 4 — well within budget)*
 - [x] **F6** FastAPI `/mcts/best-action` endpoint — **DONE** `server.py`
@@ -152,33 +151,35 @@
 *See `docs/tensornets/A3C_COMPARISON_DESIGN.md` for full design.*
 
 ### Blocking prerequisites (must complete before A3C)
-- [ ] **E7** Integration test: 10-turn conversation, physio state updates per turn, verify decay and safety hold
-- [ ] **C5.4** `DrugRegimen` integration into `build_Gamma()` (wire `pkpd.py` → `operators.py`)
-- [ ] **C6.1** `ReactivityProfile` integration: wire `gamma_modifier()` into `gamma_from_state()`
-- [ ] **C7.1** `HystereticBaseline` integration: `TriggerHysteresis.gamma_modifier()` as longitudinal Gamma factor
-- [ ] **F3** SVD compress MCTS path → constraint matrix `M_trunc` (requires E7)
-- [ ] **F4** Tactical agent: Bedrock Llama + `M_trunc` projection via `project_constraint()`
-- [ ] **P-HRV** Persist HRV history to DB between server restarts (`physio_history` table or `save_state()`).
-      Currently `HRVHistory` is in-memory only; lost on Python server restart.
+- [x] **E7** Integration test: 10-turn conversation, physio state updates per turn, verify decay and safety hold — DONE
+- [x] **C5.4** `DrugRegimen` integration into `build_Gamma()` (wire `pkpd.py` → `operators.py`) — DONE
+- [x] **C6.1** `ReactivityProfile` integration: wire `gamma_modifier()` into `gamma_from_state()` — DONE
+- [x] **C7.1** `HystereticBaseline` integration: `TriggerHysteresis.gamma_modifier()` as longitudinal Gamma factor — DONE
+- [x] **F3** SVD compress MCTS path → constraint matrix `M_trunc` — DONE
+- [x] **F4** Tactical agent: `project_constraint()` — DONE
+- [x] **P-HRV** Persist HRV history to disk between server restarts — DONE
+      `PhysiologicalHistory.save()/load()` in `physio/state.py`; server auto-loads on startup
+      and saves on clean shutdown (lifespan hook) + after every `/physio/history/append`.
+      Storage dir: `TENSORNETS_HISTORY_DIR` env var (default `tensornets/data/physio_history/`).
 - [ ] **P-RAG** Wire `facts_v2` retrieval into `CompanionCoordinator`: before action selector, query
       relevant facts by circle/subject and inject into prompt. This closes the RAG gap — context
       is currently CAG only (physio hint + longitudinal hint). DB schema already has `subject_id`,
       `target_object`, `sensitivity`, `confidence` columns ready for semantic retrieval.
 
 ### A3C warm-up — Thompson Sampling bandit
-- [ ] **I1** `ActionBandit`: Beta posterior per action per stress bucket
-- [ ] **I2** Thompson Sampling action selection (Scout inference, cheap)
-- [ ] **I3** Bandit training loop (100 episodes, 3 stress buckets × 12 actions)
-- [ ] **I4** Bandit weights → A3C actor initialisation
+- [x] **I1** `ActionBandit`: Beta posterior per action per stress bucket — **DONE** `a3c/action_bandit.py`
+- [x] **I2** Thompson Sampling action selection (Scout inference, cheap) — **DONE** `ActionBandit.select_action()`
+- [x] **I3** Bandit training loop (100 episodes, 3 stress buckets × 12 actions) — **DONE** `run_bandit_training()`
+- [x] **I4** Bandit weights → A3C actor initialisation — **DONE** `export_actor_prior()` + `train_and_export()`
 
 ### A3C skeleton
-- [ ] **J1** `A3CWorker` base class (episode runner, per-turn reward accumulation, jsonl logging)
-- [ ] **J2** Actor: Scout prompt template as policy head (action_selector.js taxonomy)
-- [ ] **J3** Critic: Maverick value estimate V(s) per turn
-- [ ] **J4** Advantage A(s,a) = r + γV(s') - V(s); gradient update
-- [ ] **J5** Arm 1 worker: HTN + MCTS (full tensornets bridge active)
-- [ ] **J6** Arm 2 worker: Old-school production JS via HTTP (no tensornets)
-- [ ] **J7** Arm 3 worker: Hysteresis-in-prompt (tensornets physio state as text, no MPS/MCTS)
+- [x] **J1** `A3CWorker` base class (episode runner, per-turn reward accumulation, jsonl logging) — DONE `a3c/worker.py`
+- [x] **J2** Actor: Scout prompt template as policy head (action_selector.js taxonomy) — DONE `a3c/worker.py::Actor`
+- [x] **J3** Critic: Maverick value estimate V(s) per turn — DONE `a3c/worker.py::Critic`
+- [x] **J4** Advantage A(s,a) = r + γV(s') - V(s); gradient update — DONE `a3c/worker.py::compute_advantage` / `apply_update`
+- [x] **J5** Arm 1 worker: HTN + MCTS (full tensornets bridge active) — DONE `a3c/arms.py::Arm1Worker`
+- [x] **J6** Arm 2 worker: Old-school production JS via HTTP (no tensornets) — DONE `a3c/arms.py::Arm2Worker`
+- [x] **J7** Arm 3 worker: Hysteresis-in-prompt (tensornets physio state as text, no MPS/MCTS) — DONE `a3c/arms.py::Arm3Worker`
 
 ### Full comparison run
 - [ ] **K1** 3-arm parallel run (50 episodes each, 10 canonical scenarios, same synthetic personas)

@@ -1,0 +1,44 @@
+{
+  "low": {
+    "validate_emotion": 0.5301,
+    "explore_ambivalence": 0.6132,
+    "build_alliance": 0.6056,
+    "provide_information": 0.7041,
+    "reframe_perspective": 0.6438,
+    "elicit_change_talk": 0.6836,
+    "address_resistance": 0.5454,
+    "check_understanding": 0.6015,
+    "invite_reflection": 0.6274,
+    "suggest_coping_strategy": 0.5716,
+    "clarify_goal": 0.6365,
+    "summarise_session": 0.5101
+  },
+  "moderate": {
+    "validate_emotion": 0.741,
+    "explore_ambivalence": 0.5448,
+    "build_alliance": 0.6844,
+    "provide_information": 0.4868,
+    "reframe_perspective": 0.5488,
+    "elicit_change_talk": 0.4994,
+    "address_resistance": 0.611,
+    "check_understanding": 0.5457,
+    "invite_reflection": 0.6524,
+    "suggest_coping_strategy": 0.7071,
+    "clarify_goal": 0.5347,
+    "summarise_session": 0.5187
+  },
+  "high": {
+    "validate_emotion": 0.8147,
+    "explore_ambivalence": 0.4044,
+    "build_alliance": 0.6833,
+    "provide_information": 0.4073,
+    "reframe_perspective": 0.4384,
+    "elicit_change_talk": 0.3638,
+    "address_resistance": 0.5718,
+    "check_understanding": 0.4125,
+    "invite_reflection": 0.4999,
+    "suggest_coping_strategy": 0.6759,
+    "clarify_goal": 0.5,
+    "summarise_session": 0.4406
+  }
+}

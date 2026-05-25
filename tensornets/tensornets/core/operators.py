@@ -344,3 +344,75 @@ def _make_psd(M: torch.Tensor, floor: float = 1e-9) -> torch.Tensor:
     eigenvalues, eigenvectors = torch.linalg.eigh(M_sym.real.double())
     eigenvalues = eigenvalues.clamp(min=floor)
     return (eigenvectors @ torch.diag(eigenvalues) @ eigenvectors.T).to(M.dtype)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F4: project_constraint — tactical agent token-logit steering via M_trunc
+# ─────────────────────────────────────────────────────────────────────────────
+
+def project_constraint(
+    token_logits: torch.Tensor,
+    M_trunc: list[list[float]] | torch.Tensor,
+    action_tokens: list[int],
+    alpha: float = 0.3,
+) -> torch.Tensor:
+    """
+    Soft-steer LLM token logits toward the high-value action subspace found by MCTS.
+
+    Called by the F4 tactical agent after MCTS returns M_trunc. This does NOT
+    hard-block any tokens — it adds a soft bonus to tokens that correspond to
+    MCTS-preferred actions while leaving all other logits unchanged.
+
+    Arguments:
+        token_logits  : 1-D tensor, shape (vocab_size,). Raw logits from the LLM
+                        for the next token position (before softmax).
+        M_trunc       : M_trunc from BaseMCTS._build_M_trunc(). Shape (n_actions, k).
+                        Can be a nested Python list (deserialised from JSON) or a tensor.
+        action_tokens : List of token indices (into the LLM vocabulary) that correspond
+                        to each row of M_trunc. Obtained by tokenising the action strings
+                        from the MCTS action vocabulary used when building M_trunc.
+                        len(action_tokens) must equal M_trunc.shape[0].
+        alpha         : Steering strength ∈ [0, 1]. 0 = no steering, 1 = full projection.
+                        Default 0.3 — enough to nudge without hard-constraining.
+
+    Returns:
+        steered_logits: 1-D tensor, same shape as token_logits, with action tokens
+                        boosted in proportion to their projection onto M_trunc columns.
+
+    Implementation:
+        1. Convert M_trunc to tensor and compute per-action importance score
+           s_i = ||M_trunc[i, :]||_2  (row norm = importance of action i in SVD basis).
+        2. Normalise: s_i → s_i / max(s)  so scores ∈ [0, 1].
+        3. For each action i, add alpha * s_i to token_logits[action_tokens[i]].
+           This is a linear additive bias, not a multiplicative mask.
+
+    Edge cases:
+        - action_tokens out of vocab range: skipped silently.
+        - M_trunc empty or mismatched with action_tokens: returns logits unchanged.
+        - alpha == 0: returns logits unchanged (fast path).
+    """
+    if alpha == 0.0 or not action_tokens:
+        return token_logits
+
+    if not isinstance(M_trunc, torch.Tensor):
+        M = torch.tensor(M_trunc, dtype=torch.float32)
+    else:
+        M = M_trunc.float()
+
+    if M.ndim != 2 or M.shape[0] != len(action_tokens):
+        return token_logits
+
+    # Row norms = importance of each action in the SVD constraint subspace
+    row_norms = M.norm(dim=1)  # shape (n_actions,)
+    max_norm = row_norms.max()
+    if max_norm < 1e-12:
+        return token_logits
+    importance = row_norms / max_norm  # normalised ∈ [0, 1]
+
+    steered = token_logits.clone()
+    vocab_size = token_logits.shape[0]
+    for i, tok_idx in enumerate(action_tokens):
+        if 0 <= tok_idx < vocab_size:
+            steered[tok_idx] = steered[tok_idx] + alpha * importance[i].item()
+
+    return steered

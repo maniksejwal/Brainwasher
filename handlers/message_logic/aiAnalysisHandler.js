@@ -210,9 +210,65 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
                 : 'Checking for referenced participants'
         });
 
-        // Entity resolution and context enrichment
+        // Entity resolution and context enrichment.
+        //
+        // Self-reference guard — two responsibilities:
+        //
+        // 1. ENRICHMENT BLOCK: When a patient mentions themselves by name ("I, Manik, forgot
+        //    my meds"), the LLM extracts "Manik" into mentioned_usernames. Entity enrichment
+        //    (performContextEnrichment) treats every named entity as a third party and adds
+        //    interpersonal risk context, biasing criticality upward. We block enrichment for
+        //    names that belong to the speaker.
+        //
+        // 2. SUBJECT_ID NORMALISATION: Self-referential facts sometimes get subject_id set to
+        //    the speaker's real name ("Manik") instead of "self". These facts are about the
+        //    patient — they should be stored and retrieved as self-facts. We correct subject_id
+        //    to "self" so the DB, RAG retrieval, and longitudinal analysis work correctly.
+        //    The majority of useful facts live here: medication adherence, symptoms, mood,
+        //    behaviours — all reported in first person but with the speaker's own name attached.
+        //
+        // Note on nicknames: names not stored in the DB remain a gap. If the gap becomes
+        // a clinical problem, the right fix is adding a names field to user profiles, not regex.
+
         if (analysis.mentioned_usernames && analysis.mentioned_usernames.length > 0) {
-            analysis = await resolveEntitiesAndEnrichContext(userId, message, analysis, circleId);
+            let speakerNames = new Set();
+            try {
+                const speaker = await findUserById(userId);
+                if (speaker?.username) {
+                    speakerNames.add(speaker.username.toLowerCase());
+                }
+                if (speaker?.profile_data) {
+                    const profile = typeof speaker.profile_data === 'string'
+                        ? JSON.parse(speaker.profile_data)
+                        : speaker.profile_data;
+                    for (const key of ['first_name', 'last_name', 'display_name', 'name', 'full_name']) {
+                        if (profile[key] && typeof profile[key] === 'string') {
+                            speakerNames.add(profile[key].toLowerCase());
+                        }
+                    }
+                }
+            } catch (_) {}
+
+            // Normalise subject_id on facts that the LLM tagged with the speaker's name
+            // instead of "self". These are self-reported facts, not third-party facts.
+            if (speakerNames.size > 0 && analysis.facts && typeof analysis.facts === 'object') {
+                for (const factKey of Object.keys(analysis.facts)) {
+                    const fact = analysis.facts[factKey];
+                    if (fact && typeof fact === 'object' && fact.subject_id) {
+                        if (speakerNames.has(String(fact.subject_id).toLowerCase())) {
+                            analysis.facts[factKey] = { ...fact, subject_id: 'self' };
+                        }
+                    }
+                }
+            }
+
+            const nonSelfMentions = analysis.mentioned_usernames.filter(
+                u => !speakerNames.has(u.toLowerCase())
+            );
+            if (nonSelfMentions.length > 0) {
+                const filteredAnalysis = { ...analysis, mentioned_usernames: nonSelfMentions };
+                analysis = await resolveEntitiesAndEnrichContext(userId, message, filteredAnalysis, circleId);
+            }
         }
 
         events.emit('analysis_progress', {
@@ -229,6 +285,64 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
                 criticality: analysis.criticality,
                 privacyLevel: analysis.privacyLevel
             });
+        }
+
+        // ── Analogy preference observation ──────────────────────────────────────
+        // Passively update facts_v2 whenever the patient uses an analogy in their
+        // own message. The explainer (LLM) already knows *when* to use one; this
+        // fact tells it whether the *patient* has historically responded to them.
+        //
+        // Detection is structural (LLM was already asked) — we look for an
+        // `analogy_used` flag that the unified prompt populates when it detects
+        // the patient using analogy-style language ("like a...", "as if...", etc.).
+        // This avoids adding a regex here; it relies on what the LLM already saw.
+        //
+        // fact_key: communication_analogy_preference_<userId>
+        // value:    "yes — uses analogies often" | "no — prefers direct language"
+        //           | "observed once" (confidence 0.5, upgrades over time)
+        if (circleId && analysis.analogy_used !== undefined) {
+            try {
+                const { addFact, getCurrentFact } = await import('../../db/queries_facts.js');
+                const factKey = `communication_analogy_preference_${userId}`;
+                const existing = await getCurrentFact(circleId, factKey);
+                const existingConf = existing?.confidence ?? 0.0;
+
+                if (analysis.analogy_used === true) {
+                    // Patient used an analogy this turn — strengthen the "yes" fact
+                    const newConf = Math.min(1.0, existingConf + 0.2);
+                    await addFact(circleId, factKey,
+                        newConf >= 0.8
+                            ? 'yes — uses analogies often in own messages'
+                            : 'yes — has used analogies (still building confidence)',
+                        {
+                            category:    'communication_style',
+                            confidence:  newConf,
+                            sourceType:  'observed',
+                            subjectId:   userId,
+                            sensitivity: 'normal',
+                            observedAt:  Date.now(),
+                        }
+                    );
+                } else if (analysis.analogy_used === false && existingConf < 0.3) {
+                    // No analogy seen and no strong prior — record mild "no" signal
+                    await addFact(circleId, factKey,
+                        'unknown — no analogy usage observed yet',
+                        {
+                            category:    'communication_style',
+                            confidence:  0.2,
+                            sourceType:  'observed',
+                            subjectId:   userId,
+                            sensitivity: 'normal',
+                            observedAt:  Date.now(),
+                        }
+                    );
+                }
+            } catch (err) {
+                // Non-fatal — never block a response for a preference observation
+                if (process.env.DEBUG_CLI) {
+                    console.warn('[AIAnalysisHandler] Analogy preference write failed:', err.message);
+                }
+            }
         }
 
         return analysis;

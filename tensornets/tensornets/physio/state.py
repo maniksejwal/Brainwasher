@@ -35,7 +35,9 @@ References
 
 from __future__ import annotations
 
+import json
 import math
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional
@@ -379,6 +381,67 @@ class PhysiologicalHistory:
 
     def __len__(self) -> int:
         return len(self.states)
+
+    # ── Persistence ─────────────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        """Serialise to a plain dict suitable for json.dump."""
+        return {
+            "subject_id": self.subject_id,
+            "states": [
+                {
+                    "hrv_rmssd_ms":           s.hrv_rmssd_ms,
+                    "blood_glucose_mmol":     s.blood_glucose_mmol,
+                    "eda_us":                 s.eda_us,
+                    "time_of_day_h":          s.time_of_day_h,
+                    "location_stress_index":  s.location_stress_index,
+                    "sleep_hours_last_night": s.sleep_hours_last_night,
+                    "sleep_deficit_hours":    s.sleep_deficit_hours,
+                    "circadian_entrainment":  s.circadian_entrainment,
+                    "respiratory_rate_bpm":   s.respiratory_rate_bpm,
+                    "timestamp":              s.timestamp.isoformat(),
+                    "is_simulated":           s.is_simulated,
+                    "subject_id":             s.subject_id,
+                }
+                for s in self.states
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PhysiologicalHistory":
+        """Deserialise from the dict produced by to_dict()."""
+        hist = cls(subject_id=data["subject_id"])
+        for row in data.get("states", []):
+            state = PhysiologicalState(
+                hrv_rmssd_ms=row["hrv_rmssd_ms"],
+                blood_glucose_mmol=row["blood_glucose_mmol"],
+                eda_us=row["eda_us"],
+                time_of_day_h=row["time_of_day_h"],
+                location_stress_index=row["location_stress_index"],
+                sleep_hours_last_night=row.get("sleep_hours_last_night", 7.0),
+                sleep_deficit_hours=row.get("sleep_deficit_hours", 1.0),
+                circadian_entrainment=row.get("circadian_entrainment", 0.7),
+                respiratory_rate_bpm=row.get("respiratory_rate_bpm", 15.0),
+                timestamp=datetime.fromisoformat(row["timestamp"]),
+                is_simulated=row.get("is_simulated", True),
+                subject_id=row.get("subject_id"),
+            )
+            # Bypass chronological guard: states loaded from disk are already sorted
+            hist.states.append(state)
+        return hist
+
+    def save(self, path: str) -> None:
+        """Serialise history to *path* as JSON (atomic write via temp file)."""
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(self.to_dict(), fh, ensure_ascii=False)
+        os.replace(tmp, path)
+
+    @classmethod
+    def load(cls, path: str) -> "PhysiologicalHistory":
+        """Load a previously saved history from *path*."""
+        with open(path, encoding="utf-8") as fh:
+            return cls.from_dict(json.load(fh))
 
 
 # ── Stress label (mirrors companions/physio/state.js) ─────────────────────────

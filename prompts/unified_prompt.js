@@ -168,6 +168,17 @@ Always end with: "If symptoms persist or worsen, it's wise to consult your docto
 3.  **State Update:** Identify if the message indicates a change in the user's behavioral state.
 4.  **Conversational Reply:** Generate a concise, natural reply TO THE SPEAKER.
 5.  **Privacy Level:** Classify as 'PUBLIC', 'PRIVATE', or 'SENSITIVE'.
+    Definitions (from documentation/privacy_policy.md):
+    - **PUBLIC**: Non-identifying general information. Greetings, appointments, general mood ("feeling better today").
+    - **PRIVATE** (DEFAULT for health content): Personal health information that is routine and personally owned.
+      Use PRIVATE for: medication adherence, common symptoms, mild mood changes, tiredness, general health updates,
+      depression, anxiety (general mention), treatment (general), diagnosis (general).
+      Examples: "I forgot my medication", "I have a headache", "I feel tired", "I take medication for blood pressure".
+    - **SENSITIVE**: High-stigma, relationship-damaging, or socially harmful information.
+      Use SENSITIVE ONLY for: STDs (HIV, AIDS), drug abuse/addiction, specific psychiatric diagnoses
+      (bipolar disorder, schizophrenia, borderline personality disorder, psychosis), sexual health,
+      suicide with specific plan (date/method/location), affairs, domestic abuse, financial/legal crisis.
+      Examples: "I've been using cocaine", "I was diagnosed with bipolar", "I had an affair", "I'm being evicted".
 6.  **Criticality Level:** Classify as 'NONE', 'LOW', 'MEDIUM', or 'HIGH'.
     - HIGH: Medical emergencies, severe injuries, life-threatening conditions, OR serious harm risk (suicide planning with date/method/location, weapons involved, threats to kill)
     - MEDIUM: Doctor consultation requests, moderate health concerns
@@ -281,6 +292,11 @@ Return ONLY a single, valid JSON object in a markdown block:
   "facts": { ... },
   "mentioned_usernames": [],
   "sharingSuggestion": { "target": "username", "reason": "...", "content_to_share": "..." } or null,
-  "future_plan": { ... } or null
+  "future_plan": { ... } or null,
+  "analogy_used": true or false
 }
+
+`analogy_used`: set to true if the USER's message (not your reply) contains analogy-style language
+("like a...", "as if...", "it's similar to...", "imagine..." used to explain their own experience).
+Set to false if not. This is used to build a communication preference profile over time.
 `;

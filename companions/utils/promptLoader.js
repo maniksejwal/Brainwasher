@@ -10,6 +10,7 @@ import { PROMPT_COMPANION_PATIENT_OPTIMIZER } from '../../prompts/companion_pati
 import { PROMPT_COMPANION_DOCTOR_OPTIMIZER } from '../../prompts/companion_doctor_optimizer.js';
 import { PROMPT_COMPANION_FUTURE_PLANNING } from '../../prompts/companion_future_planning.js';
 import { PROMPT_COMPANION_STATE_TRACKER } from '../../prompts/companion_state_tracker.js';
+import { PROMPT_COMPANION_PRIVACY_GUARD } from '../../prompts/companion_privacy_guard.js';
 import { 
     PROMPT_BUSINESS_INPUT_UNDERSTANDING,
     PROMPT_BUSINESS_COMPANION_OPTIMIZER,
@@ -53,6 +54,12 @@ export function loadPrompt(promptName, variables = {}) {
             break;
         case 'state_tracker':
             prompt = PROMPT_COMPANION_STATE_TRACKER;
+            break;
+        case 'privacy_guard':
+            prompt = PROMPT_COMPANION_PRIVACY_GUARD;
+            break;
+        case 'business_privacy_guard':
+            prompt = PROMPT_BUSINESS_PRIVACY_GUARD;
             break;
         default:
             throw new Error(`Unknown prompt name: ${promptName}`);

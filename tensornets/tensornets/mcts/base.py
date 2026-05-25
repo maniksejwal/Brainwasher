@@ -260,18 +260,94 @@ class BaseMCTS(ABC):
 
     def best_action(self, initial_state: Any) -> dict:
         """
-        Convenience: run search and return {action, q_value, tree_stats}.
-        This is what the FastAPI endpoint calls.
+        Convenience: run search and return {action, q_value, tree_stats, M_trunc}.
+
+        M_trunc (F3): SVD-compressed constraint matrix derived from the best MCTS path.
+        Shape: (chi_trunc, n_actions_on_path). The F4 tactical agent uses this via
+        project_constraint() to bias prompt token probabilities toward the chosen path.
+
+        When torch is unavailable, M_trunc is returned as None (graceful degradation).
         """
         root = self.search(initial_state)
         if not root.children:
-            return {'action': None, 'q_value': 0.0, 'tree_stats': self._last_tree_stats}
+            return {'action': None, 'q_value': 0.0, 'tree_stats': self._last_tree_stats,
+                    'M_trunc': None}
         best = root.best_action_child()
+        M_trunc = self._build_M_trunc(root)
         return {
             'action': best.action,
             'q_value': round(best.q_value, 4),
             'tree_stats': self._last_tree_stats,
+            'M_trunc': M_trunc,
         }
+
+    def _build_M_trunc(self, root: 'MCTSNode', chi_trunc: int = 4) -> 'list[list[float]] | None':
+        """
+        F3: SVD-compress the best MCTS path into a constraint matrix M_trunc.
+
+        Algorithm:
+          1. Trace the greedy best path from root to leaf (max Q-value at each step).
+          2. Represent each action on the path as a one-hot vector over all unique actions
+             seen in root.children (vocabulary = candidate actions from action_selector.js).
+          3. Stack these into a path matrix P of shape (n_actions_vocab, path_length).
+          4. SVD-compress P: keep the top chi_trunc singular vectors.
+          5. M_trunc = U[:, :chi_trunc]  shape (n_actions_vocab, chi_trunc).
+
+        The F4 agent uses M_trunc via project_constraint(token_logits, M_trunc) to soft-steer
+        token probabilities toward actions that lie in the high-value subspace discovered by MCTS.
+
+        Returns M_trunc as a nested Python list (serialisable to JSON for the FastAPI response).
+        Returns None if path is trivially short (<= 1 node) or torch is unavailable.
+        """
+        try:
+            import torch
+        except ImportError:
+            return None
+
+        # Collect unique actions from root children (the action vocabulary for this call)
+        action_vocab = [child.action for child in root.children if child.action is not None]
+        if not action_vocab:
+            return None
+        action_to_idx = {a: i for i, a in enumerate(action_vocab)}
+        n_vocab = len(action_vocab)
+
+        # Trace best path greedily from root
+        path_actions: list[str] = []
+        node = root
+        seen: set[int] = {id(node)}
+        while node.children:
+            best_child = node.best_action_child()
+            if best_child.action is None or id(best_child) in seen:
+                break
+            if best_child.action in action_to_idx:
+                path_actions.append(best_child.action)
+            seen.add(id(best_child))
+            node = best_child
+
+        if len(path_actions) < 1:
+            # Only root exists; nothing to compress
+            return None
+
+        # Build one-hot path matrix P shape (n_vocab, path_length)
+        path_len = len(path_actions)
+        P = torch.zeros(n_vocab, path_len, dtype=torch.float32)
+        for step, action in enumerate(path_actions):
+            idx = action_to_idx.get(action)
+            if idx is not None:
+                P[idx, step] = 1.0
+
+        # SVD decomposition: P = U @ S @ Vh
+        try:
+            U, S, Vh = torch.linalg.svd(P, full_matrices=False)
+        except Exception:
+            return None
+
+        # Truncate to chi_trunc singular components
+        k = min(chi_trunc, U.shape[1], S.shape[0])
+        M_trunc = U[:, :k]  # shape (n_vocab, k)
+
+        # Return as nested Python list for JSON serialisation
+        return M_trunc.tolist()
 
     def compute_reward(self, components: dict) -> float:
         """

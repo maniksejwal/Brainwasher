@@ -1,0 +1,149 @@
+{
+  "actions": [
+    "validate_emotion",
+    "explore_ambivalence",
+    "build_alliance",
+    "provide_information",
+    "reframe_perspective",
+    "elicit_change_talk",
+    "address_resistance",
+    "check_understanding",
+    "invite_reflection",
+    "suggest_coping_strategy",
+    "clarify_goal",
+    "summarise_session"
+  ],
+  "alpha": {
+    "low": {
+      "validate_emotion": 7.95223658005647,
+      "explore_ambivalence": 14.103245966293908,
+      "build_alliance": 13.929113507347815,
+      "provide_information": 28.869550512762306,
+      "reframe_perspective": 14.8075357479335,
+      "elicit_change_talk": 26.66156614842284,
+      "address_resistance": 8.181082577038767,
+      "check_understanding": 13.231919035067648,
+      "invite_reflection": 15.686087071323914,
+      "suggest_coping_strategy": 9.145804119464568,
+      "clarify_goal": 14.638555880876911,
+      "summarise_session": 6.121252372086227
+    },
+    "moderate": {
+      "validate_emotion": 183.0147835664079,
+      "explore_ambivalence": 14.710411604772567,
+      "build_alliance": 59.54339256850554,
+      "provide_information": 9.73508700267996,
+      "reframe_perspective": 14.817031499876427,
+      "elicit_change_talk": 9.48825101466315,
+      "address_resistance": 23.216991754279075,
+      "check_understanding": 15.280204127138608,
+      "invite_reflection": 45.01352708771241,
+      "suggest_coping_strategy": 92.63432916391082,
+      "clarify_goal": 11.762605124397878,
+      "summarise_session": 11.929940442219314
+    },
+    "high": {
+      "validate_emotion": 9.776253420307444,
+      "explore_ambivalence": 1.6175841529036752,
+      "build_alliance": 4.783020501059809,
+      "provide_information": 1.2219363769256368,
+      "reframe_perspective": 1.3153094303136554,
+      "elicit_change_talk": 1.0913696522040646,
+      "address_resistance": 2.8588354476922024,
+      "check_understanding": 2.062747371878949,
+      "invite_reflection": 1.499844434728053,
+      "suggest_coping_strategy": 3.3796328669581452,
+      "clarify_goal": 1.0,
+      "summarise_session": 2.202872389969848
+    }
+  },
+  "beta_": {
+    "low": {
+      "validate_emotion": 7.04776341994353,
+      "explore_ambivalence": 8.896754033706088,
+      "build_alliance": 9.070886492652185,
+      "provide_information": 12.13044948723769,
+      "reframe_perspective": 8.192464252066502,
+      "elicit_change_talk": 12.338433851577154,
+      "address_resistance": 6.818917422961233,
+      "check_understanding": 8.768080964932352,
+      "invite_reflection": 9.313912928676082,
+      "suggest_coping_strategy": 6.854195880535433,
+      "clarify_goal": 8.36144411912309,
+      "summarise_session": 5.878747627913773
+    },
+    "moderate": {
+      "validate_emotion": 63.9852164335922,
+      "explore_ambivalence": 12.289588395227433,
+      "build_alliance": 27.456607431494465,
+      "provide_information": 10.26491299732004,
+      "reframe_perspective": 12.182968500123573,
+      "elicit_change_talk": 9.51174898533685,
+      "address_resistance": 14.783008245720927,
+      "check_understanding": 12.719795872861392,
+      "invite_reflection": 23.986472912287585,
+      "suggest_coping_strategy": 38.3656708360892,
+      "clarify_goal": 10.237394875602124,
+      "summarise_session": 11.070059557780686
+    },
+    "high": {
+      "validate_emotion": 2.223746579692554,
+      "explore_ambivalence": 2.3824158470963246,
+      "build_alliance": 2.2169794989401908,
+      "provide_information": 1.7780636230743632,
+      "reframe_perspective": 1.6846905696863446,
+      "elicit_change_talk": 1.9086303477959354,
+      "address_resistance": 2.1411645523077976,
+      "check_understanding": 2.937252628121051,
+      "invite_reflection": 1.500155565271947,
+      "suggest_coping_strategy": 1.6203671330418548,
+      "clarify_goal": 1.0,
+      "summarise_session": 2.797127610030152
+    }
+  },
+  "pulls": {
+    "low": {
+      "validate_emotion": 13,
+      "explore_ambivalence": 21,
+      "build_alliance": 21,
+      "provide_information": 39,
+      "reframe_perspective": 21,
+      "elicit_change_talk": 37,
+      "address_resistance": 13,
+      "check_understanding": 20,
+      "invite_reflection": 23,
+      "suggest_coping_strategy": 14,
+      "clarify_goal": 21,
+      "summarise_session": 10
+    },
+    "moderate": {
+      "validate_emotion": 245,
+      "explore_ambivalence": 25,
+      "build_alliance": 85,
+      "provide_information": 18,
+      "reframe_perspective": 25,
+      "elicit_change_talk": 17,
+      "address_resistance": 36,
+      "check_understanding": 26,
+      "invite_reflection": 67,
+      "suggest_coping_strategy": 129,
+      "clarify_goal": 20,
+      "summarise_session": 21
+    },
+    "high": {
+      "validate_emotion": 10,
+      "explore_ambivalence": 2,
+      "build_alliance": 5,
+      "provide_information": 1,
+      "reframe_perspective": 1,
+      "elicit_change_talk": 1,
+      "address_resistance": 3,
+      "check_understanding": 3,
+      "invite_reflection": 1,
+      "suggest_coping_strategy": 3,
+      "clarify_goal": 0,
+      "summarise_session": 3
+    }
+  },
+  "episodes": 100
+}

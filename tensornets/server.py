@@ -22,7 +22,10 @@ POST /mps/project           -> apply constraint projection (requires mps_state i
 from __future__ import annotations
 
 import json
+import logging
+import os
 import time
+from contextlib import asynccontextmanager
 from typing import Optional
 
 try:
@@ -33,6 +36,8 @@ except ImportError:
     raise ImportError(
         "FastAPI not installed. Run: pip install fastapi uvicorn[standard] pydantic"
     )
+
+log = logging.getLogger("tensornets.server")
 
 from tensornets.physio.state import (
     PhysiologicalState,
@@ -52,6 +57,7 @@ app = FastAPI(
     title="tensornets bridge",
     description="Physiological state + MCTS services for the JS companion system",
     version="0.1.0",
+    lifespan=_lifespan,
 )
 
 app.add_middleware(
@@ -61,8 +67,48 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── In-memory history store (replace with Redis for production) ───────────────
+# ── In-memory history store — persisted to TENSORNETS_HISTORY_DIR on restart ──
 _histories: dict[str, PhysiologicalHistory] = {}
+
+_HISTORY_DIR = os.environ.get("TENSORNETS_HISTORY_DIR", os.path.join(os.path.dirname(__file__), "data", "physio_history"))
+
+
+def _history_path(subject_id: str) -> str:
+    os.makedirs(_HISTORY_DIR, exist_ok=True)
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in subject_id)
+    return os.path.join(_HISTORY_DIR, f"{safe}.json")
+
+
+def _load_all_histories() -> None:
+    """Load all persisted history files from disk into _histories."""
+    if not os.path.isdir(_HISTORY_DIR):
+        return
+    for fname in os.listdir(_HISTORY_DIR):
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(_HISTORY_DIR, fname)
+        try:
+            hist = PhysiologicalHistory.load(fpath)
+            _histories[hist.subject_id] = hist
+            log.info("Loaded physio history for subject %s (%d states)", hist.subject_id, len(hist))
+        except Exception as exc:
+            log.warning("Failed to load physio history %s: %s", fpath, exc)
+
+
+def _save_all_histories() -> None:
+    """Flush all in-memory histories to disk."""
+    for subject_id, hist in _histories.items():
+        try:
+            hist.save(_history_path(subject_id))
+        except Exception as exc:
+            log.warning("Failed to save physio history for %s: %s", subject_id, exc)
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    _load_all_histories()
+    yield
+    _save_all_histories()
 
 
 # ── Request / response models ─────────────────────────────────────────────────
@@ -199,6 +245,10 @@ def physio_history_append(req: PhysioStateIn):
         _histories[subject_id].append(state)
 
     hist = _histories[subject_id]
+    try:
+        hist.save(_history_path(subject_id))
+    except Exception as exc:
+        log.warning("Could not persist physio history for %s: %s", subject_id, exc)
     return {
         "subject_id":         subject_id,
         "n_states":           len(hist),
@@ -714,9 +764,9 @@ class MCTSActionIn(BaseModel):
 @app.post("/mcts/best-action")
 def mcts_best_action(req: MCTSActionIn):
     """
-    Run DialogMCTS and return the best action + Q-value + tree stats.
+    Run DialogMCTS and return the best action + Q-value + tree stats + M_trunc.
 
-    This is the Phase 3 endpoint used by tensornetsBridge.js getMCTSAction().
+    Used by tensornetsBridge.js getMCTSAction().
 
     Request:
       physio_state:       {hrv_ms, stress_index, ...}
@@ -725,7 +775,11 @@ def mcts_best_action(req: MCTSActionIn):
       depth / iterations: MCTS hyperparameters
 
     Response:
-      action, q_value, tree_stats
+      action, q_value, tree_stats, M_trunc
+      M_trunc: SVD-compressed constraint matrix from the best MCTS path (F3).
+               Shape: (n_actions_vocab, chi_trunc). Used by the F4 tactical agent
+               via project_constraint() to soft-steer token logits.
+               None when the search tree is trivial (single root, no children).
     """
     from tensornets.mcts.base import DialogMCTS
 
