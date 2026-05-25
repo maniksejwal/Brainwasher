@@ -204,3 +204,39 @@ export async function getRunScenarioBreakdown(run_id) {
         [run_id]
     );
 }
+
+/**
+ * Get a named metadata value from htn_benchmark_metadata.
+ * @param {string} key  e.g. 'baseline_cutoff_ts'
+ * @returns {Promise<string|null>}
+ */
+export async function getBenchmarkMeta(key) {
+    const db = await getDb();
+    const row = await db.get(
+        'SELECT value FROM htn_benchmark_metadata WHERE key = ?', [key]
+    );
+    return row?.value ?? null;
+}
+
+/**
+ * Fetch old-pipeline (baseline) feedback stats for A3C arm comparison.
+ * Returns mean score and episode count for simulations that ran before the
+ * baseline cutoff (set during schema creation to 2026-05-23 23:59:59 IST).
+ * A3C Arm 2 ("oldschool") reward distributions are anchored to this window.
+ *
+ * @returns {Promise<{mean_score: number, episode_count: number, cutoff_ts: number}|null>}
+ */
+export async function getBaselineStats() {
+    const db = await getDb();
+    const cutoffStr = await getBenchmarkMeta('baseline_cutoff_ts');
+    if (!cutoffStr) return null;
+
+    const cutoff = Number(cutoffStr);
+    const row = await db.get(
+        `SELECT AVG(score) as mean_score, COUNT(*) as episode_count
+         FROM feedback
+         WHERE timestamp < ?`,
+        [cutoff]
+    );
+    return row ? { mean_score: row.mean_score, episode_count: row.episode_count, cutoff_ts: cutoff } : null;
+}

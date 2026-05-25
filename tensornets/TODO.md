@@ -158,6 +158,12 @@
 - [ ] **C7.1** `HystereticBaseline` integration: `TriggerHysteresis.gamma_modifier()` as longitudinal Gamma factor
 - [ ] **F3** SVD compress MCTS path → constraint matrix `M_trunc` (requires E7)
 - [ ] **F4** Tactical agent: Bedrock Llama + `M_trunc` projection via `project_constraint()`
+- [ ] **P-HRV** Persist HRV history to DB between server restarts (`physio_history` table or `save_state()`).
+      Currently `HRVHistory` is in-memory only; lost on Python server restart.
+- [ ] **P-RAG** Wire `facts_v2` retrieval into `CompanionCoordinator`: before action selector, query
+      relevant facts by circle/subject and inject into prompt. This closes the RAG gap — context
+      is currently CAG only (physio hint + longitudinal hint). DB schema already has `subject_id`,
+      `target_object`, `sensitivity`, `confidence` columns ready for semantic retrieval.
 
 ### A3C warm-up — Thompson Sampling bandit
 - [ ] **I1** `ActionBandit`: Beta posterior per action per stress bucket

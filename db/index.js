@@ -11,6 +11,19 @@
 import { getDb, setGlobalDb } from './connection.js';
 import { initializeDatabase, clearDatabase, addConversationIntelligenceTables, addDialogGraphSchemaTables, addHTNBenchmarkTables } from './schema.js';
 import {
+    createBenchmarkRun,
+    finaliseBenchmarkRun,
+    listBenchmarkRuns,
+    getBenchmarkRun,
+    createBenchmarkEpisode,
+    finaliseBenchmarkEpisode,
+    recordBenchmarkTurn,
+    compareBenchmarkArms,
+    getRunScenarioBreakdown,
+    getBenchmarkMeta,
+    getBaselineStats,
+} from './queries_benchmarks.js';
+import {
     findUserByUsername,
     findUserById,
     findCircleByPatientId,
@@ -176,5 +189,16 @@ export {
     finalizeDialogGraphRun,
     // HTN benchmarks
     addHTNBenchmarkTables,
+    createBenchmarkRun,
+    finaliseBenchmarkRun,
+    listBenchmarkRuns,
+    getBenchmarkRun,
+    createBenchmarkEpisode,
+    finaliseBenchmarkEpisode,
+    recordBenchmarkTurn,
+    compareBenchmarkArms,
+    getRunScenarioBreakdown,
+    getBenchmarkMeta,
+    getBaselineStats,
 };
 

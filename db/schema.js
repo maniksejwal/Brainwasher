@@ -642,7 +642,39 @@ export async function addHTNBenchmarkTables(db) {
         CREATE INDEX IF NOT EXISTS idx_bench_runs_arm     ON htn_benchmark_runs(arm);
         CREATE INDEX IF NOT EXISTS idx_bench_episodes_run ON htn_benchmark_episodes(run_id);
         CREATE INDEX IF NOT EXISTS idx_bench_turns_ep     ON htn_benchmark_turns(episode_id);
+
+        -- Metadata / configuration table for benchmark system.
+        -- Stores named key-value pairs: baseline cutoff timestamps, experiment labels,
+        -- hyperparameter snapshots, and any other system-level annotations.
+        -- query: SELECT value FROM htn_benchmark_metadata WHERE key = 'baseline_cutoff_ts'
+        CREATE TABLE IF NOT EXISTS htn_benchmark_metadata (
+            key         TEXT PRIMARY KEY,
+            value       TEXT NOT NULL,
+            description TEXT,
+            set_at      INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
     `);
+
+    // Mark the baseline cutoff: end of Saturday 2026-05-23 (day before yesterday).
+    // All feedback/simulation data created BEFORE this timestamp is considered the
+    // "pre-HTN baseline" for A3C comparison. Arm 2 (oldschool) reward distributions
+    // are anchored to this window. Only insert once; do not overwrite if already set.
+    const existing = await db.get(
+        "SELECT key FROM htn_benchmark_metadata WHERE key = 'baseline_cutoff_ts'"
+    );
+    if (!existing) {
+        const baselineCutoff = new Date('2026-05-23T23:59:59+05:30').getTime();
+        await db.run(
+            `INSERT INTO htn_benchmark_metadata (key, value, description) VALUES (?, ?, ?)`,
+            [
+                'baseline_cutoff_ts',
+                String(baselineCutoff),
+                'End of pre-HTN baseline window (2026-05-23 23:59:59 IST). Feedback and simulation ' +
+                'data before this timestamp is the old-pipeline baseline for A3C arm comparison.'
+            ]
+        );
+        console.log('[Schema] HTN baseline cutoff set to 2026-05-23T23:59:59 IST');
+    }
 
     console.log('[Schema] HTN benchmark tables added');
 }

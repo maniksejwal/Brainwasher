@@ -48,6 +48,14 @@ The production system as it exists today in the JS project, with no tensornets b
 **This is the true baseline.** Not a hardcoded strawman. The production system
 as shipped — multi-agent, LLM-generated, with all existing prompt engineering.
 
+**Historical baseline anchor:** All simulation and feedback data generated before
+`2026-05-23T23:59:59 IST` is the pre-HTN baseline window. This cutoff is stored in
+`htn_benchmark_metadata.baseline_cutoff_ts`. Arm 2 reward distributions must be
+compared against `getBaselineStats()` (mean score, episode count) from that window
+to verify A3C Arm 2 is internally consistent with the historical pipeline.
+The old pipeline produced quality data — the A3C arms compete against this empirical
+baseline, not a synthetic one. See `db/queries_benchmarks.js::getBaselineStats()`.
+
 ### Arm 3 — Hysteresis-in-prompts (no MCTS, no MPS)
 The same production system but with hysteresis context injected into every prompt:
 - HystereticBaseline state and TriggerHysteresis extinction progress included in system prompt
