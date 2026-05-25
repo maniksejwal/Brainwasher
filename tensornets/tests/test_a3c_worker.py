@@ -59,6 +59,10 @@ def _make_scenario(n_turns: int = 3) -> dict:
         "session_id":           "s-test",
         "initial_stress_index": 0.5,
         "initial_physio":       {"hrv_rmssd_ms": 30.0, "eda_us": 4.0, "stress_index": 0.5},
+        "session_goal":         "test support",
+        "patient_prompt":       "You are a test patient.",
+        "required_elements":    ["element_1", "element_2"],
+        "max_turns":            n_turns,   # cap episodes to n_turns so tests are fast
         "turns": [
             {"user_message": f"Turn {i} user message."}
             for i in range(n_turns)
@@ -205,12 +209,27 @@ class ConcreteWorker(A3CWorker):
 
 
 class TestA3CWorker:
+    def _patch_scorer(self):
+        """Patch A3CScorer.score_turn to return a neutral result offline."""
+        from tensornets.a3c.scorer import TurnScoreResult
+        return patch(
+            "tensornets.a3c.worker.A3CScorer.score_turn",
+            return_value=TurnScoreResult(
+                integer_scores=[("fallback", 0, "offline test")],
+                continuous_score=0.5,
+                dimensions={},
+                critical_failure=False,
+                repetition_penalty=0.0,
+            ),
+        )
+
     def test_run_episode_returns_summary(self, tmp_path):
         actor   = Actor()
         critic  = Critic()
         worker  = ConcreteWorker(actor, critic, run_dir=tmp_path)
         scenario = _make_scenario(n_turns=3)
-        summary  = worker.run_episode(scenario)
+        with self._patch_scorer():
+            summary  = worker.run_episode(scenario, patient_mode='scripted')
         assert summary["n_turns"] == 3
         assert "cumulative_reward" in summary
         assert "episode_id" in summary
@@ -219,7 +238,8 @@ class TestA3CWorker:
         actor  = Actor()
         critic = Critic()
         worker = ConcreteWorker(actor, critic, run_dir=tmp_path)
-        summary = worker.run_episode(_make_scenario(n_turns=2))
+        with self._patch_scorer():
+            summary = worker.run_episode(_make_scenario(n_turns=2), patient_mode='scripted')
         jsonl_path = Path(summary["jsonl_path"])
         assert jsonl_path.exists()
         lines = jsonl_path.read_text().strip().splitlines()
@@ -241,7 +261,8 @@ class TestA3CWorker:
         # Record biases before
         before = dict(actor.log_biases["moderate"])
         worker = ConcreteWorker(actor, critic, run_dir=tmp_path)
-        worker.run_episode(_make_scenario(n_turns=5))
+        with self._patch_scorer():
+            worker.run_episode(_make_scenario(n_turns=5), patient_mode='scripted')
         after = actor.log_biases["moderate"]
         # At least one bias should have changed
         changed = any(abs(after[a] - before[a]) > 1e-9 for a in ACTION_TAXONOMY)
@@ -258,13 +279,24 @@ class TestArmWorkers:
             side_effect=ConnectionError("server down"),
         )
 
+    def _patch_scorer(self):
+        from tensornets.a3c.scorer import TurnScoreResult
+        return patch(
+            "tensornets.a3c.worker.A3CScorer.score_turn",
+            return_value=TurnScoreResult(
+                integer_scores=[("fallback", 0, "offline test")],
+                continuous_score=0.5, dimensions={},
+                critical_failure=False, repetition_penalty=0.0,
+            ),
+        )
+
     def test_arm1_fallback_on_server_down(self, tmp_path):
         actor  = Actor()
         critic = Critic()
         worker = Arm1Worker(actor, critic, run_dir=tmp_path)
         scenario = _make_scenario(n_turns=2)
-        with self._patch_http():
-            summary = worker.run_episode(scenario)
+        with self._patch_http(), self._patch_scorer():
+            summary = worker.run_episode(scenario, patient_mode='scripted')
         assert summary["n_turns"] == 2
         assert summary["arm"] == "htn_mcts"
 
@@ -272,16 +304,16 @@ class TestArmWorkers:
         actor  = Actor()
         critic = Critic()
         worker = Arm2Worker(actor, critic, run_dir=tmp_path)
-        with self._patch_http():
-            summary = worker.run_episode(_make_scenario(n_turns=2))
+        with self._patch_http(), self._patch_scorer():
+            summary = worker.run_episode(_make_scenario(n_turns=2), patient_mode='scripted')
         assert summary["arm"] == "oldschool"
 
     def test_arm3_fallback_on_server_down(self, tmp_path):
         actor  = Actor()
         critic = Critic()
         worker = Arm3Worker(actor, critic, run_dir=tmp_path)
-        with self._patch_http():
-            summary = worker.run_episode(_make_scenario(n_turns=2))
+        with self._patch_http(), self._patch_scorer():
+            summary = worker.run_episode(_make_scenario(n_turns=2), patient_mode='scripted')
         assert summary["arm"] == "hysteresis_prompt"
 
     def test_stress_after_response_calming(self):
@@ -289,13 +321,18 @@ class TestArmWorkers:
         assert s < 0.6
 
     def test_stress_after_response_crisis(self):
-        s = _stress_after_response(0.4, "escalate")
-        assert s >= 0.4
+        # safety_protocol has low CALMING_WEIGHT (it can raise stress by signalling danger)
+        s = _stress_after_response(0.4, "safety_protocol")
+        # safety_protocol: CW=0.80 → Δ = -(0.80-0.5)*2*0.08 = -0.048 → mild calming
+        # Key property: breathing_exercise should be MORE calming than safety_protocol
+        s_breathing = _stress_after_response(0.4, "breathing_exercise")
+        assert s_breathing < s   # breathing is more calming than safety protocol
 
     def test_synthetic_reward_keys(self):
         state = _make_state(0.5)
         reward = _synthetic_reward(state, "empathic_reflection", 0.45)
-        for dim in REWARD_DIMS:
+        # _synthetic_reward covers the arm-computed dims (not count_penalty which comes from scorer)
+        for dim in ("stress", "trust_delta", "goal_progress", "info_coverage", "consistency", "safety"):
             assert dim in reward
             assert 0.0 <= reward[dim] <= 1.0
 

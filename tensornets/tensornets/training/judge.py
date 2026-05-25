@@ -171,7 +171,7 @@ class TurnRecord:
     physio_summary:  str
     agent_role:      str = "companion"
     mode:            str = "standard"
-    phase:           str = "rapport"
+    phase:           str = "precontemplation"
     session_goal:    str = "support patient through billing dispute"
 
 

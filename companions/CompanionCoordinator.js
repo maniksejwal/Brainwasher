@@ -100,7 +100,7 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
                 ? _stressLevelFromIndex(stressState.stress_index)
                 : 'medium';
             const therapeuticMode = context.therapeuticMode || 'standard';
-            const currentPhase    = context.deaddictionPhase || 'rapport';
+            const currentPhase    = context.deaddictionPhase || 'precontemplation';
 
             // Available actions vary by stress level (mirrors BaseMCTS gates)
             const availableActions = _availableActionsByStress(stressLevel);

@@ -389,7 +389,7 @@ class TherapyCandidateRequest(BaseModel):
     physio_state:        PhysioStateIn
     candidates:          list[str]
     mode:                str = "standard"
-    deaddiction_phase:   str = "rapport"
+    deaddiction_phase:   str = "precontemplation"
     flooding_target:     float = 0.75
     n_lookahead:         int = 3
 
@@ -398,7 +398,7 @@ class SessionRecordIn(BaseModel):
     subject_id:       str
     session_id:       str
     mode:             str = "deaddiction"
-    phase:            str = "rapport"
+    phase:            str = "precontemplation"
     turns:            int = 0
     rapport_score:    float = 0.5
     peak_stress:      float = 0.5

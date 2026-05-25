@@ -51,41 +51,175 @@ from typing import Optional
 # ─────────────────────────────────────────────────────────────────────────────
 
 ACTION_TAXONOMY: list[str] = [
-    # ── Ask actions ───────────────────────────────────────────────────────────
+    # ── Ask actions (production — from action_selector.js) ────────────────────
     "open_question",          # 5W question inviting extended narrative (OARS: O)
     "specific_question",      # targeted closed-ended fact gathering
     "probing_question",       # drill down on something mentioned
     "socratic_probe",         # surfaces contradiction in patient's own statements
     "topic_from_stack",       # reintroduce a prior topic patient didn't finish
-    # ── Answer / tell actions ─────────────────────────────────────────────────
+    # ── Answer / tell actions (production) ────────────────────────────────────
     "give_facts",             # share relevant clinical / practical information
     "give_options",           # present 2-3 alternatives (FRAMES: Advice + Menu)
     "psychoeducation",        # explain a mechanism (FRAMES: Feedback)
     "summarise",              # OARS summary: collect and transition
-    # ── Empathy / relationship actions ───────────────────────────────────────
+    # ── Empathy / relationship actions (production) ───────────────────────────
     "empathic_reflection",    # OARS reflection: mirror meaning, not just words
     "affirmation",            # OARS: specific genuine strength recognition
     "validate",               # normalise experience without reinforcing it
-    "unconditional_regard",   # non-judgment signal (deaddiction rapport only)
-    # ── Strategic challenge actions ───────────────────────────────────────────
+    "unconditional_regard",   # non-judgment signal (behaviour-change rapport only)
+    # ── Strategic challenge actions (production) ──────────────────────────────
     "challenger_insight",     # Challenger Sale: new perspective
     "develop_discrepancy",    # MET: gap between values and behaviour
     "socratic_reframe",       # patient discovers insight through questions
     "loss_frame",             # Tversky-Kahneman: cost of NOT changing
-    # ── Topic management ──────────────────────────────────────────────────────
+    # ── Topic management (production) ─────────────────────────────────────────
     "change_topic",           # pivot (use when high stress OR repetition)
     "introduce_new_angle",    # stay on topic but shift perspective
     "acknowledge_only",       # brief ack, invite patient to continue
-    # ── Mode-gated technique-specific ─────────────────────────────────────────
+    # ── Mode-gated technique-specific (production) ────────────────────────────
     "flooding_hold",          # [flooding] hold at exposure, prevent escape
     "flooding_deepen",        # [flooding] intensify stimulus
     "oars_summary",           # [session transitions] full OARS before topic change
-    # ── Meta actions ──────────────────────────────────────────────────────────
+    # ── Meta actions (production) ─────────────────────────────────────────────
     "escalate",               # hand to clinician / human
     "safety_protocol",        # crisis or harm risk
     "motivational_frame",     # MET self-efficacy framing
     "end_conversation",       # natural close
+    # ── Abstract MI / CBT actions (retained from original taxonomy) ───────────
+    "validate_emotion",       # empathic reflection / validation (MI)
+    "explore_ambivalence",    # MI ambivalence surfacing
+    "build_alliance",         # therapeutic alliance reinforcement
+    "provide_information",    # psychoeducation / factual update
+    "reframe_perspective",    # cognitive reframe
+    "elicit_change_talk",     # evocation of motivation
+    "address_resistance",     # roll with resistance (MI)
+    "check_understanding",    # comprehension check / teach-back
+    "invite_reflection",      # Socratic open question
+    "suggest_coping_strategy",# concrete coping tool
+    "clarify_goal",           # goal clarification / narrowing
+    "summarise_session",      # recap and next-step alignment
+    # ── Specific technique actions (from original discrete taxonomy) ──────────
+    "breathing_exercise",     # guided diaphragmatic / box breathing intervention
+    "mindfulness_prompt",     # brief grounding / mindfulness check-in
 ]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CALMING_WEIGHT: continuous [0, 1] stress-reduction potential per action
+# ─────────────────────────────────────────────────────────────────────────────
+# Values: 0 = no calming effect (or may escalate), 1 = maximum de-escalation.
+# Used in _stress_after_response() for continuous OU-decay stress modelling.
+# Derived from action_selector.js SELECTION RULES + FRAMES/MI empirical literature.
+
+CALMING_WEIGHT: dict[str, float] = {
+    # High calming — use first under high stress
+    "validate":              0.90,
+    "empathic_reflection":   0.88,
+    "unconditional_regard":  0.85,
+    "affirmation":           0.82,
+    "safety_protocol":       0.80,
+    "breathing_exercise":    0.85,
+    "mindfulness_prompt":    0.80,
+    "validate_emotion":      0.88,
+    "acknowledge_only":      0.65,
+    "change_topic":          0.70,
+    "address_resistance":    0.68,
+    "motivational_frame":    0.65,
+    # Moderate calming — safe under moderate stress
+    "escalate":              0.65,
+    "flooding_hold":         0.72,
+    "flooding_deepen":       0.60,
+    "build_alliance":        0.65,
+    "summarise":             0.55,
+    "summarise_session":     0.55,
+    "oars_summary":          0.60,
+    "invite_reflection":     0.60,
+    "explore_ambivalence":   0.55,
+    "suggest_coping_strategy": 0.70,
+    "empathic_reflection":   0.88,   # duplicate anchor — key stays last
+    # Moderate/neutral — context-dependent
+    "open_question":         0.50,
+    "socratic_probe":        0.45,
+    "topic_from_stack":      0.45,
+    "introduce_new_angle":   0.45,
+    "elicit_change_talk":    0.50,
+    "check_understanding":   0.50,
+    "clarify_goal":          0.45,
+    "invite_reflection":     0.55,
+    # Low calming / may escalate — avoid under high stress
+    "give_options":          0.40,
+    "provide_information":   0.40,
+    "give_facts":            0.30,
+    "psychoeducation":       0.30,
+    "specific_question":     0.35,
+    "reframe_perspective":   0.40,
+    "socratic_reframe":      0.38,
+    # Potentially escalating — gated by stress level in production
+    "challenger_insight":    0.20,
+    "develop_discrepancy":   0.20,
+    "loss_frame":            0.15,
+    "end_conversation":      0.30,
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTION_INTENT_GROUP: groupings for consistency reward shaping
+# ─────────────────────────────────────────────────────────────────────────────
+# Consecutive actions in the same intent group on non-repetition turns incur
+# a consistency penalty (repetition without advance = low progress signal).
+# Actions in different groups are always compatible.
+
+ACTION_INTENT_GROUP: dict[str, str] = {
+    # Asking
+    "open_question":           "ask",
+    "specific_question":       "ask",
+    "probing_question":        "ask",
+    "socratic_probe":          "ask",
+    "topic_from_stack":        "ask",
+    "invite_reflection":       "ask",
+    "check_understanding":     "ask",
+    # Informing
+    "give_facts":              "inform",
+    "give_options":            "inform",
+    "psychoeducation":         "inform",
+    "provide_information":     "inform",
+    "clarify_goal":            "inform",
+    # Validating / empathy
+    "empathic_reflection":     "validate",
+    "affirmation":             "validate",
+    "validate":                "validate",
+    "unconditional_regard":    "validate",
+    "validate_emotion":        "validate",
+    "acknowledge_only":        "validate",
+    "build_alliance":          "validate",
+    # Motivating / change-talk
+    "challenger_insight":      "motivate",
+    "develop_discrepancy":     "motivate",
+    "socratic_reframe":        "motivate",
+    "loss_frame":              "motivate",
+    "motivational_frame":      "motivate",
+    "elicit_change_talk":      "motivate",
+    "reframe_perspective":     "motivate",
+    "address_resistance":      "motivate",
+    # Summarising / transitioning
+    "summarise":               "summarise",
+    "summarise_session":       "summarise",
+    "oars_summary":            "summarise",
+    # Topic / direction
+    "change_topic":            "direction",
+    "introduce_new_angle":     "direction",
+    # Coping / somatic
+    "suggest_coping_strategy": "coping",
+    "breathing_exercise":      "coping",
+    "mindfulness_prompt":      "coping",
+    # Flooding
+    "flooding_hold":           "flooding",
+    "flooding_deepen":         "flooding",
+    # Explore
+    "explore_ambivalence":     "explore",
+    # Safety / meta
+    "escalate":                "safety",
+    "safety_protocol":         "safety",
+    "end_conversation":        "meta",
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stress bucket definitions
@@ -144,10 +278,10 @@ class ActionBandit:
 
     def select_action(self, hrv_ms: float, exclude: list[str] | None = None) -> str:
         """
-        I2: Select an action via Thompson Sampling for the given HRV stress level.
+        I2: Select a single action via Thompson Sampling.
 
         For each candidate action, sample θ ~ Beta(α, β). Choose argmax(θ).
-        This naturally balances exploration (uncertain arms) vs exploitation (high α/β ratio).
+        This naturally balances exploration (uncertain arms) vs exploitation.
 
         Arguments:
             hrv_ms  : current HRV RMSSD in milliseconds (used to select stress bucket)
@@ -165,10 +299,63 @@ class ActionBandit:
         for action in candidates:
             a = self.alpha[bucket][action]
             b = self.beta_[bucket][action]
-            # Beta sample via standard gamma ratio: θ = Gamma(α,1) / (Gamma(α,1)+Gamma(β,1))
             scores[action] = _beta_sample(a, b)
 
         return max(scores, key=lambda x: scores[x])
+
+    def select_actions_poisson(
+        self,
+        hrv_ms:   float,
+        base_lam: float = 1.5,
+    ) -> list[str]:
+        """
+        Poisson K multi-action selection (λ=1.5 by default, per user spec §Q6a).
+
+        Samples K ~ Poisson(λ_effective) where λ_effective is learned per stress
+        bucket (high stress → lower λ, calmer → higher λ), then selects K
+        distinct actions without replacement via Thompson Sampling.
+
+        Design notes
+        ------------
+        - K is Poisson-sampled, not deterministic.  This makes the action count
+          stochastic and interpretable (expected actions = λ).
+        - Under high stress, λ is reduced because multi-action turns fragment
+          patient attention — single focused de-escalation is empirically better.
+        - Actions within the same ACTION_INTENT_GROUP are penalised when selected
+          consecutively (consistency penalty — see arms.py count_penalty).
+        - Minimum K = 1, maximum K = 4 (hard cap to prevent overwhelming the
+          patient's context window).
+
+        Arguments:
+            hrv_ms   : current HRV RMSSD in milliseconds
+            base_lam : base Poisson rate (λ=1.5 by default)
+
+        Returns:
+            Ordered list of action strings (most important first).
+        """
+        bucket    = stress_bucket_for_hrv(hrv_ms)
+        lam_eff   = self._effective_lambda(bucket, base_lam)
+        k         = _poisson_sample(lam_eff)
+        k         = max(1, min(k, 4))
+
+        selected: list[str] = []
+        for _ in range(k):
+            action = self.select_action(hrv_ms, exclude=selected)
+            selected.append(action)
+
+        return selected
+
+    def _effective_lambda(self, bucket: str, base_lam: float) -> float:
+        """
+        Stress-bucket-conditional Poisson rate.
+
+        High stress → λ ≈ 1.0 (single focused action).
+        Moderate   → λ ≈ base_lam (default behaviour).
+        Low stress → λ ≈ base_lam + 0.5 (richer multi-action turns allowed).
+        """
+        bucket_lam_offset = {"low": 0.5, "moderate": 0.0, "high": -0.5}
+        offset = bucket_lam_offset.get(bucket, 0.0)
+        return max(1.0, base_lam + offset)
 
     def update(self, hrv_ms: float, action: str, reward: float) -> None:
         """
@@ -382,6 +569,22 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         'safety_protocol':      0.20,
         'motivational_frame':   0.62,
         'end_conversation':     0.30,
+        # Abstract MI / CBT actions
+        'validate_emotion':     0.58,
+        'explore_ambivalence':  0.65,
+        'build_alliance':       0.60,
+        'provide_information':  0.70,
+        'reframe_perspective':  0.65,
+        'elicit_change_talk':   0.70,
+        'address_resistance':   0.55,
+        'check_understanding':  0.60,
+        'invite_reflection':    0.65,
+        'suggest_coping_strategy': 0.58,
+        'clarify_goal':         0.65,
+        'summarise_session':    0.55,
+        # Specific somatic
+        'breathing_exercise':   0.55,
+        'mindfulness_prompt':   0.55,
     },
     # ── Moderate stress: trust-building and reflection gain weight ────────────
     'moderate': {
@@ -390,11 +593,11 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         'probing_question':     0.55,
         'socratic_probe':       0.55,
         'topic_from_stack':     0.55,
-        'give_facts':           0.50,   # info dump under stress is counterproductive
+        'give_facts':           0.50,
         'give_options':         0.58,
         'psychoeducation':      0.50,
         'summarise':            0.55,
-        'empathic_reflection':  0.75,   # high value under moderate stress
+        'empathic_reflection':  0.75,
         'affirmation':          0.72,
         'validate':             0.78,
         'unconditional_regard': 0.72,
@@ -402,16 +605,32 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         'develop_discrepancy':  0.45,
         'socratic_reframe':     0.50,
         'loss_frame':           0.40,
-        'change_topic':         0.65,   # useful to break repetition / reduce stress
+        'change_topic':         0.65,
         'introduce_new_angle':  0.55,
         'acknowledge_only':     0.50,
-        'flooding_hold':        0.60,   # flooding: moderate stress is the target zone
+        'flooding_hold':        0.60,
         'flooding_deepen':      0.55,
         'oars_summary':         0.60,
         'escalate':             0.30,
         'safety_protocol':      0.25,
         'motivational_frame':   0.62,
         'end_conversation':     0.25,
+        # Abstract MI / CBT actions
+        'validate_emotion':     0.78,
+        'explore_ambivalence':  0.65,
+        'build_alliance':       0.70,
+        'provide_information':  0.50,
+        'reframe_perspective':  0.55,
+        'elicit_change_talk':   0.60,
+        'address_resistance':   0.65,
+        'check_understanding':  0.55,
+        'invite_reflection':    0.60,
+        'suggest_coping_strategy': 0.70,
+        'clarify_goal':         0.55,
+        'summarise_session':    0.55,
+        # Specific somatic
+        'breathing_exercise':   0.72,
+        'mindfulness_prompt':   0.68,
     },
     # ── High stress: only safety actions and direct de-escalation ─────────────
     'high': {
@@ -420,28 +639,44 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         'probing_question':     0.25,
         'socratic_probe':       0.20,
         'topic_from_stack':     0.25,
-        'give_facts':           0.20,   # worst choice under high stress
+        'give_facts':           0.20,
         'give_options':         0.30,
         'psychoeducation':      0.20,
         'summarise':            0.40,
-        'empathic_reflection':  0.88,   # critical: de-escalate first
+        'empathic_reflection':  0.88,
         'affirmation':          0.82,
         'validate':             0.90,
         'unconditional_regard': 0.85,
-        'challenger_insight':   0.15,   # BLOCKED by stress gate in production
+        'challenger_insight':   0.15,
         'develop_discrepancy':  0.15,
         'socratic_reframe':     0.20,
-        'loss_frame':           0.10,   # BLOCKED
+        'loss_frame':           0.10,
         'change_topic':         0.70,
         'introduce_new_angle':  0.45,
         'acknowledge_only':     0.60,
-        'flooding_hold':        0.72,   # flooding: high stress is the target
+        'flooding_hold':        0.72,
         'flooding_deepen':      0.65,
         'oars_summary':         0.55,
         'escalate':             0.65,
         'safety_protocol':      0.80,
         'motivational_frame':   0.55,
         'end_conversation':     0.40,
+        # Abstract MI / CBT actions
+        'validate_emotion':     0.90,
+        'explore_ambivalence':  0.35,
+        'build_alliance':       0.75,
+        'provide_information':  0.20,
+        'reframe_perspective':  0.30,
+        'elicit_change_talk':   0.30,
+        'address_resistance':   0.68,
+        'check_understanding':  0.40,
+        'invite_reflection':    0.45,
+        'suggest_coping_strategy': 0.78,
+        'clarify_goal':         0.30,
+        'summarise_session':    0.45,
+        # Specific somatic — critical under high stress
+        'breathing_exercise':   0.88,
+        'mindfulness_prompt':   0.82,
     },
 }
 
@@ -477,6 +712,20 @@ def _beta_sample(alpha: float, beta: float) -> float:
     if denom < 1e-300:
         return 0.5
     return x / denom
+
+
+def _poisson_sample(lam: float) -> int:
+    """
+    Sample K ~ Poisson(λ) using Knuth's algorithm (exact for λ < 30).
+    Returns an integer ≥ 0.  Use _effective_lambda to keep λ < 5 in practice.
+    """
+    import math as _math
+    L = _math.exp(-lam)
+    k, p = 0, 1.0
+    while p > L:
+        k += 1
+        p *= random.random()
+    return k - 1
 
 
 # ─────────────────────────────────────────────────────────────────────────────

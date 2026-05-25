@@ -187,13 +187,14 @@ class TestI3BanditTrainingLoop:
         (patient is calm, can absorb psychoeducation).
         """
         bandit = ActionBandit()
-        config = BanditTrainingConfig(n_episodes=100, n_turns_per_ep=10, seed=99)
+        config = BanditTrainingConfig(n_episodes=200, n_turns_per_ep=10, seed=99)
         run_bandit_training(bandit, heuristic_reward, config)
 
         prior = bandit.export_actor_prior()
         low_info = prior['low']['give_facts']
 
-        # Should be above 0.55 (the heuristic table value for low-stress info)
+        # Should be above 0.55 (heuristic table value for low-stress informing).
+        # Uses 200 episodes to ensure enough pulls per arm across the 41-action taxonomy.
         assert low_info > 0.55, (
             f"give_facts prior in low bucket is {low_info:.4f}, expected > 0.55"
         )

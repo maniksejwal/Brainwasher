@@ -54,20 +54,22 @@ import math
 from dataclasses import dataclass, field
 from typing import Optional
 
-from tensornets.therapy.modes import TherapeuticMode, DeaddictionPhase
+from tensornets.therapy.modes import TherapeuticMode, ChangeStage
 
 
 # ── Weight vectors ─────────────────────────────────────────────────────────────
 
 # Each row: [stress_reduction, goal_progress, trust_delta, info_coverage, consistency]
+# Keys mirror ChangeStage enum values (Prochaska & DiClemente TTM).
 WEIGHTS: dict[str, list[float]] = {
-    "standard":      [0.35, 0.25, 0.20, 0.15, 0.05],
-    "flooding":      [0.10, 0.50, 0.15, 0.20, 0.05],   # goal = stay in stimulus
-    "rapport":       [0.30, 0.10, 0.45, 0.10, 0.05],   # trust dominates
-    "ambivalence":   [0.20, 0.25, 0.25, 0.25, 0.05],   # balanced
-    "insight":       [0.15, 0.30, 0.20, 0.30, 0.05],   # coverage + progress
-    "strike":        [0.20, 0.35, 0.20, 0.20, 0.05],   # progress matters most
-    "negotiation":   [0.25, 0.20, 0.20, 0.30, 0.05],   # info coverage key
+    "standard":          [0.35, 0.25, 0.20, 0.15, 0.05],
+    "flooding":          [0.10, 0.50, 0.15, 0.20, 0.05],   # goal = stay in stimulus
+    "precontemplation":  [0.30, 0.10, 0.45, 0.10, 0.05],   # trust dominates
+    "contemplation":     [0.20, 0.25, 0.25, 0.25, 0.05],   # balanced
+    "preparation":       [0.15, 0.30, 0.20, 0.30, 0.05],   # coverage + progress
+    "action":            [0.20, 0.35, 0.20, 0.20, 0.05],   # progress matters most
+    "maintenance":       [0.15, 0.35, 0.25, 0.20, 0.05],   # sustain progress
+    "negotiation":       [0.25, 0.20, 0.20, 0.30, 0.05],   # info coverage key
 }
 
 # Trust-building keywords (presence → positive trust delta)
@@ -84,16 +86,16 @@ TRUST_ERODE = frozenset({
     "technically", "as i said", "as mentioned",
 })
 
-# Goal-progress indicators per mode
+# Goal-progress indicators per TTM stage / mode
 GOAL_KEYWORDS: dict[str, frozenset] = {
-    "standard":    frozenset({"appeal", "file", "document", "step", "option", "next"}),
-    "flooding":    frozenset({"stay", "remain", "notice", "feel", "describe", "still here"}),
-    "rapport":     frozenset({"tell me", "how are", "what matters", "personal", "share"}),
-    "ambivalence": frozenset({"on one hand", "part of you", "wondering", "what if", "imagine"}),
-    "insight":     frozenset({"noticed", "pattern", "when you", "every time", "what happens"}),
-    "strike":      frozenset({"know", "truth", "silence", "sit with", "what would it feel"}),
-    "negotiation": frozenset({"option", "propose", "fair", "both", "alternative", "request"}),
-    "flooding":    frozenset({"stay", "hold", "don't run", "still there", "describe the"}),
+    "standard":         frozenset({"appeal", "file", "document", "step", "option", "next"}),
+    "flooding":         frozenset({"stay", "hold", "don't run", "still there", "describe the"}),
+    "precontemplation": frozenset({"tell me", "how are", "what matters", "personal", "share"}),
+    "contemplation":    frozenset({"on one hand", "part of you", "wondering", "what if", "imagine"}),
+    "preparation":      frozenset({"noticed", "pattern", "when you", "every time", "what happens"}),
+    "action":           frozenset({"know", "truth", "silence", "sit with", "what would it feel"}),
+    "maintenance":      frozenset({"kept up", "still going", "proud", "last week", "how's it been"}),
+    "negotiation":      frozenset({"option", "propose", "fair", "both", "alternative", "request"}),
 }
 
 
@@ -127,7 +129,7 @@ def score_candidate_multidim(
     base_stress: float,
     projected_stress: float,       # from existing stress model
     mode: TherapeuticMode,
-    phase: DeaddictionPhase = DeaddictionPhase.RAPPORT,
+    phase: ChangeStage | None = None,
     covered_elements: set[str] | None = None,
     required_elements: list[str] | None = None,
     prior_agent_framing: str = "",
@@ -143,11 +145,15 @@ def score_candidate_multidim(
     base_stress        : Patient's current stress_index (before response).
     projected_stress   : Projected stress after n_lookahead turns (from modes.py).
     mode               : TherapeuticMode.
-    phase              : DeaddictionPhase (only used when mode=DEADDICTION).
+    phase              : ChangeStage (TTM stage; only used when mode=DEADDICTION or
+                         BEHAVIOUR_CHANGE). Defaults to PRECONTEMPLATION.
     covered_elements   : Set of required_elements already addressed in session.
     required_elements  : Full list of required elements for current graph node.
     prior_agent_framing: Key terms from other agents' recent responses (for consistency).
     """
+    if phase is None:
+        from tensornets.therapy.modes import ChangeStage as _CS
+        phase = _CS.PRECONTEMPLATION
     words_lower = candidate_text.lower()
     word_set    = set(words_lower.split())
 

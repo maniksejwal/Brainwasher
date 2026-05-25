@@ -40,11 +40,11 @@ export const THERAPY_PERSONAS = {
             self_image: 'I am a good father and provider who deserves to relax',
         },
         phase_responses: {
-            rapport: `You respond warmly but deflect any clinical concern. "Everyone has a drink or two."`,
-            ambivalence: `When asked reflective questions, you occasionally let slip fears about your liver.`,
-            insight: `When confronted with liver results, you minimise. "Every man my age has that."
+            precontemplation: `You respond warmly but deflect any clinical concern. "Everyone has a drink or two."`,
+            contemplation: `When asked reflective questions, you occasionally let slip fears about your liver.`,
+            preparation: `When confronted with liver results, you minimise. "Every man my age has that."
                       But you go quiet when family is mentioned alongside your drinking.`,
-            strike: `If the therapist mentions specific evidence (flask, night drinking) you become
+            action: `If the therapist mentions specific evidence (flask, night drinking) you become
                      defensive then tearful. You've been waiting for someone to notice.`,
         },
         physiological_profile: {
@@ -91,13 +91,13 @@ amount. You want to be seen as a good father more than anything.`,
             self_image: 'I am managing a medical condition, not an addiction',
         },
         phase_responses: {
-            rapport: `Clinical and distanced. Speaks of addiction as a pharmacological phenomenon.
+            precontemplation: `Clinical and distanced. Speaks of addiction as a pharmacological phenomenon.
                       Warms when treated as an equal intellectually.`,
-            ambivalence: `"Part of me knows this is affecting my clinical judgment."
+            contemplation: `"Part of me knows this is affecting my clinical judgment."
                           Shows brief emotion when asked about her patients.`,
-            insight: `Becomes cold and logical when confronted. However, her HRV drops
+            preparation: `Becomes cold and logical when confronted. However, her HRV drops
                       severely when her colleagues' prescriptions are mentioned specifically.`,
-            strike: `"How did you know?" followed by silence. The professional identity crack
+            action: `"How did you know?" followed by silence. The professional identity crack
                      opens the emotional truth underneath.`,
         },
         physiological_profile: {
@@ -200,10 +200,10 @@ export const THERAPY_SCENARIOS = {
 
     deaddiction_alcohol_rapport: {
         id: 'deaddiction_alcohol_rapport',
-        name: 'Alcohol Denial — Rapport Phase',
+        name: 'Alcohol Denial — Pre-contemplation Phase',
         domain: 'deaddiction',
         therapeutic_mode: 'deaddiction',
-        deaddiction_phase: 'rapport',
+        deaddiction_phase: 'precontemplation',
         description: 'First 3 sessions with Marcus. Goal: establish unconditional positive regard. Do NOT confront.',
         complexity: 3,
         turns: 8,
@@ -218,10 +218,10 @@ The session is successful if Marcus says anything personal and unprompted.`,
 
     deaddiction_alcohol_ambivalence: {
         id: 'deaddiction_alcohol_ambivalence',
-        name: 'Alcohol Denial — Ambivalence Phase',
+        name: 'Alcohol Denial — Contemplation Phase',
         domain: 'deaddiction',
         therapeutic_mode: 'deaddiction',
-        deaddiction_phase: 'ambivalence',
+        deaddiction_phase: 'contemplation',
         description: 'Surface Marcus\'s own contradictions using Socratic questioning. Watch for secret signals.',
         complexity: 4,
         turns: 10,
@@ -235,10 +235,10 @@ Do NOT interpret or confront yet. Record which topics cause physiological deflec
 
     deaddiction_alcohol_strike: {
         id: 'deaddiction_alcohol_strike',
-        name: 'Alcohol Denial — Strike Phase',
+        name: 'Alcohol Denial — Action Phase',
         domain: 'deaddiction',
         therapeutic_mode: 'deaddiction',
-        deaddiction_phase: 'strike',
+        deaddiction_phase: 'action',
         description: 'Confront with specific evidence. Strike when readiness score >= 0.6.',
         complexity: 5,
         turns: 6,

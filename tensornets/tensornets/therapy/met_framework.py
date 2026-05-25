@@ -137,19 +137,29 @@ class EEDDAARRSSSkill(Enum):
         }[self.value]
 
 
-# Deaddiction phase → allowed skill set (gate for MCTS candidate generation)
+# TTM stage → allowed skill set (gate for MCTS candidate generation)
+# Key names mirror ChangeStage enum in therapy/modes.py (Prochaska & DiClemente TTM).
+# Old names (rapport/ambivalence/insight/strike) are kept as aliases below for
+# backward-compat with any persisted session state that still carries them.
 DEADDICTION_PHASE_SKILLS = {
-    "rapport":      [EEDDAARRSSSkill.ENGAGE, EEDDAARRSSSkill.SUPPORT,
-                     EEDDAARRSSSkill.AFFIRM, EEDDAARRSSSkill.REFLECT],
-    "ambivalence":  [EEDDAARRSSSkill.ELICIT, EEDDAARRSSSkill.DEVELOP,
-                     EEDDAARRSSSkill.REFRAME, EEDDAARRSSSkill.SUMMARISE,
-                     EEDDAARRSSSkill.REFLECT],
-    "insight":      [EEDDAARRSSSkill.ELICIT, EEDDAARRSSSkill.DEVELOP,
-                     EEDDAARRSSSkill.REFRAME, EEDDAARRSSSkill.ADVISE,
-                     EEDDAARRSSSkill.DIRECT],
-    "strike":       [EEDDAARRSSSkill.DIRECT, EEDDAARRSSSkill.DEVELOP,
-                     EEDDAARRSSSkill.ADVISE, EEDDAARRSSSkill.SUMMARISE],
+    "precontemplation": [EEDDAARRSSSkill.ENGAGE, EEDDAARRSSSkill.SUPPORT,
+                         EEDDAARRSSSkill.AFFIRM, EEDDAARRSSSkill.REFLECT],
+    "contemplation":    [EEDDAARRSSSkill.ELICIT, EEDDAARRSSSkill.DEVELOP,
+                         EEDDAARRSSSkill.REFRAME, EEDDAARRSSSkill.SUMMARISE,
+                         EEDDAARRSSSkill.REFLECT],
+    "preparation":      [EEDDAARRSSSkill.ELICIT, EEDDAARRSSSkill.DEVELOP,
+                         EEDDAARRSSSkill.REFRAME, EEDDAARRSSSkill.ADVISE,
+                         EEDDAARRSSSkill.DIRECT],
+    "action":           [EEDDAARRSSSkill.DIRECT, EEDDAARRSSSkill.DEVELOP,
+                         EEDDAARRSSSkill.ADVISE, EEDDAARRSSSkill.SUMMARISE],
+    "maintenance":      [EEDDAARRSSSkill.AFFIRM, EEDDAARRSSSkill.SUPPORT,
+                         EEDDAARRSSSkill.SUMMARISE, EEDDAARRSSSkill.REFLECT],
 }
+# Backward-compat aliases (old deaddiction phase names → TTM keys)
+DEADDICTION_PHASE_SKILLS["rapport"]     = DEADDICTION_PHASE_SKILLS["precontemplation"]
+DEADDICTION_PHASE_SKILLS["ambivalence"] = DEADDICTION_PHASE_SKILLS["contemplation"]
+DEADDICTION_PHASE_SKILLS["insight"]     = DEADDICTION_PHASE_SKILLS["preparation"]
+DEADDICTION_PHASE_SKILLS["strike"]      = DEADDICTION_PHASE_SKILLS["action"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -437,9 +447,9 @@ class DeaddictionPhaseContext:
     transition_signals: list[str]
 
 DEADDICTION_PROTOCOL = {
-    "rapport": DeaddictionPhaseContext(
-        phase="rapport",
-        allowed_skills=DEADDICTION_PHASE_SKILLS["rapport"],
+    "precontemplation": DeaddictionPhaseContext(
+        phase="precontemplation",
+        allowed_skills=DEADDICTION_PHASE_SKILLS["precontemplation"],
         allowed_frames=[MotivationalFrame.VALUES, MotivationalFrame.CONFIDENCE],
         mcts_cost_weights={
             "stress_reduction": 0.5,
@@ -452,9 +462,9 @@ DEADDICTION_PROTOCOL = {
             "rapport_score > 0.7",
         ],
     ),
-    "ambivalence": DeaddictionPhaseContext(
-        phase="ambivalence",
-        allowed_skills=DEADDICTION_PHASE_SKILLS["ambivalence"],
+    "contemplation": DeaddictionPhaseContext(
+        phase="contemplation",
+        allowed_skills=DEADDICTION_PHASE_SKILLS["contemplation"],
         allowed_frames=[
             MotivationalFrame.IMPORTANCE, MotivationalFrame.VALUES,
             MotivationalFrame.CONSEQUENCES,
@@ -471,9 +481,9 @@ DEADDICTION_PROTOCOL = {
             "ambivalence_score < 0.3",
         ],
     ),
-    "insight": DeaddictionPhaseContext(
-        phase="insight",
-        allowed_skills=DEADDICTION_PHASE_SKILLS["insight"],
+    "preparation": DeaddictionPhaseContext(
+        phase="preparation",
+        allowed_skills=DEADDICTION_PHASE_SKILLS["preparation"],
         allowed_frames=[
             MotivationalFrame.IMPORTANCE, MotivationalFrame.READINESS,
             MotivationalFrame.CONSEQUENCES,
@@ -490,9 +500,9 @@ DEADDICTION_PROTOCOL = {
             "readiness_ruler ≥ 7/10",
         ],
     ),
-    "strike": DeaddictionPhaseContext(
-        phase="strike",
-        allowed_skills=DEADDICTION_PHASE_SKILLS["strike"],
+    "action": DeaddictionPhaseContext(
+        phase="action",
+        allowed_skills=DEADDICTION_PHASE_SKILLS["action"],
         allowed_frames=[
             MotivationalFrame.CONSEQUENCES, MotivationalFrame.READINESS,
         ],
@@ -507,10 +517,27 @@ DEADDICTION_PROTOCOL = {
             "session ends",
         ],
     ),
+    "maintenance": DeaddictionPhaseContext(
+        phase="maintenance",
+        allowed_skills=DEADDICTION_PHASE_SKILLS["maintenance"],
+        allowed_frames=[
+            MotivationalFrame.CONFIDENCE, MotivationalFrame.VALUES,
+        ],
+        mcts_cost_weights={
+            "stress_reduction": 0.2,
+            "trust_delta":      0.3,
+            "goal_progress":    0.4,
+            "info_coverage":    0.1,
+        },
+        transition_signals=[
+            "sustained behaviour change ≥ 6 months",
+            "patient reports no craving events",
+        ],
+    ),
 }
 
 def get_phase_context(phase: str) -> DeaddictionPhaseContext:
-    return DEADDICTION_PROTOCOL.get(phase, DEADDICTION_PROTOCOL["rapport"])
+    return DEADDICTION_PROTOCOL.get(phase, DEADDICTION_PROTOCOL["precontemplation"])
 
 def phase_prompt_injection(phase: str) -> str:
     ctx = get_phase_context(phase)
@@ -531,7 +558,7 @@ def phase_prompt_injection(phase: str) -> str:
             f"{k}={v}" for k, v in ctx.mcts_cost_weights.items()
         )
         + "\n\nDo NOT confront, argue, or directly contradict the patient in this phase."
-        if phase in ("rapport", "ambivalence")
+        if phase in ("precontemplation", "contemplation")
         else ""
     )
 
@@ -579,7 +606,7 @@ def worked_example():
 
     # Deaddiction phase prompt
     print("\n--- Deaddiction Phase Injection (rapport) ---")
-    print(phase_prompt_injection("rapport")[:500])
+    print(phase_prompt_injection("precontemplation")[:500])
 
     # SPIKE
     print("\n--- SPIKE current step (HRV=28, baseline=40, step 3) ---")

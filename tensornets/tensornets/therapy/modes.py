@@ -12,22 +12,34 @@ FLOODING          Exposure/flooding therapy: deliberately maximise short-term st
                   to extinguish the conditioned fear response. The cost function
                   becomes: penalise *avoiding* stress rather than *inducing* it.
                   After the peak, the natural decay γ drives recovery.
-DEADDICTION       Long-form motivational approach. Four sub-phases with
-                  different cost functions per phase:
-                    Phase 1 (RAPPORT)     : maximise unconditional positive regard
-                    Phase 2 (AMBIVALENCE) : Socratic — surface the patient's own doubts
-                    Phase 3 (INSIGHT)     : strategic confrontation after secret detection
-                    Phase 4 (STRIKE)      : direct truth delivery in a window of readiness
+BEHAVIOUR_CHANGE  Universal behaviour-change mode. Four sub-stages (Prochaska &
+                  DiClemente 1983, Transtheoretical Model) with different cost
+                  functions per stage:
+                    Stage 1 (ENGAGING)       : maximise unconditional positive regard
+                    Stage 2 (EVOKING)        : Socratic — surface the patient's own doubts
+                    Stage 3 (FOCUSING)       : strategic confrontation after insight emerges
+                    Stage 4 (PLANNING)       : action commitment in a window of readiness
+                  Also used for deaddiction, the original use-case.
 NEGOTIATION       Principled disagreement: find the response that maximally
                   reduces the other party's BATNA gap while staying within
                   the patient's physiological tolerance band.
+
+Note on naming
+--------------
+This module uses Motivational Interviewing (Miller & Rollnick 2012) stage names
+(Engaging → Evoking → Focusing → Planning) which are universal to all behaviour
+change, not just substance use.  The old deaddiction-specific names (RAPPORT,
+AMBIVALENCE, INSIGHT, STRIKE) are preserved as backward-compatible aliases.
 
 References
 ----------
 - Barlow et al. (2004). Psychological treatments. Ann. Rev. Clin. Psychol.
   (flooding / exposure therapy as gold standard for phobias and PTSD)
 - Miller & Rollnick (2012). Motivational Interviewing (3rd ed.).
-  (deaddiction: OARS model — Open questions, Affirmation, Reflection, Summary)
+  (OARS model — Open questions, Affirmation, Reflection, Summary;
+   four processes: Engaging, Focusing, Evoking, Planning)
+- Prochaska & DiClemente (1983). Stages and processes of self-change.
+  J. Consult. Clin. Psychol. (Transtheoretical Model)
 - Fisher & Ury (1981). Getting to Yes.
   (principled negotiation: separate people from the problem)
 """
@@ -44,17 +56,53 @@ from tensornets.physio.hrv import gamma_from_state, gamma_to_lambda1
 
 
 class TherapeuticMode(str, enum.Enum):
-    STANDARD     = "standard"
-    FLOODING     = "flooding"
-    DEADDICTION  = "deaddiction"
-    NEGOTIATION  = "negotiation"
+    STANDARD         = "standard"
+    FLOODING         = "flooding"
+    BEHAVIOUR_CHANGE = "behaviour_change"   # general behaviour-change arc (TTM)
+    DEADDICTION      = "deaddiction"        # specialised: secrecy, physio, long-term arc
+    NEGOTIATION      = "negotiation"
 
 
+class ChangeStage(str, enum.Enum):
+    """
+    Stages of the behaviour-change process.
+
+    Aligned with STAGES_OF_CHANGE in behavioral_models.js (Prochaska &
+    DiClemente 1983 Transtheoretical Model) — the single source of truth
+    for stage names across this codebase.
+
+    TTM Stage          → Old deaddiction name  → MCTS cost function
+    ─────────────────────────────────────────────────────────────────
+    Pre-contemplation  → rapport               → minimise stress (build trust)
+    Contemplation      → ambivalence           → hold mild tension (σ ≈ 0.35)
+    Preparation        → insight               → reward controlled challenge
+    Action             → strike                → brief spike allowed, then decay
+    Maintenance        → (no old name)         → sustain low stress
+    """
+    PRECONTEMPLATION = "precontemplation"   # was: rapport
+    CONTEMPLATION    = "contemplation"      # was: ambivalence
+    PREPARATION      = "preparation"        # was: insight
+    ACTION           = "action"             # was: strike
+    MAINTENANCE      = "maintenance"        # sustaining change
+
+
+# Backward-compatible alias — existing code using DeaddictionPhase still works
 class DeaddictionPhase(str, enum.Enum):
-    RAPPORT     = "rapport"      # build trust; no confrontation
-    AMBIVALENCE = "ambivalence"  # surface internal conflict through questions
-    INSIGHT     = "insight"      # confront gently after secrets emerge
-    STRIKE      = "strike"       # direct truth; patient is ready
+    RAPPORT     = ChangeStage.PRECONTEMPLATION.value
+    AMBIVALENCE = ChangeStage.CONTEMPLATION.value
+    INSIGHT     = ChangeStage.PREPARATION.value
+    STRIKE      = ChangeStage.ACTION.value
+
+
+# String-level mapping for code that passes phase names as strings
+DEADDICTION_TO_CHANGESTAGE: dict[str, str] = {
+    "rapport":     ChangeStage.PRECONTEMPLATION.value,
+    "ambivalence": ChangeStage.CONTEMPLATION.value,
+    "insight":     ChangeStage.PREPARATION.value,
+    "strike":      ChangeStage.ACTION.value,
+}
+
+CHANGESTAGE_TO_DEADDICTION: dict[str, str] = {v: k for k, v in DEADDICTION_TO_CHANGESTAGE.items()}
 
 
 # ── MCTS cost function ─────────────────────────────────────────────────────────
@@ -70,31 +118,39 @@ class MCTSConfig:
     Parameters
     ----------
     mode : TherapeuticMode
-    deaddiction_phase : DeaddictionPhase
-        Only used when mode=DEADDICTION.
+    change_stage : ChangeStage
+        The current stage in the behaviour-change process.
+        Only used when mode=BEHAVIOUR_CHANGE.
+    deaddiction_phase : ChangeStage
+        Backward-compatible alias for change_stage.
     flooding_target_stress : float
         Only used when mode=FLOODING.
-        The target peak stress level. Responses that push stress toward
-        this level are rewarded. Responses that avoid it are penalised.
     flooding_recovery_turns : int
-        After the flooding peak, how many turns should recovery take.
-        A shorter expected recovery rewards bolder flooding choices.
     negotiation_target_stress_ceiling : float
-        Only used when mode=NEGOTIATION.
-        Responses that push patient stress above this ceiling are penalised
-        even if they advance the negotiation goal.
     n_lookahead : int
-        MCTS rollout depth. Default 3 turns.
     exploration_c : float
-        UCB1 exploration constant. Higher = more exploration.
     """
-    mode: TherapeuticMode = TherapeuticMode.STANDARD
-    deaddiction_phase: DeaddictionPhase = DeaddictionPhase.RAPPORT
-    flooding_target_stress: float = 0.75
-    flooding_recovery_turns: int = 5
+    mode:                              TherapeuticMode = TherapeuticMode.STANDARD
+    change_stage:                      ChangeStage     = ChangeStage.PRECONTEMPLATION
+    flooding_target_stress:            float = 0.75
+    flooding_recovery_turns:           int   = 5
     negotiation_target_stress_ceiling: float = 0.60
-    n_lookahead: int = 3
-    exploration_c: float = 1.414   # √2 (Kocsis & Szepesvári 2006)
+    n_lookahead:                       int   = 3
+    exploration_c:                     float = 1.414   # √2 (Kocsis & Szepesvári 2006)
+
+    @property
+    def deaddiction_phase(self) -> ChangeStage:
+        """Backward-compatible property — returns change_stage."""
+        return self.change_stage
+
+    @deaddiction_phase.setter
+    def deaddiction_phase(self, value) -> None:
+        if isinstance(value, str):
+            # Accept old string values like "rapport" or new ones like "engaging"
+            mapped = DEADDICTION_TO_CHANGESTAGE.get(value, value)
+            self.change_stage = ChangeStage(mapped)
+        else:
+            self.change_stage = value
 
 
 def compute_turn_cost(
@@ -108,38 +164,38 @@ def compute_turn_cost(
 
     Returns a scalar cost in [0, ∞). MCTS minimises total cost over the path.
 
-    STANDARD   : C = σ_t (minimise stress at every turn)
-    FLOODING   : C = |σ_t - target| at peak turn; C = σ_t thereafter
-                 (penalise both overshooting and undershooting the target)
-    DEADDICTION:
-      RAPPORT     C = 1 - σ_t (minimise stress, maximise calm)
-      AMBIVALENCE C = |σ_t - 0.35| (hold mild tension, not full calm)
-      INSIGHT     C = max(0, 0.65 - σ_t) (reward moderate stress induction)
-      STRIKE      C = σ_t * (1 if t > 0 else 0.5) (allow brief spike, then minimise)
-    NEGOTIATION : C = σ_t if σ_t < ceiling else σ_t * 3 (hard penalty over ceiling)
+    STANDARD         : C = σ_t (minimise stress at every turn)
+    FLOODING         : C = |σ_t - target| at peak turn; C = σ_t thereafter
+    BEHAVIOUR_CHANGE :
+      ENGAGING  C = 1 - σ_t (minimise stress, maximise calm)
+      EVOKING   C = |σ_t - 0.35| (hold mild tension, not full calm)
+      FOCUSING  C = max(0, 0.65 - σ_t) (reward moderate stress induction)
+      PLANNING  C = σ_t * (1 if t > 0 else 0.5) (allow brief spike, then minimise)
+    NEGOTIATION      : C = σ_t if σ_t < ceiling else σ_t * 3
     """
     if mode == TherapeuticMode.STANDARD:
         return stress_t
 
     if mode == TherapeuticMode.FLOODING:
         if turn_index == 0:
-            # First turn: reward hitting the target stress level
             return abs(stress_t - cfg.flooding_target_stress)
         else:
-            # Subsequent turns: we want fast recovery
             return stress_t
 
-    if mode == TherapeuticMode.DEADDICTION:
-        phase = cfg.deaddiction_phase
-        if phase == DeaddictionPhase.RAPPORT:
-            return stress_t                              # minimise stress — build trust
-        if phase == DeaddictionPhase.AMBIVALENCE:
-            return abs(stress_t - 0.35)                  # hold mild productive tension
-        if phase == DeaddictionPhase.INSIGHT:
-            return max(0.0, 0.60 - stress_t)             # reward controlled challenge
-        if phase == DeaddictionPhase.STRIKE:
+    # BEHAVIOUR_CHANGE — general arc (same stage logic as deaddiction)
+    if mode in (TherapeuticMode.BEHAVIOUR_CHANGE, TherapeuticMode.DEADDICTION):
+        stage = cfg.change_stage
+        if stage == ChangeStage.PRECONTEMPLATION:
+            return stress_t
+        if stage == ChangeStage.CONTEMPLATION:
+            return abs(stress_t - 0.35)
+        if stage == ChangeStage.PREPARATION:
+            return max(0.0, 0.60 - stress_t)
+        if stage == ChangeStage.ACTION:
             penalty = 0.5 if turn_index == 0 else 1.0
-            return stress_t * penalty                    # brief spike allowed, then decay
+            return stress_t * penalty
+        if stage == ChangeStage.MAINTENANCE:
+            return stress_t
 
     if mode == TherapeuticMode.NEGOTIATION:
         ceiling = cfg.negotiation_target_stress_ceiling
@@ -161,7 +217,7 @@ def score_candidate(
     Returns a dict with cumulative_cost, amplification, and per-turn breakdown.
     """
     if mode_keywords is None:
-        mode_keywords = ModeKeywords.for_mode(cfg.mode, cfg.deaddiction_phase)
+        mode_keywords = ModeKeywords.for_mode(cfg.mode, cfg.change_stage)
 
     words = set(candidate_text.lower().split())
     stress_count = sum(1 for w in words if w in mode_keywords.stress_words)
@@ -170,17 +226,14 @@ def score_candidate(
 
     # Build amplification factor
     if cfg.mode == TherapeuticMode.FLOODING:
-        # For flooding: challenge keywords LOWER the cost (we WANT stress)
         amp = 1.0 + 0.08 * stress_count - 0.05 * calm_count
-    elif cfg.mode == TherapeuticMode.DEADDICTION:
-        phase = cfg.deaddiction_phase
-        if phase == DeaddictionPhase.RAPPORT:
+    elif cfg.mode in (TherapeuticMode.BEHAVIOUR_CHANGE, TherapeuticMode.DEADDICTION):
+        stage = cfg.change_stage
+        if stage == ChangeStage.PRECONTEMPLATION:
             amp = 1.0 - 0.06 * calm_count + 0.04 * stress_count
-        elif phase == DeaddictionPhase.AMBIVALENCE:
-            # Probe questions are rewarded; direct confrontation is not
+        elif stage == ChangeStage.CONTEMPLATION:
             amp = 1.0 - 0.05 * probe_count + 0.03 * stress_count - 0.03 * calm_count
-        elif phase in (DeaddictionPhase.INSIGHT, DeaddictionPhase.STRIKE):
-            # Confrontation words raise stress (intended)
+        elif stage in (ChangeStage.PREPARATION, ChangeStage.ACTION):
             amp = 1.0 + 0.07 * probe_count + 0.04 * stress_count - 0.02 * calm_count
         else:
             amp = 1.0
@@ -201,18 +254,18 @@ def score_candidate(
         cost = compute_turn_cost(current_stress, cfg.mode, cfg, turn_index=t)
         cumulative_cost += cost
         breakdown.append({
-            "turn":           t + 1,
-            "stress":         round(current_stress, 4),
-            "cost":           round(cost, 4),
+            "turn":  t + 1,
+            "stress": round(current_stress, 4),
+            "cost":   round(cost, 4),
         })
 
     return {
-        "cumulative_cost":  round(cumulative_cost, 5),
-        "amplification":    round(amp, 4),
-        "stress_keywords":  stress_count,
-        "calm_keywords":    calm_count,
-        "probe_keywords":   probe_count,
-        "breakdown":        breakdown,
+        "cumulative_cost": round(cumulative_cost, 5),
+        "amplification":   round(amp, 4),
+        "stress_keywords": stress_count,
+        "calm_keywords":   calm_count,
+        "probe_keywords":  probe_count,
+        "breakdown":       breakdown,
     }
 
 
@@ -227,7 +280,7 @@ class ModeKeywords:
     @staticmethod
     def for_mode(
         mode: TherapeuticMode,
-        phase: DeaddictionPhase = DeaddictionPhase.RAPPORT,
+        stage: ChangeStage = ChangeStage.PRECONTEMPLATION,
     ) -> "ModeKeywords":
 
         BASE_STRESS = frozenset({
@@ -256,8 +309,8 @@ class ModeKeywords:
                 probe_words  = frozenset(),
             )
 
-        if mode == TherapeuticMode.DEADDICTION:
-            if phase == DeaddictionPhase.RAPPORT:
+        if mode in (TherapeuticMode.BEHAVIOUR_CHANGE, TherapeuticMode.DEADDICTION):
+            if stage == ChangeStage.PRECONTEMPLATION:
                 return ModeKeywords(
                     stress_words = frozenset({"judgment", "wrong", "should", "must", "failure"}),
                     calm_words   = BASE_CALM | frozenset({
@@ -266,7 +319,7 @@ class ModeKeywords:
                     }),
                     probe_words  = frozenset(),
                 )
-            if phase == DeaddictionPhase.AMBIVALENCE:
+            if stage == ChangeStage.CONTEMPLATION:
                 return ModeKeywords(
                     stress_words = frozenset({"lose", "damage", "risk", "cost"}),
                     calm_words   = frozenset({"but", "however", "on the other hand"}),
@@ -275,7 +328,7 @@ class ModeKeywords:
                         "on a scale", "your words", "i wonder",
                     }),
                 )
-            if phase in (DeaddictionPhase.INSIGHT, DeaddictionPhase.STRIKE):
+            if stage in (ChangeStage.PREPARATION, ChangeStage.ACTION):
                 return ModeKeywords(
                     stress_words = frozenset({
                         "noticed", "pattern", "happens when", "every time",
@@ -300,17 +353,18 @@ class ModeKeywords:
         return ModeKeywords(BASE_STRESS, BASE_CALM, BASE_PROBE)
 
 
-# ── Phase transition detector ─────────────────────────────────────────────────
+# ── Stage tracker (renamed from DeaddictionPhaseTracker) ─────────────────────
 
 @dataclass
-class DeaddictionPhaseTracker:
+class ChangeStageTracker:
     """
-    Tracks which deaddiction phase to use based on longitudinal session data.
+    Tracks which behaviour-change stage to use based on longitudinal session data.
 
-    Phase transitions are driven by:
-      RAPPORT → AMBIVALENCE : rapport_score >= 0.7 for 3+ sessions
-      AMBIVALENCE → INSIGHT : at least 1 secret_signal detected in recent history
-      INSIGHT → STRIKE      : subject explicitly acknowledges ambivalence (readiness score)
+    Stage transitions are driven by:
+      ENGAGING → EVOKING  : rapport_score >= 0.7 for 3+ sessions
+      EVOKING  → FOCUSING : at least 1 secret_signal detected in recent history
+      FOCUSING → PLANNING : readiness_score >= 0.6 (patient shows willingness)
+      PLANNING → MAINTENANCE : after successful commitment (external signal)
 
     secret_signals — patterns in physiological history that indicate
     hidden information:
@@ -319,11 +373,16 @@ class DeaddictionPhaseTracker:
       - High EDA with low vocal stress (suppression pattern)
     """
     subject_id:       str
-    current_phase:    DeaddictionPhase = DeaddictionPhase.RAPPORT
-    session_count:    int = 0
+    current_stage:    ChangeStage = ChangeStage.PRECONTEMPLATION
+    session_count:    int         = 0
     rapport_scores:   list[float] = field(default_factory=list)
     secret_signals:   list[dict]  = field(default_factory=list)
-    readiness_score:  float = 0.0
+    readiness_score:  float       = 0.0
+
+    @property
+    def current_phase(self) -> ChangeStage:
+        """Backward-compatible alias — returns current_stage."""
+        return self.current_stage
 
     def record_session(
         self,
@@ -331,9 +390,9 @@ class DeaddictionPhaseTracker:
         secret_detected: bool = False,
         readiness: float = 0.0,
         secret_detail: str = "",
-    ) -> DeaddictionPhase:
+    ) -> ChangeStage:
         """
-        Update state after one session. Returns the recommended phase for next session.
+        Update state after one session. Returns the recommended stage for next session.
         """
         self.session_count  += 1
         self.rapport_scores.append(rapport)
@@ -345,33 +404,32 @@ class DeaddictionPhaseTracker:
                 "detail":  secret_detail,
             })
 
-        # Phase transition logic
-        if self.current_phase == DeaddictionPhase.RAPPORT:
-            recent_rapport = self.rapport_scores[-3:] if len(self.rapport_scores) >= 3 else []
-            if len(recent_rapport) >= 3 and min(recent_rapport) >= 0.7:
-                self.current_phase = DeaddictionPhase.AMBIVALENCE
+        # Stage transition logic (mirrors old DeaddictionPhaseTracker)
+        if self.current_stage == ChangeStage.PRECONTEMPLATION:
+            recent = self.rapport_scores[-3:] if len(self.rapport_scores) >= 3 else []
+            if len(recent) >= 3 and min(recent) >= 0.7:
+                self.current_stage = ChangeStage.CONTEMPLATION
 
-        elif self.current_phase == DeaddictionPhase.AMBIVALENCE:
+        elif self.current_stage == ChangeStage.CONTEMPLATION:
             if len(self.secret_signals) >= 1:
-                self.current_phase = DeaddictionPhase.INSIGHT
+                self.current_stage = ChangeStage.PREPARATION
 
-        elif self.current_phase == DeaddictionPhase.INSIGHT:
+        elif self.current_stage == ChangeStage.PREPARATION:
             if self.readiness_score >= 0.6:
-                self.current_phase = DeaddictionPhase.STRIKE
+                self.current_stage = ChangeStage.ACTION
 
-        return self.current_phase
+        return self.current_stage
 
     def detect_secret_signal(self, hrv_topic_map: dict[str, float]) -> list[dict]:
         """
         Detect secret signals from HRV drops associated with specific topics.
 
         hrv_topic_map: {topic_string: hrv_rmssd_ms_when_mentioned}
-        baseline_hrv:  subject's resting HRV
 
         Returns a list of detected secrets: [{topic, hrv_drop_ms, confidence}]
         """
         baseline  = sum(hrv_topic_map.values()) / len(hrv_topic_map) if hrv_topic_map else 35.0
-        threshold = baseline * 0.75   # >25% drop from mean = suspicious
+        threshold = baseline * 0.75
 
         return [
             {
@@ -383,3 +441,7 @@ class DeaddictionPhaseTracker:
             for topic, hrv in hrv_topic_map.items()
             if hrv < threshold
         ]
+
+
+# Backward-compatible alias
+DeaddictionPhaseTracker = ChangeStageTracker

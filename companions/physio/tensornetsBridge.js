@@ -236,7 +236,7 @@ export async function runPhysioSimulation({ subject_id, n_turns = 20, hrv_baseli
  * @param {object}   params.physio_state
  * @param {string[]} params.candidates
  * @param {string}   [params.mode='standard']         — TherapeuticMode value
- * @param {string}   [params.deaddiction_phase='rapport']
+ * @param {string}   [params.deaddiction_phase='precontemplation']
  * @param {number}   [params.flooding_target=0.75]
  * @param {number}   [params.n_lookahead=3]
  * @returns {Promise<object|null>}  — { best, candidates, mode, phase, current_stress }
@@ -246,7 +246,7 @@ export async function scoreCandidatesTherapy({
     physio_state,
     candidates,
     mode = 'standard',
-    deaddiction_phase = 'rapport',
+    deaddiction_phase = 'precontemplation',
     flooding_target = 0.75,
     n_lookahead = 3,
 }) {
@@ -438,7 +438,7 @@ export async function getMCTSAction({
  * @param {object} opts
  * @param {string}  opts.subject_id
  * @param {string}  [opts.therapeutic_mode='standard']
- * @param {string}  [opts.deaddiction_phase='rapport']
+ * @param {string}  [opts.deaddiction_phase='precontemplation']
  * @param {string}  [opts.session_goal='']
  * @returns {Promise<{session_id, recommended_phase, recommended_mode,
  *                    longitudinal_rationale, readiness_score,

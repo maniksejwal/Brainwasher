@@ -83,7 +83,7 @@ class SessionRecord:
     start_time: float
     end_time: Optional[float] = None
     therapeutic_mode: str = "standard"
-    deaddiction_phase: str = "rapport"
+    deaddiction_phase: str = "precontemplation"
     turns: list[TurnRecord] = field(default_factory=list)
     final_stress: float = 0.5
     peak_stress: float = 0.5
@@ -144,7 +144,7 @@ class SubjectPersistentState:
     rupture_count: int = 0
 
     # Therapeutic progress
-    deaddiction_phase: str = "rapport"
+    deaddiction_phase: str = "precontemplation"
     rapport_scores: list = field(default_factory=list)
     readiness_score: float = 0.0
     secrets: list = field(default_factory=list)
@@ -183,7 +183,7 @@ class SessionManager:
         self,
         subject_id: str,
         therapeutic_mode: str = "standard",
-        deaddiction_phase: str = "rapport",
+        deaddiction_phase: str = "precontemplation",
         session_goal: str = "",
     ) -> SessionRecord:
         """

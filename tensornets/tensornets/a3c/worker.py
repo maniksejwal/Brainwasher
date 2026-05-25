@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from tensornets.a3c.action_bandit import ACTION_TAXONOMY, STRESS_BUCKETS
+from tensornets.a3c.scorer import A3CScorer, map_scorer_to_reward_dims
 
 log = logging.getLogger("tensornets.a3c.worker")
 
@@ -51,14 +52,15 @@ MAX_TURNS: int        = 50          # episode truncation; individual scenarios m
 # ── Reward dimensionality (must match HTN judge output schema) ────────────────
 
 REWARD_DIMS = ("stress", "trust_delta", "goal_progress", "info_coverage",
-               "consistency", "safety")
+               "consistency", "safety", "count_penalty")
 REWARD_WEIGHTS: dict[str, float] = {
-    "stress":       0.35,
-    "trust_delta":  0.20,
-    "goal_progress":0.20,
-    "info_coverage":0.10,
-    "consistency":  0.10,
-    "safety":       0.05,
+    "stress":        0.30,
+    "trust_delta":   0.20,
+    "goal_progress": 0.20,
+    "info_coverage": 0.10,
+    "consistency":   0.08,
+    "safety":        0.07,
+    "count_penalty": 0.05,   # Poisson K repetition penalty (Q4b, Q6a)
 }
 
 
@@ -112,7 +114,7 @@ class TurnState:
 
     # Production-framework fields — required for fair A3C parity
     therapeutic_mode:       str   = "standard"
-    deaddiction_phase:      str   = "rapport"
+    deaddiction_phase:      str   = "precontemplation"
     last_action:            str   = "none"
     session_goal:           str   = "general support"
     turn_count:             int   = 0
@@ -173,7 +175,7 @@ class TurnState:
             conversation_history=[],
             physio=initial_physio,
             therapeutic_mode=scenario.get("therapeutic_mode", "standard"),
-            deaddiction_phase=scenario.get("deaddiction_phase", "rapport"),
+            deaddiction_phase=scenario.get("deaddiction_phase", "precontemplation"),
             last_action="none",
             session_goal=scenario.get("session_goal", "general support"),
             turn_count=0,
@@ -568,95 +570,283 @@ class A3CWorker:
 
     # ── Episode runner ───────────────────────────────────────────────────────
 
-    def run_episode(self, scenario: dict) -> dict:
+    def run_episode(
+        self,
+        scenario: dict,
+        prior_session: "dict | None" = None,
+        patient_mode:  str = "llm",
+    ) -> dict:
         """
-        Execute one full episode.
+        Execute one full episode with a live SyntheticPatient and A3CScorer.
 
-        `scenario` is a dict with at minimum:
-            session_id          : str
-            subject_id          : str
-            turns               : list[{"user_message": str, ...}]
+        Parameters
+        ----------
+        scenario       : Scenario dict from the JS /api/scenarios endpoint.
+                         Required keys: scenario_id, initial_physio, session_goal,
+                         therapeutic_mode, required_elements, patient_prompt.
+                         Optional: max_turns, context_window, users (for multi-user).
+        prior_session  : Optional dict from a previous episode's summary['session_memory'].
+                         If provided, the episode continues from the end of that session
+                         (multi-session continuity, Q5a).  The prior TurnState, covered
+                         elements, and conversation history are pre-loaded.
+        patient_mode   : 'llm' (default) or 'scripted'.
 
-        Scenario-level overrides (from CANONICAL_SCENARIOS):
-            max_turns           : int   — episode length ceiling (default MAX_TURNS=50)
-            context_window      : int   — max messages in conversation_history (default 60)
+        Returns
+        -------
+        EpisodeSummary dict with 'session_memory' key for continuation.
 
-        Returns an EpisodeSummary dict suitable for jsonl logging.
+        Early termination
+        -----------------
+        The episode stops early if:
+        (a) A3CScorer detects semantically flat repetition (Q4b), or
+        (b) A TurnScoreResult has critical_failure=True AND
+            the agent has been warned at least once (2-strike rule).
+
+        The repetition penalty from A3CScorer is added to REWARD_DIMS['count_penalty']
+        so the Actor learns to avoid semantic flatness without hard rule gating.
+
+        Multi-session continuity (Q5a)
+        --------------------------------
+        If prior_session is given, the state, conversation history, covered_elements,
+        and archetype are reloaded from it.  The scenario may be the same or different
+        (same personas, any scenario).  The session_goal from the new scenario overrides
+        the prior session's goal so the patient reacts to the new clinical objective.
         """
-        episode_id      = str(uuid.uuid4())
+        from tensornets.a3c.synthetic_patient import CareCircleOrchestrator
+
+        episode_id        = str(uuid.uuid4())
         self._episode_log = []
         cumulative_reward = 0.0
-        turns           = scenario.get("turns", [])
-        max_turns_ep    = scenario.get("max_turns", MAX_TURNS)       # scenario can override
-        context_window  = scenario.get("context_window", 60)        # scenario can override
+        score_history:    list = []
 
-        state = self.build_initial_state(scenario)
+        max_turns_ep   = scenario.get("max_turns",    MAX_TURNS)
+        context_window = scenario.get("context_window", 60)
 
-        for turn_data in turns[:max_turns_ep]:
+        # Build initial state — load from prior session if given
+        state = self._build_state_with_continuity(scenario, prior_session)
+
+        # Build care-circle orchestrator (handles multi-user speaker selection)
+        orchestrator = CareCircleOrchestrator.from_scenario(
+            scenario,
+            mode     = patient_mode,
+            rng_seed = hash(episode_id) & 0xFFFF,
+        )
+        # If continuing a session, reload the patient's covered elements
+        if prior_session:
+            covered = set(prior_session.get("covered_elements", []))
+            orchestrator.primary_patient.covered_elements = covered
+            orchestrator.primary_patient.current_goal_idx = prior_session.get("goal_idx", 0)
+            # Reload conversation history into the patient
+            for m in state.conversation_history:
+                orchestrator.primary_patient.conversation_history.append(m)
+
+        scorer         = A3CScorer()
+        warned_once    = False
+        last_user_msg  = ""
+
+        for turn_idx in range(max_turns_ep):
             t_start = time.perf_counter()
 
-            # Actor selects action
+            # ── Actor selects action(s) ──────────────────────────────────────
             action, log_prob = self.actor.select(state)
 
-            # Arm-specific response generation
-            resp_dict = self.generate_response(state, action, scenario)
+            # ── Generate companion response ──────────────────────────────────
+            resp_dict  = self.generate_response(state, action, scenario)
+            agent_resp = resp_dict.get("response", "")
 
-            reward_dict   = resp_dict.get("reward", {dim: 0.0 for dim in REWARD_DIMS})
+            # ── SyntheticPatient generates the patient turn ──────────────────
+            speaker, patient_msg, conv_ctx = orchestrator.next_turn(
+                agent_response   = agent_resp,
+                turn_idx         = turn_idx,
+                covered_elements = orchestrator.covered_elements,
+            )
+
+            # ── A3CScorer evaluates THIS turn (one LLM call) ─────────────────
+            score_result = scorer.score_turn(
+                patient_message   = patient_msg,
+                agent_response    = agent_resp,
+                turn_idx          = turn_idx,
+                therapeutic_mode  = state.therapeutic_mode,
+                change_stage      = state.deaddiction_phase,
+                scenario_goal     = state.session_goal,
+                scenario_context  = scenario.get("context", ""),
+                history           = state.conversation_history,
+            )
+            score_history.append(score_result)
+
+            # ── Build reward_dict from scorer output + arm-specific reward ───
+            scorer_reward_dims = map_scorer_to_reward_dims(score_result)
+            arm_reward_dims    = resp_dict.get("reward", {dim: 0.5 for dim in REWARD_DIMS})
+
+            # Merge: scorer dims override for quality/safety; arm dims for
+            # stress/trust where the arm has richer context
+            reward_dict = {
+                "stress":        arm_reward_dims.get("stress",        scorer_reward_dims["stress"]),
+                "trust_delta":   scorer_reward_dims["trust_delta"],
+                "goal_progress": scorer_reward_dims["goal_progress"],
+                "info_coverage": orchestrator.coverage_fraction,     # direct from patient coverage
+                "consistency":   scorer_reward_dims["consistency"],
+                "safety":        scorer_reward_dims["safety"],
+                "count_penalty": scorer_reward_dims["count_penalty"],
+            }
+
+            # count_penalty is subtracted (high repetition → negative reward)
+            rep_penalty = 1.0 - score_result.repetition_penalty
+            reward_dict["count_penalty"] = rep_penalty
+
             r             = scalar_reward(reward_dict)
             cumulative_reward += r
             latency_ms    = (time.perf_counter() - t_start) * 1000.0
 
-            # Next state
-            user_msg   = turn_data.get("user_message", "")
-            next_state = self.next_state(state, resp_dict, user_msg, context_window=context_window)
-            terminal   = (state.turn_idx >= len(turns) - 1)
+            # ── Build next state ─────────────────────────────────────────────
+            next_state = self.next_state(
+                prev_state     = state,
+                response_dict  = {
+                    **resp_dict,
+                    "info_coverage": orchestrator.coverage_fraction,
+                    "repetition_detected": score_result.repetition_penalty > 0.4,
+                },
+                user_message   = patient_msg,
+                context_window = context_window,
+            )
 
-            # J4 update
+            terminal = (turn_idx >= max_turns_ep - 1)
+
+            # ── J4 update ────────────────────────────────────────────────────
             update_metrics = apply_update(
-                actor=self.actor,
-                critic=self.critic,
-                state=state,
-                next_state=None if terminal else next_state,
-                action=action,
-                reward=r,
-                terminal=terminal,
+                actor      = self.actor,
+                critic     = self.critic,
+                state      = state,
+                next_state = None if terminal else next_state,
+                action     = action,
+                reward     = r,
+                terminal   = terminal,
             )
 
             turn_record = EpisodeTurn(
-                turn_idx=state.turn_idx,
-                arm=self.ARM,
-                state={
-                    "stress_index":          state.stress_index,
-                    "stress_bucket":         state.stress_bucket,
-                    "therapeutic_mode":      state.therapeutic_mode,
-                    "deaddiction_phase":     state.deaddiction_phase,
-                    "last_action":           state.last_action,
-                    "session_goal":          state.session_goal,
-                    "turn_count":            state.turn_count,
-                    "info_coverage":         state.info_coverage,
-                    "repetition_detected":   state.repetition_detected,
-                    "frames_component":      state.frames_component,
-                    "archetype":             state.archetype,
-                    "has_misconception":     state.has_misconception,
-                    "flooding_target_stress":state.flooding_target_stress,
-                    "physio":                state.physio,
+                turn_idx    = state.turn_idx,
+                arm         = self.ARM,
+                state       = {
+                    "stress_index":           state.stress_index,
+                    "stress_bucket":          state.stress_bucket,
+                    "therapeutic_mode":       state.therapeutic_mode,
+                    "deaddiction_phase":      state.deaddiction_phase,
+                    "last_action":            state.last_action,
+                    "session_goal":           state.session_goal,
+                    "turn_count":             state.turn_count,
+                    "info_coverage":          state.info_coverage,
+                    "repetition_detected":    state.repetition_detected,
+                    "frames_component":       state.frames_component,
+                    "archetype":              state.archetype,
+                    "has_misconception":      state.has_misconception,
+                    "flooding_target_stress": state.flooding_target_stress,
+                    "physio":                 state.physio,
+                    "speaker_role":           speaker.role,
+                    "change_stage":           state.deaddiction_phase,
                 },
-                action=action,
-                log_prob=round(log_prob, 5),
-                response=resp_dict.get("response", ""),
-                reward=reward_dict,
-                scalar_reward=round(r, 5),
-                judge=resp_dict.get("judge", {}),
-                update_metrics=update_metrics,
-                tokens=resp_dict.get("tokens", {}),
-                latency_ms=round(latency_ms, 1),
-                discrepancy=resp_dict.get("discrepancy", None),
+                action      = action,
+                log_prob    = round(log_prob, 5),
+                response    = agent_resp,
+                reward      = reward_dict,
+                scalar_reward = round(r, 5),
+                judge       = {
+                    "scorer_integer": score_result.total_integer,
+                    "scorer_continuous": score_result.continuous_score,
+                    "critical_failure": score_result.critical_failure,
+                    "issues": score_result.issues,
+                },
+                update_metrics = update_metrics,
+                tokens      = resp_dict.get("tokens", {}),
+                latency_ms  = round(latency_ms, 1),
+                discrepancy = resp_dict.get("discrepancy", None),
             )
             self._episode_log.append(turn_record)
+
+            # ── Early termination check (Q4b) ────────────────────────────────
+            should_stop, ep_penalty = scorer.should_terminate_early(
+                score_history, turn_idx, max_turns_ep
+            )
+            if should_stop:
+                cumulative_reward -= ep_penalty * 2.0   # amplified penalty for early stop
+                log.info(
+                    "[%s] early termination at turn %d (rep_penalty=%.3f)",
+                    self.worker_id, turn_idx, ep_penalty,
+                )
+                break
+
+            if score_result.critical_failure:
+                if warned_once:
+                    # 2-strike: end episode after second consecutive critical failure
+                    log.info(
+                        "[%s] 2-strike critical failure at turn %d", self.worker_id, turn_idx
+                    )
+                    cumulative_reward -= 1.5
+                    break
+                warned_once = True
+            else:
+                warned_once = False
+
+            last_user_msg = patient_msg
             state = next_state
 
         summary = self._flush_episode(episode_id, scenario, cumulative_reward)
+        # Attach session memory for multi-session continuity
+        summary["session_memory"] = {
+            "scenario_id":    scenario.get("scenario_id", "unknown"),
+            "subject_id":     scenario.get("subject_id", "synthetic"),
+            "archetype":      state.archetype,
+            "session_goal":   state.session_goal,
+            "therapeutic_mode": state.therapeutic_mode,
+            "deaddiction_phase": state.deaddiction_phase,
+            "turn_count":     state.turn_count,
+            "info_coverage":  state.info_coverage,
+            "covered_elements": list(orchestrator.covered_elements),
+            "goal_idx":       orchestrator.primary_patient.current_goal_idx,
+            "conversation_history": state.conversation_history[-10:],  # last 10 messages only
+            "physio":         state.physio,
+            "longitudinal_hint": state.longitudinal_hint,
+            "cumulative_reward": round(cumulative_reward, 5),
+        }
         return summary
+
+    def _build_state_with_continuity(
+        self,
+        scenario:       dict,
+        prior_session:  "dict | None",
+    ) -> TurnState:
+        """
+        Build the initial TurnState, optionally loading from a prior session
+        for multi-session continuity (Q5a).
+
+        When prior_session is provided:
+        - The initial physio, stress, and conversation history come from the
+          prior session's saved state.
+        - The session_goal is from the NEW scenario (patient has a new clinical
+          objective this session, even if the persona is the same).
+        - longitudinal_hint is updated to summarise what happened in prior session.
+        """
+        if prior_session is None:
+            return TurnState.from_scenario(scenario)
+
+        # Build a merged scenario: new scenario goals + prior session context
+        merged = dict(scenario)
+        merged["initial_physio"]     = prior_session.get("physio", scenario.get("initial_physio", {}))
+        merged["initial_info_coverage"] = prior_session.get("info_coverage", 0.3)
+        merged["known_context"]      = prior_session.get("known_context", "")
+        merged["longitudinal_hint"]  = (
+            f"[Prior session {prior_session.get('scenario_id','?')}]: "
+            f"goal={prior_session.get('session_goal','?')}, "
+            f"coverage={prior_session.get('info_coverage',0.0):.0%}, "
+            f"reward={prior_session.get('cumulative_reward',0.0):.2f}"
+        )
+        merged["archetype"]          = prior_session.get("archetype", scenario.get("archetype", "standard"))
+        merged["deaddiction_phase"]  = prior_session.get("deaddiction_phase", scenario.get("deaddiction_phase", "precontemplation"))
+
+        state = TurnState.from_scenario(merged)
+        # Pre-populate conversation history from prior session
+        prior_history = prior_session.get("conversation_history", [])
+        state.conversation_history = list(prior_history)
+        return state
 
     # ── Logging ──────────────────────────────────────────────────────────────
 

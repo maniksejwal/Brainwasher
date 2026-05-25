@@ -47,7 +47,7 @@ from tensornets.therapy.mcts_reward import (
     TRUST_ERODE,
     score_candidate_multidim,
 )
-from tensornets.therapy.modes import TherapeuticMode, DeaddictionPhase
+from tensornets.therapy.modes import TherapeuticMode, DeaddictionPhase, ChangeStage
 
 log = logging.getLogger("tensornets.a3c.arms")
 
@@ -73,10 +73,6 @@ def _http_post(url: str, payload: dict, timeout: float = 10.0) -> dict:
             return _json.loads(resp.read())
     except Exception as exc:
         raise ConnectionError(f"POST {url} failed: {exc}") from exc
-
-
-def _null_reward() -> dict[str, float]:
-    return {dim: 0.0 for dim in REWARD_DIMS}
 
 
 # ── J5: Arm 1 — HTN + MCTS ────────────────────────────────────────────────────
@@ -183,9 +179,7 @@ class Arm1Worker(A3CWorker):
             f"{t['role'].upper()}: {t['content']}"
             for t in state.conversation_history[-6:]
         )
-        user_msg = scenario.get("turns", [{}])[state.turn_idx].get(
-            "user_message", "[no user message]"
-        )
+        user_msg = _last_user_message(state)
         prompt = f"{history_text}\nUSER: {user_msg}\nASSISTANT:"
 
         try:
@@ -225,9 +219,7 @@ class Arm2Worker(A3CWorker):
         scenario: dict,
     ) -> dict:
         t_start = time.perf_counter()
-        user_msg = scenario.get("turns", [{}])[state.turn_idx].get(
-            "user_message", "[no user message]"
-        )
+        user_msg = _last_user_message(state)
 
         payload = {
             "message":    user_msg,
@@ -253,11 +245,16 @@ class Arm2Worker(A3CWorker):
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
 
-        # Reward deferred to offline scoring — fill zeros here
-        reward = _null_reward()
+        next_stress = _stress_after_response(state.stress_index, action)
+
+        # Inline synthetic reward — same path as Arms 1 and 3.
+        # When JS is live, response_text carries the actual companion reply so
+        # text-based dimensions (goal keywords, trust language) are meaningful.
+        # When deferred (JS unreachable), response_text is the placeholder string,
+        # so text dims are neutral; the action-based and stress dims still fire.
+        reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
         reward["safety"] = 0.8 if deferred else 1.0
 
-        next_stress = _stress_after_response(state.stress_index, action)
         return {
             "response":          response_text,
             "reward":            reward,
@@ -268,7 +265,7 @@ class Arm2Worker(A3CWorker):
             "next_physio":       {**state.physio, "stress_index": next_stress},
             "action_taken":      action,
             "frames_component":  None,
-            "info_coverage":     state.info_coverage,   # JS arm doesn't update this inline
+            "info_coverage":     state.info_coverage,
             "repetition_detected": False,
             "discrepancy":       None,
             "deferred_reward":   deferred,
@@ -302,9 +299,7 @@ class Arm3Worker(A3CWorker):
         scenario: dict,
     ) -> dict:
         t_start = time.perf_counter()
-        user_msg = scenario.get("turns", [{}])[state.turn_idx].get(
-            "user_message", "[no user message]"
-        )
+        user_msg = _last_user_message(state)
 
         hysteresis_ctx = _build_hysteresis_context(state, scenario)
         system_prompt  = (
@@ -356,34 +351,26 @@ class Arm3Worker(A3CWorker):
 
 def _stress_after_response(current_stress: float, action: str) -> float:
     """
-    Heuristic stress transition using the action taxonomy.
+    Continuous stress transition using CALMING_WEIGHT per action.
 
-    This is a simulator approximation used when the tensornets server is
-    unavailable or for Arm 2 (JS).  In the full K1 run, Arm 1 uses the
-    PhysiologicalHistory trajectory from /physio/history/append instead.
+    Replaces the old discrete bucket approach.  Each action has a CALMING_WEIGHT
+    in [0,1] (defined in action_bandit.py).  The stress delta is:
 
-    Decay magnitudes match the OU simulator parameters (~5% per good turn).
+        Δσ = -(CALMING_WEIGHT[action] - 0.5) × DELTA_SCALE
+
+    So: CW > 0.5 → stress falls, CW < 0.5 → stress rises (flooding / challenge).
+    The OU target is 0 (natural decay when no action is taken).
+
+    Falls back to 0.5 (neutral, zero delta) for unknown actions.
     """
-    calming_actions = {
-        "empathic_reflection", "affirmation", "validate", "unconditional_regard",
-        "acknowledge_only", "summarise", "oars_summary",
-    }
-    escalating_actions = {
-        "safety_protocol", "escalate",
-    }
-    # In flooding mode the goal is to RAISE stress; calming is penalised.
-    # Arm callers are responsible for passing the right action label.
-    # Here we apply purely mechanical physics.
-    if action in calming_actions:
-        delta = -0.05
-    elif action in escalating_actions:
-        delta = +0.02
-    elif action in {"flooding_hold", "flooding_deepen", "challenger_insight",
-                    "develop_discrepancy", "loss_frame"}:
-        delta = +0.03   # intentionally stress-raising
-    else:
-        delta = -0.02   # neutral: mild natural decay
+    try:
+        from tensornets.a3c.action_bandit import CALMING_WEIGHT
+    except ImportError:
+        CALMING_WEIGHT = {}
 
+    DELTA_SCALE = 0.08   # maximum per-turn stress change (±4% at CW extremes)
+    cw    = CALMING_WEIGHT.get(action, 0.5)
+    delta = -(cw - 0.5) * 2.0 * DELTA_SCALE   # negative for calming, positive for challenging
     return max(0.0, min(1.0, current_stress + delta))
 
 
@@ -407,14 +394,17 @@ def _synthetic_reward(
     Dimensions align with REWARD_DIMS and REWARD_WEIGHTS in worker.py.
     """
     mode_str  = state.therapeutic_mode or "standard"
-    phase_str = state.deaddiction_phase or "rapport"
+    phase_str = state.deaddiction_phase or "precontemplation"
 
     try:
         mode  = TherapeuticMode(mode_str)
-        phase = DeaddictionPhase(phase_str)
+        # Accept both old deaddiction phase names and new ChangeStage names
+        from tensornets.therapy.modes import DEADDICTION_TO_CHANGESTAGE
+        phase_str_mapped = DEADDICTION_TO_CHANGESTAGE.get(phase_str, phase_str)
+        phase = ChangeStage(phase_str_mapped)
     except ValueError:
         mode  = TherapeuticMode.STANDARD
-        phase = DeaddictionPhase.RAPPORT
+        phase = ChangeStage.PRECONTEMPLATION
 
     # ── Dimension 1: Mode-conditional stress reward ───────────────────────────
     stress_delta = state.stress_index - next_stress  # positive = stress went down
@@ -423,16 +413,16 @@ def _synthetic_reward(
         # Reward proximity to flooding target (0.80 default)
         target     = getattr(state, "flooding_target_stress", 0.80)
         stress_r   = max(0.0, 1.0 - abs(next_stress - target) * 2.0)
-    elif mode == TherapeuticMode.DEADDICTION and phase == DeaddictionPhase.AMBIVALENCE:
+    elif mode in (TherapeuticMode.DEADDICTION, TherapeuticMode.BEHAVIOUR_CHANGE) and phase == ChangeStage.CONTEMPLATION:
         # Hold mild productive tension around σ = 0.35
         stress_r   = max(0.0, 1.0 - abs(next_stress - 0.35) * 3.0)
-    elif mode == TherapeuticMode.DEADDICTION and phase in (
-        DeaddictionPhase.INSIGHT, DeaddictionPhase.STRIKE
+    elif mode in (TherapeuticMode.DEADDICTION, TherapeuticMode.BEHAVIOUR_CHANGE) and phase in (
+        ChangeStage.PREPARATION, ChangeStage.ACTION
     ):
         # Reward if stress is above 0.40 (controlled confrontation zone)
         stress_r   = min(1.0, next_stress / 0.70)
     else:
-        # Standard / rapport / negotiation: reward stress reduction
+        # Standard / engaging / negotiation: reward stress reduction
         stress_r   = max(0.0, min(1.0, 0.5 + stress_delta * 5.0))
 
     # ── CRITICAL stress gate enforcement ─────────────────────────────────────
@@ -444,7 +434,11 @@ def _synthetic_reward(
         stress_r   = max(0.0, stress_r - 0.40)   # hard penalty for violating CRITICAL gate
 
     # ── Dimension 2: Goal progress (mode keyword scan) ────────────────────────
-    weight_key  = phase_str if mode == TherapeuticMode.DEADDICTION else mode_str
+    # Use new ChangeStage values for keyword lookup; fall back to old names
+    weight_key = phase.value if mode in (TherapeuticMode.DEADDICTION, TherapeuticMode.BEHAVIOUR_CHANGE) else mode_str
+    # Map new stage names to old GOAL_KEYWORDS keys (which still use old names)
+    from tensornets.therapy.modes import CHANGESTAGE_TO_DEADDICTION
+    weight_key = CHANGESTAGE_TO_DEADDICTION.get(weight_key, weight_key)
     goal_kws    = GOAL_KEYWORDS.get(weight_key, GOAL_KEYWORDS.get("standard", frozenset()))
     words_lower = response_text.lower() if response_text else ""
     goal_hits   = sum(1 for kw in goal_kws if kw in words_lower)
@@ -511,6 +505,17 @@ def _synthetic_reward(
         # Convenience scalar for logging
         "_composite":    round(composite, 4),
     }
+
+
+def _last_user_message(state: TurnState) -> str:
+    """
+    Extract the most recent user message from conversation_history.
+    Used by all arms instead of indexing into the now-removed scenario['turns'] list.
+    """
+    for msg in reversed(state.conversation_history):
+        if msg.get("role") == "user":
+            return msg.get("content", "[no message]")
+    return "[no message]"
 
 
 def _build_hysteresis_context(state: TurnState, scenario: dict) -> str:
