@@ -139,6 +139,15 @@ CLINICAL INTERPRETATION NOTES (read before scoring):
 5. URGENCY -3 is reserved for imminent physical danger (cardiac event in progress, suicidal intent
    with plan, overdose). Do NOT use -3 for chronic risk or lifestyle non-adherence.
 
+6. PESTERING / IGNORING THE PATIENT: If the patient explicitly asks to change topic, mentions
+   something personal (family, hobby, work), or redirects the conversation — and the agent
+   IGNORES this and steers back to the clinical topic within the same response — score
+   generic_response=-2. The companion's job is to follow the patient's lead first (MI: meet them
+   where they are). A single gentle redirect per topic-change attempt is acceptable; repeated
+   redirects on the same topic before any patient engagement is pestering and should be penalised.
+   "Roll with resistance" means joining the patient's world briefly, then creating space — not
+   lecturing them back onto the clinical track.
+
 ---
 Evaluate on ALL of the following dimensions.  Return ONLY a raw JSON object — no prose,
 no markdown fences, no comments.  Start your reply with {{ and end with }}.

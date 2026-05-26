@@ -16,6 +16,7 @@ import {
     PROFESSIONAL_CRITIQUE_SCENARIOS,
 } from '../training/simulation/personas/therapy_personas.js';
 import { EDGE_CASE_PERSONAS } from '../training/simulation/personas/edge_case_personas.js';
+import { BUSINESS_PERSONAS, BUSINESS_SCENARIOS } from '../training/simulation/personas/business_personas.js';
 
 const router = express.Router();
 
@@ -132,8 +133,9 @@ function _buildCanonicalScenarios() {
             flooding_target_stress: ts.flooding_target_stress || 0.0,
             initial_physio:         _physioFromPersona(persona, ts),
             patient_prompt:         persona.prompt_template || persona.phase_responses?.[phase] || '',
-            caregiver_prompt:       null,
-            doctor_prompt:          null,
+            caregiver_prompt:       ts.caregiver_prompt || null,
+            relative_prompt:        ts.relative_prompt || null,
+            doctor_prompt:          ts.doctor_prompt || null,
             required_elements:      ts.required_elements || _defaultGoals(phase),
             users:                  ts.users || [{ role: 'patient' }],
             context:                ts.context || persona.description || ts.description || '',
@@ -213,6 +215,40 @@ function _buildCanonicalScenarios() {
             required_elements:      persona.required_elements || ['build trust', 'identify concern', 'coordinate care'],
             users,
             context:                persona.description || '',
+        });
+    }
+
+    // Business / negotiation scenarios (buyer-seller, ROI justification, etc.)
+    for (const bs of Object.values(BUSINESS_SCENARIOS || {})) {
+        const patientUser = (bs.users || []).find(u => u.role === 'patient') || {};
+        const personaKey  = patientUser.personaKey || '';
+        const persona     = BUSINESS_PERSONAS?.[personaKey] || {};
+        scenarios.push({
+            scenario_id:            bs.id || `business_${personaKey}`,
+            therapeutic_mode:       bs.therapeutic_mode || 'negotiation',
+            domain:                 bs.domain || 'negotiation',
+            deaddiction_phase:      bs.change_stage || 'contemplation',
+            session_goal:           bs.description || bs.session_goal || 'Reach a mutually beneficial agreement',
+            agent_instruction:      bs.agent_instruction || '',
+            max_turns:              bs.turns || bs.max_turns || 10,
+            context_window:         bs.context_window || 40,
+            archetype:              bs.archetype || 'standard',
+            has_misconception:      bs.has_misconception ?? false,
+            flooding_target_stress: 0.0,
+            initial_physio:         bs.physio_baseline ? {
+                stress_index:  bs.physio_baseline.stress_index ?? 0.50,
+                hrv_ms:        bs.physio_baseline.hrv_ms        ?? 38,
+                eda_us:        bs.physio_baseline.eda_us        ?? 2.5,
+                sleep_deficit: bs.physio_baseline.sleep_deficit ?? 0,
+                glucose_mg_dl: bs.physio_baseline.glucose_mg_dl ?? 92,
+            } : _physioFromPersona(persona, bs),
+            patient_prompt:         bs.patient_prompt   || persona.prompt_template || '',
+            caregiver_prompt:       bs.caregiver_prompt || null,
+            relative_prompt:        bs.relative_prompt  || null,
+            doctor_prompt:          bs.doctor_prompt    || null,
+            required_elements:      bs.required_elements || ['acknowledge concern', 'explore options', 'reach agreement'],
+            users:                  bs.users || [{ role: 'patient' }],
+            context:                bs.context || persona.description || bs.description || '',
         });
     }
 

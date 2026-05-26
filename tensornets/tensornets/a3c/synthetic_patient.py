@@ -434,8 +434,25 @@ class CareCircleOrchestrator:
         participants = []
         for u in users:
             role           = u.get("role", "patient")
-            prompt_key     = f"{_normalise_role(role)}_prompt"
-            persona_prompt = scenario.get(prompt_key, scenario.get("patient_prompt", ""))
+            norm_role      = _normalise_role(role)
+            prompt_key     = f"{norm_role}_prompt"
+            persona_prompt = scenario.get(prompt_key)
+            if not persona_prompt:
+                # Fall back to patient_prompt only for actual patient roles.
+                # For caregiver/relative/doctor, log a warning — they need their own prompt.
+                if norm_role == "patient":
+                    persona_prompt = scenario.get("patient_prompt", "")
+                else:
+                    import logging as _log
+                    _log.getLogger(__name__).warning(
+                        "Scenario '%s' has no '%s' — role will have no persona. "
+                        "Add a '%s' key to the scenario definition.",
+                        scenario.get("scenario_id", "?"), prompt_key, prompt_key,
+                    )
+                    persona_prompt = (
+                        f"You are a {role} in this care circle. "
+                        f"Respond naturally in character based on the scenario context."
+                    )
             change_stage   = scenario.get("deaddiction_phase", "precontemplation")
             # Map old deaddiction_phase names to TTM names
             change_stage   = _MAP_PHASE_TO_TTM.get(change_stage, change_stage)

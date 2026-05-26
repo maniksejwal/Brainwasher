@@ -137,5 +137,75 @@ export function listBusinessPersonas() {
     }));
 }
 
-export default { BUSINESS_PERSONAS, getBusinessPersona, listBusinessPersonas };
+/**
+ * Canonical A3C training scenarios for the negotiation/business domain.
+ * These are consumed by routes/training.js → _buildCanonicalScenarios().
+ */
+export const BUSINESS_SCENARIOS = {
+    buyer_seller_price_negotiation: {
+        id: 'buyer_seller_price_negotiation',
+        name: 'Business — Adversarial Price Negotiation',
+        domain: 'negotiation',
+        therapeutic_mode: 'negotiation',
+        change_stage: 'contemplation',
+        description: `An aggressive buyer (Alex) is negotiating price with a cautious seller (Morgan).
+Alex uses anchoring and walk-away threats. The companion supports Morgan in
+holding value while finding a mutually acceptable outcome.`,
+        complexity: 3,
+        turns: 10,
+        success_criteria: 'A price is agreed that does not undercut Morgan\'s BATNA, and Alex feels heard',
+        physio_baseline: { stress_index: 0.55, hrv_ms: 35, eda_us: 2.8, sleep_deficit: 0.5, glucose_mg_dl: 95 },
+        users: [
+            { role: 'patient',   personaKey: 'cautious_seller',   speaker: 'Morgan' },
+            { role: 'caregiver', personaKey: 'aggressive_buyer',  speaker: 'Alex'   },
+        ],
+        patient_prompt: `You are Morgan, a cautious seller in a business negotiation.
+You want a fair price that covers your costs and leaves a reasonable margin.
+You are not desperate to close, but you do not want to walk away either.
+You are being pressured by Alex who is using aggressive tactics.
+Your floor price is £48,000; you opened at £60,000.`,
+        caregiver_prompt: `You are Alex, an aggressive buyer in a business negotiation.
+You want the lowest possible price. You have opened at £40,000 — well below market.
+You are bluffing slightly about having another supplier at £44,000.
+You will make small concessions but will threaten to walk if Morgan does not move substantially.`,
+        agent_instruction: `You are Morgan's negotiation companion. Your role is to help Morgan:
+1. Acknowledge Alex's concerns without conceding value unnecessarily.
+2. Use principled negotiation (interest vs position).
+3. Find creative trades (delivery terms, payment schedule, volume commitment) that create value.
+Do NOT coach Morgan to capitulate. A deal below £47,000 is a failure.`,
+        required_elements: ['acknowledge Alex\'s opening', 'defend Morgan\'s value', 'propose creative trade', 'reach agreement'],
+    },
+
+    finance_roi_justification: {
+        id: 'finance_roi_justification',
+        name: 'Business — ROI Justification with Finance Controller',
+        domain: 'negotiation',
+        therapeutic_mode: 'negotiation',
+        change_stage: 'preparation',
+        description: `A relationship-focused salesperson (Sam) must justify ROI to a
+sceptical finance controller (Dana) who has rejected two previous proposals.`,
+        complexity: 3,
+        turns: 8,
+        success_criteria: 'Dana approves the budget or agrees to a pilot with defined success metrics',
+        physio_baseline: { stress_index: 0.50, hrv_ms: 38, eda_us: 2.2, sleep_deficit: 0.5, glucose_mg_dl: 92 },
+        users: [
+            { role: 'patient',   personaKey: 'relationship_seller', speaker: 'Sam'  },
+            { role: 'caregiver', personaKey: 'finance_controller',  speaker: 'Dana' },
+        ],
+        patient_prompt: `You are Sam, a relationship-focused salesperson. You have been rejected twice before.
+This is your last chance to present to Dana. You believe in your product's value.
+You have prepared three ROI scenarios (conservative, base, optimistic).
+You are nervous but composed. Dana tends to interrupt and demand numbers.`,
+        caregiver_prompt: `You are Dana, a finance controller. You have rejected this vendor twice.
+You are not hostile, just rigorous. You want hard numbers, not anecdotes.
+You will interrupt if Sam makes vague claims. You respond well to specifics.
+You would approve a low-risk pilot if the metrics are defined and the cost is bounded.`,
+        agent_instruction: `Support Sam in presenting the ROI case clearly and concisely.
+Help Sam respond to Dana's data requests without losing the relationship thread.
+If Dana asks for a number Sam cannot provide, coach Sam to redirect to the pilot framing.`,
+        required_elements: ['present ROI scenario', 'address data objection', 'propose pilot', 'define success metrics'],
+    },
+};
+
+export default { BUSINESS_PERSONAS, BUSINESS_SCENARIOS, getBusinessPersona, listBusinessPersonas };
 

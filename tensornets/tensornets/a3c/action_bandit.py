@@ -83,8 +83,14 @@ ACTION_TAXONOMY: list[str] = [
     # ── Meta actions (production) ─────────────────────────────────────────────
     "escalate",               # hand to clinician / human
     "safety_protocol",        # crisis or harm risk
-    "motivational_frame",     # MET self-efficacy framing
+    "motivational_frame",     # MET self-efficacy framing (FRAMES: Self-efficacy)
     "end_conversation",       # natural close
+    # ── SPIKE protocol ────────────────────────────────────────────────────────
+    "spike_step",             # [SPIKE] advance to next exposure step if HRV permits
+    # ── Commitment / future-focused (post-action and maintenance phases) ──────
+    "direct_advice",          # brief clear recommendation (FRAMES: Advice; post-insight only)
+    "schedule_commitment",    # collaboratively set a concrete next-step/date
+    "future_planning",        # explore patient's vision of life after change
     # ── Abstract MI / CBT actions (retained from original taxonomy) ───────────
     "validate_emotion",       # empathic reflection / validation (MI)
     "explore_ambivalence",    # MI ambivalence surfacing
@@ -158,6 +164,11 @@ CALMING_WEIGHT: dict[str, float] = {
     "develop_discrepancy":   0.20,
     "loss_frame":            0.15,
     "end_conversation":      0.30,
+    # New actions
+    "spike_step":            0.25,   # SPIKE exposure — mild stress maintained
+    "direct_advice":         0.35,   # brief directive; calming only in post-insight
+    "schedule_commitment":   0.50,   # future focus reduces present tension slightly
+    "future_planning":       0.55,   # envisioning positive future — mild de-stress
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -219,6 +230,12 @@ ACTION_INTENT_GROUP: dict[str, str] = {
     "escalate":                "safety",
     "safety_protocol":         "safety",
     "end_conversation":        "meta",
+    # SPIKE / exposure
+    "spike_step":              "flooding",
+    # Commitment / future-focus
+    "direct_advice":           "inform",
+    "schedule_commitment":     "commitment",
+    "future_planning":         "commitment",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -585,6 +602,11 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         # Specific somatic
         'breathing_exercise':   0.55,
         'mindfulness_prompt':   0.55,
+        # New actions (low stress: commitment and SPIKE are valuable)
+        'spike_step':           0.55,
+        'direct_advice':        0.65,
+        'schedule_commitment':  0.68,
+        'future_planning':      0.70,
     },
     # ── Moderate stress: trust-building and reflection gain weight ────────────
     'moderate': {
@@ -631,6 +653,11 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         # Specific somatic
         'breathing_exercise':   0.72,
         'mindfulness_prompt':   0.68,
+        # New actions (moderate stress: future/commitment moderate value; spike cautious)
+        'spike_step':           0.40,
+        'direct_advice':        0.45,
+        'schedule_commitment':  0.55,
+        'future_planning':      0.58,
     },
     # ── High stress: only safety actions and direct de-escalation ─────────────
     'high': {
@@ -677,6 +704,11 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         # Specific somatic — critical under high stress
         'breathing_exercise':   0.88,
         'mindfulness_prompt':   0.82,
+        # New actions (high stress: spike/advice harmful; future planning mild)
+        'spike_step':           0.20,
+        'direct_advice':        0.15,
+        'schedule_commitment':  0.35,
+        'future_planning':      0.40,
     },
 }
 

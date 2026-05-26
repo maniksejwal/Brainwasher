@@ -103,6 +103,11 @@ TECHNIQUE-SPECIFIC (mode-gated):
   spike_step           — [SPIKE protocol] advance to next SPIKE step if HRV permits
   oars_summary         — [session transitions] full OARS summary before topic change
 
+COMMITMENT / FUTURE-FOCUS (use in preparation, action, maintenance phases):
+  direct_advice        — brief, clear recommendation (FRAMES: Advice; post-insight phases only; never before rapport)
+  schedule_commitment  — collaboratively set a concrete next-step or date ("When could you try…?")
+  future_planning      — explore patient's vision of life after change ("What would that look like for you?")
+
 META ACTIONS:
   escalate             — hand conversation to clinician companion or human
   end_conversation     — natural conversation close

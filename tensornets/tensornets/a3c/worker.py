@@ -64,6 +64,71 @@ REWARD_WEIGHTS: dict[str, float] = {
 }
 
 
+def physio_reward_modifier(physio: dict, prev_physio: dict | None = None) -> float:
+    """
+    Continuous modifier in [-0.15, +0.15] derived from raw physiological signals.
+
+    This is applied multiplicatively on top of scalar_reward() so it cannot
+    dominate the signal — it shapes the gradient without overwhelming it.
+
+    Signals used:
+      hrv_ms         — HRV RMSSD.  Trend (vs prev_physio) is more informative than absolute.
+                       Rising HRV during an exchange = positive physiological engagement.
+      eda_us         — EDA/skin conductance. Sudden spike (>1.5× prev) = acute arousal.
+                       Penalise: companion may have triggered distress.
+      sleep_deficit  — Hours of sleep lost. > 1.5h deficit = lower tolerance; cap reward.
+      glucose_mg_dl  — Blood glucose proxy for energy/cognitive load.
+                       Very low (<70) or very high (>140) = physiological stress penalty.
+      circadian      — Time-of-day receptivity [0,1] from synthetic_patient physio block.
+                       Low circadian (night/early morning) = patient less receptive.
+
+    Args:
+        physio:      Current turn physio snapshot (from TurnState.physio).
+        prev_physio: Previous turn physio snapshot for trend computation.
+
+    Returns:
+        Scalar modifier ∈ [-0.15, +0.15].
+    """
+    mod = 0.0
+
+    hrv      = physio.get("hrv_ms",        40.0)
+    eda      = physio.get("eda_us",         2.0)
+    sleep_d  = physio.get("sleep_deficit",  0.0)
+    glucose  = physio.get("glucose_mg_dl", 90.0)
+    circad   = physio.get("circadian",      0.7)   # 0=worst, 1=peak receptivity
+
+    # ── HRV trend ────────────────────────────────────────────────────────────
+    if prev_physio is not None:
+        prev_hrv = prev_physio.get("hrv_ms", hrv)
+        hrv_delta = hrv - prev_hrv
+        # Normalise: ±10ms change → ±0.05 modifier
+        mod += max(-0.05, min(0.05, hrv_delta / 200.0))
+
+    # ── EDA spike (acute arousal) ─────────────────────────────────────────────
+    if prev_physio is not None:
+        prev_eda = prev_physio.get("eda_us", eda)
+        if prev_eda > 0 and eda / prev_eda > 1.5:
+            mod -= 0.05   # sudden arousal spike — companion may have pushed too hard
+
+    # ── Sleep deficit ─────────────────────────────────────────────────────────
+    # > 1.5h deficit: −0.03; > 3h deficit: −0.06 (cumulative fatigue gate)
+    if sleep_d > 3.0:
+        mod -= 0.06
+    elif sleep_d > 1.5:
+        mod -= 0.03
+
+    # ── Glucose extremes ──────────────────────────────────────────────────────
+    if glucose < 70 or glucose > 140:
+        mod -= 0.04   # physiological stress from dysglycaemia
+
+    # ── Circadian receptivity ─────────────────────────────────────────────────
+    # Low receptivity (circadian < 0.4) caps positive reward
+    if circad < 0.4:
+        mod -= 0.03
+
+    return max(-0.15, min(0.15, mod))
+
+
 def scalar_reward(reward_dict: dict[str, float]) -> float:
     """Aggregate multi-dimensional reward into a scalar for A3C updates."""
     return sum(REWARD_WEIGHTS.get(k, 0.0) * v for k, v in reward_dict.items())
@@ -258,29 +323,40 @@ class Actor:
 
     # ── Policy distribution ──────────────────────────────────────────────────
 
-    def action_distribution(self, bucket: str) -> dict[str, float]:
-        """Softmax over log-biases for the given stress bucket."""
-        biases = self.log_biases.get(bucket, {a: 0.0 for a in ACTION_TAXONOMY})
+    def _bucket_key(self, bucket: str, mode: str = "standard") -> str:
+        """
+        Return the compound lookup key "{mode}_{bucket}" if it exists, else plain "{bucket}".
+        This allows mode-specific policies to develop over training while remaining
+        backward-compatible with checkpoints that only have plain bucket keys.
+        """
+        compound = f"{mode}_{bucket}"
+        return compound if compound in self.log_biases else bucket
+
+    def action_distribution(self, bucket: str, mode: str = "standard") -> dict[str, float]:
+        """Softmax over log-biases for the given stress bucket and therapeutic mode."""
+        key = self._bucket_key(bucket, mode)
+        biases = self.log_biases.get(key, {a: 0.0 for a in ACTION_TAXONOMY})
         max_b = max(biases.values(), default=0.0)
         exp_b = {a: math.exp(b - max_b) for a, b in biases.items()}
         total = sum(exp_b.values()) or 1.0
         return {a: v / total for a, v in exp_b.items()}
 
-    def entropy(self, bucket: str) -> float:
+    def entropy(self, bucket: str, mode: str = "standard") -> float:
         """Shannon entropy of the action distribution (nats)."""
-        dist = self.action_distribution(bucket)
+        dist = self.action_distribution(bucket, mode)
         return -sum(p * math.log(p + 1e-12) for p in dist.values())
 
     def select(self, state: TurnState) -> tuple[str, float]:
         """
-        Sample an action from the policy.
+        Sample an action from the policy, conditioned on both stress bucket and
+        therapeutic mode so that different clinical contexts develop distinct policies.
 
         Returns
         -------
         (action_name, log_prob)
         """
         import random
-        dist = self.action_distribution(state.stress_bucket)
+        dist = self.action_distribution(state.stress_bucket, state.therapeutic_mode)
         actions = list(dist.keys())
         weights = list(dist.values())
         chosen = random.choices(actions, weights=weights, k=1)[0]
@@ -289,19 +365,30 @@ class Actor:
 
     # ── Weight update (J4 calls this) ────────────────────────────────────────
 
-    def update(self, bucket: str, action: str, advantage: float) -> None:
+    def update(self, bucket: str, action: str, advantage: float,
+               mode: str = "standard") -> None:
         """
         Policy-gradient update for one (bucket, action, advantage) triple.
 
         Δ log_bias = α · advantage · (1 − π(a|s))
         The (1 − π) term is the policy-gradient baseline correction that
         prevents the weight from growing unboundedly for already-likely actions.
+
+        The update is applied to the compound "{mode}_{bucket}" key, creating
+        mode-specific log-bias tables that share the plain-bucket fallback for
+        unseen modes.
         """
-        dist = self.action_distribution(bucket)
+        key = self._bucket_key(bucket, mode)
+        # Lazily initialise compound key from plain bucket defaults
+        if key not in self.log_biases:
+            base = self.log_biases.get(bucket, {a: 0.0 for a in ACTION_TAXONOMY})
+            self.log_biases[key] = dict(base)
+
+        dist = self.action_distribution(bucket, mode)
         pi_a = dist.get(action, 1.0 / len(ACTION_TAXONOMY))
         delta = ALPHA_LR * advantage * (1.0 - pi_a)
-        if action in self.log_biases.get(bucket, {}):
-            self.log_biases[bucket][action] += delta
+        if action in self.log_biases[key]:
+            self.log_biases[key][action] += delta
 
     # ── Persistence ──────────────────────────────────────────────────────────
 
@@ -336,11 +423,24 @@ class Critic:
     """
 
     FEATURE_NAMES = ("stress_index", "turn_progress", "history_len_norm",
-                     "info_coverage", "repetition", "bias")
+                     "info_coverage", "repetition", "mode_idx", "bias")
+
+    # Ordered list of all known modes — index is the feature value
+    _MODE_ORDER = ["standard", "flooding", "deaddiction", "behaviour_change",
+                   "negotiation", "mental_health", "professional_critique"]
 
     def __init__(self, weights: list[float] | None = None) -> None:
         n = len(self.FEATURE_NAMES)
         self.weights: list[float] = weights if weights is not None else [0.0] * n
+
+    @classmethod
+    def _mode_idx(cls, mode: str) -> float:
+        """Normalised mode index ∈ [0, 1] for use as a feature."""
+        try:
+            idx = cls._MODE_ORDER.index(mode)
+        except ValueError:
+            idx = 0
+        return idx / max(len(cls._MODE_ORDER) - 1, 1)
 
     @staticmethod
     def _features(state: TurnState, max_turns: int = MAX_TURNS) -> list[float]:
@@ -350,6 +450,7 @@ class Critic:
             min(len(state.conversation_history), 20) / 20.0,
             state.info_coverage,
             1.0 if state.repetition_detected else 0.0,
+            Critic._mode_idx(state.therapeutic_mode),
             1.0,                   # bias term
         ]
 
@@ -377,7 +478,13 @@ class Critic:
     @classmethod
     def load(cls, path: str | Path) -> "Critic":
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        return cls(weights=data["weights"])
+        weights = data["weights"]
+        expected = len(cls.FEATURE_NAMES)
+        # Backward compat: old checkpoints have 6 weights; new has 7 (mode_idx added).
+        # Pad with 0.0 for the new mode_idx weight (inserted at index 5, before bias).
+        if len(weights) == expected - 1:
+            weights = weights[:-1] + [0.0] + [weights[-1]]
+        return cls(weights=weights)
 
 
 # ── J4: Advantage and update orchestration ────────────────────────────────────
@@ -424,9 +531,10 @@ def apply_update(
     v_s     = critic.estimate(state)
     v_next  = 0.0 if (terminal or next_state is None) else critic.estimate(next_state)
     adv     = compute_advantage(reward, v_s, v_next)
-    entropy = actor.entropy(state.stress_bucket)
+    entropy = actor.entropy(state.stress_bucket, state.therapeutic_mode)
 
-    actor.update(state.stress_bucket, action, adv + ENTROPY_COEF * entropy)
+    actor.update(state.stress_bucket, action, adv + ENTROPY_COEF * entropy,
+                 mode=state.therapeutic_mode)
     td_error = critic.update(state, reward + GAMMA_DISCOUNT * v_next)
 
     return {
@@ -702,6 +810,8 @@ class A3CWorker:
         scorer         = A3CScorer()
         warned_once    = False
         last_user_msg  = ""
+        redirect_streak = 0   # consecutive turns companion redirected despite patient avoidance
+        prev_physio: dict | None = None   # for HRV trend and EDA spike detection
         # LLM scorer is called on even turns (0, 2, 4 …) and skipped on odd turns.
         # Odd turns use the most-recent LLM result plus a lightweight heuristic
         # adjustment so the reward signal is still turn-level granular.
@@ -754,6 +864,57 @@ class A3CWorker:
             scorer_reward_dims = map_scorer_to_reward_dims(score_result)
             arm_reward_dims    = resp_dict.get("reward", {dim: 0.5 for dim in REWARD_DIMS})
 
+            # ── Pestering penalty & rapport bonus ────────────────────────────
+            # Track how many consecutive turns the patient deflected/redirected
+            # and the companion still steered back to the clinical topic.
+            # A patient "redirect" is any message asking to change topic or
+            # discussing something off-topic (sports, family, work anecdotes).
+            _REDIRECT_PHRASES = (
+                "can we talk about something else", "speak about something else",
+                "change the subject", "don't want to talk about", "let's move on",
+                "by the way", "speaking of which", "did you hear", "how about",
+                "catch the game", "my team", "coffee shop", "summer plans",
+            )
+            patient_redirected = any(
+                p in patient_msg.lower() for p in _REDIRECT_PHRASES
+            )
+            # A "clinical push" is the companion re-introducing the health topic
+            # after the patient has redirected.
+            _CLINICAL_PUSH = (
+                "your drinking", "alcohol", "your health", "your doctor",
+                "cut back", "your liver", "your diagnosis", "your medication",
+                "behaviour change", "your smoking", "your condition",
+            )
+            companion_pushed_clinical = any(
+                p in agent_resp.lower() for p in _CLINICAL_PUSH
+            )
+
+            if patient_redirected and companion_pushed_clinical:
+                redirect_streak += 1
+            else:
+                redirect_streak = 0
+
+            # Penalty starts at streak=2 (one gentle redirect is acceptable),
+            # capped at 0.3 so it doesn't dominate the reward signal.
+            pester_penalty = min(0.3, max(0.0, (redirect_streak - 1) * 0.10))
+
+            # ── Rapport bonus ─────────────────────────────────────────────────
+            # Small reward (+0.07) when the companion genuinely engages with
+            # something the patient raised (sport, family, hobby, work anecdote)
+            # WITHOUT immediately redirecting to a clinical topic.
+            # This reinforces "person first, problem second" (MI spirit).
+            # The bonus is intentionally small — it should never outweigh safety.
+            _PERSONAL_TOPICS = (
+                "that sounds", "tell me more", "what happened", "how did that go",
+                "what do you enjoy", "that must", "sounds like", "what was it like",
+                "that's interesting", "i can imagine", "how are things with",
+            )
+            companion_engaged_personally = (
+                any(p in agent_resp.lower() for p in _PERSONAL_TOPICS)
+                and not companion_pushed_clinical
+            )
+            rapport_bonus = 0.07 if (patient_redirected and companion_engaged_personally) else 0.0
+
             # Merge: scorer dims override for quality/safety; arm dims for
             # stress/trust where the arm has richer context
             reward_dict = {
@@ -770,7 +931,30 @@ class A3CWorker:
             rep_penalty = 1.0 - score_result.repetition_penalty
             reward_dict["count_penalty"] = rep_penalty
 
-            r             = scalar_reward(reward_dict)
+            # ── Physio reward modifier ────────────────────────────────────────
+            # Uses HRV trend, EDA spike, sleep deficit, glucose, and circadian
+            # receptivity to shape reward without adding new critic dimensions.
+            p_mod = physio_reward_modifier(state.physio, prev_physio)
+            prev_physio = dict(state.physio)   # store for next turn comparison
+
+            r             = scalar_reward(reward_dict) - pester_penalty + rapport_bonus + p_mod
+
+            # ── Negotiation convergence bonus ─────────────────────────────────
+            # For negotiation scenarios (billing, professional critique, etc.),
+            # reward language of agreement / concession from either party.
+            # This approximates "position gap closure" without requiring a
+            # full two-party state tracker.
+            if state.therapeutic_mode == "negotiation":
+                _CONVERGENCE_CUES = (
+                    "i can agree", "that works", "fair enough", "let's go with",
+                    "i'll accept", "we have a deal", "that seems reasonable",
+                    "i can meet", "let me offer", "i'm willing to",
+                    "that's acceptable", "we could try", "i'd be open to",
+                )
+                combined_text = (patient_msg + " " + agent_resp).lower()
+                convergence_hit = any(c in combined_text for c in _CONVERGENCE_CUES)
+                if convergence_hit:
+                    r += 0.10
             cumulative_reward += r
             latency_ms    = (time.perf_counter() - t_start) * 1000.0
 
@@ -831,6 +1015,10 @@ class A3CWorker:
                     "scorer_continuous": score_result.continuous_score,
                     "critical_failure": score_result.critical_failure,
                     "issues": score_result.issues,
+                    "pester_penalty": round(pester_penalty, 3),
+                    "redirect_streak": redirect_streak,
+                    "rapport_bonus": round(rapport_bonus, 3),
+                    "physio_modifier": round(p_mod, 3),
                 },
                 update_metrics = update_metrics,
                 tokens         = resp_dict.get("tokens", {}),

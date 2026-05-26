@@ -465,29 +465,49 @@ def _synthetic_reward(
     # ── Dimension 1: Mode-conditional stress reward ───────────────────────────
     stress_delta = state.stress_index - next_stress  # positive = stress went down
 
+    # Extract flooding sub-phase from deaddiction_phase when in flooding mode
+    flooding_subphase = state.deaddiction_phase if mode == TherapeuticMode.FLOODING else ""
+
     if mode == TherapeuticMode.FLOODING:
-        # Reward proximity to flooding target (0.80 default)
-        target     = getattr(state, "flooding_target_stress", 0.80)
-        stress_r   = max(0.0, 1.0 - abs(next_stress - target) * 2.0)
+        target = getattr(state, "flooding_target_stress", 0.80)
+        if flooding_subphase == "flooding_peak":
+            # At peak: maintain high stress, penalise escape (premature stress drop)
+            if next_stress >= target - 0.05:
+                stress_r = 1.0
+            else:
+                stress_r = max(0.0, 1.0 - (target - next_stress) * 4.0)   # hard fall-off
+        elif flooding_subphase == "flooding_recovery":
+            # Recovery: reward declining stress — patient is processing, not escaping
+            stress_r = max(0.0, min(1.0, 0.5 + stress_delta * 4.0))
+        else:
+            # General exposure: reward proximity to flooding target
+            stress_r = max(0.0, 1.0 - abs(next_stress - target) * 2.0)
+    elif state.deaddiction_phase == "relapse":
+        # Relapse: heavily reward de-escalation; penalise any confrontation
+        stress_r = max(0.0, min(1.0, 0.5 + stress_delta * 6.0))
+    elif state.deaddiction_phase == "termination":
+        # Termination / closing: reward low stress and session coherence
+        stress_r = max(0.0, 1.0 - next_stress * 1.5)
     elif mode in (TherapeuticMode.DEADDICTION, TherapeuticMode.BEHAVIOUR_CHANGE) and phase == ChangeStage.CONTEMPLATION:
         # Hold mild productive tension around σ = 0.35
-        stress_r   = max(0.0, 1.0 - abs(next_stress - 0.35) * 3.0)
+        stress_r = max(0.0, 1.0 - abs(next_stress - 0.35) * 3.0)
     elif mode in (TherapeuticMode.DEADDICTION, TherapeuticMode.BEHAVIOUR_CHANGE) and phase in (
         ChangeStage.PREPARATION, ChangeStage.ACTION
     ):
         # Reward if stress is above 0.40 (controlled confrontation zone)
-        stress_r   = min(1.0, next_stress / 0.70)
+        stress_r = min(1.0, next_stress / 0.70)
     else:
-        # Standard / engaging / negotiation: reward stress reduction
-        stress_r   = max(0.0, min(1.0, 0.5 + stress_delta * 5.0))
+        # Standard / engaging / negotiation / mental_health / professional_critique:
+        # reward stress reduction
+        stress_r = max(0.0, min(1.0, 0.5 + stress_delta * 5.0))
 
     # ── CRITICAL stress gate enforcement ─────────────────────────────────────
     # Mirrors action_selector.js rule #1 and #2.
     if state.stress_index >= 0.85 and action not in {
         "validate", "empathic_reflection", "safety_protocol", "acknowledge_only",
-        "escalate", "flooding_hold", "flooding_deepen",
+        "escalate", "flooding_hold", "flooding_deepen", "spike_step",
     }:
-        stress_r   = max(0.0, stress_r - 0.40)   # hard penalty for violating CRITICAL gate
+        stress_r = max(0.0, stress_r - 0.40)   # hard penalty for violating CRITICAL gate
 
     # ── Dimension 2: Goal progress (mode keyword scan) ────────────────────────
     # Use new ChangeStage values for keyword lookup; fall back to old names
