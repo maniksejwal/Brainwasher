@@ -1,5 +1,9 @@
 """
-tensornets.a3c.train — Resumable three-arm A3C training loop.
+tensornets.a3c.train — Resumable independent-per-arm A3C training loop.
+
+Each arm trains its own independent Actor + Critic.  The three arms run in
+round-robin order but never share weights.  This lets us compare the *learning
+rate* of each environment (MCTS, JS companion, hysteresis-prompt) independently.
 
 Usage
 -----
@@ -24,12 +28,13 @@ remaining).
 Checkpoint layout
 -----------------
     <run-dir>/
-      checkpoints/
-        actor_<step>.json       ← Actor log-biases
-        critic_<step>.json      ← Critic weights
-        run_state.json          ← {last_step, arm_counters, rng_state, ...}
-      episodes/
-        episode_<uuid>.jsonl    ← One file per completed episode
+      arm_<name>/
+        checkpoints/
+          actor_<step>.json     ← Actor log-biases for this arm only
+          critic_<step>.json    ← Critic weights for this arm only
+          run_state.json        ← {last_step, ...}
+        episodes/
+          episode_<uuid>.jsonl  ← One file per completed episode for this arm
       run_manifest.json         ← Metadata written at run start / resume
 
 Checkpoint frequency
@@ -145,12 +150,11 @@ def _db_finalise_run(run_id: Optional[str], total_eps: int,
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
 
-def _latest_checkpoint(run_dir: Path) -> Optional[int]:
+def _latest_checkpoint(ckpt_dir: Path) -> Optional[int]:
     """
     Return the highest completed step number that has BOTH actor and critic
-    files.  Returns None if no valid checkpoint exists.
+    files in `ckpt_dir`.  Returns None if no valid checkpoint exists.
     """
-    ckpt_dir = run_dir / "checkpoints"
     if not ckpt_dir.exists():
         return None
 
@@ -166,17 +170,15 @@ def _latest_checkpoint(run_dir: Path) -> Optional[int]:
     return max(steps) if steps else None
 
 
-def _load_run_state(run_dir: Path) -> dict:
-    path = run_dir / "checkpoints" / "run_state.json"
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+def _load_run_state(state_path: Path) -> dict:
+    if state_path.exists():
+        return json.loads(state_path.read_text(encoding="utf-8"))
     return {}
 
 
-def _save_run_state(run_dir: Path, state: dict) -> None:
-    path = run_dir / "checkpoints" / "run_state.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2), encoding="utf-8")
+def _save_run_state(state_path: Path, state: dict) -> None:
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def _write_manifest(run_dir: Path, info: dict) -> None:
@@ -206,6 +208,10 @@ def train(
     """
     Run (or resume) the three-arm A3C training loop.
 
+    Each arm has its own independent Actor + Critic.  Arms run in round-robin
+    order.  Comparing their learning curves tells us which *environment*
+    (MCTS, JS companion, hysteresis-prompt) enables better policy learning.
+
     Parameters
     ----------
     run_dir          : Directory for checkpoints and episode logs.
@@ -218,49 +224,68 @@ def train(
     """
     from tensornets.a3c.worker import Actor, Critic
     from tensornets.a3c.scenario_loader import load_scenarios
+    from tensornets.a3c.prompt_optimizer import DEFAULT_PROMPTS, maybe_improve_prompt
 
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
     arm_classes = _get_arm_classes()
-    selected_arms = [arm_classes[i - 1] for i in (arms or [1, 2, 3])]
+    selected_arm_classes = [arm_classes[i - 1] for i in (arms or [1, 2, 3])]
 
-    # ── Resume detection ─────────────────────────────────────────────────────
-    latest_step = _latest_checkpoint(run_dir)
-    run_state   = _load_run_state(run_dir)
-    start_episode = 0
+    # ── Per-arm state: each arm gets its own Actor, Critic, and checkpoint dir ─
+    arm_states: list[dict] = []
+    for ArmCls in selected_arm_classes:
+        arm_name   = ArmCls.ARM
+        arm_dir    = run_dir / f"arm_{arm_name}"
+        ckpt_dir   = arm_dir / "checkpoints"
+        state_path = ckpt_dir / "run_state.json"
 
-    if latest_step is not None:
-        ckpt_dir = run_dir / "checkpoints"
-        actor  = Actor.load(ckpt_dir / f"actor_{latest_step}.json")
-        critic = Critic.load(ckpt_dir / f"critic_{latest_step}.json")
-        start_episode = run_state.get("last_completed_episode", latest_step) + 1
-        log.info(
-            "Resuming from checkpoint step=%d, starting at episode %d",
-            latest_step, start_episode,
-        )
-    else:
-        # Fresh start
-        if prior_path and Path(prior_path).exists():
-            actor = Actor.from_prior(prior_path)
-            log.info("Actor initialised from prior: %s", prior_path)
+        latest_step = _latest_checkpoint(ckpt_dir)
+        run_state   = _load_run_state(state_path)
+
+        if latest_step is not None:
+            actor  = Actor.load(ckpt_dir / f"actor_{latest_step}.json")
+            critic = Critic.load(ckpt_dir / f"critic_{latest_step}.json")
+            start_ep = run_state.get("last_completed_episode", latest_step) + 1
+            log.info(
+                "Arm %s: resuming from checkpoint step=%d (next episode=%d)",
+                arm_name, latest_step, start_ep,
+            )
         else:
-            actor = Actor.cold_start()
-            log.info("Actor cold-started (uniform log-biases)")
-        critic = Critic()
-        log.info("Critic initialised (zero weights)")
+            if prior_path and Path(prior_path).exists():
+                actor = Actor.from_prior(prior_path)
+                log.info("Arm %s: Actor initialised from prior: %s", arm_name, prior_path)
+            else:
+                actor = Actor.cold_start()
+                log.info("Arm %s: Actor cold-started (uniform log-biases)", arm_name)
+            critic   = Critic()
+            start_ep = 0
+            log.info("Arm %s: Critic initialised (zero weights)", arm_name)
 
-    if start_episode >= total_episodes:
-        log.info("Run already complete (%d/%d episodes done).", start_episode, total_episodes)
-        return
+        worker = ArmCls(actor=actor, critic=critic, run_dir=arm_dir)
 
-    # ── Build workers (shared actor + critic across all arms) ────────────────
-    workers = [
-        ArmCls(actor=actor, critic=critic, run_dir=run_dir)
-        for ArmCls in selected_arms
-    ]
+        # ── Prompt improvement state ──────────────────────────────────────────
+        saved_prompt = run_state.get("active_prompt")
+        default_prompt = DEFAULT_PROMPTS.get(arm_name)
+        active_prompt = saved_prompt or default_prompt
 
-    # ── Scenarios ────────────────────────────────────────────────────────────
+        arm_states.append({
+            "name":             arm_name,
+            "worker":           worker,
+            "actor":            actor,
+            "critic":           critic,
+            "arm_dir":          arm_dir,
+            "ckpt_dir":         ckpt_dir,
+            "state_path":       state_path,
+            "start_ep":         start_ep,
+            "db_run_id":        run_state.get("db_run_id"),
+            "prior_sess":       run_state.get("last_session_memory"),
+            "ep_count":         run_state.get("ep_count", 0),
+            "successful":       run_state.get("successful_eps", 0),
+            "active_prompt":    active_prompt,
+            "last_improved_at": run_state.get("last_improved_at", 0),
+        })
+
     if scenario_url:
         os.environ.setdefault("TENSORNETS_URL", scenario_url)
     try:
@@ -272,96 +297,124 @@ def train(
         log.error("Could not load scenarios: %s — aborting.", exc)
         sys.exit(1)
 
-    # ── Manifest + DB run record ─────────────────────────────────────────────
-    arm_names = [w.ARM for w in workers]
+    # ── Manifest + per-arm DB run records ────────────────────────────────────
+    arm_names = [s["name"] for s in arm_states]
     _write_manifest(run_dir, {
         "run_dir":         str(run_dir),
         "total_episodes":  total_episodes,
         "patient_mode":    patient_mode,
         "arms":            arm_names,
-        "resumed_from":    latest_step,
-        "start_episode":   start_episode,
         "timestamp_start": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
-    db_run_id = run_state.get("db_run_id") or _db_create_run(
-        str(run_dir), arm_names, total_episodes, patient_mode,
-    )
-    if db_run_id:
-        log.info("DB run record: %s", db_run_id)
+
+    for s in arm_states:
+        if not s["db_run_id"]:
+            s["db_run_id"] = _db_create_run(
+                str(s["arm_dir"]), [s["name"]], total_episodes, patient_mode,
+            )
+            if s["db_run_id"]:
+                log.info("Arm %s: DB run record: %s", s["name"], s["db_run_id"])
 
     # ── Emergency checkpoint on interrupt ────────────────────────────────────
-    _emergency_step = [start_episode - 1]  # mutable container for closure
+    _last_ep = [0]
 
     def _emergency_save(signum, frame):
-        step = _emergency_step[0]
-        if step >= 0:
-            log.warning("Signal %d received — writing emergency checkpoint at step %d", signum, step)
-            for w in workers:
-                w.save_checkpoint(step)
-            _save_run_state(run_dir, {
-                "last_completed_episode": step,
-                "emergency": True,
-                "signal": signum,
+        log.warning("Signal %d — writing emergency checkpoints", signum)
+        for s in arm_states:
+            s["worker"].save_checkpoint(s["ep_count"])
+            _save_run_state(s["state_path"], {
+                "last_completed_episode": s["ep_count"],
+                "ep_count":              s["ep_count"],
+                "successful_eps":        s["successful"],
+                "db_run_id":             s["db_run_id"],
+                "last_session_memory":   s["prior_sess"],
+                "emergency":             True,
+                "signal":                signum,
             })
         sys.exit(0)
 
     signal.signal(signal.SIGINT,  _emergency_save)
     signal.signal(signal.SIGTERM, _emergency_save)
 
-    # ── Main loop ─────────────────────────────────────────────────────────────
-    prior_session: Optional[dict] = run_state.get("last_session_memory")
-    arm_cycle = list(range(len(workers)))
-    successful_eps = 0
+    # ── Main loop — round-robin across arms, each updating only its own policy ─
+    for ep in range(total_episodes):
+        s      = arm_states[ep % len(arm_states)]
+        worker = s["worker"]
 
-    for ep in range(start_episode, total_episodes):
-        worker = workers[ep % len(workers)]
-        scenario = random.choice(scenarios)
+        # Skip episodes this arm already completed before a resume
+        if s["ep_count"] < s["start_ep"]:
+            s["ep_count"] += 1
+            continue
 
-        # Multi-session continuity: ~20% chance of continuing a prior session
-        use_prior = (prior_session is not None) and (random.random() < 0.20)
-        prior_arg = prior_session if use_prior else None
+        scenario  = random.choice(scenarios)
+        use_prior = (s["prior_sess"] is not None) and (random.random() < 0.20)
 
         db_episode_id = _db_create_episode(
-            db_run_id, worker.ARM, scenario.get("scenario_id", ""), ""
+            s["db_run_id"], s["name"], scenario.get("scenario_id", ""), ""
         )
 
         try:
             summary = worker.run_episode(
-                scenario     = scenario,
-                prior_session = prior_arg,
+                scenario      = scenario,
+                prior_session = s["prior_sess"] if use_prior else None,
                 patient_mode  = patient_mode,
             )
         except Exception as exc:
-            log.error("Episode %d failed (%s %s): %s — skipping", ep, worker.ARM, scenario.get("scenario_id", "?"), exc)
+            log.error(
+                "Episode %d failed (%s %s): %s — skipping",
+                ep, s["name"], scenario.get("scenario_id", "?"), exc,
+            )
+            s["ep_count"] += 1
             continue
 
-        successful_eps += 1
-        prior_session = summary.get("session_memory")
-        _emergency_step[0] = ep
+        s["successful"]  += 1
+        s["ep_count"]    += 1
+        s["prior_sess"]   = summary.get("session_memory")
+        _last_ep[0]       = ep
 
         _db_finalise_episode(db_episode_id or summary.get("episode_id"), summary)
 
         log.info(
             "ep=%04d  arm=%-18s  scenario=%-35s  reward=%.3f  turns=%d",
             ep,
-            worker.ARM,
+            s["name"],
             scenario.get("scenario_id", "?")[:35],
             summary.get("mean_reward", 0.0),
             summary.get("n_turns", 0),
         )
 
-        # ── Periodic checkpoint ───────────────────────────────────────────────
+        # ── Periodic checkpoint (per arm) ─────────────────────────────────────
         if (ep + 1) % checkpoint_every == 0 or ep == total_episodes - 1:
-            worker.save_checkpoint(ep)
-            _save_run_state(run_dir, {
-                "last_completed_episode": ep,
-                "last_session_memory":   prior_session,
-                "arm_at_checkpoint":     worker.ARM,
-                "db_run_id":             db_run_id,
-            })
-            log.info("Checkpoint written at episode %d", ep)
+            worker.save_checkpoint(s["ep_count"])
 
-    _db_finalise_run(db_run_id, total_episodes, successful_eps)
+            # ── Conservative prompt improvement ───────────────────────────────
+            # Runs at most once per IMPROVEMENT_INTERVAL episodes.  Only fires
+            # when the arm's mean score is below threshold.  Arm 2 (oldschool,
+            # JS companion) is excluded — its prompt lives in Node.js.
+            new_prompt, s["last_improved_at"] = maybe_improve_prompt(
+                arm_name         = s["name"],
+                arm_dir          = s["arm_dir"],
+                ep_count         = s["ep_count"],
+                last_improved_at = s["last_improved_at"],
+                current_prompt   = s["active_prompt"],
+            )
+            if new_prompt:
+                s["active_prompt"] = new_prompt
+                worker.update_system_prompt(new_prompt)
+
+            _save_run_state(s["state_path"], {
+                "last_completed_episode": s["ep_count"],
+                "ep_count":              s["ep_count"],
+                "successful_eps":        s["successful"],
+                "db_run_id":             s["db_run_id"],
+                "last_session_memory":   s["prior_sess"],
+                "active_prompt":         s["active_prompt"],
+                "last_improved_at":      s["last_improved_at"],
+            })
+            log.info("Checkpoint written for arm=%s at episode %d", s["name"], ep)
+
+    for s in arm_states:
+        _db_finalise_run(s["db_run_id"], s["ep_count"], s["successful"])
 
     _write_manifest(run_dir, {
         "timestamp_end":  time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

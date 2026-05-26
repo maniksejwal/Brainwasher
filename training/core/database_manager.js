@@ -103,7 +103,7 @@ export class TrainingDatabaseManager {
      * Get conversation count for training analysis
      */
     async getConversationCount(days = 7, minCount = 50) {
-        const logPath = path.join(__dirname, '../training_log.jsonl');
+        const logPath = path.join(__dirname, '../../data/storage/local/training/training_log.jsonl');
 
         try {
             const content = await fs.readFile(logPath, 'utf-8');

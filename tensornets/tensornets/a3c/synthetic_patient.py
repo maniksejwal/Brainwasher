@@ -61,15 +61,20 @@ _TENSORNETS_URL = os.environ.get("TENSORNETS_URL", "http://localhost:8765")
 
 
 def _http_post(url: str, payload: dict, timeout: float = 15.0) -> dict:
-    """Minimal HTTP POST without external dependencies."""
-    import json as _json, urllib.request as _req
+    """Minimal HTTP POST without external dependencies. Retries once on timeout."""
+    import json as _json, urllib.request as _req, time as _time
     data = _json.dumps(payload).encode()
     req  = _req.Request(url, data=data, headers={"Content-Type": "application/json"})
-    try:
-        with _req.urlopen(req, timeout=timeout) as resp:
-            return _json.loads(resp.read())
-    except Exception as exc:
-        raise ConnectionError(f"POST {url} failed: {exc}") from exc
+    last_exc = None
+    for attempt in range(2):
+        try:
+            with _req.urlopen(req, timeout=timeout) as resp:
+                return _json.loads(resp.read())
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 0:
+                _time.sleep(1.5)  # brief pause before retry
+    raise ConnectionError(f"POST {url} failed: {last_exc}") from last_exc
 
 
 # ── Conversation context state (mirrors realistic_conversation.js) ────────────
@@ -282,10 +287,21 @@ class SyntheticParticipant:
             f"Archetype: {self.archetype}. Let this shape HOW you say things (tone, resistance level).\n"
             f"{ctx_note}"
         )
+        # Allow several turns of information discovery before forcing disclosure.
+        # In precontemplation, 4–6 turns of deflection is realistic and useful for training.
+        # After turn 4, if no clinical content has been surfaced, nudge the patient to disclose.
+        disclosure_instruction = ""
+        if turn_idx >= 4 and not self.covered_elements:
+            disclosure_instruction = (
+                "\n\nIMPORTANT: You have been deflecting for several turns. This turn, mention — even briefly "
+                "and reluctantly — the real reason you are in this session (your health concern, "
+                "the event that brought you here, or a worry your companion/doctor has expressed). "
+                "You can still be resistant, but you must surface the presenting issue."
+            )
         user_prompt = (
             f"Conversation history:\n{history_text}\n\n"
             f"AGENT (last response): {agent_response}\n\n"
-            f"YOUR TURN (1–3 sentences, in character, first-person, realistic):"
+            f"YOUR TURN (1–3 sentences, in character, first-person, realistic):{disclosure_instruction}"
         )
 
         try:

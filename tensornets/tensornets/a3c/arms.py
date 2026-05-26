@@ -63,16 +63,20 @@ _MAVERICK_MODEL = "us.meta.llama4-maverick-17b-instruct-v1:0"
 
 
 def _http_post(url: str, payload: dict, timeout: float = 10.0) -> dict:
-    """Minimal HTTP POST without httpx / requests dependency."""
-    import json as _json
-    import urllib.request as _req
+    """Minimal HTTP POST without httpx / requests dependency. Retries once on transient failure."""
+    import json as _json, urllib.request as _req, time as _time
     data = _json.dumps(payload).encode()
     req  = _req.Request(url, data=data, headers={"Content-Type": "application/json"})
-    try:
-        with _req.urlopen(req, timeout=timeout) as resp:
-            return _json.loads(resp.read())
-    except Exception as exc:
-        raise ConnectionError(f"POST {url} failed: {exc}") from exc
+    last_exc = None
+    for attempt in range(2):
+        try:
+            with _req.urlopen(req, timeout=timeout) as resp:
+                return _json.loads(resp.read())
+        except Exception as exc:
+            last_exc = exc
+            if attempt == 0:
+                _time.sleep(1.5)
+    raise ConnectionError(f"POST {url} failed: {last_exc}") from last_exc
 
 
 # ── J5: Arm 1 — HTN + MCTS ────────────────────────────────────────────────────
@@ -97,6 +101,22 @@ class Arm1Worker(A3CWorker):
     """
 
     ARM = "htn_mcts"
+
+    # Default system prompt template.  Updated by PromptOptimizer when improvement
+    # threshold is not met.  Template vars: {action}, {stress_index}, {stress_bucket}.
+    _DEFAULT_SYSTEM_PROMPT = (
+        "You are a clinical companion. Current action strategy: {action}. "
+        "Patient stress level: {stress_index:.2f} ({stress_bucket}). "
+        "Respond with one empathetic, concise message (2–3 sentences)."
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._system_prompt: str = self._DEFAULT_SYSTEM_PROMPT
+
+    def update_system_prompt(self, new_prompt: str) -> None:
+        """Replace the active system prompt template (called by PromptOptimizer)."""
+        self._system_prompt = new_prompt
 
     def generate_response(
         self,
@@ -170,11 +190,19 @@ class Arm1Worker(A3CWorker):
         m_trunc=None,
     ) -> str:
         """Generate a response via Scout (Bedrock).  Returns the response text."""
-        system_prompt = (
-            f"You are a clinical companion. Current action strategy: {action}. "
-            f"Patient stress level: {state.stress_index:.2f} ({state.stress_bucket}). "
-            "Respond with one empathetic, concise message (2–3 sentences)."
-        )
+        try:
+            system_prompt = self._system_prompt.format(
+                action=action,
+                stress_index=state.stress_index,
+                stress_bucket=state.stress_bucket,
+                hysteresis_ctx="",  # not used by Arm1 but prevents KeyError in rewritten prompts
+            )
+        except (KeyError, ValueError):
+            system_prompt = (
+                f"You are a clinical companion. Action strategy: {action}. "
+                f"Patient stress: {state.stress_index:.2f} ({state.stress_bucket}). "
+                "Respond with one empathetic, concise message (2–3 sentences)."
+            )
         history_text = "\n".join(
             f"{t['role'].upper()}: {t['content']}"
             for t in state.conversation_history[-6:]
@@ -213,6 +241,9 @@ class Arm2Worker(A3CWorker):
     """
 
     ARM = "oldschool"
+
+    def update_system_prompt(self, new_prompt: str) -> None:
+        """No-op: Arm 2 uses the Node.js production companion; prompt lives in Node.js."""
 
     def generate_response(
         self,
@@ -290,6 +321,23 @@ class Arm3Worker(A3CWorker):
 
     ARM = "hysteresis_prompt"
 
+    # Default system prompt template.
+    # Template vars: {hysteresis_ctx}, {action}.
+    _DEFAULT_SYSTEM_PROMPT = (
+        "You are a clinical companion.\n"
+        "Physiological context:\n{hysteresis_ctx}\n"
+        "Recommended action strategy: {action}.\n"
+        "Respond with one empathetic, concise message (2–3 sentences)."
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._system_prompt: str = self._DEFAULT_SYSTEM_PROMPT
+
+    def update_system_prompt(self, new_prompt: str) -> None:
+        """Replace the active system prompt template (called by PromptOptimizer)."""
+        self._system_prompt = new_prompt
+
     def generate_response(
         self,
         state: TurnState,
@@ -300,12 +348,20 @@ class Arm3Worker(A3CWorker):
         user_msg = _last_user_message(state)
 
         hysteresis_ctx = _build_hysteresis_context(state, scenario)
-        system_prompt  = (
-            f"You are a clinical companion.\n"
-            f"Physiological context:\n{hysteresis_ctx}\n"
-            f"Recommended action strategy: {action}.\n"
-            "Respond with one empathetic, concise message (2–3 sentences)."
-        )
+        try:
+            system_prompt  = self._system_prompt.format(
+                hysteresis_ctx=hysteresis_ctx,
+                action=action,
+                stress_index=state.stress_index,
+                stress_bucket=state.stress_bucket,
+            )
+        except (KeyError, ValueError):
+            system_prompt = (
+                f"You are a clinical companion.\n"
+                f"Physiological context:\n{hysteresis_ctx}\n"
+                f"Recommended action strategy: {action}.\n"
+                "Respond with one empathetic, concise message (2–3 sentences)."
+            )
         history_text = "\n".join(
             f"{t['role'].upper()}: {t['content']}"
             for t in state.conversation_history[-6:]

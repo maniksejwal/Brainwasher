@@ -23,7 +23,7 @@ class ConversationAnnotator {
     /**
      * Load training log entries
      */
-    async loadTrainingLog(logPath = path.join(__dirname, '../training_log.jsonl')) {
+    async loadTrainingLog(logPath = path.join(__dirname, '../../data/storage/local/training/training_log.jsonl')) {
         try {
             const content = await fs.readFile(logPath, 'utf8');
             const lines = content.trim().split('\n').filter(line => line);
@@ -149,7 +149,7 @@ class ConversationAnnotator {
      */
     async runSession(options = {}) {
         const {
-            logPath = './training/training_log.jsonl',
+            logPath = './data/storage/local/training/training_log.jsonl',
             startIndex = 0,
             maxEntries = null,
             filterUnannotated = true,

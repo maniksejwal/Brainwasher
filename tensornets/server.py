@@ -754,13 +754,17 @@ def judge_audit(req: DiscrepancyAuditIn):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class MCTSActionIn(BaseModel):
-    physio_state: dict
-    candidate_actions: list[str]
-    mode: str = "standard"
-    depth: int = 4
-    iterations: int = 80
-    context: str = ""
-    flooding_target_stress: float = 0.7
+    physio_state:            dict
+    candidate_actions:       list[str]
+    mode:                    str   = "standard"
+    depth:                   int   = 10       # lookahead depth; capped to remaining turns if session-aware
+    iterations:              int   = 80
+    context:                 str   = ""
+    flooding_target_stress:  float = 0.7
+    current_turn:            int   = 0        # current turn index in the session (0-based)
+    max_turns:               int   = 0        # 0 = no cap (backward-compat); set to session length for capping
+    # Multi-user: pass all participants' physio states; MCTS uses mean-weighted aggregate
+    participants:            list[dict] = []  # [{agent_id, physio_state, weight}]; empty = single-user
 
 
 @app.post("/mcts/best-action")
@@ -768,41 +772,51 @@ def mcts_best_action(req: MCTSActionIn):
     """
     Run DialogMCTS and return the best action + Q-value + tree stats + M_trunc.
 
-    Used by tensornetsBridge.js getMCTSAction().
+    Session-aware lookahead: if max_turns > 0, effective depth is capped to
+    (max_turns - current_turn) so the search never simulates beyond session end.
 
-    Request:
-      physio_state:       {hrv_ms, stress_index, ...}
-      candidate_actions:  list of action type strings (from action_selector.js)
-      mode:               therapeutic mode
-      depth / iterations: MCTS hyperparameters
-
-    Response:
-      action, q_value, tree_stats, M_trunc
-      M_trunc: SVD-compressed constraint matrix from the best MCTS path (F3).
-               Shape: (n_actions_vocab, chi_trunc). Used by the F4 tactical agent
-               via project_constraint() to soft-steer token logits.
-               None when the search tree is trivial (single root, no children).
+    Multi-user: if participants is non-empty, physio_state is replaced by a
+    weighted mean across all participants before MCTS (V_int coupling pre-step).
     """
     from tensornets.mcts.base import DialogMCTS
 
-    stress_index = req.physio_state.get('stress_index', 0.5)
-    hrv_ms = req.physio_state.get('hrv_ms', 35.0)
+    # ── Multi-user physio aggregation ─────────────────────────────────────────
+    if req.participants:
+        # Weighted mean across participants; default weight=1.0 if not specified
+        total_w  = sum(p.get('weight', 1.0) for p in req.participants)
+        agg: dict = {}
+        for field in ('stress_index', 'hrv_ms', 'eda_us', 'sleep_deficit', 'glucose_mg_dl'):
+            vals = [p['physio_state'].get(field, 0.5 if field == 'stress_index' else 35.0)
+                    * p.get('weight', 1.0) for p in req.participants]
+            agg[field] = sum(vals) / total_w
+        physio_state = {**req.physio_state, **agg}
+    else:
+        physio_state = req.physio_state
+
+    # ── Session-aware lookahead cap ───────────────────────────────────────────
+    effective_depth = req.depth
+    if req.max_turns > 0:
+        remaining = max(1, req.max_turns - req.current_turn)
+        effective_depth = min(req.depth, remaining)
+
+    stress_index = physio_state.get('stress_index', 0.5)
+    hrv_ms       = physio_state.get('hrv_ms', 35.0)
 
     initial_state = {
-        'physio': req.physio_state,
-        'hrv_ms': hrv_ms,
-        'stress_index': stress_index,
-        'turn': 0,
-        'mode': req.mode,
-        'candidate_actions': req.candidate_actions,
-        'context': req.context,
-        'flooding_target_stress': req.flooding_target_stress,
+        'physio':                    physio_state,
+        'hrv_ms':                    hrv_ms,
+        'stress_index':              stress_index,
+        'turn':                      req.current_turn,
+        'mode':                      req.mode,
+        'candidate_actions':         req.candidate_actions,
+        'context':                   req.context,
+        'flooding_target_stress':    req.flooding_target_stress,
     }
 
     mcts = DialogMCTS(
         mode=req.mode,
         iterations=req.iterations,
-        max_depth=req.depth,
+        max_depth=effective_depth,
     )
     result = mcts.best_action(initial_state)
     return result

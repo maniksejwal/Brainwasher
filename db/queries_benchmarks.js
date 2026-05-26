@@ -14,7 +14,7 @@ import { getDb } from './connection.js';
 import { addHTNBenchmarkTables } from './schema.js';
 import { randomUUID } from 'crypto';
 
-async function db() { return getDb(); }
+async function _db() { return getDb(); }
 
 // ─── Runs ─────────────────────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ async function db() { return getDb(); }
  * @returns {string} run_id
  */
 export async function createBenchmarkRun({ arm, label, scenario_set, config = {} }) {
-    const d = await db();
+    const d = await _db();
     await addHTNBenchmarkTables(d);
     const run_id = randomUUID();
     await d.run(
@@ -46,7 +46,7 @@ export async function createBenchmarkRun({ arm, label, scenario_set, config = {}
 export async function finaliseBenchmarkRun(run_id, {
     episode_count, mean_reward, mean_stress_auc, goal_achieved_pct, notes,
 } = {}) {
-    const d = await db();
+    const d = await _db();
     await d.run(
         `UPDATE htn_benchmark_runs
          SET completed_at=?, episode_count=?, mean_reward=?, mean_stress_auc=?,
@@ -59,7 +59,7 @@ export async function finaliseBenchmarkRun(run_id, {
 
 /** List all runs, newest first. */
 export async function listBenchmarkRuns({ arm, limit = 50 } = {}) {
-    const d = await db();
+    const d = await _db();
     const where = arm ? `WHERE arm = '${arm}'` : '';
     return d.all(
         `SELECT run_id, arm, label, scenario_set, started_at, completed_at,
@@ -72,7 +72,7 @@ export async function listBenchmarkRuns({ arm, limit = 50 } = {}) {
 
 /** Get one run with its episodes. */
 export async function getBenchmarkRun(run_id) {
-    const d = await db();
+    const d = await _db();
     const run = await d.get(
         'SELECT * FROM htn_benchmark_runs WHERE run_id = ?', [run_id]
     );
@@ -88,7 +88,7 @@ export async function getBenchmarkRun(run_id) {
 // ─── Episodes ─────────────────────────────────────────────────────────────────
 
 export async function createBenchmarkEpisode({ run_id, scenario_id, persona_id, arm }) {
-    const d = await db();
+    const d = await _db();
     const episode_id = randomUUID();
     await d.run(
         `INSERT INTO htn_benchmark_episodes
@@ -100,7 +100,7 @@ export async function createBenchmarkEpisode({ run_id, scenario_id, persona_id, 
 }
 
 export async function finaliseBenchmarkEpisode(episode_id, metrics = {}) {
-    const d = await db();
+    const d = await _db();
     const {
         cumulative_reward, stress_auc, goal_achieved, turns_to_goal,
         trust_delta_final, tokens_scout, tokens_maverick, latency_ms_mean, summary,
@@ -133,7 +133,7 @@ export async function finaliseBenchmarkEpisode(episode_id, metrics = {}) {
  * This is the per-turn jsonl equivalent — stored in DB instead of file.
  */
 export async function recordBenchmarkTurn(episode_id, run_id, arm, turn) {
-    const d = await db();
+    const d = await _db();
     const {
         turn_number, action, response,
         hrv_ms, stress_label, stress_index,
@@ -168,7 +168,9 @@ export async function recordBenchmarkTurn(episode_id, run_id, arm, turn) {
  * Returns aggregate stats per arm for dashboard display.
  */
 export async function compareBenchmarkArms(scenario_set) {
-    const d = await db();
+    const d = await _db();
+    const where = scenario_set ? `WHERE r.scenario_set = ?` : '';
+    const params = scenario_set ? [scenario_set] : [];
     return d.all(
         `SELECT r.arm,
                 COUNT(DISTINCT e.episode_id)  AS episodes,
@@ -180,10 +182,10 @@ export async function compareBenchmarkArms(scenario_set) {
                 AVG(e.latency_ms_mean)        AS mean_latency_ms
          FROM htn_benchmark_runs r
          JOIN htn_benchmark_episodes e ON e.run_id = r.run_id
-         WHERE r.scenario_set = ?
+         ${where}
          GROUP BY r.arm
          ORDER BY mean_reward DESC`,
-        [scenario_set]
+        params
     );
 }
 
@@ -192,7 +194,7 @@ export async function compareBenchmarkArms(scenario_set) {
  * Used for transcript comparison view in dashboard.
  */
 export async function getRunScenarioBreakdown(run_id) {
-    const d = await db();
+    const d = await _db();
     return d.all(
         `SELECT e.scenario_id, e.persona_id,
                 e.cumulative_reward, e.goal_achieved, e.turns_to_goal,
@@ -203,6 +205,73 @@ export async function getRunScenarioBreakdown(run_id) {
          ORDER BY e.scenario_id`,
         [run_id]
     );
+}
+
+/**
+ * Get per-episode reward sequence for each arm — used to plot learning curves.
+ *
+ * Returns episodes in chronological order per arm, with episode index (within
+ * that arm's run) and cumulative_reward.  Optionally filtered to episodes from
+ * a specific run.
+ *
+ * @param {object}  [opts]
+ * @param {string}  [opts.run_id]   - restrict to a single run
+ * @param {number}  [opts.limit]    - max episodes per arm (default 200)
+ * @returns {Promise<Array<{arm, episode_index, cumulative_reward, mean_reward, scenario_id, started_at}>>}
+ */
+export async function getLearningCurves({ run_id, limit = 200 } = {}) {
+    const d = await _db();
+    const where = run_id ? 'AND e.run_id = ?' : '';
+    const params = run_id ? [run_id, limit] : [limit];
+    return d.all(
+        `WITH ranked AS (
+             SELECT e.arm,
+                    e.cumulative_reward,
+                    e.turn_count,
+                    e.goal_achieved,
+                    e.scenario_id,
+                    e.started_at,
+                    ROW_NUMBER() OVER (PARTITION BY e.arm ORDER BY e.started_at) AS episode_index
+             FROM htn_benchmark_episodes e
+             JOIN htn_benchmark_runs r ON r.run_id = e.run_id
+             WHERE e.completed_at IS NOT NULL
+               ${where}
+         )
+         SELECT arm, episode_index, cumulative_reward,
+                turn_count, goal_achieved, scenario_id, started_at
+         FROM ranked
+         WHERE episode_index <= ?
+         ORDER BY arm, episode_index`,
+        params
+    );
+}
+
+/**
+ * Get a rolling-window smoothed learning curve (window=5) per arm.
+ * This is what the dashboard chart uses.
+ */
+export async function getSmoothedLearningCurves({ run_id, limit = 200, window = 5 } = {}) {
+    const raw = await getLearningCurves({ run_id, limit });
+    // Group by arm
+    const byArm = {};
+    for (const row of raw) {
+        if (!byArm[row.arm]) byArm[row.arm] = [];
+        byArm[row.arm].push(row);
+    }
+    // Apply rolling average per arm
+    const result = [];
+    for (const [arm, rows] of Object.entries(byArm)) {
+        for (let i = 0; i < rows.length; i++) {
+            const start = Math.max(0, i - window + 1);
+            const slice = rows.slice(start, i + 1);
+            const smoothed = slice.reduce((s, r) => s + (r.cumulative_reward ?? 0), 0) / slice.length;
+            result.push({
+                ...rows[i],
+                smoothed_reward: Math.round(smoothed * 1000) / 1000,
+            });
+        }
+    }
+    return result;
 }
 
 /**
@@ -227,12 +296,12 @@ export async function getBenchmarkMeta(key) {
  * @returns {Promise<{mean_score: number, episode_count: number, cutoff_ts: number}|null>}
  */
 export async function getBaselineStats() {
-    const db = await getDb();
+    const _db = await getDb();
     const cutoffStr = await getBenchmarkMeta('baseline_cutoff_ts');
     if (!cutoffStr) return null;
 
     const cutoff = Number(cutoffStr);
-    const row = await db.get(
+    const row = await _db.get(
         `SELECT AVG(score) as mean_score, COUNT(*) as episode_count
          FROM feedback
          WHERE timestamp < ?`,
@@ -271,6 +340,11 @@ export const CANONICAL_SCENARIOS = [
     { scenarioId: 'patient_caregiver_swap',   scenarioType: 'world',   canonicalLabel: 'W1_role_swap_coordination',  description: 'Caregiver becomes primary decision-maker; inter-agent consistency test' },
     { scenarioId: 'family_network_care',      scenarioType: 'world',   canonicalLabel: 'W2_multi_agent_consistency', description: 'Four companions in circle; contradiction detection and MCTS consensus' },
     { scenarioId: 'complex_family_medical_crisis', scenarioType: 'world', canonicalLabel: 'W3_world_crisis',         description: 'High-stakes multi-agent crisis; full V_int propagation and escalation' },
+    // ── Clinical / behaviour-change (new) ─────────────────────────────────────
+    { scenarioId: 'angina_lifestyle_resistance',        scenarioType: 'regular', canonicalLabel: 'C1_angina_behaviour_change',     description: 'Stable angina + lifestyle resistance; MI vs psychoeducation; physio_baseline HRV 42ms' },
+    { scenarioId: 'depression_passive_suicidality',     scenarioType: 'regular', canonicalLabel: 'C2_depression_passive_SI',       description: 'Passive SI; Columbia screening; safety gate; MCTS action gating at low HRV 28ms' },
+    { scenarioId: 'family_care_circle_coordination',    scenarioType: 'regular', canonicalLabel: 'R8_multi_user_post_discharge',    description: 'Single circle, 3 members; post-discharge; caregiver burnout + remote relative + patient autonomy' },
+    { scenarioId: 'multi_agent_relapse_prevention',     scenarioType: 'world',   canonicalLabel: 'W4_relapse_prevention_network',  description: '3 circles (Marcus personal, Sarah family, Dr. Patel clinical); 3 companions; privacy walls + V_int propagation' },
 ];
 
 /**

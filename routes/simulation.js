@@ -251,20 +251,26 @@ router.get('/simulations/:id/logs', async (req, res) => {
 });
 
 // Get comprehensive analysis stats
+// ?db=simulation|development|production  — selects which DB to read from (default: simulation)
 router.get('/analysis/stats', async (req, res) => {
     try {
-        const { TrainingMetricsAnalyzer } = await import('../training/analysis/lib/training_metrics_analyzer.js');
-        const analyzer = new TrainingMetricsAnalyzer();
+        const { TrainingMetricsAnalyzer, DB_OPTIONS } = await import('../training/analysis/lib/training_metrics_analyzer.js');
 
-        // Run analysis
+        const dbKey   = ['simulation', 'development', 'production'].includes(req.query.db) ? req.query.db : 'simulation';
+        const simPath = DB_OPTIONS[dbKey];
+        // For "production" db, we show it as the sim source (single-db mode)
+        const analyzer = new TrainingMetricsAnalyzer(simPath, null);
+
         const logStats = await analyzer.analyzeLogs();
-        const dbStats = await analyzer.analyzeDB();
-        const timeSeriesData = analyzer.processTimeSeriesData();
+        const dbStats  = await analyzer.analyzeDB();
+        const timeSeriesData  = analyzer.processTimeSeriesData();
         const definedPersonas = analyzer.getDefinedPersonas();
-        const scenarios = analyzer.getScenarios();
+        const scenarios       = analyzer.getScenarios();
 
         res.json({
             success: true,
+            activeDb: dbKey,
+            availableDbs: Object.keys(DB_OPTIONS),
             logStats: {
                 totalLines: logStats.totalLines,
                 interactions: logStats.interactions,

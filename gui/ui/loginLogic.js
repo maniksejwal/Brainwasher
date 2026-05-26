@@ -5,6 +5,7 @@ import initTrainingDashboard from './trainingDashboard.js';
 import initPromptComparison from './promptComparison.js';
 import { initAnalysisUI } from './analysisUI.js';
 import { initReportUI } from './reportUI.js';
+import initBenchmarksDashboard from './benchmarksDashboard.js';
 
 export function setupLoginHandler(api, state) {
     const loginBtn = document.getElementById('login-btn');
@@ -61,6 +62,7 @@ export function setupLoginHandler(api, state) {
             initPromptComparison();
             initAnalysisUI();
             initReportUI();
+            initBenchmarksDashboard();
         } catch (error) {
             alert(MESSAGES.LOGIN_FAILED(error.message));
         }

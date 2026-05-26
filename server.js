@@ -8,7 +8,7 @@ import path from 'path';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
 import config from './config.js';
-import { initializeDatabase } from './db/index.js';
+import { initializeDatabase, addHTNBenchmarkTables, addConversationIntelligenceTables } from './db/index.js';
 import { events } from './orchestrator.js';
 import { setupLogger, getLogs } from './lib/logger.js';
 import { addClient, removeClient, broadcast } from './lib/sse.js';
@@ -177,7 +177,10 @@ app.get('/api/logs', (req, res) => {
 const PORT = config.PORT || 3000; // Use config port or default to 3000? original used config.PORT
 const HOST = config.HOST || 'localhost';
 
-initializeDatabase().then(() => {
+initializeDatabase()
+    .then(() => addHTNBenchmarkTables())
+    .then(() => addConversationIntelligenceTables())
+    .then(() => {
     app.listen(PORT, HOST, () => {
         console.log(`--- Multi-Agent Orchestrator (JS) is RUNNING ---`);
         console.log(`Listening on http://${HOST}:${PORT}`);

@@ -12,12 +12,21 @@ const __dirname = path.dirname(__filename);
 
 // Paths relative to this lib file: ../../../
 const PROJECT_ROOT = path.join(__dirname, '../../../');
-const LOG_FILE = path.join(PROJECT_ROOT, 'training/training_log.jsonl');
-const SIM_DB_FILE = path.join(PROJECT_ROOT, 'care_circle_simulation.db');
-const PROD_DB_FILE = path.join(PROJECT_ROOT, 'care_circle.db');
+const LOG_FILE = path.join(PROJECT_ROOT, 'data/storage/local/training/training_log.jsonl');
+const SIM_DB_FILE  = path.join(PROJECT_ROOT, 'data/dbs/care_circle_simulation.db');
+const PROD_DB_FILE = path.join(PROJECT_ROOT, 'data/dbs/care_circle_prod.db');
+const DEV_DB_FILE  = path.join(PROJECT_ROOT, 'data/dbs/care_circle_dev.db');
+
+export const DB_OPTIONS = {
+    simulation:  SIM_DB_FILE,
+    production:  PROD_DB_FILE,
+    development: DEV_DB_FILE,
+};
 
 export class TrainingMetricsAnalyzer {
-    constructor() {
+    constructor(simDbOverride = null, prodDbOverride = null) {
+        this._simDbFile  = simDbOverride  || SIM_DB_FILE;
+        this._prodDbFile = prodDbOverride || PROD_DB_FILE;
         this.logStats = {
             totalLines: 0,
             conversations: new Map(),
@@ -199,7 +208,7 @@ export class TrainingMetricsAnalyzer {
 
         // 1. SIMULATION DB
         try {
-            const simDb = await open({ filename: SIM_DB_FILE, driver: sqlite3.Database });
+            const simDb = await open({ filename: this._simDbFile, driver: sqlite3.Database });
             const simFeedback = await simDb.all("SELECT *, 'simulation' as source FROM feedback");
             this.dbStats.feedback.push(...simFeedback);
             this.dbStats.meta.lastUpdatedSim = getMaxTime(simFeedback);
@@ -216,7 +225,7 @@ export class TrainingMetricsAnalyzer {
 
         // 2. PRODUCTION DB
         try {
-            const prodDb = await open({ filename: PROD_DB_FILE, driver: sqlite3.Database });
+            const prodDb = await open({ filename: this._prodDbFile, driver: sqlite3.Database });
             const prodFeedback = await prodDb.all("SELECT *, 'production' as source FROM feedback");
             this.dbStats.feedback.push(...prodFeedback);
             this.dbStats.meta.lastUpdatedProd = getMaxTime(prodFeedback);

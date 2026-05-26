@@ -184,7 +184,7 @@ class BaseMCTS(ABC):
         self,
         mode: str = 'standard',
         iterations: int = 80,
-        max_depth: int = 4,
+        max_depth: int = 10,
         exploration_c: float = 1.414,
         reward_weights: dict | None = None,
         seed: int | None = None,
@@ -512,7 +512,7 @@ if __name__ == '__main__':
     mcts = DialogMCTS(
         mode='deaddiction',
         iterations=120,
-        max_depth=4,
+        max_depth=10,
         exploration_c=1.5,
         seed=42,
     )

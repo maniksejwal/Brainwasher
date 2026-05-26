@@ -135,7 +135,7 @@ class MCTSConfig:
     flooding_target_stress:            float = 0.75
     flooding_recovery_turns:           int   = 5
     negotiation_target_stress_ceiling: float = 0.60
-    n_lookahead:                       int   = 3
+    n_lookahead:                       int   = 10
     exploration_c:                     float = 1.414   # √2 (Kocsis & Szepesvári 2006)
 
     @property

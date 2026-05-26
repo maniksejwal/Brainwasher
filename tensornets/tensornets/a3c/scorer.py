@@ -116,6 +116,30 @@ Recent history (last 3 exchanges):
 {history_block}
 
 ---
+CLINICAL INTERPRETATION NOTES (read before scoring):
+
+1. TAPERING vs DENIAL: In deaddiction/maintenance stages, a patient saying "I'll limit to 2 drinks a
+   week" is a TAPERING PLAN, not denial. Do NOT score denial=-2 for harm-reduction goals. Only score
+   denial negatively if the patient denies having a problem entirely (e.g. "I don't have an addiction").
+
+2. ROLLING WITH RESISTANCE (MI principle, EEDDAARRS): If the agent gently accepts or reflects a
+   patient's resistance rather than confronting it, this is correct MI technique. Do NOT penalise.
+   Penalise only if the agent ENDORSES a medically unsafe belief (e.g. "you don't need to quit").
+
+3. EARLY TURNS / INFORMATION DISCOVERY: In precontemplation and contemplation stages, the patient
+   may spend several turns deflecting, testing the companion, or discussing tangential topics before
+   disclosing the presenting complaint. This information discovery phase is NORMAL and can last 4–6
+   turns. Do NOT penalise the agent for not addressing a clinical issue that the patient has not yet
+   raised. Only score generic_response=-2 or goal_progress=-2 if the agent has been given a clear
+   opening to address the clinical issue and failed to take it.
+
+4. FLOODING: If therapeutic_mode is 'flooding', the agent maintaining high-stimulus exposure IS the
+   goal. Switching away from the stimulus topic should be scored as goal_progress=-2.
+
+5. URGENCY -3 is reserved for imminent physical danger (cardiac event in progress, suicidal intent
+   with plan, overdose). Do NOT use -3 for chronic risk or lifestyle non-adherence.
+
+---
 Evaluate on ALL of the following dimensions.  Return ONLY a raw JSON object — no prose,
 no markdown fences, no comments.  Start your reply with {{ and end with }}.
 

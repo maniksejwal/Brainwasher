@@ -444,19 +444,20 @@ def apply_update(
 @dataclass
 class EpisodeTurn:
     """Single turn record written to the episode jsonl log."""
-    turn_idx:       int
-    arm:            str
-    state:          dict
-    action:         str
-    log_prob:       float
-    response:       str
-    reward:         dict[str, float]
-    scalar_reward:  float
-    judge:          dict
-    update_metrics: dict
-    tokens:         dict[str, int]
-    latency_ms:     float
-    discrepancy:    Any = None
+    turn_idx:         int
+    arm:              str
+    state:            dict
+    action:           str
+    log_prob:         float
+    patient_message:  str          # what the patient/participant said this turn
+    response:         str          # what the companion said
+    reward:           dict[str, float]
+    scalar_reward:    float
+    judge:            dict
+    update_metrics:   dict
+    tokens:           dict[str, int]
+    latency_ms:       float
+    discrepancy:      Any = None
 
 
 class A3CWorker:
@@ -495,6 +496,13 @@ class A3CWorker:
         self._episode_log: list[EpisodeTurn] = []
 
     # ── Subclass interface ───────────────────────────────────────────────────
+
+    def update_system_prompt(self, new_prompt: str) -> None:
+        """
+        Replace the arm's active system prompt.  Called by PromptOptimizer.
+        Subclasses that use a trainable prompt must override this.
+        The base implementation is a no-op (for arms that use external prompts).
+        """
 
     def generate_response(
         self,
@@ -599,8 +607,13 @@ class A3CWorker:
         -----------------
         The episode stops early if:
         (a) A3CScorer detects semantically flat repetition (Q4b), or
-        (b) A TurnScoreResult has critical_failure=True AND
-            the agent has been warned at least once (2-strike rule).
+        (b) A TurnScoreResult has critical_failure=True AND the agent has been
+            warned at least once (2-strike rule).
+
+        Grace period for turns 0–2: during rapport-building, `denial` and
+        `generic_response` scoring ≤ -2 are expected behaviour and do not
+        count as qualifying strikes.  Only `urgency` ≤ -2 (a real safety signal)
+        triggers the 2-strike logic in the early turns.
 
         The repetition penalty from A3CScorer is added to REWARD_DIMS['count_penalty']
         so the Actor learns to avoid semantic flatness without hard rule gating.
@@ -744,21 +757,22 @@ class A3CWorker:
                     "speaker_role":           speaker.role,
                     "change_stage":           state.deaddiction_phase,
                 },
-                action      = action,
-                log_prob    = round(log_prob, 5),
-                response    = agent_resp,
-                reward      = reward_dict,
-                scalar_reward = round(r, 5),
-                judge       = {
+                action         = action,
+                log_prob       = round(log_prob, 5),
+                patient_message = patient_msg,
+                response       = agent_resp,
+                reward         = reward_dict,
+                scalar_reward  = round(r, 5),
+                judge          = {
                     "scorer_integer": score_result.total_integer,
                     "scorer_continuous": score_result.continuous_score,
                     "critical_failure": score_result.critical_failure,
                     "issues": score_result.issues,
                 },
                 update_metrics = update_metrics,
-                tokens      = resp_dict.get("tokens", {}),
-                latency_ms  = round(latency_ms, 1),
-                discrepancy = resp_dict.get("discrepancy", None),
+                tokens         = resp_dict.get("tokens", {}),
+                latency_ms     = round(latency_ms, 1),
+                discrepancy    = resp_dict.get("discrepancy", None),
             )
             self._episode_log.append(turn_record)
 
@@ -775,14 +789,27 @@ class A3CWorker:
                 break
 
             if score_result.critical_failure:
-                if warned_once:
-                    # 2-strike: end episode after second consecutive critical failure
+                # 2-strike rule: two *consecutive* critical failures → end episode.
+                #
+                # Grace period for turns 0–2: during rapport-building, denial and
+                # generic_response scoring ≤ -2 is expected.  Only urgency ≤ -2
+                # (a true safety signal) counts as a critical strike in early turns.
+                is_safety_critical = any(
+                    dim == "urgency" and s <= -2
+                    for dim, s, _ in score_result.integer_scores
+                )
+                counts_as_strike = is_safety_critical or (turn_idx >= 3)
+
+                if counts_as_strike and warned_once:
+                    # 2-strike: end episode after second consecutive qualifying strike
                     log.info(
                         "[%s] 2-strike critical failure at turn %d", self.worker_id, turn_idx
                     )
                     cumulative_reward -= 1.5
                     break
-                warned_once = True
+                if counts_as_strike:
+                    warned_once = True
+                # non-qualifying critical (early-turn denial/generic): log but don't strike
             else:
                 warned_once = False
 
@@ -864,19 +891,20 @@ class A3CWorker:
         with jsonl_path.open("w", encoding="utf-8") as fh:
             for turn in self._episode_log:
                 line = {
-                    "turn":         turn.turn_idx,
-                    "arm":          turn.arm,
-                    "state":        turn.state,
-                    "action":       turn.action,
-                    "log_prob":     turn.log_prob,
-                    "response":     turn.response,
-                    "reward":       turn.reward,
-                    "scalar_reward":turn.scalar_reward,
-                    "judge":        turn.judge,
-                    "update":       turn.update_metrics,
-                    "tokens":       turn.tokens,
-                    "latency_ms":   turn.latency_ms,
-                    "discrepancy":  turn.discrepancy,
+                    "turn":           turn.turn_idx,
+                    "arm":            turn.arm,
+                    "state":          turn.state,
+                    "action":         turn.action,
+                    "log_prob":       turn.log_prob,
+                    "patient_message": turn.patient_message,
+                    "response":       turn.response,
+                    "reward":         turn.reward,
+                    "scalar_reward":  turn.scalar_reward,
+                    "judge":          turn.judge,
+                    "update":         turn.update_metrics,
+                    "tokens":         turn.tokens,
+                    "latency_ms":     turn.latency_ms,
+                    "discrepancy":    turn.discrepancy,
                 }
                 fh.write(json.dumps(line, ensure_ascii=False) + "\n")
 

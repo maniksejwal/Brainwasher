@@ -28,6 +28,7 @@ import {
     listBenchmarkRuns,
     getBenchmarkRun,
     getRunScenarioBreakdown,
+    getSmoothedLearningCurves,
 } from '../db/queries_benchmarks.js';
 
 const router = Router();
@@ -117,6 +118,20 @@ router.get('/runs/:run_id', async (req, res) => {
 router.get('/scenario-breakdown/:run_id', async (req, res) => {
     try {
         const rows = await getRunScenarioBreakdown(req.params.run_id);
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/learning-curves', async (req, res) => {
+    try {
+        const { run_id, limit, window } = req.query;
+        const rows = await getSmoothedLearningCurves({
+            run_id:  run_id  || undefined,
+            limit:   parseInt(limit)  || 200,
+            window:  parseInt(window) || 5,
+        });
         res.json({ rows });
     } catch (e) {
         res.status(500).json({ error: e.message });
