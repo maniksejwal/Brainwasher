@@ -1,5 +1,7 @@
 import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs, loadBusinessData, loadBusinessSectionData } from './dataLoaders.js';
 import { loadConversationLogs } from './simulationLogsUI.js';
+import { generateAndShowReport } from './reportUI.js';
+import initBenchmarksDashboard from './benchmarksDashboard.js';
 
 export function setupNavigationHandlers(api, state) {
     // Listen for circle view refresh events
@@ -101,6 +103,12 @@ export function setupNavigationHandlers(api, state) {
                 // Prompt comparison is already initialized
             } else if (tabName === 'simulation-logs') {
                 loadConversationLogs(api);
+            } else if (tabName === 'reports') {
+                // Auto-generate report on tab open (no manual button needed)
+                generateAndShowReport();
+            } else if (tabName === 'benchmarks') {
+                // Re-calculate and render benchmarks fresh on every tab activation
+                initBenchmarksDashboard();
             }
         });
     });

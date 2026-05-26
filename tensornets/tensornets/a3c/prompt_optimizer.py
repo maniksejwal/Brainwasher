@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -52,7 +53,7 @@ VALIDATION_TURNS       = 6     # turns used to validate new prompt
 MIN_PROMPT_TOKENS      = 50
 MAX_PROMPT_TOKENS      = 400
 
-_TENSORNETS_URL = "http://localhost:8765"
+_TENSORNETS_URL = os.environ.get("TENSORNETS_URL", "http://localhost:8765")
 
 # ── Default system prompts per arm ────────────────────────────────────────────
 

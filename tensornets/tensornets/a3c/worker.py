@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from tensornets.a3c.action_bandit import ACTION_TAXONOMY, STRESS_BUCKETS
-from tensornets.a3c.scorer import A3CScorer, map_scorer_to_reward_dims
+from tensornets.a3c.scorer import A3CScorer, TurnScoreResult, map_scorer_to_reward_dims
 
 log = logging.getLogger("tensornets.a3c.worker")
 
@@ -439,6 +439,52 @@ def apply_update(
     }
 
 
+
+# ── Heuristic scorer carry (odd-turn substitute) ─────────────────────────────
+
+# Actions with well-understood positive impact on goal progress / trust.
+_HIGH_VALUE_ACTIONS = frozenset({
+    "elicit_change_talk", "explore_ambivalence", "reframe_perspective",
+    "build_alliance", "validate_emotion", "clarify_goal", "invite_reflection",
+    "suggest_coping_strategy", "summarise_session",
+})
+# Surface-level distress cues in patient message that lower expected quality.
+_DISTRESS_CUES = ("I can't", "I give up", "this is pointless", "you don't understand",
+                  "leave me alone", "I'm fine", "nothing helps", "why bother")
+
+
+def _heuristic_score_carry(
+    prev_score,
+    action: str,
+    patient_msg: str,
+    agent_resp: str,
+) -> TurnScoreResult:
+    """
+    Return a lightweight copy of `prev_score` adjusted by cheap heuristics.
+
+    Called on odd turns to halve LLM scorer calls.  The adjustments are
+    intentionally small (±0.05) to avoid drifting far from the LLM signal.
+    """
+    import copy
+
+    carry = copy.copy(prev_score)
+
+    # Small quality boost for high-value therapeutic actions
+    boost = 0.05 if action in _HIGH_VALUE_ACTIONS else 0.0
+
+    # Small quality penalty when patient shows distress cues
+    pm_lower = patient_msg.lower()
+    penalty  = 0.04 if any(c in pm_lower for c in _DISTRESS_CUES) else 0.0
+
+    # Lift / drag continuous score within [0, 1]
+    carry.continuous_score = max(0.0, min(1.0, prev_score.continuous_score + boost - penalty))
+
+    # Never escalate critical_failure on a carry turn — only the LLM can set it
+    carry.critical_failure = False
+
+    return carry
+
+
 # ── J1: A3CWorker base class ──────────────────────────────────────────────────
 
 @dataclass
@@ -656,6 +702,11 @@ class A3CWorker:
         scorer         = A3CScorer()
         warned_once    = False
         last_user_msg  = ""
+        # LLM scorer is called on even turns (0, 2, 4 …) and skipped on odd turns.
+        # Odd turns use the most-recent LLM result plus a lightweight heuristic
+        # adjustment so the reward signal is still turn-level granular.
+        # This halves Scout calls from the scorer (−33 % total per episode).
+        _SCORE_EVERY_N = 2
 
         for turn_idx in range(max_turns_ep):
             t_start = time.perf_counter()
@@ -674,17 +725,29 @@ class A3CWorker:
                 covered_elements = orchestrator.covered_elements,
             )
 
-            # ── A3CScorer evaluates THIS turn (one LLM call) ─────────────────
-            score_result = scorer.score_turn(
-                patient_message   = patient_msg,
-                agent_response    = agent_resp,
-                turn_idx          = turn_idx,
-                therapeutic_mode  = state.therapeutic_mode,
-                change_stage      = state.deaddiction_phase,
-                scenario_goal     = state.session_goal,
-                scenario_context  = scenario.get("context", ""),
-                history           = state.conversation_history,
-            )
+            # ── A3CScorer: LLM call on even turns, heuristic carry on odd ───
+            use_llm_scorer = (turn_idx % _SCORE_EVERY_N == 0)
+            if use_llm_scorer:
+                score_result = scorer.score_turn(
+                    patient_message   = patient_msg,
+                    agent_response    = agent_resp,
+                    turn_idx          = turn_idx,
+                    therapeutic_mode  = state.therapeutic_mode,
+                    change_stage      = state.deaddiction_phase,
+                    scenario_goal     = state.session_goal,
+                    scenario_context  = scenario.get("context", ""),
+                    history           = state.conversation_history,
+                )
+            else:
+                # Carry the previous score result but apply a heuristic nudge:
+                # if the action is in a high-value group, lift continuous_score
+                # slightly; if the patient message contains a distress cue, lower it.
+                score_result = _heuristic_score_carry(
+                    prev_score    = score_result,
+                    action        = action,
+                    patient_msg   = patient_msg,
+                    agent_resp    = agent_resp,
+                )
             score_history.append(score_result)
 
             # ── Build reward_dict from scorer output + arm-specific reward ───

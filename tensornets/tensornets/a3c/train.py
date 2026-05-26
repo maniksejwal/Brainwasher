@@ -92,19 +92,22 @@ def _db_post(path: str, payload: dict) -> dict:
         with _ureq.urlopen(req, timeout=3) as resp:
             return json.loads(resp.read())
     except Exception as exc:
-        log.debug("DB write skipped (%s %s): %s", path, payload.get("arm", ""), exc)
+        log.warning("DB write skipped (%s %s): %s", path, payload.get("arm", ""), exc)
         return {}
 
 
-def _db_create_run(run_dir: str, arms: list[str], total_episodes: int,
+def _db_create_run(run_dir: str, arm: str, total_episodes: int,
                    patient_mode: str) -> Optional[str]:
+    """Create one benchmark run record per arm. Matches BenchmarkRunIn schema."""
     r = _db_post("/benchmark/run/create", {
-        "name":            Path(run_dir).name,
-        "description":     f"A3C training run: arms={arms}, episodes={total_episodes}",
-        "arms":            arms,
-        "scenarios":       [],
-        "total_episodes":  total_episodes,
-        "patient_mode":    patient_mode,
+        "arm":          arm,
+        "label":        f"{Path(run_dir).name} / {arm}",
+        "scenario_set": "a3c_training",
+        "config": {
+            "run_dir":       Path(run_dir).name,
+            "total_episodes": total_episodes,
+            "patient_mode":  patient_mode,
+        },
     })
     return r.get("run_id")
 
@@ -117,7 +120,7 @@ def _db_create_episode(run_id: Optional[str], arm: str, scenario_id: str,
         "run_id":      run_id,
         "arm":         arm,
         "scenario_id": scenario_id,
-        "episode_id":  episode_id,
+        "persona_id":  "",
     })
     return r.get("episode_id") or episode_id
 
@@ -310,7 +313,7 @@ def train(
     for s in arm_states:
         if not s["db_run_id"]:
             s["db_run_id"] = _db_create_run(
-                str(s["arm_dir"]), [s["name"]], total_episodes, patient_mode,
+                str(s["arm_dir"]), s["name"], total_episodes, patient_mode,
             )
             if s["db_run_id"]:
                 log.info("Arm %s: DB run record: %s", s["name"], s["db_run_id"])
@@ -337,6 +340,8 @@ def train(
     signal.signal(signal.SIGTERM, _emergency_save)
 
     # ── Main loop — round-robin across arms, each updating only its own policy ─
+    consecutive_failures = 0   # back-off counter for Bedrock throttling
+
     for ep in range(total_episodes):
         s      = arm_states[ep % len(arm_states)]
         worker = s["worker"]
@@ -365,7 +370,15 @@ def train(
                 ep, s["name"], scenario.get("scenario_id", "?"), exc,
             )
             s["ep_count"] += 1
+            consecutive_failures += 1
+            # Exponential back-off when Bedrock is throttling: 5s, 10s, 20s, 40s (cap)
+            if consecutive_failures >= 3:
+                wait = min(5 * (2 ** (consecutive_failures - 3)), 40)
+                log.warning("Bedrock throttle detected (%d consecutive failures) — waiting %.0fs", consecutive_failures, wait)
+                time.sleep(wait)
             continue
+
+        consecutive_failures = 0   # reset on success
 
         s["successful"]  += 1
         s["ep_count"]    += 1
@@ -382,6 +395,10 @@ def train(
             summary.get("mean_reward", 0.0),
             summary.get("n_turns", 0),
         )
+
+        # Brief pause after each successful episode to avoid exhausting Bedrock
+        # per-minute token quota across back-to-back episodes.
+        time.sleep(1)
 
         # ── Periodic checkpoint (per arm) ─────────────────────────────────────
         if (ep + 1) % checkpoint_every == 0 or ep == total_episodes - 1:
@@ -430,7 +447,7 @@ def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Resumable A3C three-arm training loop")
     p.add_argument("--run-dir",          required=True,         help="Directory for checkpoints + episode logs")
     p.add_argument("--episodes",         type=int, default=1000, help="Total episodes (not remaining — total)")
-    p.add_argument("--checkpoint-every", type=int, default=50,   help="Save checkpoint every N episodes")
+    p.add_argument("--checkpoint-every", type=int, default=5,    help="Save checkpoint every N episodes")
     p.add_argument("--prior",            default=None,           help="Path to bandit_actor_prior.json (I4 output)")
     p.add_argument("--scenario-url",     default=None,           help="Override tensornets server URL for /api/scenarios")
     p.add_argument("--patient-mode",     default="llm", choices=["llm", "scripted"], help="Patient generation mode")

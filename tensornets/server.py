@@ -1177,6 +1177,8 @@ def _call_bedrock_llm(model_key: str, system: str, prompt: str,
                       max_tokens: int, temperature: float) -> dict:
     try:
         import boto3 as _boto3
+        import botocore.exceptions as _bce
+        import time as _time
     except ImportError:
         raise HTTPException(status_code=500, detail="boto3 not installed")
 
@@ -1186,27 +1188,48 @@ def _call_bedrock_llm(model_key: str, system: str, prompt: str,
 
     messages = [{"role": "user", "content": [{"text": prompt}]}]
     system_list = [{"text": system}] if system else []
+    kwargs: dict = {
+        "modelId":          model_id,
+        "messages":         messages,
+        "inferenceConfig":  {"maxTokens": max_tokens, "temperature": temperature},
+    }
+    if system_list:
+        kwargs["system"] = system_list
 
-    try:
-        kwargs: dict = {
-            "modelId":          model_id,
-            "messages":         messages,
-            "inferenceConfig":  {"maxTokens": max_tokens, "temperature": temperature},
-        }
-        if system_list:
-            kwargs["system"] = system_list
+    # Exponential backoff for Bedrock throttling (ThrottlingException / TooManyRequestsException)
+    last_exc: Exception | None = None
+    for attempt in range(4):
+        try:
+            response = client.converse(**kwargs)
+            content_blocks = response["output"]["message"]["content"]
+            if not content_blocks:
+                raise ValueError("Bedrock returned empty content block list")
+            text    = content_blocks[0]["text"]
+            usage   = response.get("usage", {})
+            return {
+                "text":          text,
+                "input_tokens":  usage.get("inputTokens",  0),
+                "output_tokens": usage.get("outputTokens", 0),
+            }
+        except Exception as exc:
+            last_exc = exc
+            exc_name = type(exc).__name__
+            is_throttle = (
+                "Throttling" in exc_name
+                or "TooManyRequests" in exc_name
+                or "throttling" in str(exc).lower()
+                # Treat empty-content responses as transient and retry
+                or "empty content" in str(exc).lower()
+            )
+            if is_throttle and attempt < 3:
+                wait = 2 ** attempt + 1   # 2s, 3s, 5s
+                log.warning("Bedrock throttled (%s), retrying in %.0fs (attempt %d/4)", model_key, wait, attempt + 1)
+                _time.sleep(wait)
+            else:
+                break
 
-        response = client.converse(**kwargs)
-        text    = response["output"]["message"]["content"][0]["text"]
-        usage   = response.get("usage", {})
-        return {
-            "text":          text,
-            "input_tokens":  usage.get("inputTokens",  0),
-            "output_tokens": usage.get("outputTokens", 0),
-        }
-    except Exception as exc:
-        log.error("Bedrock %s call failed: %s", model_key, exc)
-        raise HTTPException(status_code=502, detail=f"Bedrock error: {exc}")
+    log.error("Bedrock %s call failed: %s", model_key, last_exc)
+    raise HTTPException(status_code=502, detail=f"Bedrock error: {last_exc}")
 
 
 @app.post("/llm/scout")
