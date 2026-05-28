@@ -106,8 +106,52 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
             const availableActions = _availableActionsByStress(stressLevel);
             const blockedActions   = _blockedActionsByStress(stressLevel);
 
+            // ── Intervention queue check ─────────────────────────────────────────
+            // Before assembling the action selector prompt, check if there is a
+            // pending cross-user intervention item due for this user this turn.
+            // The peeked item is NOT marked surfaced here — that happens only if the
+            // action selector returns 'surface_intervention' and the response is sent.
+            let pendingIntervention = null;
+            try {
+                const { peekInterventionQueue } = await import('../db/queries_interventions.js');
+                pendingIntervention = await peekInterventionQueue(userId, {
+                    currentStressIndex: stressState?.stress_index ?? 0.0,
+                    currentSessionTurn: currentTurn,
+                });
+                if (pendingIntervention) {
+                    enhancedContext.pendingIntervention = pendingIntervention;
+                    if (process.env.DEBUG_COMPANION) {
+                        console.log(
+                            `[CompanionCoordinator] Pending intervention for ${userId}: ` +
+                            `type=${pendingIntervention.concern_type} ` +
+                            `urgency=${pendingIntervention.urgency_score} ` +
+                            `deadline=${pendingIntervention.deadline_at ?? 'none'}`
+                        );
+                    }
+                }
+            } catch (iqErr) {
+                // Intervention queue is non-critical — never break response generation
+                console.warn('[CompanionCoordinator] Intervention queue peek failed:', iqErr.message);
+            }
+
             const { PROMPT_ACTION_SELECTOR, ACTION_TO_FRAMES } = await import('../prompts/action_selector.js');
             const { processUserMessage } = await import('../agents/unifiedAgent.js');
+
+            // Build the {{PENDING_INTERVENTION}} block injected into the action selector.
+            // Exposes urgency, concern type, and the privacy-filtered summary.
+            // The LLM never sees the source_user_id or raw cross-user disclosure.
+            const pendingInterventionBlock = pendingIntervention
+                ? [
+                    `PENDING INTERVENTION ITEM (item_id: ${pendingIntervention.item_id}):`,
+                    `  concern_type   : ${pendingIntervention.concern_type}`,
+                    `  urgency_score  : ${pendingIntervention.urgency_score}`,
+                    `  summary        : ${pendingIntervention.concern_summary}`,
+                    `  suggested_action: ${pendingIntervention.suggested_action ?? 'none'}`,
+                    pendingIntervention.deadline_at
+                        ? `  deadline_in    : ${Math.round((pendingIntervention.deadline_at - Date.now()) / 60000)}min`
+                        : '',
+                  ].filter(Boolean).join('\n')
+                : 'none';
 
             const actionPrompt = PROMPT_ACTION_SELECTOR
                 .replace('{{STRESS_LEVEL}}', stressLevel)
@@ -131,7 +175,8 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
                 .replace('{{LONGITUDINAL_HINT}}',
                     enhancedContext.longitudinalHint
                         ? `\nSession history: ${enhancedContext.longitudinalHint}`
-                        : '');
+                        : '')
+                .replace('{{PENDING_INTERVENTION}}', pendingInterventionBlock);
 
             const actionResult = await processUserMessage(
                 userId, role, actionPrompt, circleId,
@@ -161,6 +206,25 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
                             `[CompanionCoordinator] Action selected: ${selectedAction} ` +
                             `[FRAMES: ${framesComponent}] lookahead: ${parsed.lookahead_hint}`
                         );
+                    }
+
+                    // ── Intervention queue: mark surfaced when action selector chose it ──
+                    // 'defer_intervention' leaves the item pending for reconsideration next turn.
+                    // 'surface_intervention' marks it surfaced so it won't fire again this session.
+                    if (selectedAction === 'surface_intervention' && pendingIntervention) {
+                        try {
+                            const { markSurfaced } = await import('../db/queries_interventions.js');
+                            await markSurfaced(pendingIntervention.item_id, currentTurn);
+                            // Pass the item into enhanced context so patient optimizer can use it
+                            enhancedContext.surfacedInterventionItem = pendingIntervention;
+                        } catch (mqErr) {
+                            console.warn('[CompanionCoordinator] markSurfaced failed:', mqErr.message);
+                        }
+                    } else if (selectedAction === 'defer_intervention' && pendingIntervention) {
+                        // Item stays pending — nothing to update in DB
+                        if (process.env.DEBUG_COMPANION) {
+                            console.log(`[CompanionCoordinator] Deferred intervention item=${pendingIntervention.item_id}`);
+                        }
                     }
                 } catch {
                     // JSON parse failure — action selector output was not valid JSON

@@ -43,6 +43,19 @@ setupLoginHandler(api, state);
 // Navigation Logic
 setupNavigationHandlers(api, state);
 
+// ── Header collapse on scroll ────────────────────────────────────────────────
+(function() {
+    const header = document.querySelector('header');
+    const scrollContainers = [document.querySelector('.content'), document.querySelector('#feedback-view')];
+    function onScroll() {
+        const scrolled = scrollContainers.some(el => el && el.scrollTop > 40);
+        header?.classList.toggle('header-compact', scrolled);
+    }
+    scrollContainers.forEach(el => el?.addEventListener('scroll', onScroll, { passive: true }));
+    // Also watch dynamically-added scroll containers (tab switches)
+    document.addEventListener('scroll', onScroll, { passive: true, capture: true });
+})();
+
 // ====== SSE CONNECTION ======
 function connectToEventSource() {
     state.eventSource = new EventSource(api.getEventSourceUrl(state.userId));

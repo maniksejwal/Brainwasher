@@ -433,6 +433,236 @@ export async function getCanonicalTranscripts({ arm, scenarioType, scenarioId } 
 }
 
 /**
+ * Merged timeline across all runs for each experiment (arm), ordered by episode timestamp.
+ * Returns rows with global_episode_idx, restart markers, smoothed_reward, stddev.
+ */
+/**
+ * Merged timeline across all runs for each experiment (arm), ordered by episode timestamp.
+ *
+ * Produces a single chronological sequence per experiment spanning all training
+ * runs (run_008 → run_009 → run_010 → run_013 …).  Each element carries the
+ * raw episode metrics plus several pre-computed rolling statistics so the GUI
+ * can render Weighted Moving Average lines without additional client-side work.
+ *
+ * Pre-computed per element:
+ *   smoothed_reward  — windowSize-episode rolling mean of cumulative_reward
+ *   stddev           — rolling SD of cumulative_reward over the same window
+ *   stress_auc_wma   — rolling mean of stress_auc
+ *   goal_rate_wma    — rolling fraction of goal_achieved episodes
+ *   run_restart      — true on the first episode of every new run (code-change boundary)
+ *
+ * @param {object}  opts
+ * @param {string}  [opts.arm]        — filter to a single experiment arm
+ * @param {number}  [opts.windowSize=20] — rolling window size (episodes)
+ * @returns {Promise<object[]>}
+ */
+export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {}) {
+    const db = await getDb();
+    const where = arm ? `WHERE e.arm = ?` : '';
+    const params = arm ? [arm] : [];
+
+    const rows = await db.all(
+        `SELECT e.episode_id, e.arm,
+                r.label as run_label, r.run_id, r.started_at as run_started_at,
+                e.cumulative_reward, e.goal_achieved, e.stress_auc,
+                e.trust_delta_final, e.turns_to_goal, e.turn_count,
+                e.tokens_scout, e.tokens_maverick, e.latency_ms_mean,
+                e.scenario_id, e.started_at
+         FROM htn_benchmark_episodes e
+         JOIN htn_benchmark_runs r ON r.run_id = e.run_id
+         ${where}
+         ORDER BY e.arm, e.started_at ASC`,
+        params
+    );
+
+    const byArm = {};
+    for (const row of rows) {
+        if (!byArm[row.arm]) byArm[row.arm] = [];
+        byArm[row.arm].push(row);
+    }
+
+    const result = [];
+    for (const [armKey, episodes] of Object.entries(byArm)) {
+        let prevRunId = null;
+        for (let i = 0; i < episodes.length; i++) {
+            const ep = episodes[i];
+            const isRestart = ep.run_id !== prevRunId && prevRunId !== null;
+            prevRunId = ep.run_id;
+
+            const start = Math.max(0, i - windowSize + 1);
+            const slice = episodes.slice(start, i + 1);
+
+            const smoothed  = slice.reduce((s, r) => s + (r.cumulative_reward ?? 0), 0) / slice.length;
+            const variance  = slice.reduce((s, r) => s + Math.pow((r.cumulative_reward ?? 0) - smoothed, 2), 0) / slice.length;
+            const stressWma = slice.reduce((s, r) => s + (r.stress_auc ?? 0), 0) / slice.length;
+            const goalWma   = slice.filter(r => r.goal_achieved).length / slice.length;
+
+            result.push({
+                arm:                armKey,
+                global_episode_idx: i + 1,
+                run_label:          ep.run_label,
+                run_id:             ep.run_id,
+                run_restart:        isRestart,
+                cumulative_reward:  ep.cumulative_reward,
+                smoothed_reward:    Math.round(smoothed * 1000) / 1000,
+                stddev:             Math.round(Math.sqrt(variance) * 1000) / 1000,
+                stress_auc:         ep.stress_auc,
+                stress_auc_wma:     Math.round(stressWma * 1000) / 1000,
+                goal_achieved:      ep.goal_achieved,
+                goal_rate_wma:      Math.round(goalWma * 1000) / 1000,
+                trust_delta_final:  ep.trust_delta_final,
+                turns_to_goal:      ep.turns_to_goal,
+                turn_count:         ep.turn_count,
+                tokens_scout:       ep.tokens_scout,
+                tokens_maverick:    ep.tokens_maverick,
+                latency_ms_mean:    ep.latency_ms_mean,
+                scenario_id:        ep.scenario_id,
+                started_at:         ep.started_at,
+            });
+        }
+    }
+    return result;
+}
+
+/**
+ * Per-experiment metric aggregates across all runs (for bar charts).
+ */
+/**
+ * Per-experiment, per-run aggregate metrics for bar/overlay charts.
+ *
+ * Joins htn_benchmark_runs → episodes → turns and groups by (arm, run_id).
+ * Returns all metric dimensions stored in the turns table so the GUI can
+ * render overlapping bar charts for each metric without a separate query.
+ *
+ * Columns of interest:
+ *   total_episodes, mean_reward, goal_rate, mean_stress_auc,
+ *   safety_failures, discrepancy_turns (currently always 0 — logic not wired),
+ *   mean_latency_ms, mean_goal_reward, mean_stress_reward, mean_trust_reward
+ *
+ * @returns {Promise<object[]>}
+ */
+export async function getExperimentMetricSummary() {
+    const db = await getDb();
+    return db.all(
+        `SELECT e.arm,
+                r.label as run_label, r.run_id,
+                COUNT(DISTINCT e.episode_id) as total_episodes,
+                AVG(e.cumulative_reward)      as mean_reward,
+                AVG(e.goal_achieved)          as goal_rate,
+                AVG(e.stress_auc)             as mean_stress_auc,
+                SUM(CASE WHEN t.judge_safety IS NOT NULL AND t.judge_safety < 0.5 THEN 1 ELSE 0 END) as safety_failures,
+                SUM(CASE WHEN t.discrepancy_flag = 1 THEN 1 ELSE 0 END) as discrepancy_turns,
+                AVG(t.latency_ms)             as mean_latency_ms,
+                AVG(t.reward_goal)            as mean_goal_reward,
+                AVG(t.reward_stress)          as mean_stress_reward,
+                AVG(t.reward_trust)           as mean_trust_reward
+         FROM htn_benchmark_runs r
+         JOIN htn_benchmark_episodes e ON e.run_id = r.run_id
+         JOIN htn_benchmark_turns t ON t.episode_id = e.episode_id
+         GROUP BY e.arm, r.run_id
+         ORDER BY e.arm, r.started_at`
+    );
+}
+
+/**
+ * Goal rate and avg reward per scenario per experiment (arm).
+ * Fully dynamic — returns all distinct scenario_ids in the DB.
+ */
+/**
+ * Goal rate and average cumulative reward per scenario per experiment.
+ *
+ * Fully dynamic — returns every distinct scenario_id present in the DB
+ * so the GUI never needs a hardcoded scenario list.  Used by the scenario
+ * goal-rate bar chart and the physio-reward scatter overlay.
+ *
+ * @returns {Promise<Array<{arm, scenario_id, episode_count, goal_rate, avg_reward, min_reward, max_reward}>>}
+ */
+export async function getScenarioGoalRates() {
+    const db = await getDb();
+    return db.all(
+        `SELECT e.arm, e.scenario_id,
+                COUNT(*) as episode_count,
+                AVG(e.goal_achieved) as goal_rate,
+                AVG(e.cumulative_reward) as avg_reward,
+                MIN(e.cumulative_reward) as min_reward,
+                MAX(e.cumulative_reward) as max_reward
+         FROM htn_benchmark_episodes e
+         WHERE e.scenario_id IS NOT NULL AND e.scenario_id != ''
+         GROUP BY e.arm, e.scenario_id
+         ORDER BY e.scenario_id, e.arm`
+    );
+}
+
+/**
+ * Physio-reward correlation data: per-episode hrv_ms mean, stress_index mean vs reward.
+ * Used for scatter plot showing relationship between physiology and outcomes.
+ */
+/**
+ * Per-episode physiological and reward data for scatter / correlation charts.
+ *
+ * Aggregates turn-level HRV and stress readings to episode level so each
+ * point in the scatter plot represents one complete episode.  All 5,402 turns
+ * have populated hrv_ms and stress_index columns, so no filtering is needed.
+ *
+ * Intended use: HRV vs cumulative_reward, stress_index vs stress_reward_component.
+ *
+ * @returns {Promise<Array<{arm, scenario_id, cumulative_reward, goal_achieved,
+ *   stress_auc, mean_hrv, mean_stress_index, mean_stress_reward,
+ *   mean_trust_reward, mean_goal_reward, turn_count}>>}
+ */
+export async function getPhysioRewardData() {
+    const db = await getDb();
+    return db.all(
+        `SELECT e.arm, e.scenario_id,
+                e.cumulative_reward, e.goal_achieved, e.stress_auc,
+                AVG(t.hrv_ms) as mean_hrv,
+                AVG(t.stress_index) as mean_stress_index,
+                AVG(t.reward_stress) as mean_stress_reward,
+                AVG(t.reward_trust) as mean_trust_reward,
+                AVG(t.reward_goal) as mean_goal_reward,
+                COUNT(t.turn_id) as turn_count
+         FROM htn_benchmark_episodes e
+         JOIN htn_benchmark_turns t ON t.episode_id = e.episode_id
+         GROUP BY e.episode_id
+         ORDER BY e.arm, e.started_at`
+    );
+}
+
+/**
+ * Critical failure summary: episodes where goal was NOT achieved, grouped by experiment + scenario.
+ */
+/**
+ * Critical failure summary — episodes where goal_achieved = 0, grouped by
+ * experiment and scenario.
+ *
+ * A "critical failure" in this context is a complete episode that did not meet
+ * the session goal (goal_achieved = 0).  This is distinct from the in-episode
+ * 2-strike termination (which also sets goal_achieved = 0 but ends the episode
+ * early via a cumulative_reward penalty of −1.5).
+ *
+ * The failure rate (failed_episodes / total_episodes) is the primary metric.
+ * fail_avg_reward and fail_avg_stress show whether failures cluster around
+ * high-stress scenarios or low-engagement ones.
+ *
+ * @returns {Promise<Array<{arm, scenario_id, total_episodes, failed_episodes,
+ *   fail_avg_reward, fail_avg_stress}>>}
+ */
+export async function getCriticalFailureSummary() {
+    const db = await getDb();
+    return db.all(
+        `SELECT e.arm, e.scenario_id,
+                COUNT(*) as total_episodes,
+                SUM(CASE WHEN e.goal_achieved = 0 THEN 1 ELSE 0 END) as failed_episodes,
+                AVG(CASE WHEN e.goal_achieved = 0 THEN e.cumulative_reward END) as fail_avg_reward,
+                AVG(CASE WHEN e.goal_achieved = 0 THEN e.stress_auc END) as fail_avg_stress
+         FROM htn_benchmark_episodes e
+         WHERE e.scenario_id IS NOT NULL AND e.scenario_id != ''
+         GROUP BY e.arm, e.scenario_id
+         ORDER BY failed_episodes DESC`
+    );
+}
+
+/**
  * Get a side-by-side comparison of all three arms for the same canonical scenario.
  * Returns null if fewer than 2 arms have a transcript for this scenario.
  */

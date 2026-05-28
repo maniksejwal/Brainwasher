@@ -1,14 +1,28 @@
 """
-tensornets.a3c.arms — The three A3C comparison arm workers.
+tensornets.a3c.arms — The three independent A3C training experiments.
 
-J5  Arm1Worker : HTN + MCTS — full tensornets bridge (tensornetsBridge → FastAPI).
-J6  Arm2Worker : Old-school production JS via HTTP (CompanionCoordinator endpoint).
-J7  Arm3Worker : Hysteresis-in-prompt — physio state as text, no MPS / no MCTS.
+Terminology note
+----------------
+These are three **independent training experiments** (or environments), not
+statistical arms of a single randomised controlled trial.  Each experiment
+has its own separate training loop, checkpoint directory, and episode log.
+They are compared as experimental conditions in a controlled ablation study.
 
-Each arm overrides A3CWorker.generate_response() and sets ARM = <arm_id>.
+The identifier "arm" is retained in code (ARM class attribute, DB column) for
+backwards-compatibility with existing run data.  Use "experiment" when referring
+to these in documentation, reports, or user-facing text.
 
-Arm 1 is the *treatment*.  Arms 2 and 3 are baselines.
-The same Actor / Critic parameters are shared across all arms within a run
+J5  Arm1Worker / Experiment 1 (htn_mcts)
+    : HTN + MCTS — full tensornets bridge (tensornetsBridge → FastAPI).
+J6  Arm2Worker / Experiment 2 (oldschool)
+    : Old-school production JS via HTTP (CompanionCoordinator endpoint).
+J7  Arm3Worker / Experiment 3 (hysteresis_prompt)
+    : Hysteresis-in-prompt — physio state as text, no MPS / no MCTS.
+
+Each experiment class overrides A3CWorker.generate_response() and sets ARM = <arm_id>.
+
+Experiment 1 is the *treatment*.  Experiments 2 and 3 are baselines.
+The same Actor / Critic parameters are shared across all experiments within a run
 so the policy improves from all three streams simultaneously.
 
 Design notes (from A3C_COMPARISON_DESIGN.md §1)
@@ -176,7 +190,7 @@ class Arm1Worker(A3CWorker):
             "next_physio":        {**state.physio, "stress_index": next_stress},
             "action_taken":       action,
             "frames_component":   None,   # MCTS supplies this when bridge is live
-            "info_coverage":      min(1.0, state.info_coverage + 0.08),
+            "info_coverage":      min(1.0, state.info_coverage + 0.06),  # normalised to match Exp 2/3
             "repetition_detected":False,
             "discrepancy":        None,
             "arm1_fallback":      fallback,
@@ -333,7 +347,7 @@ class Arm2Worker(A3CWorker):
             "next_physio":       {**state.physio, "stress_index": next_stress},
             "action_taken":      action,
             "frames_component":  None,
-            "info_coverage":     state.info_coverage,
+            "info_coverage":     min(1.0, state.info_coverage + 0.06),  # normalised to match Exp 1/3
             "repetition_detected": False,
             "discrepancy":       None,
             "deferred_reward":   deferred,
@@ -425,6 +439,7 @@ class Arm3Worker(A3CWorker):
         latency_ms = (time.perf_counter() - t_start) * 1000.0
         next_stress = _stress_after_response(state.stress_index, action, state.archetype, state.drug_regimen)
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
+        reward["safety"] = 1.0  # normalised: same unconditional floor as Exp 1/2
 
         return {
             "response":          response_text,
@@ -436,7 +451,7 @@ class Arm3Worker(A3CWorker):
             "next_physio":       {**state.physio, "stress_index": next_stress},
             "action_taken":      action,
             "frames_component":  None,
-            "info_coverage":     min(1.0, state.info_coverage + 0.05),
+            "info_coverage":     min(1.0, state.info_coverage + 0.06),  # normalised to match Exp 1/2
             "repetition_detected": False,
             "discrepancy":       None,
         }

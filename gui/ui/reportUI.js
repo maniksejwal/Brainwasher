@@ -56,48 +56,20 @@ export async function generateAndShowReport() {
         });
 
         if (result && result.success) {
+            // Show a brief toast then clear — the report is shown inline below
             resultsDiv.innerHTML = `
-                <div style="padding: 20px; background: var(--green-50); border: 1px solid var(--green-200); border-radius: 8px; text-align: center;">
-                    <div style="font-size: 48px; margin-bottom: 10px;">📊</div>
-                    <h3 style="margin: 0 0 8px 0; color: var(--green-900);">Report Ready</h3>
-                    <p style="color: var(--green-800); margin-bottom: 20px;">The latest simulation analysis is available.</p>
-                    
-                    <a href="/reports/simulation_report.html" target="_blank" class="button primary" style="
-                        display: inline-flex;
-                        align-items: center;
-                        gap: 8px;
-                        text-decoration: none;
-                        background-color: var(--google-blue);
-                        color: white;
-                        padding: 10px 24px;
-                        border-radius: 20px;
-                        font-weight: 600;
-                        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-                        transition: transform 0.1s;
-                    ">
-                        <span>Open Interactive Report</span>
-                        <span>↗</span>
-                    </a>
-
-                    <div style="margin-top: 20px; text-align: left;">
-                        <details>
-                            <summary style="cursor: pointer; color: var(--gray-600); font-size: 12px; user-select: none;">View Generation Log</summary>
-                            <pre style="
-                                margin-top: 8px;
-                                padding: 12px;
-                                background: #2d2d2d;
-                                color: #eee;
-                                border-radius: 4px;
-                                font-family: 'Consolas', monospace;
-                                font-size: 11px;
-                                white-space: pre-wrap;
-                                max-height: 200px;
-                                overflow-y: auto;
-                            ">${output}</pre>
-                        </details>
-                    </div>
+                <div style="padding:10px 16px;background:var(--green-50);border:1px solid var(--green-200);border-radius:8px;display:flex;align-items:center;gap:10px;font-size:13px;">
+                    <span>✅</span>
+                    <span style="color:var(--green-900);font-weight:500;">Report generated</span>
+                    <details style="margin-left:auto;font-size:11px;">
+                        <summary style="cursor:pointer;color:var(--gray-500);">log</summary>
+                        <pre style="margin-top:6px;padding:8px;background:#2d2d2d;color:#eee;border-radius:4px;font-size:10px;white-space:pre-wrap;max-height:120px;overflow-y:auto;">${output}</pre>
+                    </details>
+                    <button onclick="this.closest('#report-results').innerHTML=''" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--gray-500);padding:2px 6px;" title="Dismiss">×</button>
                 </div>
             `;
+            // Auto-load into inline frame
+            import('./benchmarksDashboard.js').then(m => m.loadInlineReport('report-inline-frame'));
         }
     } catch (error) {
         resultsDiv.innerHTML = `<p style="color: red;">❌ Error: ${error.message}</p>`;

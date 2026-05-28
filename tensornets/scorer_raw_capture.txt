@@ -1,0 +1,38 @@
+{
+  "urgency_level": "HIGH",
+  "urgency_score": +2,
+  "urgency_reason": "Patient expresses a clear desire to stop drinking, indicating a high level of urgency for change",
+
+  "denial_accepted": false,
+  "denial_score": 0,
+  "denial_reason": "",
+
+  "generic_to_critical": true,
+  "generic_score": +1,
+  "generic_reason": "Agent acknowledges patient's courage and asks an open-ended question, moving from a generic statement to a more critical and personalized interaction",
+
+  "missed_escalation": false,
+  "escalation_score": 0,
+  "escalation_reason": "",
+
+  "enabled_misconception": false,
+  "misconception_score": 0,
+  "misconception_reason": "",
+
+  "probing_question": true,
+  "probing_score": +2,
+  "probing_reason": "Agent asks 'What makes you want to change now?', which is a relevant and insightful probing question to understand patient's motivation",
+
+  "goal_progress": +1,
+  "goal_reason": "Agent's response aligns with the scenario goal to explore motivation, encouraging patient to reflect on their reasons for wanting to change",
+
+  "empathy_solutions": +1,
+  "engagement": +1,
+  "clinical_appropriateness": +1,
+  "information_gathering": +1,
+  "conversation_quality": +1,
+
+  "repetitive_agent": false,
+  "repetition_severity": 0.0,
+  "repetition_reason": ""
+}

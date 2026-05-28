@@ -29,6 +29,11 @@ import {
     getBenchmarkRun,
     getRunScenarioBreakdown,
     getSmoothedLearningCurves,
+    getMergedExperimentTimeline,
+    getExperimentMetricSummary,
+    getScenarioGoalRates,
+    getPhysioRewardData,
+    getCriticalFailureSummary,
 } from '../db/queries_benchmarks.js';
 
 const router = Router();
@@ -135,6 +140,76 @@ router.get('/learning-curves', async (req, res) => {
         res.json({ rows });
     } catch (e) {
         res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Merged experiment timeline (cross-run continuous sequence) ─────────────────
+router.get('/experiment-timeline', async (req, res) => {
+    try {
+        const { arm, window } = req.query;
+        const rows = await getMergedExperimentTimeline({
+            arm:        arm || undefined,
+            windowSize: parseInt(window) || 20,
+        });
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Per-experiment metric aggregates (for bar charts) ─────────────────────────
+router.get('/experiment-metrics', async (req, res) => {
+    try {
+        const rows = await getExperimentMetricSummary();
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Scenario goal rates (dynamic, all scenarios) ──────────────────────────────
+router.get('/scenario-goal-rates', async (req, res) => {
+    try {
+        const rows = await getScenarioGoalRates();
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Physio-reward correlation data ───────────────────────────────────────────
+router.get('/physio-reward', async (req, res) => {
+    try {
+        const rows = await getPhysioRewardData();
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Critical failure summary ──────────────────────────────────────────────────
+router.get('/critical-failures', async (req, res) => {
+    try {
+        const rows = await getCriticalFailureSummary();
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Prompt version log (for timeline overlay) ─────────────────────────────────
+router.get('/prompt-versions', async (req, res) => {
+    try {
+        const { getDb } = await import('../db/connection.js');
+        const db = await getDb();
+        const rows = await db.all(
+            `SELECT version, name, deployed_at, created_at
+             FROM prompt_versions
+             ORDER BY created_at ASC`
+        );
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message, rows: [] });
     }
 });
 

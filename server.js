@@ -27,6 +27,7 @@ import notificationsRouter from './routes/notifications.js';
 import businessRouter from './routes/business.js';
 import dialogGraphsRouter from './routes/dialog_graphs.js';
 import benchmarksRouter from './routes/benchmarks.js';
+import interventionsRouter from './routes/interventions.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -160,6 +161,7 @@ app.use('/api', notificationsRouter);
 app.use('/api', businessRouter);
 app.use('/api', dialogGraphsRouter);
 app.use('/api/benchmarks', benchmarksRouter);
+app.use('/api', interventionsRouter);
 
 // Core API (Prompts, Command, Legacy Login) -> Mounted at root because it handles both /login and /api/prompts
 app.use('/', coreRouter);

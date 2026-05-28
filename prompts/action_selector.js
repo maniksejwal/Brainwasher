@@ -113,10 +113,28 @@ CROSS-CIRCLE INFORMATION RELAY (use in multi-user / care-circle scenarios):
   share_circle_insight — relay privacy-filtered information another circle member disclosed ("Your daughter mentioned…")
                          ONLY use if the information was not marked confidential and is clinically relevant.
 
+INTERVENTION QUEUE (use ONLY when pending_intervention context is present):
+  surface_intervention — introduce a concern that was queued by another companion on behalf of another user.
+                         The concern_summary and suggested follow-on are in the {{PENDING_INTERVENTION}} context block.
+                         Frame naturally — never disclose that "a companion sent this". Use clinical or relational framing.
+                         Always pair with consent_acknowledgement on the NEXT turn if the topic requires user B's explicit buy-in.
+  consent_acknowledgement — seek user B's permission to continue discussing the concern surfaced in the previous turn.
+                            Use when surface_intervention introduced a sensitive cross-user topic (concern_type =
+                            'physiological_alert', 'behavioral_flag', or 'cross_user_welfare').
+                            Frame as: "Would it be okay to talk about...?" Never disclose source.
+  defer_intervention   — consciously skip a pending intervention item this turn (stress too high, wrong moment).
+                         The item remains pending and will be reconsidered next turn.
+                         Use when stress_gate_check would block the concern or rapport is insufficient.
+
 META ACTIONS:
   escalate             — hand conversation to clinician companion or human
   end_conversation     — natural conversation close
   safety_protocol      — crisis or harm risk detected
+
+---
+
+**PENDING INTERVENTION:**
+{{PENDING_INTERVENTION}}
 
 ---
 
@@ -132,6 +150,11 @@ META ACTIONS:
 8. If context_type = MEDICAL_VISIT AND turns_completed = 0: prefer [validate] first
 9. CHALLENGER SALE rule: challenger_insight should be followed by give_facts, then by open_question or socratic_probe. Never use challenger_insight on consecutive turns.
 10. SOCRATIC rule: socratic_probe leads to patient discovering the insight. If patient shows insight, follow with [affirmation]. Do not give the answer yourself.
+11. INTERVENTION rule: If PENDING_INTERVENTION is present AND stress ≠ CRITICAL AND turns_completed >= min_session_turn:
+    a. If intervention urgency >= 0.9 AND stress ≠ HIGH: MUST select [surface_intervention] unless last_action = surface_intervention (avoid double-surfacing).
+    b. If intervention urgency 0.5–0.89: prefer [surface_intervention] when conversation allows a natural pivot.
+    c. If stress = HIGH or CRITICAL: select [defer_intervention] — never surface during high stress.
+    d. After surface_intervention: next turn MUST be [consent_acknowledgement] if concern_type is physiological_alert, behavioral_flag, or cross_user_welfare.
 
 **CRITICAL: You MUST return ONLY valid JSON.**
 
@@ -183,6 +206,11 @@ export const ACTION_TO_FRAMES = {
     open_question:        'Empathy',
     spike_step:           'Feedback',
     flooding_hold:        'SelfEfficacy',       // holding exposure = builds self-efficacy
+
+    // Intervention queue actions
+    surface_intervention:    'Empathy',           // surfacing a concern = empathic attentiveness
+    consent_acknowledgement: 'Responsibility',    // user owns whether to continue
+    defer_intervention:      'Empathy',           // respecting user's state = empathy
 };
 
 /**
@@ -219,4 +247,9 @@ export const ACTION_TO_MCTS_CATEGORY = {
     // Flooding
     flooding_hold:       { mcts_dimension: 'goal_progress',    weight_boost: 0.5 },
     flooding_deepen:     { mcts_dimension: 'goal_progress',    weight_boost: 0.4 },
+
+    // Intervention queue actions
+    surface_intervention:   { mcts_dimension: 'goal_progress',    weight_boost: 0.3 },
+    consent_acknowledgement:{ mcts_dimension: 'trust_delta',      weight_boost: 0.2 },
+    defer_intervention:     { mcts_dimension: 'stress_reduction', weight_boost: 0.0 },
 };

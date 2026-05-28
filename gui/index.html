@@ -10,6 +10,8 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/themes/light.css">
     <script type="module" src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.12.0/cdn/shoelace.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
     <!-- Environment Config (Injected during deploy) -->
     <script src="env.js"></script>
 </head>
@@ -238,17 +240,19 @@
                     <div id="analysis-results" class="console-output"></div>
                 </div>
 
-                <div id="reports" class="tab-content scrollable-content">
-                    <div class="analysis-header" style="margin-bottom: 20px;">
-                        <h3>Simulation Progress Report</h3>
-                        <p style="color: var(--gray-600); font-size: 14px;">Auto-generated when you open this tab.</p>
+                <div id="reports" class="tab-content scrollable-content reports-tab-content">
+                    <div class="reports-toolbar">
+                        <div>
+                            <h3 style="margin:0 0 2px;">Simulation Progress Report</h3>
+                            <p style="color:var(--gray-600);font-size:13px;margin:0;">Auto-generated when you open this tab. Shown inline below.</p>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;flex-shrink:0;">
+                            <button id="generate-report-btn" class="primary" style="font-size:12px;padding:6px 14px;">📊 Generate New Report</button>
+                            <button id="reload-report-btn" class="secondary" style="font-size:12px;padding:6px 14px;">↻ Reload</button>
+                        </div>
                     </div>
-                    <div id="report-controls" style="margin-bottom: 20px; display:none">
-                        <button id="generate-report-btn" class="primary">
-                            📊 Generate New Report
-                        </button>
-                    </div>
-                    <div id="report-results"></div>
+                    <div id="report-results" style="margin-bottom:6px;"></div>
+                    <div id="report-inline-frame" class="report-inline-frame"></div>
                 </div>
 
                 <div id="training" class="tab-content scrollable-content">
@@ -261,6 +265,131 @@
                 </div>
 
                 <div id="benchmarks" class="tab-content scrollable-content">
+                    <!-- Controls toolbar -->
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px;padding:12px;background:var(--gray-50);border-radius:8px;border:1px solid var(--gray-200);">
+                        <span style="font-weight:600;font-size:13px;color:var(--gray-700);">Benchmarks</span>
+                        <span id="bench-refresh-spinner" style="display:none;font-size:11px;color:var(--gray-500);">⏳ loading…</span>
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                            <button class="secondary bench-exp-btn" data-exp-toggle="htn_mcts" style="font-size:11px;padding:4px 10px;border-left:4px solid #4285F4;">Exp 1 MCTS</button>
+                            <button class="secondary bench-exp-btn" data-exp-toggle="oldschool" style="font-size:11px;padding:4px 10px;border-left:4px solid #34A853;">Exp 2 JS</button>
+                            <button class="secondary bench-exp-btn" data-exp-toggle="hysteresis_prompt" style="font-size:11px;padding:4px 10px;border-left:4px solid #EA4335;">Exp 3 Hyst</button>
+                        </div>
+                        <select id="duration-filter" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid var(--gray-300);">
+                            <option value="0">All time</option>
+                            <option value="1">Last 1 day</option>
+                            <option value="7">Last 7 days</option>
+                            <option value="30">Last 30 days</option>
+                        </select>
+                        <label style="font-size:11px;display:flex;gap:5px;align-items:center;cursor:pointer;">
+                            <input type="checkbox" id="show-raw-traces">
+                            <span>Raw traces</span><span class="trace-tooltip-hint" title="Show individual episode reward dots behind the weighted moving-average line. Useful for spotting outliers and variance." style="cursor:help;color:var(--gray-500);">ⓘ</span>
+                        </label>
+                        <label style="font-size:11px;display:flex;gap:5px;align-items:center;cursor:pointer;">
+                            <input type="checkbox" id="show-sd-band">
+                            <span>±1 SD band</span>
+                        </label>
+                        <label style="font-size:11px;display:flex;gap:5px;align-items:center;cursor:pointer;">
+                            <input type="checkbox" id="show-crit-fail">
+                            <span>Critical failures</span>
+                        </label>
+                        <label style="font-size:11px;display:flex;gap:5px;align-items:center;cursor:pointer;">
+                            <span>WMA window:</span>
+                            <input type="range" id="wma-window" min="5" max="50" value="20" style="width:80px;">
+                            <span id="wma-window-val">20</span>
+                        </label>
+                    </div>
+
+                    <!-- Simulation overview stats row -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Simulation Overview</h4>
+                        <div id="simulation-overview-stats" style="display:flex;gap:12px;flex-wrap:wrap;"></div>
+                    </div>
+
+                    <!-- Learning curves (reward WMA) -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Learning Curves — Cumulative Reward (Weighted Moving Average)</h4>
+                        <div style="position:relative;height:280px;">
+                            <canvas id="learning-curves-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Goal rate chart -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Goal Rate over Episodes (Weighted Moving Average)</h4>
+                        <div style="position:relative;height:220px;">
+                            <canvas id="goal-rate-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Cumulative reward stats table -->
+                    <div style="margin-bottom:16px;" id="reward-stats-section">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Episode Reward Statistics</h4>
+                        <div id="reward-stats-table" style="overflow-x:auto;"></div>
+                    </div>
+
+                    <!-- Stress AUC over episodes -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Stress AUC over Episodes (Weighted Moving Average)</h4>
+                        <div style="position:relative;height:220px;">
+                            <canvas id="stress-auc-chart"></canvas>
+                        </div>
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Scenario Reward Breakdown (Avg Cumulative)</h4>
+                        <div style="position:relative;height:220px;">
+                            <canvas id="scenario-heatmap-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Scenario goal rates -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Scenario Goal Rate by Experiment</h4>
+                        <div style="position:relative;height:220px;">
+                            <canvas id="scenario-goal-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Critical failures -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Critical Failures (goal not achieved)</h4>
+                        <div id="crit-fail-stats-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;"></div>
+                        <div style="position:relative;height:200px;">
+                            <canvas id="crit-fail-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Metric line charts (replaced bars) -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 4px;font-size:13px;color:var(--gray-700);">Per-Run Metric Comparison <small style="font-weight:400;color:var(--gray-500);">(overlapping bars per experiment per run)</small></h4>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-reward"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-goal"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-stress"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-safety"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-disc"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-rgoal"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-rstress"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-rtrust"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-latency"></canvas></div>
+                        </div>
+                    </div>
+
+                    <!-- Physio-reward correlation -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 4px;font-size:13px;color:var(--gray-700);">Physiology ↔ Reward Correlation</h4>
+                        <p style="font-size:11px;color:var(--gray-500);margin:0 0 10px;">Each dot = one training episode. All 5,402 turns have HRV and stress data. No distinct persona IDs were recorded during training runs — persona-level breakdown pending.</p>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                            <div>
+                                <div style="font-size:11px;color:var(--gray-600);margin-bottom:4px;">HRV (ms) vs Cumulative Reward</div>
+                                <div style="position:relative;height:220px;"><canvas id="physio-hrv-chart"></canvas></div>
+                            </div>
+                            <div>
+                                <div style="font-size:11px;color:var(--gray-600);margin-bottom:4px;">Stress Index vs Stress Reward Component</div>
+                                <div style="position:relative;height:220px;"><canvas id="physio-stress-chart"></canvas></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div id="benchmarks-dashboard"></div>
                 </div>
 

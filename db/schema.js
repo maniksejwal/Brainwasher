@@ -191,6 +191,10 @@ export async function initializeDatabase() {
 
     // Create dialog graph tables (supervised training + MCTS comparison)
     await addDialogGraphSchemaTables();
+
+    // Create intervention queue table (cross-user scheduled interventions)
+    const { addInterventionQueueTable } = await import('./queries_interventions.js');
+    await addInterventionQueueTable();
 }
 
 /**

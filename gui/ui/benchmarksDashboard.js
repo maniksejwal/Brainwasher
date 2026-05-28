@@ -1,496 +1,536 @@
-/**
- * @fileoverview Unified Benchmarks Dashboard
+﻿/**
+ * @fileoverview gui/ui/benchmarksDashboard.js — Benchmarks view v3
  *
- * Merges the A3C training benchmarks and the simulation analysis dashboard
- * into a single view inside the main GUI's Benchmarks tab.
- *
- * Sections
- * --------
- * A. SIMULATION OVERVIEW  — Stats cards (simulated runs, interactions, scores, personas)
- *                           + Score-over-time trend chart (simulation vs production)
- * B. A3C LEARNING CURVES  — D3 line chart, one line per arm, reward vs episode index
- * C. ARM SUMMARY          — Table: mean reward, goal rate, mean turns, mean latency
- * D. SCENARIO BREAKDOWN   — Per-scenario reward heatmap for the selected run
- *
- * Data sources
- * ------------
- *   GET  /api/simulation/analysis/stats               → simulation overview stats
- *   GET  /api/benchmarks/learning-curves?limit=200    → A3C learning curve rows
- *   POST /api/benchmarks/compare                      → arm summary
- *   GET  /api/benchmarks/runs?limit=20                → run selector
- *   GET  /api/benchmarks/scenario-breakdown/:run_id   → scenario heatmap
+ * v3 additions:
+ *  • WMA window slider (default 20, range 5-50)
+ *  • Stress AUC WMA line chart
+ *  • Reward stats table (min/max/mean/SD per experiment)
+ *  • Prompt version markers on learning curves
+ *  • Scenario goal-rate per-scenario line chart
+ *  • Metric bar charts show all missing metrics
+ *  • All per-episode line charts respect WMA window
  */
 
 import config from '../config.js';
 
-const BASE = config.ORCHESTRATOR_URL;
+const EXP_META = {
+    htn_mcts:          { label: 'Exp 1 — HTN + MCTS',                color: '#4285F4', bg: 'rgba(66,133,244,0.18)'  },
+    oldschool:         { label: 'Exp 2 — LLM Agents w/o Physiology', color: '#34A853', bg: 'rgba(52,168,83,0.18)'   },
+    hysteresis_prompt: { label: 'Exp 3 — Hysteresis Prompt',         color: '#EA4335', bg: 'rgba(234,67,53,0.18)'   },
+};
+const EXP_KEYS = Object.keys(EXP_META);
 
-// ── Arm display metadata ──────────────────────────────────────────────────────
-
-const ARM_META = {
-    htn_mcts:          { label: 'Arm 1 — HTN + MCTS',         color: '#4285F4' },
-    oldschool:         { label: 'Arm 2 — JS Companion',        color: '#34A853' },
-    hysteresis_prompt: { label: 'Arm 3 — Hysteresis Prompt',   color: '#EA4335' },
+let _state = {
+    activeExperiments: new Set(EXP_KEYS),
+    showRawTraces:  false,
+    showSD:         false,
+    showCritFail:   false,
+    durationDays:   0,
+    wmaWindow:      20,
+    timelineData:   null,
+    metricsData:    null,
+    simStats:       null,
+    scenarioGoalData: null,
+    physioData:     null,
+    critFailData:   null,
+    promptVersions: null,
 };
 
-function armLabel(arm) { return ARM_META[arm]?.label ?? arm; }
-function armColor(arm) { return ARM_META[arm]?.color ?? '#888'; }
-
-// ── Fetch helpers ─────────────────────────────────────────────────────────────
-
-async function fetchSimStats(dbKey = 'simulation') {
-    try {
-        const r = await fetch(`${BASE}/api/simulation/analysis/stats?db=${encodeURIComponent(dbKey)}`);
-        if (!r.ok) return null;
-        return await r.json();
-    } catch { return null; }
-}
-
-async function fetchLearningCurves(runId) {
-    const qs = runId ? `?run_id=${encodeURIComponent(runId)}&limit=200` : '?limit=200';
-    const r = await fetch(`${BASE}/api/benchmarks/learning-curves${qs}`);
-    return (await r.json()).rows ?? [];
-}
-
-async function fetchArmSummary() {
-    const r = await fetch(`${BASE}/api/benchmarks/compare`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario_set: '' }),
-    });
-    return (await r.json()).rows ?? [];
-}
-
-async function fetchRuns() {
-    const r = await fetch(`${BASE}/api/benchmarks/runs?limit=20`);
-    return (await r.json()).runs ?? [];
-}
-
-async function fetchScenarioBreakdown(runId) {
-    if (!runId) return [];
-    const r = await fetch(`${BASE}/api/benchmarks/scenario-breakdown/${encodeURIComponent(runId)}`);
-    return (await r.json()).rows ?? [];
-}
-
-// ── Section A: Simulation stats cards + trend chart ──────────────────────────
-
-function renderSimulationOverview(container, stats) {
-    if (!stats?.success) {
-        container.innerHTML = `<p style="color:var(--gray-500);font-size:13px">Simulation stats unavailable. Run a simulation first.</p>`;
-        return;
-    }
-
-    const { logStats, dbStats, timeSeriesData } = stats;
-
-    // ── Stats cards row ───────────────────────────────────────────────────────
-    const simCount   = logStats?.conversationsCount ?? 0;
-    const interactions = logStats?.interactions ?? 0;
-
-    const aiScores   = (timeSeriesData?.aiTimeSeries ?? []).filter(t => t.score != null).map(t => t.score);
-    const prodScores = (timeSeriesData?.productionTimeSeries ?? timeSeriesData?.humanTimeSeries ?? []).filter(t => t.score != null).map(t => t.score);
-
-    const avg = arr => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length) : null;
-    const simScore  = avg(aiScores);
-    const prodScore = avg(prodScores);
-
-    const definedPersonas = stats.definedPersonas
-        ? Object.values(stats.definedPersonas).reduce((s, a) => s + (Array.isArray(a) ? a.length : 0), 0)
-        : 0;
-
-    const fmtScore = v => v == null ? 'N/A' : v.toFixed(2);
-    const fmtCount = v => v.toLocaleString();
-
-    const scoreColor = v => {
-        if (v == null) return 'var(--gray-500)';
-        if (v >= 0.5)  return '#137333';
-        if (v >= 0)    return '#e37400';
-        return '#c5221f';
-    };
-
-    container.innerHTML = `
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px">
-            ${card('📊', 'Simulated Runs',    fmtCount(simCount),         '')}
-            ${card('💬', 'Interactions',      fmtCount(interactions),     '')}
-            ${card('🤖', 'Simulation Score',  fmtScore(simScore),  simScore  == null ? '' : `${fmtCount(aiScores.length)} samples`, scoreColor(simScore))}
-            ${card('👥', 'Production Score',  fmtScore(prodScore), prodScore == null ? '' : `${fmtCount(prodScores.length)} samples`, scoreColor(prodScore))}
-            ${card('🧬', 'Defined Personas',  fmtCount(definedPersonas), '')}
-        </div>
-        <div id="sim-trend-chart" style="width:100%;min-height:260px;background:white;border:1px solid var(--gray-200);border-radius:8px;padding:8px 0;box-sizing:border-box"></div>`;
-
-    // ── Trend chart ───────────────────────────────────────────────────────────
-    const trendEl = container.querySelector('#sim-trend-chart');
-    const ts = timeSeriesData?.aiTimeSeries ?? timeSeriesData ?? [];
-    if (!ts.length) {
-        trendEl.innerHTML = '<p style="color:var(--gray-500);padding:16px;font-size:13px">No time-series data yet.</p>';
-        return;
-    }
-    renderTrendChart(trendEl, ts, timeSeriesData?.humanTimeSeries ?? []);
-}
-
-function card(icon, label, value, sub, valueColor = 'var(--gray-800)') {
-    return `
-        <div style="background:white;border:1px solid var(--gray-200);border-radius:8px;padding:14px 16px">
-            <div style="font-size:20px;margin-bottom:4px">${icon}</div>
-            <div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.5px">${label}</div>
-            <div style="font-size:22px;font-weight:600;color:${valueColor};line-height:1.2;margin-top:2px">${value}</div>
-            ${sub ? `<div style="font-size:11px;color:var(--gray-500);margin-top:2px">${sub}</div>` : ''}
-        </div>`;
-}
-
-function renderTrendChart(container, simTs, prodTs) {
-    container.innerHTML = '';
-    const W = container.clientWidth || 680;
-    const H = 240;
-    const margin = { top: 20, right: 100, bottom: 44, left: 50 };
-    const iW = W - margin.left - margin.right;
-    const iH = H - margin.top - margin.bottom;
-
-    const allDates = [...new Set([...simTs.map(t => t.date), ...prodTs.map(t => t.date)])].sort();
-    if (!allDates.length) return;
-
-    const svg = d3.select(container).append('svg')
-        .attr('width', W).attr('height', H).style('font-family', 'inherit');
-    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
-
-    const x = d3.scalePoint().domain(allDates).range([0, iW]).padding(0.2);
-
-    const allScores = [...simTs, ...prodTs].map(t => t.score).filter(v => v != null);
-    const yMin = Math.min(0, d3.min(allScores) ?? 0);
-    const yMax = Math.max(1, d3.max(allScores) ?? 1);
-    const y = d3.scaleLinear().domain([yMin, yMax]).range([iH, 0]).nice();
-
-    // Grid
-    g.append('g').call(d3.axisLeft(y).tickSize(-iW).tickFormat(''))
-        .selectAll('line').style('stroke', '#e8eaed').style('stroke-dasharray', '3,3');
-    g.select('.domain').remove();
-
-    // Zero line
-    g.append('line').attr('x1', 0).attr('x2', iW)
-        .attr('y1', y(0)).attr('y2', y(0))
-        .style('stroke', '#bdc1c6').style('stroke-width', 1);
-
-    // Axes
-    const tickEvery = Math.max(1, Math.floor(allDates.length / 6));
-    g.append('g').attr('transform', `translate(0,${iH})`)
-        .call(d3.axisBottom(x).tickValues(allDates.filter((_, i) => i % tickEvery === 0)))
-        .selectAll('text').style('font-size', '10px').attr('transform', 'rotate(-25)').attr('text-anchor', 'end');
-    g.append('g').call(d3.axisLeft(y).ticks(5));
-
-    // Axis labels
-    g.append('text').attr('x', iW / 2).attr('y', iH + 40)
-        .attr('text-anchor', 'middle').style('font-size', '11px').style('fill', '#5f6368')
-        .text('Date');
-    g.append('text').attr('transform', 'rotate(-90)').attr('x', -iH / 2).attr('y', -38)
-        .attr('text-anchor', 'middle').style('font-size', '11px').style('fill', '#5f6368')
-        .text('Avg Score');
-
-    function drawLine(series, color, label) {
-        const valid = series.filter(t => t.score != null);
-        if (!valid.length) return;
-        const line = d3.line()
-            .x(d => x(d.date))
-            .y(d => y(d.score))
-            .defined(d => d.score != null)
-            .curve(d3.curveCatmullRom.alpha(0.5));
-        g.append('path').datum(valid)
-            .attr('fill', 'none').attr('stroke', color).attr('stroke-width', 2)
-            .attr('d', line);
-        // Dots
-        g.selectAll(null).data(valid).enter().append('circle')
-            .attr('cx', d => x(d.date)).attr('cy', d => y(d.score))
-            .attr('r', 3).attr('fill', color);
-        // Legend
-        const lx = iW + 8;
-        const ly = label === 'Simulation' ? 0 : 22;
-        svg.append('line')
-            .attr('x1', margin.left + lx).attr('x2', margin.left + lx + 16)
-            .attr('y1', margin.top + ly + 6).attr('y2', margin.top + ly + 6)
-            .attr('stroke', color).attr('stroke-width', 2);
-        svg.append('text')
-            .attr('x', margin.left + lx + 20).attr('y', margin.top + ly + 10)
-            .style('font-size', '11px').style('fill', '#3c4043').text(label);
-    }
-
-    drawLine(simTs,  '#4285F4', 'Simulation');
-    drawLine(prodTs, '#34A853', 'Production');
-}
-
-// ── Section B: A3C Learning-curves chart ─────────────────────────────────────
-
-function renderLearningCurveChart(container, rows, showRaw) {
-    container.innerHTML = '';
-    if (!rows.length) {
-        container.innerHTML = '<p style="color:var(--gray-500);padding:24px">No episode data yet. Start a training run to see curves.</p>';
-        return;
-    }
-
-    const W = container.clientWidth || 700;
-    const H = 340;
-    const margin = { top: 24, right: 150, bottom: 48, left: 56 };
-    const iW = W - margin.left - margin.right;
-    const iH = H - margin.top - margin.bottom;
-
-    const svg = d3.select(container).append('svg')
-        .attr('width', W).attr('height', H).style('font-family', 'inherit');
-    const g = svg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
-
-    const byArm = d3.group(rows, d => d.arm);
-    const xMax  = d3.max(rows, d => d.episode_index) ?? 1;
-    const yMin  = d3.min(rows, d => Math.min(d.cumulative_reward ?? 0, d.smoothed_reward ?? 0));
-    const yMax  = d3.max(rows, d => Math.max(d.cumulative_reward ?? 0, d.smoothed_reward ?? 0));
-
-    const x = d3.scaleLinear().domain([1, xMax]).range([0, iW]);
-    const y = d3.scaleLinear().domain([yMin * 1.1, yMax * 1.1 + 0.1]).range([iH, 0]);
-
-    g.append('g').call(d3.axisLeft(y).tickSize(-iW).tickFormat(''))
-        .selectAll('line').style('stroke', '#e8eaed').style('stroke-dasharray', '3,3');
-    g.select('.grid .domain').remove();
-
-    g.append('line').attr('x1', 0).attr('x2', iW)
-        .attr('y1', y(0)).attr('y2', y(0)).style('stroke', '#bdc1c6').style('stroke-width', 1);
-
-    g.append('g').attr('transform', `translate(0,${iH})`)
-        .call(d3.axisBottom(x).ticks(Math.min(xMax, 10)).tickFormat(d3.format('d')));
-    g.append('g').call(d3.axisLeft(y).ticks(6));
-
-    g.append('text').attr('x', iW / 2).attr('y', iH + 40)
-        .attr('text-anchor', 'middle').style('font-size', '12px').style('fill', '#5f6368')
-        .text('Episode (per arm)');
-    g.append('text').attr('transform', 'rotate(-90)').attr('x', -iH / 2).attr('y', -42)
-        .attr('text-anchor', 'middle').style('font-size', '12px').style('fill', '#5f6368')
-        .text('Cumulative Reward');
-
-    const lineSmoothed = d3.line()
-        .x(d => x(d.episode_index)).y(d => y(d.smoothed_reward ?? 0))
-        .curve(d3.curveCatmullRom.alpha(0.5));
-    const lineRaw = d3.line()
-        .x(d => x(d.episode_index)).y(d => y(d.cumulative_reward ?? 0))
-        .curve(d3.curveLinear);
-
-    let legendY = 0;
-    for (const [arm, armRows] of byArm) {
-        const color  = armColor(arm);
-        const sorted = [...armRows].sort((a, b) => a.episode_index - b.episode_index);
-        if (showRaw) {
-            g.append('path').datum(sorted)
-                .attr('fill', 'none').attr('stroke', color)
-                .attr('stroke-width', 1).attr('stroke-opacity', 0.25).attr('d', lineRaw);
-        }
-        g.append('path').datum(sorted)
-            .attr('fill', 'none').attr('stroke', color).attr('stroke-width', 2.5).attr('d', lineSmoothed);
-        const last = sorted[sorted.length - 1];
-        g.append('circle')
-            .attr('cx', x(last.episode_index)).attr('cy', y(last.smoothed_reward ?? 0))
-            .attr('r', 4).attr('fill', color);
-        const lx = iW + 10;
-        svg.append('line')
-            .attr('x1', margin.left + lx).attr('x2', margin.left + lx + 18)
-            .attr('y1', margin.top + legendY + 6).attr('y2', margin.top + legendY + 6)
-            .attr('stroke', color).attr('stroke-width', 2.5);
-        svg.append('text')
-            .attr('x', margin.left + lx + 22).attr('y', margin.top + legendY + 10)
-            .style('font-size', '11px').style('fill', '#3c4043').text(armLabel(arm));
-        legendY += 22;
-    }
-}
-
-// ── Section C: Arm summary table ─────────────────────────────────────────────
-
-function renderArmSummaryTable(container, rows) {
-    if (!rows.length) {
-        container.innerHTML = '<p style="color:var(--gray-500)">No comparison data yet.</p>';
-        return;
-    }
-    const fmt2   = v => (v == null ? '—' : (+v).toFixed(2));
-    const fmtPct = v => (v == null ? '—' : `${(+v * 100).toFixed(0)}%`);
-    const fmtMs  = v => (v == null ? '—' : `${Math.round(+v)}ms`);
-    const best   = {};
-    ['mean_reward', 'goal_rate'].forEach(k => { best[k] = Math.max(...rows.map(r => r[k] ?? -Infinity)); });
-
-    const rowHtml = rows.map(r => {
-        const isBestReward = (r.mean_reward ?? -Infinity) === best.mean_reward;
-        const isBestGoal   = (r.goal_rate   ?? -Infinity) === best.goal_rate;
-        return `<tr>
-            <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${armColor(r.arm)};margin-right:6px;"></span>${armLabel(r.arm)}</td>
-            <td style="text-align:center">${r.episodes ?? '—'}</td>
-            <td style="text-align:center;${isBestReward ? 'font-weight:600;color:#137333' : ''}">${fmt2(r.mean_reward)}</td>
-            <td style="text-align:center;${isBestGoal   ? 'font-weight:600;color:#137333' : ''}">${fmtPct(r.goal_rate)}</td>
-            <td style="text-align:center">${fmt2(r.mean_turns)}</td>
-            <td style="text-align:center">${fmtMs(r.mean_latency_ms)}</td>
-        </tr>`;
-    }).join('');
-
-    container.innerHTML = `
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
-            <thead><tr style="border-bottom:2px solid var(--gray-200);text-align:left">
-                <th style="padding:8px 12px">Arm</th>
-                <th style="padding:8px 12px;text-align:center">Episodes</th>
-                <th style="padding:8px 12px;text-align:center">Mean Reward</th>
-                <th style="padding:8px 12px;text-align:center">Goal Rate</th>
-                <th style="padding:8px 12px;text-align:center">Mean Turns</th>
-                <th style="padding:8px 12px;text-align:center">Mean Latency</th>
-            </tr></thead>
-            <tbody>${rowHtml}</tbody>
-        </table>`;
-}
-
-// ── Section D: Scenario heatmap ───────────────────────────────────────────────
-
-function renderScenarioHeatmap(container, rows) {
-    if (!rows.length) {
-        container.innerHTML = '<p style="color:var(--gray-500)">Select a specific run to see scenario breakdown.</p>';
-        return;
-    }
-    const scenarios = [...new Set(rows.map(r => r.scenario_id))].sort();
-    const arms      = [...new Set(rows.map(r => r.arm ?? ''))].sort();
-    const lookup    = {};
-    for (const r of rows) {
-        lookup[`${r.scenario_id}||${r.arm ?? ''}`] = r.cumulative_reward ?? null;
-    }
-    const allVals = Object.values(lookup).filter(v => v != null);
-    const minV = Math.min(...allVals);
-    const maxV = Math.max(...allVals);
-    function cellColor(v) {
-        if (v == null) return '#f1f3f4';
-        const t = maxV === minV ? 0.5 : (v - minV) / (maxV - minV);
-        const r = Math.round(t < 0.5 ? 220 : 220 - (t - 0.5) * 2 * 160);
-        const g = Math.round(t < 0.5 ? t * 2 * 200 : 200);
-        return `rgb(${r},${g},60)`;
-    }
-    const headerCells = arms.map(a => `<th style="padding:6px 10px;font-size:11px;text-align:center;white-space:nowrap">${armLabel(a)}</th>`).join('');
-    const bodyRows = scenarios.map(sc => {
-        const cells = arms.map(a => {
-            const v  = lookup[`${sc}||${a}`];
-            const bg = cellColor(v);
-            const text = v == null ? '—' : v.toFixed(2);
-            return `<td style="padding:5px 10px;text-align:center;background:${bg};color:${v != null && v > (minV + maxV) / 2 ? '#fff' : '#202124'};font-size:12px;font-weight:500">${text}</td>`;
-        }).join('');
-        return `<tr><td style="padding:5px 10px;font-size:12px;white-space:nowrap;color:#3c4043">${sc.replace(/_/g, ' ')}</td>${cells}</tr>`;
-    }).join('');
-    container.innerHTML = `
-        <table style="border-collapse:collapse;font-size:13px">
-            <thead><tr style="border-bottom:2px solid var(--gray-200)">
-                <th style="padding:6px 10px;text-align:left;font-size:11px">Scenario</th>
-                ${headerCells}
-            </tr></thead>
-            <tbody>${bodyRows}</tbody>
-        </table>
-        <p style="font-size:11px;color:var(--gray-500);margin-top:8px">Colour: red = low reward → green = high reward.</p>`;
-}
-
-// ── Section divider helper ────────────────────────────────────────────────────
-
-function sectionDivider(title) {
-    return `<div style="display:flex;align-items:center;gap:12px;margin:28px 0 14px">
-        <span style="font-size:14px;font-weight:600;color:#3c4043;white-space:nowrap">${title}</span>
-        <div style="flex:1;height:1px;background:var(--gray-200)"></div>
-    </div>`;
-}
-
-// ── Main init ─────────────────────────────────────────────────────────────────
-
 export async function initBenchmarksDashboard() {
-    const root = document.getElementById('benchmarks-dashboard');
-    if (!root) return;
+    _attachToolbar();
+    await _refresh();
+}
+export async function refreshBenchmarksDashboard() { await _refresh(); }
 
-    root.innerHTML = `
-        <div style="padding:16px">
-            <!-- Controls bar -->
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                <h3 style="margin:0">Benchmarks</h3>
-                <div style="display:flex;gap:8px;align-items:center">
-                    <label style="font-size:12px;color:var(--gray-600)">DB:
-                        <select id="bench-db-select" style="font-size:12px;padding:4px 8px;border:1px solid var(--gray-300);border-radius:4px;margin-left:4px">
-                            <option value="simulation">Simulation</option>
-                            <option value="development">Development</option>
-                            <option value="production">Production</option>
-                        </select>
-                    </label>
-                    <label style="font-size:12px;color:var(--gray-600)">
-                        <input type="checkbox" id="bench-show-raw" style="margin-right:4px"> Show raw A3C traces
-                    </label>
-                    <select id="bench-run-select" style="font-size:12px;padding:4px 8px;border:1px solid var(--gray-300);border-radius:4px">
-                        <option value="">All A3C runs</option>
-                    </select>
-                    <button id="bench-refresh" class="secondary" style="font-size:12px;padding:4px 10px">↻ Refresh all</button>
-                </div>
-            </div>
+async function _refresh() {
+    _showSpinner(true);
+    try {
+        await Promise.all([
+            _fetchTimeline(),
+            _fetchMetrics(),
+            _fetchSimStats(),
+            _fetchScenarioGoals(),
+            _fetchPhysio(),
+            _fetchCritFail(),
+            _fetchPromptVersions(),
+        ]);
+        _renderAll();
+    } catch (e) { console.error('[benchmarks] refresh error', e); }
+    finally { _showSpinner(false); }
+}
 
-            <!-- A: Simulation overview -->
-            ${sectionDivider('Simulation Overview')}
-            <div id="bench-sim-overview"></div>
+// ── Fetchers ─────────────────────────────────────────────────────────────────
+async function _fetchTimeline() {
+    const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/experiment-timeline?window=${_state.wmaWindow}`).then(r=>r.json());
+    _state.timelineData = rows;
+}
+async function _fetchMetrics() {
+    const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/experiment-metrics`).then(r=>r.json());
+    _state.metricsData = rows;
+}
+async function _fetchSimStats() {
+    try { const r = await fetch(`${config.ORCHESTRATOR_URL}/api/analysis/stats`); if (r.ok) _state.simStats = await r.json(); } catch { _state.simStats = null; }
+}
+async function _fetchScenarioGoals() {
+    try { const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/scenario-goal-rates`).then(r=>r.json()); _state.scenarioGoalData = rows; } catch { _state.scenarioGoalData = null; }
+}
+async function _fetchPhysio() {
+    try { const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/physio-reward`).then(r=>r.json()); _state.physioData = rows; } catch { _state.physioData = null; }
+}
+async function _fetchCritFail() {
+    try { const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/critical-failures`).then(r=>r.json()); _state.critFailData = rows; } catch { _state.critFailData = null; }
+}
+async function _fetchPromptVersions() {
+    try { const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/prompt-versions`).then(r=>r.json()); _state.promptVersions = rows; } catch { _state.promptVersions = null; }
+}
 
-            <!-- B: A3C Learning curves -->
-            ${sectionDivider('A3C Learning Curves')}
-            <div id="bench-chart-container" style="width:100%;min-height:340px;background:white;border:1px solid var(--gray-200);border-radius:8px;padding:8px 0;box-sizing:border-box"></div>
+// ── Toolbar ─────────────────────────────────────────────────────────────────
+function _attachToolbar() {
+    const rawCb = document.getElementById('show-raw-traces');
+    if (rawCb) {
+        rawCb.title = 'Show individual episode reward dots behind the Weighted Moving Average line.';
+        rawCb.addEventListener('change', () => { _state.showRawTraces = rawCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderStressAucChart(); });
+        const lbl = rawCb.closest('label') || rawCb.parentElement;
+        if (lbl && !lbl.querySelector('.trace-tooltip-hint')) {
+            const hint = document.createElement('span');
+            hint.className = 'trace-tooltip-hint'; hint.title = rawCb.title; hint.textContent = ' ⓘ';
+            hint.style.cssText = 'cursor:help;color:var(--gray-500);font-size:12px;';
+            lbl.appendChild(hint);
+        }
+    }
+    const sdCb = document.getElementById('show-sd-band');
+    if (sdCb) sdCb.addEventListener('change', () => { _state.showSD = sdCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderStressAucChart(); });
+    const critCb = document.getElementById('show-crit-fail');
+    if (critCb) critCb.addEventListener('change', () => { _state.showCritFail = critCb.checked; _renderLearningCurves(); });
+    const durSel = document.getElementById('duration-filter');
+    if (durSel) durSel.addEventListener('change', () => { _state.durationDays = parseInt(durSel.value) || 0; _renderAll(); });
 
-            <!-- C: Arm summary -->
-            ${sectionDivider('Arm Summary (all runs)')}
-            <div id="bench-summary-table"></div>
+    const wmaSlider = document.getElementById('wma-window');
+    const wmaVal = document.getElementById('wma-window-val');
+    if (wmaSlider) {
+        wmaSlider.value = _state.wmaWindow;
+        wmaSlider.addEventListener('input', () => {
+            _state.wmaWindow = parseInt(wmaSlider.value);
+            if (wmaVal) wmaVal.textContent = _state.wmaWindow;
+        });
+        wmaSlider.addEventListener('change', async () => {
+            await _fetchTimeline();
+            _renderLearningCurves(); _renderGoalRateChart(); _renderStressAucChart(); _renderRewardStatsTable();
+        });
+    }
 
-            <!-- D: Scenario heatmap -->
-            ${sectionDivider('Scenario Reward Heatmap <span style="font-weight:400;font-size:12px;color:var(--gray-500)">(select a run above)</span>')}
-            <div id="bench-scenario-heatmap" style="overflow-x:auto"></div>
+    document.querySelectorAll('[data-exp-toggle]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const exp = btn.dataset.expToggle;
+            if (_state.activeExperiments.has(exp)) _state.activeExperiments.delete(exp);
+            else _state.activeExperiments.add(exp);
+            btn.classList.toggle('inactive', !_state.activeExperiments.has(exp));
+            _renderLearningCurves(); _renderGoalRateChart(); _renderStressAucChart();
+            _renderMetricBars(); _renderCritFailChart(); _renderPhysioScatter();
+        });
+    });
+}
 
-            <p style="font-size:11px;color:var(--gray-500);margin-top:16px">
-                A3C reward is cumulative per episode (not normalised). Smoothed line uses 5-episode rolling window.
-                Each arm trains an independent Actor/Critic — curves show per-environment learning rate.
-            </p>
-        </div>`;
+function _renderAll() {
+    _renderSimOverview();
+    _renderRewardStatsTable();
+    _renderLearningCurves();
+    _renderGoalRateChart();
+    _renderStressAucChart();
+    _renderScenarioHeatmap();
+    _renderScenarioGoalRates();
+    _renderCritFailStats();
+    _renderCritFailChart();
+    _renderMetricBars();
+    _renderPhysioScatter();
+}
 
-    const simOverviewEl = document.getElementById('bench-sim-overview');
-    const chartEl       = document.getElementById('bench-chart-container');
-    const tableEl       = document.getElementById('bench-summary-table');
-    const heatmapEl     = document.getElementById('bench-scenario-heatmap');
-    const dbSelect      = document.getElementById('bench-db-select');
-    const runSelect     = document.getElementById('bench-run-select');
-    const rawCb         = document.getElementById('bench-show-raw');
-    const refreshBtn    = document.getElementById('bench-refresh');
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function _filterByDuration(rows) {
+    if (!_state.durationDays || !rows?.length) return rows;
+    const cutoff = Date.now() - _state.durationDays * 86400000;
+    return rows.filter(r => r.started_at >= cutoff);
+}
+function _showSpinner(on) { const s = document.getElementById('bench-refresh-spinner'); if (s) s.style.display = on ? 'inline' : 'none'; }
+function _destroyChart(id) {
+    const cv = document.getElementById(id);
+    if (cv) { const c = Chart.getChart(cv); if (c) c.destroy(); }
+    return cv;
+}
 
-    async function refresh() {
-        refreshBtn.disabled = true;
-        refreshBtn.textContent = 'Loading…';
-        try {
-            const runId = runSelect.value || undefined;
-            const dbKey = dbSelect.value || 'simulation';
-            const [simStats, curveRows, summaryRows, runs, heatRows] = await Promise.all([
-                fetchSimStats(dbKey),
-                fetchLearningCurves(runId),
-                fetchArmSummary(),
-                fetchRuns(),
-                fetchScenarioBreakdown(runId),
-            ]);
+// Build common line datasets for any per-episode metric (pre-smoothed in server response)
+function _buildLineDatasets(rows, yKey, wmaKey) {
+    const datasets = [];
+    for (const [arm, meta] of Object.entries(EXP_META)) {
+        if (!_state.activeExperiments.has(arm)) continue;
+        const ep = rows.filter(r => r.arm === arm);
+        if (!ep.length) continue;
+        datasets.push({
+            label: meta.label,
+            data:  ep.map(r => ({ x: r.global_episode_idx, y: r[wmaKey ?? yKey] })),
+            borderColor: meta.color, backgroundColor: 'transparent',
+            borderWidth: 2.5, pointRadius: 0, tension: 0.3, order: 1,
+        });
+        if (_state.showSD && wmaKey === 'smoothed_reward') {
+            datasets.push({ label: '_+sd', data: ep.map(r => ({ x: r.global_episode_idx, y: r.smoothed_reward + r.stddev })), borderColor: 'transparent', backgroundColor: meta.bg, fill: '+1', pointRadius: 0, tension: 0.3, order: 3 });
+            datasets.push({ label: '_-sd', data: ep.map(r => ({ x: r.global_episode_idx, y: Math.max(0, r.smoothed_reward - r.stddev) })), borderColor: 'transparent', backgroundColor: meta.bg, fill: false, pointRadius: 0, tension: 0.3, order: 3 });
+        }
+        if (_state.showRawTraces && yKey) {
+            datasets.push({ label: '_raw', data: ep.map(r => ({ x: r.global_episode_idx, y: r[yKey] })), borderColor: meta.color, backgroundColor: meta.color + '44', borderWidth: 0, pointRadius: 2.5, showLine: false, order: 2 });
+        }
+    }
+    return datasets;
+}
 
-            renderSimulationOverview(simOverviewEl, simStats);
+// ── Sim Overview ─────────────────────────────────────────────────────────────
+function _renderSimOverview() {
+    const el = document.getElementById('simulation-overview-stats');
+    if (!el) return;
+    const dbRows = _state.metricsData;
+    const total = dbRows?.reduce((a, r) => a + (r.total_episodes || 0), 0) ?? 0;
+    const runs  = new Set(dbRows?.map(r => r.run_id) ?? []).size;
+    let peakSmoothed = 0;
+    _state.timelineData?.forEach(r => { if (r.smoothed_reward > peakSmoothed) peakSmoothed = r.smoothed_reward; });
+    const goalSum   = dbRows?.reduce((a, r) => a + (r.goal_rate || 0) * (r.total_episodes || 0), 0) ?? 0;
+    const goalRate  = total ? (goalSum / total * 100).toFixed(1) + '%' : '—';
+    el.innerHTML = `
+        <div class="stat-card"><span class="stat-value">${total}</span><span class="stat-label">Training Episodes</span></div>
+        <div class="stat-card"><span class="stat-value">${runs}</span><span class="stat-label">Training Runs</span></div>
+        <div class="stat-card"><span class="stat-value">${goalRate}</span><span class="stat-label">Overall Goal Rate</span></div>
+        <div class="stat-card" title="Peak ${_state.wmaWindow}-episode Weighted Moving Average of cumulative per-turn reward">
+            <span class="stat-value">${peakSmoothed.toFixed(2)}</span>
+            <span class="stat-label">Peak WMA Reward ⓘ</span>
+        </div>
+        <div class="stat-card"><span class="stat-value">${EXP_KEYS.length}</span><span class="stat-label">Experiments</span></div>
+    `;
+}
 
-            // Populate run selector
-            const existing = new Set([...runSelect.options].map(o => o.value));
-            for (const r of runs) {
-                if (!existing.has(r.run_id)) {
-                    const opt = document.createElement('option');
-                    opt.value = r.run_id;
-                    opt.textContent = `${r.arm ?? 'all'} — ${new Date(r.started_at).toLocaleDateString()} (${r.episode_count ?? 0} ep)`;
-                    runSelect.appendChild(opt);
-                }
-            }
+// ── Reward Stats Table ───────────────────────────────────────────────────────
+function _renderRewardStatsTable() {
+    const el = document.getElementById('reward-stats-table');
+    if (!el || !_state.timelineData?.length) return;
+    const rows = _filterByDuration(_state.timelineData) ?? [];
+    const stats = EXP_KEYS.map(arm => {
+        const ep = rows.filter(r => r.arm === arm);
+        if (!ep.length) return null;
+        const vals = ep.map(r => r.cumulative_reward).filter(v => v != null);
+        const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+        const sd   = Math.sqrt(vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length);
+        const goalPct = (ep.filter(r => r.goal_achieved).length / ep.length * 100).toFixed(1);
+        const stressVals = ep.map(r => r.stress_auc).filter(v => v != null);
+        const stressMean = stressVals.length ? (stressVals.reduce((a, b) => a + b, 0) / stressVals.length).toFixed(3) : '—';
+        return { arm, meta: EXP_META[arm], n: vals.length, min: Math.min(...vals).toFixed(2), max: Math.max(...vals).toFixed(2), mean: mean.toFixed(2), sd: sd.toFixed(2), goalPct, stressMean };
+    }).filter(Boolean);
 
-            renderLearningCurveChart(chartEl, curveRows, rawCb.checked);
-            renderArmSummaryTable(tableEl, summaryRows);
-            renderScenarioHeatmap(heatmapEl, heatRows);
-        } catch (e) {
-            chartEl.innerHTML = `<p style="color:#c5221f;padding:16px">Error loading benchmark data: ${e.message}</p>`;
-        } finally {
-            refreshBtn.disabled = false;
-            refreshBtn.textContent = '↻ Refresh all';
+    el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
+        <thead><tr style="background:var(--gray-50);border-bottom:1px solid var(--gray-200);">
+            <th style="text-align:left;padding:6px 10px;">Experiment</th>
+            <th style="padding:6px 10px;">N</th>
+            <th style="padding:6px 10px;">Min Reward</th>
+            <th style="padding:6px 10px;">Max Reward</th>
+            <th style="padding:6px 10px;">Mean ± SD</th>
+            <th style="padding:6px 10px;">Goal Rate</th>
+            <th style="padding:6px 10px;">Avg Stress AUC</th>
+        </tr></thead>
+        <tbody>${stats.map(s => `<tr style="border-bottom:1px solid var(--gray-100);">
+            <td style="padding:6px 10px;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.meta.color};margin-right:6px;"></span>${s.meta.label}</td>
+            <td style="text-align:center;padding:6px 10px;">${s.n}</td>
+            <td style="text-align:center;padding:6px 10px;">${s.min}</td>
+            <td style="text-align:center;padding:6px 10px;">${s.max}</td>
+            <td style="text-align:center;padding:6px 10px;">${s.mean} ± ${s.sd}</td>
+            <td style="text-align:center;padding:6px 10px;">${s.goalPct}%</td>
+            <td style="text-align:center;padding:6px 10px;">${s.stressMean}</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+// ── Learning Curves ──────────────────────────────────────────────────────────
+function _buildRestartAnnotations() {
+    const annotations = {};
+    _state.timelineData
+        ?.filter(r => r.run_restart && _state.activeExperiments.has(r.arm))
+        .forEach((r, i) => {
+            annotations['r' + i] = { type: 'line', scaleID: 'x', value: r.global_episode_idx, borderColor: '#bbb', borderWidth: 1, borderDash: [4, 4], label: { display: false } };
+        });
+    return annotations;
+}
+
+function _buildPromptAnnotations(baseAnnotations) {
+    if (!_state.promptVersions?.length || !_state.timelineData?.length) return baseAnnotations;
+    const allEps = _state.timelineData;
+    _state.promptVersions.forEach((pv, i) => {
+        const ts = pv.deployed_at || pv.created_at;
+        if (!ts) return;
+        // Find closest global_episode_idx by started_at
+        const closest = allEps.reduce((best, r) => Math.abs(r.started_at - ts) < Math.abs((best?.started_at ?? Infinity) - ts) ? r : best, null);
+        if (!closest) return;
+        baseAnnotations['pv_' + i] = {
+            type: 'line', scaleID: 'x', value: closest.global_episode_idx,
+            borderColor: '#FF9800', borderWidth: 1.5, borderDash: [2, 4],
+            label: { display: true, content: '✏ prompt', position: 'end', color: '#FF9800', font: { size: 9 }, backgroundColor: 'rgba(255,255,255,0.85)', yAdjust: 10 + (i % 3) * 14 },
+        };
+    });
+    return baseAnnotations;
+}
+
+function _renderLearningCurves() {
+    if (typeof Chart === 'undefined') return;
+    const canvas = _destroyChart('learning-curves-chart');
+    if (!canvas) return;
+    const rows = _filterByDuration(_state.timelineData);
+    if (!rows?.length) return;
+
+    const datasets = _buildLineDatasets(rows, 'cumulative_reward', 'smoothed_reward');
+
+    if (_state.showCritFail) {
+        for (const [arm, meta] of Object.entries(EXP_META)) {
+            if (!_state.activeExperiments.has(arm)) continue;
+            const fails = rows.filter(r => r.arm === arm && r.goal_achieved === 0);
+            if (fails.length) datasets.push({ label: '_fail_' + arm, data: fails.map(r => ({ x: r.global_episode_idx, y: r.cumulative_reward ?? 0 })), borderColor: '#c62828', backgroundColor: '#c6282899', borderWidth: 1.5, pointRadius: 6, pointStyle: 'crossRot', showLine: false, order: 0 });
         }
     }
 
-    refreshBtn.addEventListener('click', refresh);
-    rawCb.addEventListener('change', refresh);
-    runSelect.addEventListener('change', refresh);
-    dbSelect.addEventListener('change', refresh);
-
-    await refresh();
+    new Chart(canvas, {
+        type: 'line', data: { datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { type: 'linear', title: { display: true, text: 'Episode (global index)', font: { size: 11 } } },
+                y: { title: { display: true, text: 'Cumulative Reward', font: { size: 11 } } },
+            },
+            plugins: {
+                legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
+                annotation: { annotations: _buildPromptAnnotations(_buildRestartAnnotations()) },
+                tooltip: {
+                    callbacks: {
+                        footer(items) {
+                            const x = items[0]?.parsed?.x;
+                            const armLabel = items.find(i => !i.dataset.label.startsWith('_'))?.dataset?.label;
+                            const armKey = Object.entries(EXP_META).find(([,m]) => m.label === armLabel)?.[0];
+                            const d = _state.timelineData?.find(r => r.arm === armKey && r.global_episode_idx === x);
+                            if (!d) return [];
+                            const lines = [`Run: ${d.run_label}`, `Scenario: ${d.scenario_id || '—'}`, `Stress AUC: ${d.stress_auc?.toFixed(3) ?? '—'}`];
+                            if (d.run_restart) lines.push('▶ Restart (code change)');
+                            return lines;
+                        },
+                    },
+                },
+            },
+        },
+    });
 }
 
-export default initBenchmarksDashboard;
+// ── Goal Rate Chart ──────────────────────────────────────────────────────────
+function _renderGoalRateChart() {
+    if (typeof Chart === 'undefined') return;
+    const canvas = _destroyChart('goal-rate-chart');
+    if (!canvas) return;
+    const rows = _filterByDuration(_state.timelineData);
+    if (!rows?.length) return;
+    const datasets = _buildLineDatasets(rows, 'goal_achieved', 'goal_rate_wma');
+    new Chart(canvas, {
+        type: 'line', data: { datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { type: 'linear', title: { display: true, text: 'Episode (global index)', font: { size: 11 } } },
+                y: { min: 0, max: 1, title: { display: true, text: 'Goal Rate', font: { size: 11 } }, ticks: { callback: v => (v*100).toFixed(0)+'%' } },
+            },
+            plugins: {
+                legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
+                annotation: { annotations: _buildRestartAnnotations() },
+            },
+        },
+    });
+}
+
+// ── Stress AUC Chart ──────────────────────────────────────────────────────────
+function _renderStressAucChart() {
+    if (typeof Chart === 'undefined') return;
+    const canvas = _destroyChart('stress-auc-chart');
+    if (!canvas) return;
+    const rows = _filterByDuration(_state.timelineData);
+    if (!rows?.length) return;
+    const datasets = _buildLineDatasets(rows, 'stress_auc', 'stress_auc_wma');
+    new Chart(canvas, {
+        type: 'line', data: { datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { type: 'linear', title: { display: true, text: 'Episode (global index)', font: { size: 11 } } },
+                y: { min: 0, max: 1, title: { display: true, text: 'Stress AUC', font: { size: 11 } } },
+            },
+            plugins: {
+                legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
+                annotation: { annotations: _buildRestartAnnotations() },
+            },
+        },
+    });
+}
+
+// ── Scenario Heatmap ─────────────────────────────────────────────────────────
+function _renderScenarioHeatmap() {
+    if (typeof Chart === 'undefined') return;
+    const canvas = _destroyChart('scenario-heatmap-chart');
+    if (!canvas) return;
+    const rows = _filterByDuration(_state.timelineData);
+    if (!rows?.length) return;
+    const scenarios = [...new Set(rows.map(r => r.scenario_id).filter(Boolean))].sort();
+    const grid = {};
+    scenarios.forEach(sc => { grid[sc] = {}; EXP_KEYS.forEach(a => { grid[sc][a] = []; }); });
+    rows.forEach(r => { if (r.scenario_id && r.cumulative_reward != null) grid[r.scenario_id]?.[r.arm]?.push(r.cumulative_reward); });
+    const datasets = EXP_KEYS.map(arm => ({
+        label: EXP_META[arm].label,
+        backgroundColor: EXP_META[arm].color + 'CC', borderColor: EXP_META[arm].color, borderWidth: 1,
+        data: scenarios.map(sc => { const v = grid[sc][arm]; return v.length ? Math.round(v.reduce((a, b) => a+b, 0)/v.length*100)/100 : null; }),
+    }));
+    new Chart(canvas, {
+        type: 'bar', data: { labels: scenarios.map(s=>s.replace(/_/g,' ')), datasets },
+        options: { responsive: true, maintainAspectRatio: false, scales: { x: { ticks: { font:{size:9}, maxRotation:45 } }, y: { title:{display:true,text:'Avg Cumulative Reward',font:{size:11}} } }, plugins: { legend: { position:'top', labels:{boxWidth:12,font:{size:11}} } } },
+    });
+}
+
+// ── Scenario Goal Rate Chart ──────────────────────────────────────────────────
+function _renderScenarioGoalRates() {
+    if (typeof Chart === 'undefined') return;
+    const canvas = _destroyChart('scenario-goal-chart');
+    if (!canvas) return;
+    const rows = _state.scenarioGoalData;
+    if (!rows?.length) return;
+    const scenarios = [...new Set(rows.map(r => r.scenario_id))].sort();
+    const datasets = EXP_KEYS.map(arm => ({
+        label: EXP_META[arm].label,
+        backgroundColor: EXP_META[arm].color + 'BB', borderColor: EXP_META[arm].color, borderWidth: 1.5,
+        data: scenarios.map(sc => { const row = rows.find(r => r.arm === arm && r.scenario_id === sc); return row ? Math.round(row.goal_rate*1000)/1000 : null; }),
+    }));
+    new Chart(canvas, {
+        type: 'bar', data: { labels: scenarios.map(s=>s.replace(/_/g,' ')), datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: { x: { ticks:{font:{size:9},maxRotation:45} }, y: { min:0,max:1,title:{display:true,text:'Goal Rate',font:{size:11}},ticks:{callback:v=>(v*100).toFixed(0)+'%'} } },
+            plugins: { legend: { position:'top', labels:{boxWidth:12,font:{size:11}} } },
+        },
+    });
+}
+
+// ── Critical Failure Stats ────────────────────────────────────────────────────
+function _renderCritFailStats() {
+    const el = document.getElementById('crit-fail-stats-row');
+    if (!el) return;
+    const rows = _state.critFailData;
+    if (!rows?.length) { el.innerHTML = '<p class="muted">No critical failure data.</p>'; return; }
+    const byExp = {};
+    rows.forEach(r => { if (!byExp[r.arm]) byExp[r.arm] = {total:0,failed:0}; byExp[r.arm].total += r.total_episodes; byExp[r.arm].failed += r.failed_episodes; });
+    el.innerHTML = EXP_KEYS.map(arm => {
+        if (!byExp[arm]) return '';
+        const meta = EXP_META[arm]; const {total,failed} = byExp[arm]; const rate = total ? (failed/total*100).toFixed(1) : 0;
+        return `<div class="stat-card" style="border-left:4px solid ${meta.color};"><span class="stat-value" style="color:${meta.color};">${rate}%</span><span class="stat-label" style="text-align:center;">${meta.label.split('—')[1]?.trim()||meta.label}<br><small style="color:var(--gray-500);">${failed}/${total} failed</small></span></div>`;
+    }).join('');
+}
+
+function _renderCritFailChart() {
+    if (typeof Chart === 'undefined') return;
+    const canvas = _destroyChart('crit-fail-chart');
+    if (!canvas) return;
+    const rows = _state.critFailData;
+    if (!rows?.length) return;
+    const scenarios = [...new Set(rows.map(r => r.scenario_id))].sort();
+    const datasets = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm)).map(arm => {
+        const meta = EXP_META[arm];
+        return {
+            label: meta.label,
+            borderColor: meta.color, backgroundColor: meta.color + '55', borderWidth: 2,
+            pointRadius: 4, tension: 0.3,
+            data: scenarios.map(sc => { const row = rows.find(r => r.arm === arm && r.scenario_id === sc); if (!row||!row.total_episodes) return null; return Math.round(row.failed_episodes/row.total_episodes*100)/100; }),
+        };
+    });
+    new Chart(canvas, {
+        type: 'line', data: { labels: scenarios.map(s=>s.replace(/_/g,' ')), datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: { x:{ticks:{font:{size:9},maxRotation:45}}, y:{min:0,max:1,title:{display:true,text:'Failure Rate',font:{size:11}},ticks:{callback:v=>(v*100).toFixed(0)+'%'}} },
+            plugins: { legend: { position:'top', labels:{boxWidth:12,font:{size:11}} } },
+        },
+    });
+}
+
+// ── Metric Bar Charts (per-run, overlapping per experiment) ──────────────────
+function _renderMetricBars() {
+    if (typeof Chart === 'undefined') return;
+    const rows = _state.metricsData;
+    if (!rows?.length) return;
+
+    const metrics = [
+        { key: 'mean_reward',        label: 'Mean Cumul. Reward',   canvas: 'metric-bar-reward'  },
+        { key: 'goal_rate',          label: 'Goal Rate',            canvas: 'metric-bar-goal'    },
+        { key: 'mean_stress_auc',    label: 'Stress AUC',           canvas: 'metric-bar-stress'  },
+        { key: 'safety_failures',    label: 'Safety Failures',      canvas: 'metric-bar-safety'  },
+        { key: 'discrepancy_turns',  label: 'Discrepancy Turns *',  canvas: 'metric-bar-disc'    },
+        { key: 'mean_goal_reward',   label: 'Reward: Goal',         canvas: 'metric-bar-rgoal'   },
+        { key: 'mean_stress_reward', label: 'Reward: Stress',       canvas: 'metric-bar-rstress' },
+        { key: 'mean_trust_reward',  label: 'Reward: Trust',        canvas: 'metric-bar-rtrust'  },
+        { key: 'mean_latency_ms',    label: 'Avg Latency (ms)',     canvas: 'metric-bar-latency' },
+    ];
+    const runIds = [...new Set(rows.map(r => r.run_label?.split('/')[0]?.trim()))].sort();
+
+    metrics.forEach(({ key, label, canvas: cid }) => {
+        const cv = _destroyChart(cid);
+        if (!cv) return;
+        const datasets = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm)).map(arm => {
+            const meta = EXP_META[arm];
+            return {
+                label: meta.label,
+                backgroundColor: meta.color + '88', borderColor: meta.color, borderWidth: 1.5,
+                borderRadius: 4, barPercentage: 0.95, categoryPercentage: 1.0,
+                data: runIds.map(rid => { const row = rows.find(r => r.arm === arm && r.run_label?.startsWith(rid)); if (!row) return null; const v = row[key] ?? 0; return Math.round(v*100)/100; }),
+            };
+        });
+        new Chart(cv, {
+            type: 'bar', data: { labels: runIds, datasets },
+            options: { responsive: true, maintainAspectRatio: false, scales: { x:{ticks:{font:{size:9}}}, y:{beginAtZero:true,ticks:{font:{size:10}}} }, plugins: { legend:{display:false}, title:{display:true,text:label,font:{size:11},padding:{bottom:4}} } },
+        });
+    });
+}
+
+// ── Physio Scatter ───────────────────────────────────────────────────────────
+function _renderPhysioScatter() {
+    if (typeof Chart === 'undefined') return;
+    const rows = _state.physioData;
+    if (!rows?.length) return;
+    _renderScatter('physio-hrv-chart', rows, 'mean_hrv', 'cumulative_reward', 'Mean HRV (ms)', 'Cumulative Reward');
+    _renderScatter('physio-stress-chart', rows, 'mean_stress_index', 'mean_stress_reward', 'Mean Stress Index', 'Stress Reward Component');
+}
+function _renderScatter(cid, rows, xKey, yKey, xLabel, yLabel) {
+    const cv = _destroyChart(cid);
+    if (!cv) return;
+    const datasets = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm)).map(arm => {
+        const meta = EXP_META[arm];
+        const ep = rows.filter(r => r.arm === arm && r[xKey] != null && r[yKey] != null);
+        return { label: meta.label, backgroundColor: meta.color + '88', borderColor: meta.color, borderWidth: 0.5, pointRadius: 3, data: ep.map(r => ({ x: r[xKey], y: r[yKey] })) };
+    });
+    new Chart(cv, {
+        type: 'scatter', data: { datasets },
+        options: { responsive: true, maintainAspectRatio: false, scales: { x:{title:{display:true,text:xLabel,font:{size:11}}}, y:{title:{display:true,text:yLabel,font:{size:11}}} }, plugins: { legend:{position:'top',labels:{boxWidth:12,font:{size:11}}} } },
+    });
+}
+
+// ── Inline Report ─────────────────────────────────────────────────────────────
+export async function loadInlineReport(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '<div style="padding:16px;text-align:center;color:var(--gray-500);">Loading report…</div>';
+    try {
+        const check = await fetch(`${config.ORCHESTRATOR_URL}/reports/simulation_report.html`, { method: 'HEAD' });
+        if (!check.ok) { container.innerHTML = '<div style="padding:16px;text-align:center;color:var(--gray-500);">No report yet. Generate one first.</div>'; return; }
+    } catch (e) { container.innerHTML = `<div style="padding:16px;color:var(--red-700);">Report load error: ${e.message}</div>`; return; }
+    container.innerHTML = '';
+    const frame = document.createElement('iframe');
+    frame.src = `${config.ORCHESTRATOR_URL}/reports/simulation_report.html?t=${Date.now()}`;
+    frame.style.cssText = 'width:100%;height:100%;min-height:600px;border:none;border-radius:8px;background:#fff;display:block;';
+    frame.title = 'Simulation Report';
+    container.appendChild(frame);
+}
+export function handleDbToggle() { if (_state.simStats) _renderSimOverview(); }

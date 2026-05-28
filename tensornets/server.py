@@ -625,6 +625,128 @@ def agents_clear_session(session_id: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Intervention Queue — cross-user, cross-session scheduled interventions
+#
+# Companion A (serving user A) calls POST /agents/intervention/enqueue when it
+# detects a significant event that requires companion B to act during B's next
+# session with user B.
+#
+# This endpoint:
+#   1. Validates the request structure
+#   2. Applies the physio-aware urgency heuristic if urgency_score not supplied
+#   3. Forwards to Node.js POST /api/interventions/enqueue (which has DB access)
+#
+# The Node.js side persists the item and applies the consent gate check.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class InterventionEnqueueIn(BaseModel):
+    target_user_id:      str
+    target_circle_id:    str | None = None
+    source_user_id:      str | None = None
+    source_companion_id: str | None = None
+    concern_type:        str        # physiological_alert|behavioral_flag|cross_user_welfare|scheduled_followup|clinical_directive|consent_request
+    concern_summary:     str
+    suggested_action:    str | None = None
+    urgency_score:       float      = 0.5   # 0.0–1.0
+    physio_gate:         float      = 0.70  # surface only if target stress_index < this
+    min_session_turn:    int        = 3
+    fire_after_ms:       int | None = None  # epoch ms; null = immediately eligible
+    deadline_at_ms:      int | None = None  # epoch ms; null = no hard deadline
+    consent_chain:       str        = "implied"
+    # Physio context of source user at time of detection (for urgency auto-scaling)
+    source_stress_index: float | None = None
+    source_hrv_ms:       float | None = None
+
+
+@app.post("/agents/intervention/enqueue")
+async def agents_intervention_enqueue(req: InterventionEnqueueIn):
+    """
+    Enqueue a cross-user intervention item.
+
+    Auto-scales urgency_score from physiological context if source_stress_index
+    is provided:
+      - source_stress_index >= 0.85  → urgency boosted to max(urgency, 0.90)
+      - source_stress_index >= 0.70  → urgency boosted to max(urgency, 0.70)
+      - concern_type = 'physiological_alert' → urgency floored at 0.60
+
+    Forwards the validated payload to Node.js POST /api/interventions/enqueue.
+    Returns the item_id assigned by Node.js.
+    """
+    import httpx, os, time
+
+    # Auto-scale urgency from physio context
+    urgency = req.urgency_score
+    if req.source_stress_index is not None:
+        si = req.source_stress_index
+        if si >= 0.85:
+            urgency = max(urgency, 0.90)
+        elif si >= 0.70:
+            urgency = max(urgency, 0.70)
+    if req.concern_type == "physiological_alert":
+        urgency = max(urgency, 0.60)
+    if req.concern_type in ("clinical_directive",):
+        urgency = max(urgency, 0.50)
+
+    payload = {
+        "targetUserId":      req.target_user_id,
+        "targetCircleId":    req.target_circle_id,
+        "sourceUserId":      req.source_user_id,
+        "sourceCompanionId": req.source_companion_id,
+        "concernType":       req.concern_type,
+        "concernSummary":    req.concern_summary,
+        "suggestedAction":   req.suggested_action,
+        "urgencyScore":      urgency,
+        "physioGate":        req.physio_gate,
+        "minSessionTurn":    req.min_session_turn,
+        "fireAfter":         req.fire_after_ms,
+        "deadlineAt":        req.deadline_at_ms,
+        "consentChain":      req.consent_chain,
+    }
+
+    node_url = os.environ.get("NODE_URL", "http://localhost:8247")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(f"{node_url}/api/interventions/enqueue", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            return {
+                "status": "enqueued",
+                "item_id": data.get("item_id"),
+                "urgency_score": urgency,
+            }
+    except Exception as exc:
+        # Non-fatal — log and return partial success so A3C training isn't blocked
+        import logging
+        logging.getLogger(__name__).warning(
+            "intervention enqueue forwarding failed: %s", exc
+        )
+        return {
+            "status": "enqueue_failed",
+            "reason": str(exc),
+            "urgency_score": urgency,
+        }
+
+
+@app.post("/agents/intervention/resolve")
+async def agents_intervention_resolve(body: dict):
+    """
+    Mark a surfaced intervention item as resolved.
+    Forwards to Node.js POST /api/interventions/resolve.
+
+    body: { item_id, outcome ('completed'|'dismissed'), note? }
+    """
+    import httpx, os
+    node_url = os.environ.get("NODE_URL", "http://localhost:8247")
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(f"{node_url}/api/interventions/resolve", json=body)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as exc:
+        return {"status": "resolve_failed", "reason": str(exc)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # LLM-as-Judge (Python / Maverick via AWS Bedrock boto3)
 #
 # These endpoints are distinct from the JS judge (training/simulation/js_judge.js).
