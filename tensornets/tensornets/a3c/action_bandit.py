@@ -91,6 +91,9 @@ ACTION_TAXONOMY: list[str] = [
     "direct_advice",          # brief clear recommendation (FRAMES: Advice; post-insight only)
     "schedule_commitment",    # collaboratively set a concrete next-step/date
     "future_planning",        # explore patient's vision of life after change
+    # ── Cross-circle information relay ────────────────────────────────────────
+    "companion_handoff",      # summarise the session to the patient (end-of-session brief)
+    "share_circle_insight",   # relay privacy-filtered information from another circle member
     # ── Abstract MI / CBT actions (retained from original taxonomy) ───────────
     "validate_emotion",       # empathic reflection / validation (MI)
     "explore_ambivalence",    # MI ambivalence surfacing
@@ -169,6 +172,8 @@ CALMING_WEIGHT: dict[str, float] = {
     "direct_advice":         0.35,   # brief directive; calming only in post-insight
     "schedule_commitment":   0.50,   # future focus reduces present tension slightly
     "future_planning":       0.55,   # envisioning positive future — mild de-stress
+    "companion_handoff":     0.60,   # session summary — grounding, reduces uncertainty
+    "share_circle_insight":  0.50,   # sharing circle context — trust-building if done well
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -236,6 +241,9 @@ ACTION_INTENT_GROUP: dict[str, str] = {
     "direct_advice":           "inform",
     "schedule_commitment":     "commitment",
     "future_planning":         "commitment",
+    # Cross-circle relay
+    "companion_handoff":       "summarise",
+    "share_circle_insight":    "inform",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -607,6 +615,8 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         'direct_advice':        0.65,
         'schedule_commitment':  0.68,
         'future_planning':      0.70,
+        'companion_handoff':    0.65,
+        'share_circle_insight': 0.62,
     },
     # ── Moderate stress: trust-building and reflection gain weight ────────────
     'moderate': {
@@ -658,6 +668,8 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         'direct_advice':        0.45,
         'schedule_commitment':  0.55,
         'future_planning':      0.58,
+        'companion_handoff':    0.55,
+        'share_circle_insight': 0.52,
     },
     # ── High stress: only safety actions and direct de-escalation ─────────────
     'high': {
@@ -709,6 +721,8 @@ _HEURISTIC_REWARD_TABLE: dict[str, dict[str, float]] = {
         'direct_advice':        0.15,
         'schedule_commitment':  0.35,
         'future_planning':      0.40,
+        'companion_handoff':    0.45,   # summarising can be grounding under stress
+        'share_circle_insight': 0.30,   # risky under high stress — may overwhelm
     },
 }
 

@@ -108,6 +108,11 @@ COMMITMENT / FUTURE-FOCUS (use in preparation, action, maintenance phases):
   schedule_commitment  — collaboratively set a concrete next-step or date ("When could you try…?")
   future_planning      — explore patient's vision of life after change ("What would that look like for you?")
 
+CROSS-CIRCLE INFORMATION RELAY (use in multi-user / care-circle scenarios):
+  companion_handoff    — summarise the current session state to the patient at session close or topic transition
+  share_circle_insight — relay privacy-filtered information another circle member disclosed ("Your daughter mentioned…")
+                         ONLY use if the information was not marked confidential and is clinically relevant.
+
 META ACTIONS:
   escalate             — hand conversation to clinician companion or human
   end_conversation     — natural conversation close

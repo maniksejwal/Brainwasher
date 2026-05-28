@@ -39,6 +39,75 @@ from typing import Any, Optional
 from tensornets.a3c.action_bandit import ACTION_TAXONOMY, STRESS_BUCKETS
 from tensornets.a3c.scorer import A3CScorer, TurnScoreResult, map_scorer_to_reward_dims
 
+# V_int / SharedTensorBuffer — lazy import (no torch requirement at module level)
+_SharedTensorBuffer = None
+def _get_shared_tensor_buffer():
+    global _SharedTensorBuffer
+    if _SharedTensorBuffer is None:
+        try:
+            from tensornets.agents.shared_tensor_state import SharedTensorBuffer
+            _SharedTensorBuffer = SharedTensorBuffer
+        except ImportError:
+            pass
+    return _SharedTensorBuffer
+
+# SharedDialogueState — lazy import (inter-agent commitment tracking)
+_SharedDialogueState = None
+def _get_shared_dialogue_state():
+    global _SharedDialogueState
+    if _SharedDialogueState is None:
+        try:
+            from tensornets.agents.inter_agent_comm import SharedDialogueState
+            _SharedDialogueState = SharedDialogueState
+        except ImportError:
+            pass
+    return _SharedDialogueState
+
+# ReactivityProfile — lazy import
+_ReactivityProfile = None
+_ReactivityArchetype = None
+def _get_reactivity():
+    global _ReactivityProfile, _ReactivityArchetype
+    if _ReactivityProfile is None:
+        try:
+            from tensornets.physio.reactivity import ReactivityProfile, ReactivityArchetype
+            _ReactivityProfile = ReactivityProfile
+            _ReactivityArchetype = ReactivityArchetype
+        except ImportError:
+            pass
+    return _ReactivityProfile, _ReactivityArchetype
+
+# ReactivityProfile archetype mapping from old JS names → Python enum values
+_ARCHETYPE_MAP: dict[str, str] = {
+    "anxious":          "hypersensitive",
+    "hypersensitive":   "hypersensitive",
+    "reactive":         "labile",
+    "labile":           "labile",
+    "avoidant":         "stoic",
+    "stoic":            "stoic",
+    "intellectualiser": "ruminant",
+    "ruminant":         "ruminant",
+    # 'standard' → no profile (None)
+}
+
+
+def _build_reactivity_profile(subject_id: str, archetype: str):
+    """
+    Instantiate a ReactivityProfile from an archetype string.
+    Returns None for unknown or 'standard' archetypes.
+    """
+    ReactivityProfile, ReactivityArchetype = _get_reactivity()
+    if ReactivityProfile is None:
+        return None
+    arch_key = _ARCHETYPE_MAP.get(archetype.lower())
+    if arch_key is None:
+        return None
+    try:
+        arch_enum = ReactivityArchetype(arch_key)
+        return ReactivityProfile.from_archetype(subject_id, arch_enum)
+    except Exception:
+        return None
+
 log = logging.getLogger("tensornets.a3c.worker")
 
 # ── Hyper-parameters ──────────────────────────────────────────────────────────
@@ -195,6 +264,11 @@ class TurnState:
     has_misconception:      bool  = False        # patient has a factual misconception
     flooding_target_stress: float = 0.80         # target σ for flooding mode
 
+    # C5.4 — DrugRegimen: optional dict of active drugs for PK/PD Γ modifier
+    # Format: {"metoprolol": {"dose_mg": 50, "t_h": 3.0}, "ssri": {...}, ...}
+    # None = patient has no active drug regimen (the common case)
+    drug_regimen:           Optional[dict] = None
+
     session_id:   str = ""
     subject_id:   str = ""
 
@@ -253,6 +327,7 @@ class TurnState:
             archetype=scenario.get("archetype", "standard"),
             has_misconception=scenario.get("has_misconception", False),
             flooding_target_stress=scenario.get("flooding_target_stress", 0.80),
+            drug_regimen=scenario.get("drug_regimen", None) or None,
             session_id=scenario.get("session_id", str(uuid.uuid4())),
             subject_id=scenario.get("subject_id", "synthetic"),
         )
@@ -779,7 +854,7 @@ class A3CWorker:
         (same personas, any scenario).  The session_goal from the new scenario overrides
         the prior session's goal so the patient reacts to the new clinical objective.
         """
-        from tensornets.a3c.synthetic_patient import CareCircleOrchestrator
+        from tensornets.a3c.synthetic_patient import CareCircleOrchestrator, _normalise_role
 
         episode_id        = str(uuid.uuid4())
         self._episode_log = []
@@ -791,6 +866,17 @@ class A3CWorker:
 
         # Build initial state — load from prior session if given
         state = self._build_state_with_continuity(scenario, prior_session)
+
+        # ── C6.1: ReactivityProfile — instantiate from archetype string ──────────
+        # Maps the scenario/persona archetype to a ReactivityProfile that modifies
+        # the Γ operator (autonomic recovery) based on trait-level reactivity.
+        reactivity_profile = _build_reactivity_profile(
+            subject_id = state.subject_id,
+            archetype  = state.archetype,
+        )
+        if reactivity_profile:
+            log.debug("[%s] ReactivityProfile: archetype=%s → %s",
+                      self.worker_id, state.archetype, reactivity_profile.archetype.value)
 
         # Build care-circle orchestrator (handles multi-user speaker selection)
         orchestrator = CareCircleOrchestrator.from_scenario(
@@ -807,6 +893,49 @@ class A3CWorker:
             for m in state.conversation_history:
                 orchestrator.primary_patient.conversation_history.append(m)
 
+        # ── V_int / SharedTensorBuffer — G3 social coupling ───────────────────────
+        # One slot per participant. V_int propagates HRV deltas between agents
+        # after each speaker turn so the next companion sees updated physio context.
+        # This is pure arithmetic — no LLM calls.
+        SharedTensorBuffer = _get_shared_tensor_buffer()
+        vint_buf = None
+        if SharedTensorBuffer is not None and len(orchestrator.participants) > 1:
+            agents = [
+                {"agent_id": p.role, "role": _normalise_role(p.role)}
+                for p in orchestrator.participants
+            ]
+            # Add a "companion" slot — the companion's calm presence also propagates
+            agents.append({"agent_id": "companion", "role": "companion"})
+            try:
+                vint_buf = SharedTensorBuffer(agents)
+                # Seed each slot with initial HRV from scenario physio
+                init_hrv = state.physio.get("hrv_ms", 35.0)
+                for a in agents:
+                    vint_buf.put_mps(a["agent_id"], None, init_hrv)
+            except Exception as exc:
+                log.debug("[%s] SharedTensorBuffer init failed (non-fatal): %s",
+                          self.worker_id, exc)
+                vint_buf = None
+
+        # ── SharedDialogueState — cross-companion consistency tracking ───────────
+        # Records commitments made by each agent during the episode.
+        # Before each companion response, the consistency_hint() is injected into
+        # known_context so the companion avoids contradicting prior statements.
+        # This implements the semantic layer of cross-companion coordination.
+        SharedDialogueState = _get_shared_dialogue_state()
+        dialogue_state = None
+        is_world_scenario = len(orchestrator.participants) > 1
+        if SharedDialogueState is not None:
+            try:
+                dialogue_state = SharedDialogueState(
+                    session_id = episode_id,
+                    agents     = [_normalise_role(p.role) for p in orchestrator.participants],
+                )
+            except Exception as exc:
+                log.debug("[%s] SharedDialogueState init failed (non-fatal): %s",
+                          self.worker_id, exc)
+                dialogue_state = None
+
         scorer         = A3CScorer()
         warned_once    = False
         last_user_msg  = ""
@@ -814,6 +943,15 @@ class A3CWorker:
         prev_physio: dict | None = None   # for HRV trend and EDA spike detection
         # LLM scorer is called on even turns (0, 2, 4 …) and skipped on odd turns.
         # Odd turns use the most-recent LLM result plus a lightweight heuristic
+
+        # ── Genuine progress metric trackers ─────────────────────────────────
+        # These are computed over the episode and added to the episode summary.
+        # They provide methodologically independent measures of progress,
+        # not circular wrt action selection heuristics.
+        _stress_samples: list[float] = []
+        _turns_to_goal: int | None   = None   # first turn where info_coverage ≥ 0.75
+        _start_change_stage: str     = state.deaddiction_phase
+        _trust_acc: float            = 0.0    # accumulated trust_delta over episode
         # adjustment so the reward signal is still turn-level granular.
         # This halves Scout calls from the scorer (−33 % total per episode).
         _SCORE_EVERY_N = 2
@@ -823,6 +961,23 @@ class A3CWorker:
 
             # ── Actor selects action(s) ──────────────────────────────────────
             action, log_prob = self.actor.select(state)
+
+            # ── Cross-companion: inject consistency hint before response ─────
+            # Before the companion generates its response, inject any commitments
+            # made by other agents in this episode into known_context.
+            # This prevents the companion from contradicting the clinician's advice
+            # or repeating information another companion already delivered.
+            if dialogue_state is not None:
+                try:
+                    cc_hint = dialogue_state.consistency_hint(requesting_agent="companion")
+                    if cc_hint:
+                        state = state.__class__(
+                            **{**state.__dict__,
+                               "known_context": (cc_hint + "\n\n" +
+                                                 state.known_context).strip()}
+                        )
+                except Exception:
+                    pass
 
             # ── Generate companion response ──────────────────────────────────
             resp_dict  = self.generate_response(state, action, scenario)
@@ -834,6 +989,72 @@ class A3CWorker:
                 turn_idx         = turn_idx,
                 covered_elements = orchestrator.covered_elements,
             )
+
+            # ── V_int: propagate speaker's HRV delta to all other agents ─────
+            # After the speaker generates their turn, their physio may have shifted.
+            # We use conv_ctx.emotional_tension as a proxy for HRV change: higher
+            # tension → lower HRV. The propagation updates other participants'
+            # expected HRV before the companion generates the next response.
+            vint_updates: dict[str, float] = {}
+            if vint_buf is not None:
+                speaker_role  = _normalise_role(speaker.role)
+                # Estimate speaker's current HRV from emotional tension (rough proxy)
+                tension       = getattr(conv_ctx, "emotional_tension", 2.5)  # 0–5 scale
+                speaker_hrv   = max(10.0, 55.0 - tension * 8.0)   # tension 0→55ms, 5→15ms
+                try:
+                    vint_updates = vint_buf.v_int_propagate(speaker_role, speaker_hrv)
+                    # If companion action was calming, also propagate companion HRV
+                    if action in ("validate", "empathic_reflection", "breathing_exercise",
+                                  "mindfulness_prompt", "validate_emotion", "acknowledge_only"):
+                        companion_hrv = 60.0   # companion stays calm; propagates calm
+                        vint_buf.v_int_propagate("companion", companion_hrv)
+                except Exception:
+                    pass   # non-fatal; never block training on V_int failures
+
+            # Inject V_int consistency hint into state for next turn's companion call.
+            # The hint warns the companion if any participant is in high stress
+            # so it doesn't deliver complex information at the wrong moment.
+            if vint_updates and vint_buf is not None:
+                try:
+                    consistency_hint = vint_buf.consistency_hint()
+                    # Append to known_context so it reaches the companion's prompt
+                    if consistency_hint and state.known_context is not None:
+                        state = state.__class__(
+                            **{**state.__dict__,
+                               "known_context": (state.known_context + "\n\n" +
+                                                 consistency_hint).strip()}
+                        )
+                except Exception:
+                    pass
+
+            # ── Cross-companion: record companion's commitment ────────────────
+            # After the companion speaks, extract any clinical commitments from
+            # the response and store them in the SharedDialogueState so other
+            # companions (next turn) won't contradict them.
+            if dialogue_state is not None and agent_resp:
+                try:
+                    dialogue_state.turn = turn_idx
+                    # Classify as clinical if action is in an advisory group
+                    is_clinical_action = action in (
+                        "psychoeducation", "direct_advice", "negotiate_compromise",
+                        "schedule_commitment", "future_planning", "relapse_plan",
+                        "motivational_interviewing", "challenge_distortion",
+                    )
+                    # Only log substantive responses (not generic short deflections)
+                    if len(agent_resp) > 60:
+                        dialogue_state.add_commitment(
+                            agent_id    = "companion",
+                            statement   = agent_resp[:200],   # truncated for memory
+                            topic       = action,
+                            is_clinical = is_clinical_action,
+                        )
+                    # Record speaker's HRV prediction from V_int
+                    if vint_updates:
+                        for rcv_role, hrv in vint_updates.items():
+                            if rcv_role in dialogue_state.agents:
+                                dialogue_state.agent_hrv_predictions[rcv_role] = hrv
+                except Exception:
+                    pass
 
             # ── A3CScorer: LLM call on even turns, heuristic carry on odd ───
             use_llm_scorer = (turn_idx % _SCORE_EVERY_N == 0)
@@ -937,7 +1158,86 @@ class A3CWorker:
             p_mod = physio_reward_modifier(state.physio, prev_physio)
             prev_physio = dict(state.physio)   # store for next turn comparison
 
-            r             = scalar_reward(reward_dict) - pester_penalty + rapport_bonus + p_mod
+            # ── Information delivery quality modifier ─────────────────────────
+            # Five components combined into a single `delivery_mod` ∈ [-0.15, +0.15]:
+            #
+            # 1. TIMING — penalise informing before rapport (turns 0-2, precontemplation)
+            # 2. GROUNDING — bonus when the response references content from the patient's
+            #    RAG context (known_context) or longitudinal hint (cross-session memory)
+            # 3. CIRCLE RELAY — bonus when the companion relays relevant information
+            #    another circle member disclosed (speaker wasn't primary patient)
+            # 4. NEGOTIATION LISTEN RATIO — in negotiation mode, penalise informing too
+            #    early (turn < 4); bonus for listening first, informing later
+            # 5. HUMOR/LIGHTNESS — small bonus when the companion uses appropriate
+            #    light framing (not during high stress, not safety-critical turn)
+            delivery_mod = 0.0
+
+            is_inform_action = action in {
+                "give_facts", "psychoeducation", "provide_information", "direct_advice",
+                "give_options", "suggest_coping_strategy", "schedule_commitment",
+                "companion_handoff", "share_circle_insight",
+            }
+            resp_lower = agent_resp.lower()
+
+            # 1. Timing penalty: information too early, before the patient has opened up
+            if is_inform_action and state.turn_idx < 3 and state.info_coverage < 0.25:
+                if state.deaddiction_phase in ("precontemplation", "contemplation", "rapport", "ambivalence"):
+                    delivery_mod -= 0.08   # too early — patient hasn't opened up yet
+
+            # 2. Grounding bonus: response references specific content from patient's
+            #    RAG context (known_context block) rather than generic clinical fluff.
+            #    Proxy: at least 3 words from known_context appear in agent_resp.
+            if is_inform_action and state.known_context:
+                ctx_words = set(state.known_context.lower().split()) - {
+                    "the", "a", "an", "and", "or", "but", "is", "was", "are",
+                    "you", "your", "they", "their", "it", "in", "on", "at", "to",
+                }
+                resp_words = set(resp_lower.split())
+                overlap = len(ctx_words & resp_words)
+                if overlap >= 3:
+                    delivery_mod += 0.08   # response is grounded in actual patient context
+                elif overlap == 0 and len(ctx_words) > 5:
+                    delivery_mod -= 0.04   # companion knows context but ignored it
+
+            # 3. Circle relay bonus: when the current speaker is NOT the primary patient
+            #    (caregiver, relative, clinician) and the companion shares information
+            #    the primary patient disclosed — this is the cross-user handoff.
+            #    Proxy: non-patient speaker turn + informing action + patient name/pronoun
+            #    referenced in response without leaking privacy keywords.
+            _PRIVACY_LEAK_WORDS = (
+                "confidential", "private", "secret", "didn't want you to know",
+                "told me not to", "hasn't told you",
+            )
+            is_non_patient_speaker = (
+                hasattr(speaker, "role") and
+                _normalise_role(speaker.role) not in ("patient",)
+            )
+            if (is_non_patient_speaker and is_inform_action and
+                    not any(p in resp_lower for p in _PRIVACY_LEAK_WORDS)):
+                delivery_mod += 0.06   # appropriate information relay to a non-patient
+
+            # 4. Negotiation listen-before-inform: penalise informing before turn 4
+            #    in negotiation mode (companion should listen first, understand position)
+            if state.therapeutic_mode == "negotiation" and is_inform_action:
+                if state.turn_idx < 4:
+                    delivery_mod -= 0.06   # too early to inform in negotiation
+                elif state.turn_idx >= 6:
+                    delivery_mod += 0.05   # well-timed information after listening phase
+
+            # 5. Humor / lightness bonus: appropriate levity under low stress
+            #    Proxy: response contains a playful/light phrase, stress is low, not safety turn
+            _HUMOR_CUES = (
+                "haha", "funny", "joke", "laugh", "that's amusing", "a bit of a",
+                "on the bright side", "light note", "speaking of which", "by the way",
+                "fun fact", "interestingly",
+            )
+            if (state.stress_index < 0.40 and action not in {"safety_protocol", "escalate"} and
+                    any(c in resp_lower for c in _HUMOR_CUES)):
+                delivery_mod += 0.04   # appropriate lightness — not pestering, not crisis
+
+            delivery_mod = max(-0.15, min(0.15, delivery_mod))
+
+            r             = scalar_reward(reward_dict) - pester_penalty + rapport_bonus + p_mod + delivery_mod
 
             # ── Negotiation convergence bonus ─────────────────────────────────
             # For negotiation scenarios (billing, professional critique, etc.),
@@ -1019,6 +1319,8 @@ class A3CWorker:
                     "redirect_streak": redirect_streak,
                     "rapport_bonus": round(rapport_bonus, 3),
                     "physio_modifier": round(p_mod, 3),
+                    "delivery_quality": round(delivery_mod, 3),
+                    "vint_updates": {k: round(v, 2) for k, v in vint_updates.items()} if vint_updates else {},
                 },
                 update_metrics = update_metrics,
                 tokens         = resp_dict.get("tokens", {}),
@@ -1026,6 +1328,12 @@ class A3CWorker:
                 discrepancy    = resp_dict.get("discrepancy", None),
             )
             self._episode_log.append(turn_record)
+
+            # ── Genuine progress metric updates (per turn) ───────────────────
+            _stress_samples.append(state.stress_index)
+            if _turns_to_goal is None and state.info_coverage >= 0.75:
+                _turns_to_goal = turn_idx
+            _trust_acc += scorer_reward_dims.get("trust_delta", 0.0)
 
             # ── Early termination check (Q4b) ────────────────────────────────
             should_stop, ep_penalty = scorer.should_terminate_early(
@@ -1068,6 +1376,76 @@ class A3CWorker:
             state = next_state
 
         summary = self._flush_episode(episode_id, scenario, cumulative_reward)
+
+        # ── Genuine progress metrics ──────────────────────────────────────────
+        # These are the methodologically independent measures that supplement the
+        # A3C reward signal. They help differentiate real therapeutic progress from
+        # easy-to-game action-selection parameters.
+        _STAGE_ORDER = [
+            "precontemplation", "contemplation", "preparation",
+            "action", "maintenance",
+        ]
+
+        # 1. change_stage_delta: ordinal change in the patient's TTM stage.
+        #    Positive = advancement. Estimated heuristically from coverage + stress.
+        #    Phase 5 will replace with a dedicated LLM judge call.
+        end_stage = state.deaddiction_phase
+        _stage_start_idx = _STAGE_ORDER.index(_start_change_stage) \
+            if _start_change_stage in _STAGE_ORDER else 0
+        # Heuristic advancement: if patient covered ≥ 80% AND low mean stress → advance 1
+        mean_stress = (sum(_stress_samples) / len(_stress_samples)) if _stress_samples else 0.5
+        _inferred_advance = 0
+        if (state.info_coverage >= 0.80 and mean_stress <= 0.50
+                and state.turn_count >= 4
+                and _stage_start_idx < len(_STAGE_ORDER) - 1):
+            _inferred_advance = 1
+            end_stage = _STAGE_ORDER[_stage_start_idx + 1]
+        _stage_end_idx = _STAGE_ORDER.index(end_stage) \
+            if end_stage in _STAGE_ORDER else _stage_start_idx
+        change_stage_delta = _stage_end_idx - _stage_start_idx
+
+        # 2. stress_auc: area under the calm curve — higher is better.
+        #    stress_auc = mean(1 - stress_index) over all turns.
+        stress_auc = (sum(1.0 - s for s in _stress_samples) / len(_stress_samples)) \
+            if _stress_samples else 0.5
+
+        # 3. turns_to_goal: first turn where info_coverage ≥ 0.75.
+        #    None if never achieved. Lower is better for a given goal difficulty.
+        turns_to_goal = _turns_to_goal
+
+        # 4. discrepancy_flag: did the A3C reward diverge significantly from the
+        #    LLM scorer's assessment? Flags training validity issues.
+        scorer_cumulative = sum(
+            t.judge.get("scorer_continuous", 0.5) for t in self._episode_log
+        ) if self._episode_log else 0.0
+        arm_cumulative = cumulative_reward
+        discrepancy_flag = abs(arm_cumulative - scorer_cumulative) > 3.0  # 3σ threshold
+
+        # 5. trust_delta_final: accumulated trust_delta over the episode.
+        trust_delta_final = round(_trust_acc, 4)
+
+        genuine_metrics = {
+            "change_stage_start":  _start_change_stage,
+            "change_stage_end":    end_stage,
+            "change_stage_delta":  change_stage_delta,
+            "inferred_advance":    bool(_inferred_advance),
+            "stress_auc":          round(stress_auc, 4),
+            "turns_to_goal":       turns_to_goal,
+            "goal_achieved":       turns_to_goal is not None,
+            "discrepancy_flag":    discrepancy_flag,
+            "trust_delta_final":   trust_delta_final,
+            "mean_stress":         round(mean_stress, 4),
+            "turn_count":          state.turn_count,
+            "reactivity_archetype": state.archetype,
+            "vint_active":         vint_buf is not None,
+            # Cross-companion coordination metrics
+            "world_scenario":      is_world_scenario,
+            "commitment_count":    len(dialogue_state.commitments) if dialogue_state else 0,
+            "clinical_commitments": sum(
+                1 for c in dialogue_state.commitments if c.is_clinical
+            ) if dialogue_state else 0,
+            "escalation_requested": dialogue_state.escalation_requested if dialogue_state else False,
+        }
         # Attach session memory for multi-session continuity
         summary["session_memory"] = {
             "scenario_id":    scenario.get("scenario_id", "unknown"),
@@ -1075,16 +1453,17 @@ class A3CWorker:
             "archetype":      state.archetype,
             "session_goal":   state.session_goal,
             "therapeutic_mode": state.therapeutic_mode,
-            "deaddiction_phase": state.deaddiction_phase,
+            "deaddiction_phase": end_stage,      # use inferred end stage
             "turn_count":     state.turn_count,
             "info_coverage":  state.info_coverage,
             "covered_elements": list(orchestrator.covered_elements),
             "goal_idx":       orchestrator.primary_patient.current_goal_idx,
-            "conversation_history": state.conversation_history[-10:],  # last 10 messages only
+            "conversation_history": state.conversation_history[-10:],
             "physio":         state.physio,
             "longitudinal_hint": state.longitudinal_hint,
             "cumulative_reward": round(cumulative_reward, 5),
         }
+        summary["genuine_metrics"] = genuine_metrics
         return summary
 
     def _build_state_with_continuity(

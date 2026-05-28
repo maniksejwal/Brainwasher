@@ -39,10 +39,10 @@ from tensornets.a3c.worker import (
     A3CWorker,
     REWARD_DIMS,
     TurnState,
+    _build_reactivity_profile,   # C6.1: ReactivityProfile wiring
 )
 from tensornets.therapy.mcts_reward import (
     WEIGHTS as MCTS_WEIGHTS,
-    GOAL_KEYWORDS,
     TRUST_BUILD,
     TRUST_ERODE,
     score_candidate_multidim,
@@ -161,7 +161,7 @@ class Arm1Worker(A3CWorker):
         scout_tokens  = len(response_text.split()) * 2   # rough token estimate
 
         # Step 5: synthetic reward from stress delta
-        next_stress = _stress_after_response(state.stress_index, action)
+        next_stress = _stress_after_response(state.stress_index, action, state.archetype, state.drug_regimen)
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
         reward["safety"] = 1.0 if not fallback else 0.8
 
@@ -189,13 +189,47 @@ class Arm1Worker(A3CWorker):
         scenario: dict,
         m_trunc=None,
     ) -> str:
-        """Generate a response via Scout (Bedrock).  Returns the response text."""
+        """
+        Generate a response via Scout (Bedrock).  Returns the response text.
+
+        F3/F4 — M_trunc constraint injection:
+        If M_trunc is available (shape n_vocab × k from SVD of MCTS path), extract
+        the top-weighted actions from the dominant singular vector (column 0) and
+        inject them as explicit guidance into the system prompt.  This soft-steers
+        the companion toward actions in the MCTS high-value subspace without
+        requiring direct logit manipulation (which Bedrock API doesn't expose).
+        """
+        # ── F3/F4: extract top MCTS actions from M_trunc dominant vector ─────
+        mcts_constraint_str = ""
+        if m_trunc is not None:
+            try:
+                # m_trunc is list[list[float]], shape (n_vocab, k)
+                # Extract the dominant component (column 0)
+                dominant = [row[0] for row in m_trunc if row]
+                # The MCTS /best-action returns candidate_actions sorted the same way
+                # as the action_vocab in _build_M_trunc — we use ACTION_TAXONOMY as fallback
+                from tensornets.a3c.action_bandit import ACTION_TAXONOMY
+                vocab = list(ACTION_TAXONOMY.keys())[:len(dominant)]
+                # Pair each action with its dominant-vector weight and take top 3
+                weighted = sorted(
+                    zip(vocab, dominant), key=lambda x: abs(x[1]), reverse=True
+                )
+                top_actions = [a for a, _ in weighted[:3] if abs(_) > 0.05]
+                if top_actions:
+                    mcts_constraint_str = (
+                        "\n[MCTS GUIDANCE] High-value action subspace for this state: "
+                        + ", ".join(top_actions) +
+                        ". Bias your response toward these strategy types."
+                    )
+            except Exception:
+                pass   # non-fatal; M_trunc injection is a soft hint only
+
         try:
             system_prompt = self._system_prompt.format(
                 action=action,
                 stress_index=state.stress_index,
                 stress_bucket=state.stress_bucket,
-                hysteresis_ctx="",  # not used by Arm1 but prevents KeyError in rewritten prompts
+                hysteresis_ctx="",
             )
         except (KeyError, ValueError):
             system_prompt = (
@@ -203,6 +237,11 @@ class Arm1Worker(A3CWorker):
                 f"Patient stress: {state.stress_index:.2f} ({state.stress_bucket}). "
                 "Respond with one empathetic, concise message (2–3 sentences)."
             )
+
+        # Append M_trunc constraint to system prompt if available
+        if mcts_constraint_str:
+            system_prompt = system_prompt + mcts_constraint_str
+
         history_text = "\n".join(
             f"{t['role'].upper()}: {t['content']}"
             for t in state.conversation_history[-6:]
@@ -279,7 +318,7 @@ class Arm2Worker(A3CWorker):
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
 
-        next_stress = _stress_after_response(state.stress_index, action)
+        next_stress = _stress_after_response(state.stress_index, action, state.archetype, state.drug_regimen)
 
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
         reward["safety"] = 1.0
@@ -384,7 +423,7 @@ class Arm3Worker(A3CWorker):
             raise RuntimeError(f"Arm3: Scout call failed: {exc}") from exc
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
-        next_stress = _stress_after_response(state.stress_index, action)
+        next_stress = _stress_after_response(state.stress_index, action, state.archetype, state.drug_regimen)
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
 
         return {
@@ -405,7 +444,12 @@ class Arm3Worker(A3CWorker):
 
 # ── Shared utilities ──────────────────────────────────────────────────────────
 
-def _stress_after_response(current_stress: float, action: str) -> float:
+def _stress_after_response(
+    current_stress: float,
+    action: str,
+    archetype: str = "standard",
+    drug_regimen_dict: "dict | None" = None,
+) -> float:
     """
     Continuous stress transition using CALMING_WEIGHT per action.
 
@@ -417,6 +461,16 @@ def _stress_after_response(current_stress: float, action: str) -> float:
     So: CW > 0.5 → stress falls, CW < 0.5 → stress rises (flooding / challenge).
     The OU target is 0 (natural decay when no action is taken).
 
+    C6.1 — ReactivityProfile modifier:
+    If an archetype is specified, the profile's gamma_modifier() scales the
+    calming/challenging delta. A HYPERSENSITIVE patient reacts more strongly
+    to both calming and stressful actions; a STOIC patient reacts less.
+
+    C5.4 — DrugRegimen modifier:
+    If drug_regimen_dict is provided, the composite PK/PD Γ modifier from
+    DrugRegimen.gamma_modifier() is applied. Beta-blockers dampen stress rise;
+    benzodiazepines reduce Γ sharply; naltrexone attenuates craving Γ spikes.
+
     Falls back to 0.5 (neutral, zero delta) for unknown actions.
     """
     try:
@@ -426,7 +480,37 @@ def _stress_after_response(current_stress: float, action: str) -> float:
 
     DELTA_SCALE = 0.08   # maximum per-turn stress change (±4% at CW extremes)
     cw    = CALMING_WEIGHT.get(action, 0.5)
-    delta = -(cw - 0.5) * 2.0 * DELTA_SCALE   # negative for calming, positive for challenging
+    delta = -(cw - 0.5) * 2.0 * DELTA_SCALE
+
+    # ── C6.1: scale delta by ReactivityProfile gamma_modifier ────────────────
+    profile = _build_reactivity_profile("_arm_tmp", archetype)
+    if profile is not None:
+        # gamma_modifier returns a multiplier > 1 for reactive types (amplifies delta)
+        # and < 1 for stoic types (dampens delta). Use current_stress as input.
+        try:
+            modifier = profile.gamma_modifier(current_stress)
+            delta *= modifier
+        except Exception:
+            pass   # non-fatal; fall through to unmodified delta
+
+    # ── C5.4: apply DrugRegimen PK/PD Γ modifier ────────────────────────────
+    # Drug modifier is applied to the raw delta magnitude. A beta-blocker
+    # (modifier < 1) dampens both calming and stress-rise effects — the patient
+    # is pharmacologically buffered. A BZD sharply reduces Γ (modifier << 1).
+    # A cue-triggered naltrexone damps the craving stress spike specifically.
+    if drug_regimen_dict:
+        try:
+            from tensornets.physio.pkpd import DrugRegimen
+            dr = DrugRegimen(
+                subject_id = "_arm_tmp",
+                drugs      = drug_regimen_dict,
+            )
+            cue_triggered = (action in ("spike_step", "direct_advice"))
+            drug_mod = dr.gamma_modifier(cue_triggered=cue_triggered)
+            delta *= drug_mod
+        except Exception:
+            pass   # non-fatal; ignore missing pkpd dependency
+
     return max(0.0, min(1.0, current_stress + delta))
 
 
@@ -509,22 +593,21 @@ def _synthetic_reward(
     }:
         stress_r = max(0.0, stress_r - 0.40)   # hard penalty for violating CRITICAL gate
 
-    # ── Dimension 2: Goal progress (mode keyword scan) ────────────────────────
-    # Use new ChangeStage values for keyword lookup; fall back to old names
-    weight_key = phase.value if mode in (TherapeuticMode.DEADDICTION, TherapeuticMode.BEHAVIOUR_CHANGE) else mode_str
-    # Map new stage names to old GOAL_KEYWORDS keys (which still use old names)
-    from tensornets.therapy.modes import CHANGESTAGE_TO_DEADDICTION
-    weight_key = CHANGESTAGE_TO_DEADDICTION.get(weight_key, weight_key)
-    goal_kws    = GOAL_KEYWORDS.get(weight_key, GOAL_KEYWORDS.get("standard", frozenset()))
-    words_lower = response_text.lower() if response_text else ""
-    goal_hits   = sum(1 for kw in goal_kws if kw in words_lower)
-    goal_r_text = min(1.0, goal_hits / max(1, len(goal_kws) * 0.3))
-
-    # Also consider forward action taxonomy (without text)
+    # ── Dimension 2: Goal progress ────────────────────────────────────────────
+    # NOTE: keyword scan removed. It was circular — any response containing
+    # clinical keywords scored high regardless of clinical quality.
+    # The LLM scorer (A3CScorer) evaluates goal_progress independently via
+    # scorer_reward_dims["goal_progress"] in worker.py.
+    #
+    # Here we use only the action-taxonomy signal (which IS independently
+    # grounded — advancing actions earn a small coverage boost, holding actions
+    # maintain it) combined with the orchestrator's coverage fraction. This is
+    # an unbiased, non-circular estimate for the MCTS cost function.
     advancing = {
         "psychoeducation", "motivational_frame", "develop_discrepancy",
         "give_options", "summarise", "challenger_insight", "give_facts",
         "oars_summary", "loss_frame", "socratic_reframe",
+        "share_circle_insight", "direct_advice", "future_planning",
     }
     holding = {"validate", "empathic_reflection", "unconditional_regard", "acknowledge_only"}
     if action in advancing:
@@ -534,10 +617,8 @@ def _synthetic_reward(
     else:
         goal_r = max(0.0, state.info_coverage - 0.05)
 
-    # Blend text signal with action taxonomy signal
-    goal_r = 0.6 * goal_r + 0.4 * goal_r_text
-
     # ── Dimension 3: Trust delta ──────────────────────────────────────────────
+    words_lower = response_text.lower() if response_text else ""
     if words_lower:
         build_hits = sum(1 for kw in TRUST_BUILD if kw in words_lower)
         erode_hits = sum(1 for kw in TRUST_ERODE if kw in words_lower)
@@ -558,6 +639,10 @@ def _synthetic_reward(
         consistency_r = 0.8
 
     # ── Compose via mode weights ─────────────────────────────────────────────
+    weight_key = phase.value if mode in (TherapeuticMode.DEADDICTION, TherapeuticMode.BEHAVIOUR_CHANGE) else mode_str
+    # Map new stage names to old MCTS_WEIGHTS keys
+    from tensornets.therapy.modes import CHANGESTAGE_TO_DEADDICTION
+    weight_key = CHANGESTAGE_TO_DEADDICTION.get(weight_key, weight_key)
     weights    = MCTS_WEIGHTS.get(weight_key, MCTS_WEIGHTS["standard"])
     # weights = [stress_reduction, goal_progress, trust_delta, info_coverage, consistency]
     # Normalise trust from [0,1] to [-1,+1] for the RewardVector's shift

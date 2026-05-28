@@ -148,6 +148,26 @@ CLINICAL INTERPRETATION NOTES (read before scoring):
    "Roll with resistance" means joining the patient's world briefly, then creating space — not
    lecturing them back onto the clinical track.
 
+7. INFORMATION DELIVERY QUALITY:
+   a. TIMING: Giving facts or advice before the patient has opened up (turns 0-2,
+      precontemplation/rapport) should score generic_response=-1. The companion cannot know
+      what is relevant until the patient has shared context. Exception: basic orientation info
+      ("I'm here to support you") is always appropriate.
+   b. GROUNDING: A response that refers specifically to what the patient said (their job, their
+      family member's name, their stated trigger, their own words) should score goal_progress=+1
+      or +2. A response that gives generic clinical advice (applicable to anyone with this
+      diagnosis) when the patient has shared specific personal context earns goal_progress=0 or -1.
+   c. CIRCLE RELAY: If the current speaker is a caregiver, relative, or clinician (NOT the primary
+      patient) and the companion shares information the primary patient had disclosed — this is a
+      useful handoff. Do NOT penalise this. Score goal_progress=+1 if the information is clinically
+      relevant and does not violate privacy (the companion should not expose what was said in private).
+   d. NEGOTIATION LISTENING RATIO: In negotiation mode, early turns (0-3) should be dominated by
+      listening/reflecting. If the companion delivers advice or facts before turn 4 without first
+      demonstrating understanding of both parties' positions, score generic_response=-1.
+   e. APPROPRIATE HUMOR / LIGHTNESS: If the patient is not in distress and the companion uses
+      gentle humor or a light remark that fits the moment, do NOT penalise. Score goal_progress=+1
+      if the lightness builds rapport without deflecting from the session goal.
+
 ---
 Evaluate on ALL of the following dimensions.  Return ONLY a raw JSON object — no prose,
 no markdown fences, no comments.  Start your reply with {{ and end with }}.
