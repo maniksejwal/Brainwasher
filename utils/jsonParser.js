@@ -212,7 +212,17 @@ export function parseApiResponse(apiResponse) {
             // Check if it's any other valid object response structure
             if (Object.keys(apiResponse).length > 0 && !apiResponse.modelUsed && !apiResponse.error) {
                 // Only log warning if it's not a recognized structure
-                const recognizedKeys = ['level', 'reply', 'assessment', 'intent', 'state_update', 'future_plan', 'criticality', 'mentioned_usernames'];
+                const recognizedKeys = [
+                    // Companion response keys
+                    'level', 'reply', 'assessment', 'intent', 'state_update', 'future_plan',
+                    'criticality', 'mentioned_usernames',
+                    // Privacy guard response keys
+                    'privacyLevel', 'reasoning', 'sharingSuggestion',
+                    // Action selector / orchestration keys
+                    'action', 'framesComponent', 'confidence', 'rationale',
+                    // Cross-companion / intervention keys
+                    'concern_type', 'urgency_score', 'summary',
+                ];
                 const hasRecognizedKey = Object.keys(apiResponse).some(key => recognizedKeys.includes(key));
                 if (!hasRecognizedKey) {
                     console.warn('[JSONParser] Could not extract text from response object. Keys:', Object.keys(apiResponse));

@@ -17,6 +17,9 @@ import {
 } from '../training/simulation/personas/therapy_personas.js';
 import { EDGE_CASE_PERSONAS } from '../training/simulation/personas/edge_case_personas.js';
 import { BUSINESS_PERSONAS, BUSINESS_SCENARIOS } from '../training/simulation/personas/business_personas.js';
+// Full scenario library — single source of truth for all 100+ JS scenarios
+import { SCENARIOS } from '../training/simulation/scenarios/index.js';
+import { WORLD_SCENARIOS_DEFINITIONS } from '../training/world_simulation/world_scenarios.js';
 
 const router = express.Router();
 
@@ -197,6 +200,7 @@ function _buildCanonicalScenarios() {
             { role: 'patient' },
             ...persona.care_circle.map(m => ({ role: m.role || 'caregiver' })),
         ];
+        const hasDoctor = users.some(u => u.role === 'doctor' || u.role === 'clinician');
         scenarios.push({
             scenario_id:            `edge_${key}`,
             therapeutic_mode:       persona.therapeutic_mode || 'standard',
@@ -212,9 +216,14 @@ function _buildCanonicalScenarios() {
             patient_prompt:         persona.prompt_template || '',
             caregiver_prompt:       persona.care_circle?.[0]?.prompt_template || null,
             doctor_prompt:          persona.care_circle?.find(m => m.role === 'doctor')?.prompt_template || null,
-            required_elements:      persona.required_elements || ['build trust', 'identify concern', 'coordinate care'],
+            required_elements:      persona.required_elements || [
+                'build trust', 'identify concern', 'coordinate care',
+                ...(hasDoctor ? ['escalate to clinician', 'clinician query'] : ['caregiver relay']),
+            ],
             users,
             context:                persona.description || '',
+            // Signal to worker.py that escalation is expected/rewarded
+            escalation_expected:    hasDoctor,
         });
     }
 
@@ -252,6 +261,98 @@ function _buildCanonicalScenarios() {
         });
     }
 
+    // ── Full JS scenario library ──────────────────────────────────────────────
+    // Convert every scenario from the unified SCENARIOS pool.
+    // The persona-specific loops above already covered deaddiction, flooding,
+    // negotiation, edge-case, and business variants with rich persona data.
+    // This loop adds everything else: conflict, longitudinal, hospital, caregiver,
+    // multi-user, privacy, escalation, ethical, avoidance, preventative, cultural,
+    // behaviour-change, world/multi-circle, and any future categories.
+    // Deduplication by scenario_id prevents double-counting.
+    const seenIds = new Set(scenarios.map(s => s.scenario_id));
+
+    for (const [key, sc] of Object.entries(SCENARIOS || {})) {
+        const sid = `js_${key}`;
+        if (seenIds.has(sid)) continue;
+
+        const users      = sc.users || [{ role: 'patient' }];
+        const hasDoctor  = users.some(u => (u.role || '').match(/doctor|clinician|physician/i));
+        const isMulti    = users.length > 1;
+        const cat        = sc.category || 'standard';
+        const isEscalation  = cat === 'escalation' || !!(sc.instructions?.agent || '').match(/escalat/i);
+        const isConsent     = cat === 'privacy' || cat === 'ethical';
+        const isWorld       = !!(sc.circles) || cat === 'role_inversion' || cat === 'family_network'
+                           || cat === 'generational' || cat === 'blended_family' || cat === 'complex_multi_circle';
+
+        const instrPatient   = (sc.instructions || {}).patient   || '';
+        const instrCaregiver = (sc.instructions || {}).caregiver || null;
+        const instrDoctor    = (sc.instructions || {}).doctor    || null;
+        const instrAgent     = (sc.instructions || {}).agent     || '';
+
+        scenarios.push({
+            scenario_id:            sid,
+            therapeutic_mode:       sc.therapeutic_mode || cat,
+            domain:                 cat,
+            deaddiction_phase:      sc.change_stage || 'contemplation',
+            session_goal:           sc.description  || sc.name || key,
+            agent_instruction:      instrAgent,
+            max_turns:              sc.turns || sc.max_turns || 20,
+            context_window:         60,
+            archetype:              sc.archetype || 'standard',
+            has_misconception:      false,
+            flooding_target_stress: 0.0,
+            initial_physio: {
+                stress_index:  isEscalation ? 0.65 : 0.40,
+                hrv_ms:        isEscalation ? 22   : 38,
+                eda_us:        2.5,
+                sleep_deficit: 0,
+                glucose_mg_dl: 95,
+            },
+            patient_prompt:         instrPatient,
+            caregiver_prompt:       instrCaregiver,
+            doctor_prompt:          instrDoctor,
+            required_elements:      sc.required_elements || _clinicalGoals(cat, hasDoctor, isEscalation),
+            users,
+            context:                sc.description || '',
+            escalation_expected:    isEscalation,
+            consent_boundary_test:  isConsent,
+            multi_role:             isMulti,
+            is_world_scenario:      isWorld,
+        });
+        seenIds.add(sid);
+    }
+
+    // ── World (multi-care-circle) scenarios ───────────────────────────────────
+    for (const [key, wsc] of Object.entries(WORLD_SCENARIOS_DEFINITIONS || {})) {
+        const sid = `world_${key}`;
+        if (seenIds.has(sid) || !wsc.users) continue;
+        scenarios.push({
+            scenario_id:            sid,
+            therapeutic_mode:       wsc.therapeutic_mode || 'multi_circle',
+            domain:                 wsc.category         || 'world',
+            deaddiction_phase:      'contemplation',
+            session_goal:           wsc.description      || wsc.name || key,
+            agent_instruction:      '',
+            max_turns:              wsc.turns || 25,
+            context_window:         80,
+            archetype:              'standard',
+            has_misconception:      false,
+            flooding_target_stress: 0.0,
+            initial_physio: { stress_index: 0.40, hrv_ms: 38, eda_us: 2.5, sleep_deficit: 0, glucose_mg_dl: 95 },
+            patient_prompt:         '',
+            caregiver_prompt:       null,
+            doctor_prompt:          null,
+            required_elements:      wsc.required_elements || [
+                'cross-circle coordination', 'escalate if needed', 'respect role boundaries',
+            ],
+            users:                  wsc.users || [],
+            context:                wsc.description || '',
+            is_world_scenario:      true,
+            escalation_expected:    wsc.category === 'role_inversion' || wsc.category === 'crisis',
+        });
+        seenIds.add(sid);
+    }
+
     return scenarios;
 }
 
@@ -267,6 +368,18 @@ function _physioFromPersona(persona, override) {
         sleep_deficit: initial.sleep_deficit ?? physio.sleep_deficit_rolling ?? 0,
         glucose_mg_dl: initial.glucose_mg_dl ?? 95,
     };
+}
+
+function _clinicalGoals(category, hasDoctor, escalation_expected) {
+    const base = {
+        escalation: ['recognise crisis', 'de-escalate if safe', 'coordinate caregiver', 'escalate to clinician'],
+        privacy:    ['identify consent level', 'enforce boundary', 'redirect caregiver', 'protect patient privacy'],
+        ethical:    ['identify consent gap', 'anonymous consultation if needed', 'protect patient autonomy'],
+    };
+    const goals = base[category] || ['identify concern', 'coordinate appropriately', 'respect consent'];
+    if (escalation_expected && !goals.includes('escalate to clinician')) goals.push('escalate to clinician');
+    if (hasDoctor && !goals.includes('clinician query')) goals.push('clinician query');
+    return goals;
 }
 
 function _defaultGoals(phase) {

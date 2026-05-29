@@ -87,9 +87,11 @@ export async function getBenchmarkRun(run_id) {
 
 // ─── Episodes ─────────────────────────────────────────────────────────────────
 
-export async function createBenchmarkEpisode({ run_id, scenario_id, persona_id, arm }) {
+export async function createBenchmarkEpisode({ run_id, scenario_id, persona_id, arm, episode_id: caller_id }) {
     const d = await _db();
-    const episode_id = randomUUID();
+    // Use caller-supplied episode_id if provided (Python worker sends its own uuid4).
+    // This ensures JSONL filenames on disk match the DB episode_id for backfill/replay.
+    const episode_id = caller_id ?? randomUUID();
     await d.run(
         `INSERT INTO htn_benchmark_episodes
          (episode_id, run_id, scenario_id, persona_id, arm, started_at)
@@ -104,15 +106,17 @@ export async function finaliseBenchmarkEpisode(episode_id, metrics = {}) {
     const {
         cumulative_reward, stress_auc, goal_achieved, turns_to_goal,
         trust_delta_final, tokens_scout, tokens_maverick, latency_ms_mean, summary,
-        turn_count,
+        // Python sends n_turns; JS simulation sends turn_count — accept both
+        turn_count, n_turns,
     } = metrics;
+    const resolvedTurnCount = turn_count ?? n_turns ?? 0;
     await d.run(
         `UPDATE htn_benchmark_episodes
          SET completed_at=?, turn_count=?, cumulative_reward=?, stress_auc=?,
              goal_achieved=?, turns_to_goal=?, trust_delta_final=?,
              tokens_scout=?, tokens_maverick=?, latency_ms_mean=?, summary=?
          WHERE episode_id=?`,
-        [Date.now(), turn_count ?? 0, cumulative_reward ?? null, stress_auc ?? null,
+        [Date.now(), resolvedTurnCount, cumulative_reward ?? null, stress_auc ?? null,
          goal_achieved ? 1 : 0, turns_to_goal ?? null, trust_delta_final ?? null,
          tokens_scout ?? 0, tokens_maverick ?? 0, latency_ms_mean ?? null,
          summary ? JSON.stringify(summary) : null, episode_id]
@@ -470,7 +474,7 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
                 e.scenario_id, e.started_at
          FROM htn_benchmark_episodes e
          JOIN htn_benchmark_runs r ON r.run_id = e.run_id
-         ${where}
+         ${where ? where + ' AND' : 'WHERE'} e.turn_count > 0
          ORDER BY e.arm, e.started_at ASC`,
         params
     );
@@ -482,6 +486,14 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
     }
 
     const result = [];
+    // Global t0 = earliest episode across all arms (for relative hour axis)
+    const globalT0 = Math.min(...Object.values(byArm).flatMap(eps => eps.map(e => e.started_at || 0)));
+
+    // Max episode count across all arms — used to right-pad shorter arms with null
+    // slots so the x-axis stays aligned when one arm has more episodes due to
+    // the other arms encountering errors during a shared training run.
+    const maxEpisodes = Math.max(...Object.values(byArm).map(eps => eps.length));
+
     for (const [armKey, episodes] of Object.entries(byArm)) {
         let prevRunId = null;
         for (let i = 0; i < episodes.length; i++) {
@@ -495,7 +507,18 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
             const smoothed  = slice.reduce((s, r) => s + (r.cumulative_reward ?? 0), 0) / slice.length;
             const variance  = slice.reduce((s, r) => s + Math.pow((r.cumulative_reward ?? 0) - smoothed, 2), 0) / slice.length;
             const stressWma = slice.reduce((s, r) => s + (r.stress_auc ?? 0), 0) / slice.length;
-            const goalWma   = slice.filter(r => r.goal_achieved).length / slice.length;
+            const goalWma   = (() => {
+                // Only count episodes where goal_achieved is not NULL
+                // (old-format episodes without reliable goal tracking are excluded)
+                const measurable = slice.filter(r => r.goal_achieved !== null && r.goal_achieved !== undefined);
+                if (!measurable.length) return null;
+                return measurable.filter(r => r.goal_achieved).length / measurable.length;
+            })();
+
+            // Wall-clock hours since first episode across all arms (for aligned x-axis)
+            const hoursElapsed = ep.started_at
+                ? Math.round((ep.started_at - globalT0) / 3600000 * 100) / 100
+                : null;
 
             result.push({
                 arm:                armKey,
@@ -503,13 +526,14 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
                 run_label:          ep.run_label,
                 run_id:             ep.run_id,
                 run_restart:        isRestart,
+                hours_elapsed:      hoursElapsed,
                 cumulative_reward:  ep.cumulative_reward,
                 smoothed_reward:    Math.round(smoothed * 1000) / 1000,
                 stddev:             Math.round(Math.sqrt(variance) * 1000) / 1000,
                 stress_auc:         ep.stress_auc,
                 stress_auc_wma:     Math.round(stressWma * 1000) / 1000,
                 goal_achieved:      ep.goal_achieved,
-                goal_rate_wma:      Math.round(goalWma * 1000) / 1000,
+                goal_rate_wma:      goalWma !== null ? Math.round(goalWma * 1000) / 1000 : null,
                 trust_delta_final:  ep.trust_delta_final,
                 turns_to_goal:      ep.turns_to_goal,
                 turn_count:         ep.turn_count,
@@ -518,9 +542,20 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
                 latency_ms_mean:    ep.latency_ms_mean,
                 scenario_id:        ep.scenario_id,
                 started_at:         ep.started_at,
+                missing_arm_slot:   false,
             });
         }
+
+        // No right-padding — each arm's line ends naturally where its data ends.
+        // Arm-lag (one arm ahead of others) is communicated via the `arm_episode_counts`
+        // field on the response object, not by stretching the canvas with blank slots.
     }
+
+    // Attach per-arm episode counts so the frontend can display a lag badge
+    const armEpisodeCounts = Object.fromEntries(
+        Object.entries(byArm).map(([arm, eps]) => [arm, eps.length])
+    );
+    result._armEpisodeCounts = armEpisodeCounts;
     return result;
 }
 
@@ -548,6 +583,8 @@ export async function getExperimentMetricSummary() {
                 r.label as run_label, r.run_id,
                 COUNT(DISTINCT e.episode_id) as total_episodes,
                 AVG(e.cumulative_reward)      as mean_reward,
+                MIN(e.cumulative_reward)      as min_reward,
+                MAX(e.cumulative_reward)      as max_reward,
                 AVG(e.goal_achieved)          as goal_rate,
                 AVG(e.stress_auc)             as mean_stress_auc,
                 SUM(CASE WHEN t.judge_safety IS NOT NULL AND t.judge_safety < 0.5 THEN 1 ELSE 0 END) as safety_failures,
@@ -555,7 +592,9 @@ export async function getExperimentMetricSummary() {
                 AVG(t.latency_ms)             as mean_latency_ms,
                 AVG(t.reward_goal)            as mean_goal_reward,
                 AVG(t.reward_stress)          as mean_stress_reward,
-                AVG(t.reward_trust)           as mean_trust_reward
+                AVG(t.reward_trust)           as mean_trust_reward,
+                AVG(t.reward_info)            as mean_info_reward,
+                AVG(t.reward_consistency)     as mean_consistency_reward
          FROM htn_benchmark_runs r
          JOIN htn_benchmark_episodes e ON e.run_id = r.run_id
          JOIN htn_benchmark_turns t ON t.episode_id = e.episode_id
@@ -693,3 +732,147 @@ export async function getArmComparisonForScenario(scenarioId, runId = null) {
     });
     return comparison;
 }
+
+/**
+ * List episodes for the conversation viewer (lightweight — no turn data).
+ *
+ * @param {object} opts
+ * @param {string} [opts.arm]         — filter by experiment
+ * @param {string} [opts.scenario_id] — filter by scenario
+ * @param {number} [opts.limit=100]
+ * @returns {Promise<Array<{episode_id, arm, scenario_id, run_label, cumulative_reward,
+ *   goal_achieved, stress_auc, started_at}>>}
+ */
+export async function listEpisodesForViewer({ arm, scenario_id, run_id, limit = 100 } = {}) {
+    const db = await getDb();
+    const clauses = ['e.turn_count > 0'];  // always skip ghost rows with 0 turns
+    const params = [];
+    if (arm)         { clauses.push('e.arm = ?');         params.push(arm); }
+    if (scenario_id) { clauses.push('e.scenario_id = ?'); params.push(scenario_id); }
+    if (run_id)      { clauses.push('e.run_id = ?');      params.push(run_id); }
+    const where = 'WHERE ' + clauses.join(' AND ');
+    params.push(limit);
+    return db.all(
+        `SELECT e.episode_id, e.arm, e.scenario_id,
+                r.label as run_label, e.run_id,
+                e.cumulative_reward, e.goal_achieved, e.stress_auc,
+                e.turn_count, e.started_at
+         FROM htn_benchmark_episodes e
+         JOIN htn_benchmark_runs r ON r.run_id = e.run_id
+         ${where}
+         ORDER BY e.started_at DESC LIMIT ?`,
+        params
+    );
+}
+
+/**
+ * Load full turn-by-turn conversation for a single episode.
+ *
+ * Returns turns ordered by turn_number including both the synthetic patient
+ * message (patient_message field on turns is not stored — use response as
+ * agent turn and build patient turns from htn_transcripts if available).
+ * Falls back to turn records only when no transcript exists.
+ *
+ * @param {string} episode_id
+ * @returns {Promise<{episode: object, turns: object[], transcript: object[]|null}>}
+ */
+export async function getEpisodeConversation(episode_id) {
+    const db = await getDb();
+
+    const episode = await db.get(
+        `SELECT e.*, r.label as run_label
+         FROM htn_benchmark_episodes e
+         JOIN htn_benchmark_runs r ON r.run_id = e.run_id
+         WHERE e.episode_id = ?`,
+        [episode_id]
+    );
+    if (!episode) return null;
+
+    const turns = await db.all(
+        `SELECT turn_number, action, response, hrv_ms, stress_index, stress_label,
+                reward_stress, reward_trust, reward_goal, reward_consistency,
+                judge_clinical, judge_empathy, judge_safety, judge_goal, judge_strategy,
+                latency_ms, tokens_scout, tokens_maverick
+         FROM htn_benchmark_turns
+         WHERE episode_id = ?
+         ORDER BY turn_number ASC`,
+        [episode_id]
+    );
+
+    // Try to get the full transcript (includes patient messages)
+    const transcriptRow = await db.get(
+        `SELECT transcript FROM htn_transcripts WHERE transcript_id = ? LIMIT 1`,
+        [episode_id]
+    );
+    const transcript = transcriptRow?.transcript
+        ? (() => { try { return JSON.parse(transcriptRow.transcript); } catch { return null; } })()
+        : null;
+
+    return { episode, turns, transcript };
+}
+
+/**
+ * Per-episode reward component averages for line charts.
+ * Returns one row per episode per arm, ordered by episode start time.
+ * Used to render per-dimension reward timelines on the benchmarks dashboard
+ * (goal, stress, trust, info, consistency — each as a separate line per experiment).
+ *
+ * @param {number} [windowSize=20]  Rolling mean window (episodes).
+ * @returns {Promise<Array<{arm, episode_index, hours_elapsed, run_restart,
+ *   goal_wma, stress_wma, trust_wma, info_wma, consistency_wma}>>}
+ */
+export async function getRewardComponentTimeline(windowSize = 20) {
+    const db  = await getDb();
+    const rows = await db.all(
+        `SELECT e.arm,
+                e.episode_id, e.episode_index,
+                e.started_at,
+                r.label      as run_label,
+                AVG(t.reward_goal)        as mean_goal,
+                AVG(t.reward_stress)      as mean_stress,
+                AVG(t.reward_trust)       as mean_trust,
+                AVG(t.reward_info)        as mean_info,
+                AVG(t.reward_consistency) as mean_consistency
+         FROM htn_benchmark_episodes e
+         JOIN htn_benchmark_runs r     ON r.run_id = e.run_id
+         JOIN htn_benchmark_turns t    ON t.episode_id = e.episode_id
+         WHERE e.started_at IS NOT NULL
+         GROUP BY e.episode_id
+         ORDER BY e.arm, e.started_at ASC`
+    );
+
+    // Group by arm, compute rolling mean per component, add hours_elapsed + restart markers
+    const byArm = {};
+    for (const r of rows) {
+        (byArm[r.arm] = byArm[r.arm] || []).push(r);
+    }
+
+    const dims = ['goal', 'stress', 'trust', 'info', 'consistency'];
+    const out = [];
+
+    for (const [arm, eps] of Object.entries(byArm)) {
+        const t0 = eps[0].started_at;
+        let prevRun = eps[0].run_label;
+
+        eps.forEach((ep, idx) => {
+            const slice = eps.slice(Math.max(0, idx - windowSize + 1), idx + 1);
+            const wma = {};
+            for (const d of dims) {
+                const vals = slice.map(e => e[`mean_${d}`] ?? 0);
+                wma[`${d}_wma`] = vals.reduce((s, v) => s + v, 0) / vals.length;
+            }
+            const runRestart = ep.run_label !== prevRun;
+            prevRun = ep.run_label;
+            out.push({
+                arm,
+                episode_index: idx,
+                hours_elapsed: (ep.started_at - t0) / 3_600_000,
+                run_restart:   runRestart,
+                run_label:     ep.run_label,
+                ...wma,
+            });
+        });
+    }
+    return out;
+}
+

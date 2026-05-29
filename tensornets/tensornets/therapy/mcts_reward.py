@@ -61,15 +61,17 @@ from tensornets.therapy.modes import TherapeuticMode, ChangeStage
 
 # Each row: [stress_reduction, goal_progress, trust_delta, info_coverage, consistency]
 # Keys mirror ChangeStage enum values (Prochaska & DiClemente TTM).
+# goal_progress weight reduced: value-delivery is now captured more finely by
+# info_coverage (LLM novelty+relevance gain) — avoid double-counting.
 WEIGHTS: dict[str, list[float]] = {
-    "standard":          [0.35, 0.25, 0.20, 0.15, 0.05],
-    "flooding":          [0.10, 0.50, 0.15, 0.20, 0.05],   # goal = stay in stimulus
-    "precontemplation":  [0.30, 0.10, 0.45, 0.10, 0.05],   # trust dominates
-    "contemplation":     [0.20, 0.25, 0.25, 0.25, 0.05],   # balanced
-    "preparation":       [0.15, 0.30, 0.20, 0.30, 0.05],   # coverage + progress
-    "action":            [0.20, 0.35, 0.20, 0.20, 0.05],   # progress matters most
-    "maintenance":       [0.15, 0.35, 0.25, 0.20, 0.05],   # sustain progress
-    "negotiation":       [0.25, 0.20, 0.20, 0.30, 0.05],   # info coverage key
+    "standard":          [0.30, 0.15, 0.20, 0.30, 0.05],
+    "flooding":          [0.10, 0.35, 0.15, 0.35, 0.05],   # goal = stay in stimulus
+    "precontemplation":  [0.25, 0.05, 0.40, 0.25, 0.05],   # trust dominates; listen first
+    "contemplation":     [0.15, 0.20, 0.25, 0.35, 0.05],   # info gain matters more
+    "preparation":       [0.15, 0.20, 0.20, 0.40, 0.05],   # coverage drives change readiness
+    "action":            [0.20, 0.25, 0.20, 0.30, 0.05],   # progress + fresh info
+    "maintenance":       [0.15, 0.25, 0.25, 0.30, 0.05],   # sustain via new insights
+    "negotiation":       [0.20, 0.15, 0.20, 0.40, 0.05],   # info exchange is the goal
 }
 
 # Trust-building keywords (presence → positive trust delta)

@@ -311,6 +311,7 @@
                         <div style="position:relative;height:280px;">
                             <canvas id="learning-curves-chart"></canvas>
                         </div>
+                        <div id="learning-curves-lag"></div>
                     </div>
 
                     <!-- Goal rate chart -->
@@ -319,6 +320,7 @@
                         <div style="position:relative;height:220px;">
                             <canvas id="goal-rate-chart"></canvas>
                         </div>
+                        <div id="goal-rate-lag"></div>
                     </div>
 
                     <!-- Cumulative reward stats table -->
@@ -327,15 +329,45 @@
                         <div id="reward-stats-table" style="overflow-x:auto;"></div>
                     </div>
 
+                    <!-- Cumulative reward distribution chart -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Cumulative Reward Distribution per Experiment</h4>
+                        <p style="font-size:12px;color:var(--gray-500);margin:0 0 10px;">
+                            Box-style bar: min / mean / max cumulative reward per run, per experiment.
+                            Higher is better. Cumulative reward is unbounded (sum of per-turn rewards × turns).
+                        </p>
+                        <div style="position:relative;height:240px;">
+                            <canvas id="cumulative-reward-dist-chart"></canvas>
+                        </div>
+                    </div>
+
                     <!-- Stress AUC over episodes -->
                     <div style="margin-bottom:16px;">
-                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Stress AUC over Episodes (Weighted Moving Average)</h4>
+                        <h4 style="margin:0 0 4px;font-size:13px;color:var(--gray-700);">Stress AUC over Episodes (Weighted Moving Average)</h4>
+                        <p style="margin:0 0 8px;font-size:11px;color:var(--gray-500);">
+                            Mean calmness per episode = avg(1&nbsp;&minus;&nbsp;stress_index) across all turns.
+                            <strong>Higher&nbsp;&#x2191; is better</strong> — 1.0 means the patient was calm throughout; 0.0 means maximally stressed every turn.
+                            A good companion reduces and maintains low stress while still making therapeutic progress.
+                        </p>
                         <div style="position:relative;height:220px;">
                             <canvas id="stress-auc-chart"></canvas>
                         </div>
                     </div>
+
+                    <!-- Per-reward-dimension line charts -->
                     <div style="margin-bottom:16px;">
-                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Scenario Reward Breakdown (Avg Cumulative)</h4>
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Reward Components — Individual Dimensions</h4>
+                        <p style="font-size:12px;color:var(--gray-500);margin:0 0 10px;">
+                            Each chart shows one reward dimension's WMA across all experiments (same time axis as learning curves).
+                            Goal progress, Stress reduction, Trust, Info gain, and Consistency are tracked independently.
+                        </p>
+                        <div id="reward-component-charts"></div>
+                    </div>
+
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 6px;font-size:13px;color:var(--gray-700);">Scenario Reward Breakdown (Avg Cumulative)</h4>
+                        <!-- Arm colour key — legend disabled on chart because per-run series are too many -->
+                        <div id="heatmap-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:11px;color:var(--gray-600);"></div>
                         <div style="position:relative;height:220px;">
                             <canvas id="scenario-heatmap-chart"></canvas>
                         </div>
@@ -391,6 +423,27 @@
                     </div>
 
                     <div id="benchmarks-dashboard"></div>
+
+                    <!-- Episode conversation viewer -->
+                    <div style="margin-bottom:16px;border-top:1px solid var(--gray-200);padding-top:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Episode Conversation Viewer</h4>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+                            <select id="conv-exp-select" style="font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid var(--gray-300);">
+                                <option value="">-- Select Experiment --</option>
+                                <option value="htn_mcts">Exp 1 — HTN + MCTS</option>
+                                <option value="oldschool">Exp 2 — LLM Agents w/o Physiology</option>
+                                <option value="hysteresis_prompt">Exp 3 — Hysteresis Prompt</option>
+                            </select>
+                            <select id="conv-scenario-select" style="font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid var(--gray-300);">
+                                <option value="">-- All Scenarios --</option>
+                            </select>
+                            <select id="conv-episode-select" style="font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid var(--gray-300);min-width:280px;">
+                                <option value="">-- Select Episode --</option>
+                            </select>
+                            <button id="conv-load-btn" class="secondary" style="font-size:12px;padding:4px 12px;">Load</button>
+                        </div>
+                        <div id="conv-viewer-panel" style="background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;max-height:500px;overflow-y:auto;padding:12px;display:none;"></div>
+                    </div>
                 </div>
 
                 <div id="prompts" class="tab-content scrollable-content">

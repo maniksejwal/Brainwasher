@@ -1,7 +1,7 @@
 import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs, loadBusinessData, loadBusinessSectionData } from './dataLoaders.js';
 import { loadConversationLogs } from './simulationLogsUI.js';
 import { generateAndShowReport } from './reportUI.js';
-import { initBenchmarksDashboard, refreshBenchmarksDashboard, loadInlineReport } from './benchmarksDashboard.js';
+import { initBenchmarksDashboard, refreshBenchmarksDashboard, loadInlineReport, initConversationViewer } from './benchmarksDashboard.js';
 
 export function setupNavigationHandlers(api, state) {
     // Listen for circle view refresh events
@@ -114,6 +114,7 @@ export function setupNavigationHandlers(api, state) {
             } else if (tabName === 'benchmarks') {
                 // Re-render benchmarks fresh on every tab activation
                 initBenchmarksDashboard();
+                initConversationViewer();
             }
         });
     });

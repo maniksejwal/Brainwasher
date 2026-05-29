@@ -157,8 +157,19 @@ def _load_recent_turns(episodes_dir: Path, n_episodes: int) -> list[dict]:
     for f in files:
         try:
             for line in f.read_text(encoding="utf-8").splitlines():
-                if line.strip():
-                    turns.append(json.loads(line))
+                if not line.strip():
+                    continue
+                obj = json.loads(line)
+                # Skip summary/meta lines — only include turn-level dicts
+                # (turns have a numeric "turn" key; summary lines have "type")
+                if not isinstance(obj.get("turn"), int):
+                    continue
+                # Skip turns from old JSONL files that predate scalar_reward.
+                # Do NOT invent a fake value — that would corrupt the prompt
+                # improvement signal.  Old turns simply don't contribute.
+                if "scalar_reward" not in obj:
+                    continue
+                turns.append(obj)
         except Exception:
             pass
     return turns

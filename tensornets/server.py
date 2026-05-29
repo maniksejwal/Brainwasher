@@ -21,6 +21,15 @@ POST /mps/project           -> apply constraint projection (requires mps_state i
 
 from __future__ import annotations
 
+# Load .env from the project root (two levels up: tensornets/server.py → project root).
+# This is a no-op if python-dotenv is not installed or the file is absent.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    import pathlib as _pathlib
+    _load_dotenv(_pathlib.Path(__file__).resolve().parents[1] / ".env")
+except ImportError:
+    pass
+
 import json
 import logging
 import os

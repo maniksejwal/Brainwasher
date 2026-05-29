@@ -22,6 +22,12 @@ import { retrieveRelevantFacts } from '../db/queries_facts.js';
  * @returns {Promise<object>} Final response object
  */
 export async function coordinateCompanions(userId, role, message, circleId, context) {
+    // Hoist currentTurn so it is available in the action-selector try block below
+    // (was previously declared at Step 6, causing a TDZ error on every request).
+    const currentTurn = context.history
+        ? context.history.filter(m => m.user_id === userId).length + 1
+        : 1;
+
     try {
         // Step 1: Activate all relevant handlers and agents
         // Some handlers depend on others, so we process in stages
@@ -132,6 +138,7 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
             } catch (iqErr) {
                 // Intervention queue is non-critical — never break response generation
                 console.warn('[CompanionCoordinator] Intervention queue peek failed:', iqErr.message);
+                if (process.env.NODE_ENV !== 'production') console.warn(iqErr.stack);
             }
 
             const { PROMPT_ACTION_SELECTOR, ACTION_TO_FRAMES } = await import('../prompts/action_selector.js');
@@ -234,6 +241,7 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
         } catch (actionSelectorError) {
             // Action selector is advisory — never break a response because of it
             console.warn('[CompanionCoordinator] Action selector skipped:', actionSelectorError.message);
+            if (process.env.NODE_ENV !== 'production') console.warn(actionSelectorError.stack);
         }
 
         // Inject action guidance into enhancedContext for use by the patient optimizer
@@ -255,9 +263,7 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
         const resolved = resolveConflicts(aggregated, componentResults);
         
         // Step 6: Generate future_plan if needed
-        // Calculate current turn from conversation history
-        const currentTurn = context.history ? 
-            context.history.filter(m => m.user_id === userId).length + 1 : 1;
+        // (currentTurn is hoisted to the top of coordinateCompanions)
         
         // Generate future plan using dedicated agent
         let futurePlan = aggregated.future_plan || null;

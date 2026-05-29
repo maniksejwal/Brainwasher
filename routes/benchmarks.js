@@ -34,6 +34,9 @@ import {
     getScenarioGoalRates,
     getPhysioRewardData,
     getCriticalFailureSummary,
+    listEpisodesForViewer,
+    getEpisodeConversation,
+    getRewardComponentTimeline,
 } from '../db/queries_benchmarks.js';
 
 const router = Router();
@@ -70,7 +73,10 @@ router.post('/episode', async (req, res) => {
 
 router.post('/episode/finalise', async (req, res) => {
     try {
-        const { episode_id, ...metrics } = req.body;
+        // Python sends { episode_id, metrics: { n_turns, cumulative_reward, ... } }
+        // Flatten the nested metrics object so finaliseBenchmarkEpisode gets a flat dict.
+        const { episode_id, metrics: nested, ...flat } = req.body;
+        const metrics = nested ?? flat;   // support both { metrics: {...} } and flat body
         await finaliseBenchmarkEpisode(episode_id, metrics);
         res.json({ ok: true });
     } catch (e) {
@@ -151,7 +157,10 @@ router.get('/experiment-timeline', async (req, res) => {
             arm:        arm || undefined,
             windowSize: parseInt(window) || 20,
         });
-        res.json({ rows });
+        const armEpisodeCounts = rows._armEpisodeCounts || {};
+        // strip the non-array property before sending
+        const cleanRows = rows.filter ? rows : Array.from(rows);
+        res.json({ rows: cleanRows, armEpisodeCounts });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -161,6 +170,17 @@ router.get('/experiment-timeline', async (req, res) => {
 router.get('/experiment-metrics', async (req, res) => {
     try {
         const rows = await getExperimentMetricSummary();
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Per-reward-component timeline (for individual dimension line charts) ──────
+router.get('/reward-components', async (req, res) => {
+    try {
+        const windowSize = parseInt(req.query.window) || 20;
+        const rows = await getRewardComponentTimeline(windowSize);
         res.json({ rows });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -197,7 +217,48 @@ router.get('/critical-failures', async (req, res) => {
     }
 });
 
-// ── Prompt version log (for timeline overlay) ─────────────────────────────────
+// ── Episode conversation viewer ───────────────────────────────────────────────
+router.get('/episodes', async (req, res) => {
+    try {
+        const { arm, scenario_id, run_id, limit } = req.query;
+        const rows = await listEpisodesForViewer({
+            arm:         arm || undefined,
+            scenario_id: scenario_id || undefined,
+            run_id:      run_id || undefined,
+            limit:       parseInt(limit) || 100,
+        });
+        res.json({ episodes: rows, rows });  // support both keys for backwards compat
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Delete a ghost/dangling episode (no turns, no JSONL) — called by train.py cleanup
+router.delete('/episode/:episode_id', async (req, res) => {
+    try {
+        const { episode_id } = req.params;
+        const db = await import('../db/db.js').then(m => m.getDb());
+        await db.run(
+            `DELETE FROM htn_benchmark_episodes WHERE episode_id = ? AND turn_count = 0 AND stress_auc IS NULL`,
+            [episode_id]
+        );
+        res.json({ ok: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/episodes/:episode_id/conversation', async (req, res) => {
+    try {
+        const data = await getEpisodeConversation(req.params.episode_id);
+        if (!data) return res.status(404).json({ error: 'Episode not found' });
+        res.json(data);
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Prompt version log (for reference) ───────────────────────────────────────
 router.get('/prompt-versions', async (req, res) => {
     try {
         const { getDb } = await import('../db/connection.js');

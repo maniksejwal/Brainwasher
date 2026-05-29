@@ -77,6 +77,89 @@ def _http_post(url: str, payload: dict, timeout: float = 15.0) -> dict:
     raise ConnectionError(f"POST {url} failed: {last_exc}") from last_exc
 
 
+def score_info_gain(
+    agent_response: str,
+    conversation_history: list[dict],
+    session_goals: list[str],
+    timeout: float = 8.0,
+) -> dict:
+    """
+    LLM-powered information gain scorer.
+
+    Evaluates the agent response on two dimensions that keyword matching cannot:
+
+    1. **Novelty** — did the response surface information not present in prior
+       turns? New disclosures, perspectives or clarifications score high.
+       Repetition of already-covered content scores low.
+
+    2. **Relevance** — is the information clinically or therapeutically
+       pertinent to the session goals?  Off-topic social filler scores low.
+
+    Returns
+    -------
+    dict with keys:
+        novelty   : float [0, 1]  — how new is the information?
+        relevance : float [0, 1]  — how pertinent to the session goals?
+        gain      : float [0, 1]  — composite (0.6 * novelty + 0.4 * relevance)
+        covered   : list[str]     — goals from session_goals the response addresses
+        rationale : str           — one-sentence LLM justification
+
+    Raises
+    ------
+    RuntimeError  if the LLM call fails or returns unparseable output.
+    ConnectionError  if the Scout endpoint is unreachable.
+    """
+    import json as _json
+
+    hist_snippet = "\n".join(
+        f"{m['role'].upper()}: {m['content'][:120]}"
+        for m in conversation_history[-4:]
+    )
+    goals_str = "; ".join(session_goals) if session_goals else "general therapeutic engagement"
+
+    system_prompt = (
+        "You are an information-quality evaluator for a therapeutic AI system.\n"
+        "You receive a conversation snippet and an agent response. "
+        "Score the response on two dimensions (each 0.0–1.0):\n\n"
+        "NOVELTY: Does the response surface information NOT already present in the "
+        "conversation history? 1.0 = entirely new insight or disclosure; 0.0 = pure repetition.\n\n"
+        "RELEVANCE: Is the response clinically/therapeutically pertinent to the session goals? "
+        "1.0 = directly addresses a goal; 0.0 = off-topic filler.\n\n"
+        "Also list which session goals (if any) the response meaningfully addresses.\n\n"
+        "Respond in JSON only:\n"
+        '{"novelty": <float>, "relevance": <float>, "covered": [<goal strings>], "rationale": "<one sentence>"}'
+    )
+    user_prompt = (
+        f"SESSION GOALS: {goals_str}\n\n"
+        f"CONVERSATION HISTORY:\n{hist_snippet}\n\n"
+        f"AGENT RESPONSE TO EVALUATE:\n{agent_response}"
+    )
+
+    resp = _http_post(
+        f"{_TENSORNETS_URL}/llm/scout",
+        {"system": system_prompt, "prompt": user_prompt, "max_tokens": 120},
+        timeout=timeout,
+    )
+    raw = resp.get("text", "").strip()
+    if raw.startswith("```"):
+        raw = "\n".join(raw.split("\n")[1:])
+        raw = raw.rstrip("`").strip()
+    if not raw:
+        raise RuntimeError("score_info_gain: Scout returned empty response")
+    data = _json.loads(raw)   # raises json.JSONDecodeError if output is malformed
+    novelty   = max(0.0, min(1.0, float(data["novelty"])))
+    relevance = max(0.0, min(1.0, float(data["relevance"])))
+    covered   = [g for g in (data.get("covered") or []) if isinstance(g, str)]
+    gain      = round(0.6 * novelty + 0.4 * relevance, 4)
+    return {
+        "novelty":   round(novelty, 4),
+        "relevance": round(relevance, 4),
+        "gain":      gain,
+        "covered":   covered,
+        "rationale": str(data.get("rationale", ""))[:200],
+    }
+
+
 # ── Conversation context state (mirrors realistic_conversation.js) ────────────
 
 @dataclass
@@ -206,12 +289,12 @@ class SyntheticParticipant:
         """
         Generate the participant's message for this turn.
 
-        Updates covered_elements and advances the current goal if the agent
-        response addressed it.
+        Updates covered_elements (from passed set) and advances the goal pointer.
+        Coverage itself is only updated by score_and_advance() (LLM-driven).
         """
         if covered_elements is not None:
             self.covered_elements = covered_elements
-        self._try_advance_goal(agent_response)
+        self._advance_goal_pointer()
 
         self.turn_count = turn_idx
         msg = (
@@ -239,20 +322,51 @@ class SyntheticParticipant:
 
     # ── Internal ────────────────────────────────────────────────────────────
 
+    def score_and_advance(
+        self,
+        agent_response: str,
+        turn_idx: int,
+    ) -> dict:
+        """
+        Score the agent response for information gain (novelty + relevance) using
+        the LLM-powered scorer, update covered elements from the result, and
+        advance the goal pointer.
+
+        Returns the raw score_info_gain dict so worker.py can use novelty/gain
+        in the reward without an extra LLM call.
+
+        Raises
+        ------
+        Propagates any exception from score_info_gain (ConnectionError, RuntimeError,
+        json.JSONDecodeError) — callers should handle or let the episode abort.
+        """
+        result = score_info_gain(
+            agent_response       = agent_response,
+            conversation_history = self.conversation_history,
+            session_goals        = self.goals,
+        )
+        for g in result.get("covered", []):
+            self.covered_elements.add(g.lower())
+        self._advance_goal_pointer()
+        return result
+
     def _try_advance_goal(self, agent_response: str) -> None:
         """
-        Advance to the next goal when the current required element is mentioned
-        in the agent response (coverage-driven, not timer-driven).
+        Advance the goal pointer to the first uncovered element.
 
-        Also update covered_elements from agent text.
+        Coverage is determined exclusively by the LLM-scored covered_elements
+        set (populated by score_and_advance).  Keyword matching was removed
+        because string-presence is an unreliable proxy for clinical progress
+        and incentivises the agent to parrot goal keywords rather than deliver
+        actual therapeutic value.
+
+        This method is safe to call even when score_and_advance has not yet
+        been called — it simply leaves the pointer at index 0.
         """
-        text = agent_response.lower()
-        # Mark all newly covered elements
-        for el in self.goals:
-            if el.lower() in text:
-                self.covered_elements.add(el.lower())
+        self._advance_goal_pointer()
 
-        # Advance pointer to first uncovered goal
+    def _advance_goal_pointer(self) -> None:
+        """Advance current_goal_idx to the first goal not yet in covered_elements."""
         for i, el in enumerate(self.goals):
             if el.lower() not in self.covered_elements:
                 self.current_goal_idx = i

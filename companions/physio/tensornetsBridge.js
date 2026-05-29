@@ -688,7 +688,7 @@ export async function auditJudgeDiscrepancy({
 export async function getLongitudinalHint(subjectId) {
     try {
         // GET endpoint already exists: /therapy/prompt-hint/{subject_id}
-        const base = process.env.TENSORNETS_URL || 'http://127.0.0.1:8765';
+        const base = BRIDGE_URL;
         const resp = await fetch(`${base}/therapy/prompt-hint/${encodeURIComponent(subjectId)}`);
         if (!resp.ok) return '';
         const data = await resp.json();

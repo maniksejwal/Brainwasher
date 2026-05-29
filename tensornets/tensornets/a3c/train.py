@@ -46,6 +46,14 @@ Ctrl-C or OS reboot does not lose the current session's updates.
 
 from __future__ import annotations
 
+# Load .env from the project root (train.py lives four levels deep).
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    import pathlib as _pathlib
+    _load_dotenv(_pathlib.Path(__file__).resolve().parents[3] / ".env")
+except ImportError:
+    pass
+
 import argparse
 import json
 import logging
@@ -54,6 +62,7 @@ import random
 import signal
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -68,6 +77,7 @@ logging.basicConfig(
 
 _ARM_CLASSES = None   # lazy import to avoid circular deps at module load
 _TENSORNETS_URL = os.environ.get("TENSORNETS_URL", "http://localhost:8765")
+_NODE_URL       = os.environ.get("NODE_SERVER_URL", "http://localhost:8247")
 
 
 def _get_arm_classes():
@@ -81,9 +91,9 @@ def _get_arm_classes():
 # ── Benchmark DB helpers (non-fatal — training continues if DB is down) ───────
 
 def _db_post(path: str, payload: dict) -> dict:
-    """Forward a benchmark record to the FastAPI bridge (which writes to JS DB)."""
+    """Forward a benchmark record to the Node.js server (which writes to the SQLite DB)."""
     import urllib.request as _ureq
-    url = f"{_TENSORNETS_URL}{path}"
+    url = f"{_NODE_URL}/api/benchmarks{path}"
     data = json.dumps(payload).encode()
     req = _ureq.Request(url, data=data,
                         headers={"Content-Type": "application/json"},
@@ -99,7 +109,7 @@ def _db_post(path: str, payload: dict) -> dict:
 def _db_create_run(run_dir: str, arm: str, total_episodes: int,
                    patient_mode: str) -> Optional[str]:
     """Create one benchmark run record per arm. Matches BenchmarkRunIn schema."""
-    r = _db_post("/benchmark/run/create", {
+    r = _db_post("/run", {
         "arm":          arm,
         "label":        f"{Path(run_dir).name} / {arm}",
         "scenario_set": "a3c_training",
@@ -116,11 +126,13 @@ def _db_create_episode(run_id: Optional[str], arm: str, scenario_id: str,
                        episode_id: str) -> Optional[str]:
     if not run_id:
         return None
-    r = _db_post("/benchmark/episode/create", {
+    r = _db_post("/episode", {
         "run_id":      run_id,
         "arm":         arm,
         "scenario_id": scenario_id,
         "persona_id":  "",
+        # Pass the worker's own uuid so JSONL filename == DB episode_id.
+        "episode_id":  episode_id,
     })
     return r.get("episode_id") or episode_id
 
@@ -128,12 +140,17 @@ def _db_create_episode(run_id: Optional[str], arm: str, scenario_id: str,
 def _db_finalise_episode(db_episode_id: Optional[str], summary: dict) -> None:
     if not db_episode_id:
         return
-    _db_post("/benchmark/episode/finalise", {
+    gm = summary.get("genuine_metrics", {})
+    _db_post("/episode/finalise", {
         "episode_id": db_episode_id,
         "metrics": {
             "n_turns":           summary.get("n_turns", 0),
             "cumulative_reward": summary.get("cumulative_reward", 0.0),
             "mean_reward":       summary.get("mean_reward", 0.0),
+            "goal_achieved":     gm.get("goal_achieved", False),
+            "turns_to_goal":     gm.get("turns_to_goal"),
+            "stress_auc":        gm.get("stress_auc"),
+            "trust_delta_final": gm.get("trust_delta_final"),
         },
     })
 
@@ -142,13 +159,50 @@ def _db_finalise_run(run_id: Optional[str], total_eps: int,
                      successful_eps: int) -> None:
     if not run_id:
         return
-    _db_post("/benchmark/run/finalise", {
+    _db_post("/run/finalise", {
         "run_id": run_id,
         "metrics": {
             "total_episodes":      total_eps,
             "successful_episodes": successful_eps,
         },
     })
+
+
+def _db_cleanup_ghosts(run_dir: Path) -> None:
+    """
+    Delete DB episode rows that were created but never finalised (ghost rows).
+
+    Ghost rows appear when the training process crashes after _db_create_episode
+    but before _db_finalise_episode.  They have turn_count=0, stress_auc=NULL,
+    and no matching JSONL file on disk.  They corrupt WMA / goal-rate charts by
+    dragging the rolling average toward zero.
+
+    Called once at startup before the training loop begins.
+    """
+    try:
+        import urllib.request as _req, json as _json
+        resp = _req.urlopen(
+            f"{_NODE_URL}/api/benchmarks/runs", timeout=5
+        )
+        runs = _json.loads(resp.read()).get("runs", [])
+        for run in runs:
+            run_id = run.get("run_id")
+            if not run_id:
+                continue
+            ep_resp = _req.urlopen(
+                f"{_NODE_URL}/api/benchmarks/episodes?run_id={run_id}", timeout=5
+            )
+            episodes = _json.loads(ep_resp.read()).get("episodes", [])
+            for ep in episodes:
+                ep_id = ep.get("episode_id", "")
+                arm   = ep.get("arm", "")
+                if ep.get("turn_count", 0) == 0 and ep.get("stress_auc") is None:
+                    # Only delete if no JSONL file exists on disk
+                    jsonl = run_dir / f"arm_{arm}" / "episodes" / f"episode_{ep_id}.jsonl"
+                    if not jsonl.exists():
+                        _db_post(f"/episode/{ep_id}/delete", {})
+    except Exception as exc:
+        log.debug("Ghost cleanup skipped: %s", exc)
 
 
 # ── Checkpoint helpers ────────────────────────────────────────────────────────
@@ -201,7 +255,7 @@ def _write_manifest(run_dir: Path, info: dict) -> None:
 
 def train(
     run_dir: str | Path,
-    total_episodes: int = 1000,
+    episodes_per_arm: int = 500,
     checkpoint_every: int = 50,
     prior_path: Optional[str] = None,
     scenario_url: Optional[str] = None,
@@ -218,8 +272,9 @@ def train(
     Parameters
     ----------
     run_dir          : Directory for checkpoints and episode logs.
-    total_episodes   : Total episodes to run across all arms combined.
-    checkpoint_every : Save actor/critic every N episodes.
+    episodes_per_arm : Episodes to run *per arm*.  Total loop iterations =
+                       episodes_per_arm * n_arms.  Default 500.
+    checkpoint_every : Save actor/critic every N episodes (per arm).
     prior_path       : Path to bandit_actor_prior.json from I4.  Optional.
     scenario_url     : Override for /api/scenarios endpoint URL.
     patient_mode     : 'llm' or 'scripted' (scripted for fast offline tests).
@@ -300,6 +355,15 @@ def train(
         log.error("Could not load scenarios: %s — aborting.", exc)
         sys.exit(1)
 
+    # Total loop iterations = episodes_per_arm × number of active arms
+    # (round-robin means each arm gets episodes_per_arm turns)
+    n_arms         = len(arm_states)
+    total_episodes = episodes_per_arm * n_arms
+    log.info(
+        "Training plan: %d episodes/arm × %d arms = %d total loop iterations",
+        episodes_per_arm, n_arms, total_episodes,
+    )
+
     # ── Manifest + per-arm DB run records ────────────────────────────────────
     arm_names = [s["name"] for s in arm_states]
     _write_manifest(run_dir, {
@@ -319,116 +383,138 @@ def train(
                 log.info("Arm %s: DB run record: %s", s["name"], s["db_run_id"])
 
     # ── Emergency checkpoint on interrupt ────────────────────────────────────
-    _last_ep = [0]
+    # stop_event is defined below after threading import; signal handler just
+    # sets it so all arm threads drain cleanly.
+    import threading
+    stop_event = threading.Event()
 
     def _emergency_save(signum, frame):
-        log.warning("Signal %d — writing emergency checkpoints", signum)
-        for s in arm_states:
-            s["worker"].save_checkpoint(s["ep_count"])
-            _save_run_state(s["state_path"], {
-                "last_completed_episode": s["ep_count"],
-                "ep_count":              s["ep_count"],
-                "successful_eps":        s["successful"],
-                "db_run_id":             s["db_run_id"],
-                "last_session_memory":   s["prior_sess"],
-                "emergency":             True,
-                "signal":                signum,
-            })
-        sys.exit(0)
+        log.warning("Signal %d — requesting clean stop of all arms", signum)
+        stop_event.set()
 
     signal.signal(signal.SIGINT,  _emergency_save)
     signal.signal(signal.SIGTERM, _emergency_save)
 
-    # ── Main loop — round-robin across arms, each updating only its own policy ─
-    consecutive_failures = 0   # back-off counter for Bedrock throttling
+    def _run_arm(s: dict) -> None:
+        """Worker thread: run one arm until episodes_per_arm completions."""
+        arm_ep   = s["ep_count"]          # episodes completed so far (from checkpoint)
+        target   = s["start_ep"] + episodes_per_arm   # absolute target
+        consec_fail = 0
 
-    for ep in range(total_episodes):
-        s      = arm_states[ep % len(arm_states)]
-        worker = s["worker"]
+        while arm_ep < target and not stop_event.is_set():
+            scenario  = random.choice(scenarios)
+            use_prior = (s["prior_sess"] is not None) and (random.random() < 0.20)
+            ep_uuid   = str(uuid.uuid4())
 
-        # Skip episodes this arm already completed before a resume
-        if s["ep_count"] < s["start_ep"]:
-            s["ep_count"] += 1
-            continue
-
-        scenario  = random.choice(scenarios)
-        use_prior = (s["prior_sess"] is not None) and (random.random() < 0.20)
-
-        db_episode_id = _db_create_episode(
-            s["db_run_id"], s["name"], scenario.get("scenario_id", ""), ""
-        )
-
-        try:
-            summary = worker.run_episode(
-                scenario      = scenario,
-                prior_session = s["prior_sess"] if use_prior else None,
-                patient_mode  = patient_mode,
+            db_episode_id = _db_create_episode(
+                s["db_run_id"], s["name"], scenario.get("scenario_id", ""), ep_uuid
             )
-        except Exception as exc:
-            log.error(
-                "Episode %d failed (%s %s): %s — skipping",
-                ep, s["name"], scenario.get("scenario_id", "?"), exc,
+
+            try:
+                summary = s["worker"].run_episode(
+                    scenario      = scenario,
+                    prior_session = s["prior_sess"] if use_prior else None,
+                    patient_mode  = patient_mode,
+                    episode_id    = ep_uuid,
+                )
+            except Exception as exc:
+                log.error("Episode failed (%s %s): %s — skipping",
+                          s["name"], scenario.get("scenario_id", "?"), exc)
+                arm_ep      += 1
+                s["ep_count"] = arm_ep
+                consec_fail += 1
+                if consec_fail >= 3:
+                    wait = min(5 * (2 ** (consec_fail - 3)), 40)
+                    log.warning("Back-off: arm=%s waiting %.0fs (%d consecutive failures)",
+                                s["name"], wait, consec_fail)
+                    time.sleep(wait)
+                continue
+
+            consec_fail     = 0
+            arm_ep         += 1
+            s["ep_count"]   = arm_ep
+            s["successful"] += 1
+            s["prior_sess"] = summary.get("session_memory")
+
+            _db_finalise_episode(db_episode_id or summary.get("episode_id"), summary)
+
+            log.info(
+                "arm=%-18s  ep=%04d/%d  scenario=%-35s  reward=%.3f  turns=%d  "
+                "| htn=%d old=%d hyst=%d  total_new=%d/%d",
+                s["name"], arm_ep, target,
+                scenario.get("scenario_id", "?")[:35],
+                summary.get("mean_reward", 0.0),
+                summary.get("n_turns", 0),
+                arm_states[0]["ep_count"], arm_states[1]["ep_count"], arm_states[2]["ep_count"],
+                sum(max(0, a["ep_count"] - a["start_ep"]) for a in arm_states),
+                episodes_per_arm * n_arms,
             )
-            s["ep_count"] += 1
-            consecutive_failures += 1
-            # Exponential back-off when Bedrock is throttling: 5s, 10s, 20s, 40s (cap)
-            if consecutive_failures >= 3:
-                wait = min(5 * (2 ** (consecutive_failures - 3)), 40)
-                log.warning("Bedrock throttle detected (%d consecutive failures) — waiting %.0fs", consecutive_failures, wait)
-                time.sleep(wait)
-            continue
 
-        consecutive_failures = 0   # reset on success
+            # Brief pause to avoid exhausting Bedrock per-minute token quota.
+            time.sleep(1)
 
-        s["successful"]  += 1
-        s["ep_count"]    += 1
-        s["prior_sess"]   = summary.get("session_memory")
-        _last_ep[0]       = ep
+            # ── Periodic checkpoint ────────────────────────────────────────────
+            if arm_ep % checkpoint_every == 0 or arm_ep >= target:
+                s["worker"].save_checkpoint(arm_ep)
 
-        _db_finalise_episode(db_episode_id or summary.get("episode_id"), summary)
+                # Graceful stop-at-checkpoint sentinel
+                stop_sentinel = Path(run_dir) / "STOP_AT_CHECKPOINT"
+                if stop_sentinel.exists():
+                    log.info("STOP_AT_CHECKPOINT — arm=%s stopping after ep=%d", s["name"], arm_ep)
+                    stop_event.set()
 
-        log.info(
-            "ep=%04d  arm=%-18s  scenario=%-35s  reward=%.3f  turns=%d",
-            ep,
-            s["name"],
-            scenario.get("scenario_id", "?")[:35],
-            summary.get("mean_reward", 0.0),
-            summary.get("n_turns", 0),
-        )
+                new_prompt, s["last_improved_at"] = maybe_improve_prompt(
+                    arm_name         = s["name"],
+                    arm_dir          = s["arm_dir"],
+                    ep_count         = arm_ep,
+                    last_improved_at = s["last_improved_at"],
+                    current_prompt   = s["active_prompt"],
+                )
+                if new_prompt:
+                    s["active_prompt"] = new_prompt
+                    s["worker"].update_system_prompt(new_prompt)
 
-        # Brief pause after each successful episode to avoid exhausting Bedrock
-        # per-minute token quota across back-to-back episodes.
-        time.sleep(1)
+                _save_run_state(s["state_path"], {
+                    "last_completed_episode": arm_ep,
+                    "ep_count":               arm_ep,
+                    "successful_eps":         s["successful"],
+                    "db_run_id":              s["db_run_id"],
+                    "last_session_memory":    s["prior_sess"],
+                    "active_prompt":          s["active_prompt"],
+                    "last_improved_at":       s["last_improved_at"],
+                })
+                log.info("Checkpoint written: arm=%s ep=%d", s["name"], arm_ep)
 
-        # ── Periodic checkpoint (per arm) ─────────────────────────────────────
-        if (ep + 1) % checkpoint_every == 0 or ep == total_episodes - 1:
-            worker.save_checkpoint(s["ep_count"])
+        log.info("Arm %s finished: %d episodes completed.", s["name"], arm_ep)
 
-            # ── Conservative prompt improvement ───────────────────────────────
-            # Runs at most once per IMPROVEMENT_INTERVAL episodes.  Only fires
-            # when the arm's mean score is below threshold.  Arm 2 (oldschool,
-            # JS companion) is excluded — its prompt lives in Node.js.
-            new_prompt, s["last_improved_at"] = maybe_improve_prompt(
-                arm_name         = s["name"],
-                arm_dir          = s["arm_dir"],
-                ep_count         = s["ep_count"],
-                last_improved_at = s["last_improved_at"],
-                current_prompt   = s["active_prompt"],
-            )
-            if new_prompt:
-                s["active_prompt"] = new_prompt
-                worker.update_system_prompt(new_prompt)
+    # Launch one thread per arm, all start simultaneously.
+    threads = [threading.Thread(target=_run_arm, args=(s,), name=s["name"], daemon=True)
+               for s in arm_states]
+    for t in threads:
+        t.start()
+        log.info("Started thread for arm=%s", t.name)
 
-            _save_run_state(s["state_path"], {
-                "last_completed_episode": s["ep_count"],
-                "ep_count":              s["ep_count"],
-                "successful_eps":        s["successful"],
-                "db_run_id":             s["db_run_id"],
-                "last_session_memory":   s["prior_sess"],
-                "active_prompt":         s["active_prompt"],
-                "last_improved_at":      s["last_improved_at"],
-            })
-            log.info("Checkpoint written for arm=%s at episode %d", s["name"], ep)
+    # Wait for all arms to finish (or stop_event from STOP_AT_CHECKPOINT / signal)
+    for t in threads:
+        t.join()
+
+    # Save final state for all arms
+    for s in arm_states:
+        _save_run_state(s["state_path"], {
+            "last_completed_episode": s["ep_count"],
+            "ep_count":               s["ep_count"],
+            "successful_eps":         s["successful"],
+            "db_run_id":              s["db_run_id"],
+            "last_session_memory":    s["prior_sess"],
+            "active_prompt":          s["active_prompt"],
+            "last_improved_at":       s["last_improved_at"],
+        })
+
+    # Clean up sentinel if present
+    stop_sentinel = Path(run_dir) / "STOP_AT_CHECKPOINT"
+    if stop_sentinel.exists():
+        stop_sentinel.unlink(missing_ok=True)
+        log.info("All arm states saved. Exiting cleanly.")
 
     for s in arm_states:
         _db_finalise_run(s["db_run_id"], s["ep_count"], s["successful"])
@@ -446,10 +532,10 @@ def train(
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Resumable A3C three-arm training loop")
     p.add_argument("--run-dir",          required=True,         help="Directory for checkpoints + episode logs")
-    p.add_argument("--episodes",         type=int, default=1000, help="Total episodes (not remaining — total)")
-    p.add_argument("--checkpoint-every", type=int, default=5,    help="Save checkpoint every N episodes")
-    p.add_argument("--prior",            default=None,           help="Path to bandit_actor_prior.json (I4 output)")
-    p.add_argument("--scenario-url",     default=None,           help="Override tensornets server URL for /api/scenarios")
+    p.add_argument("--episodes",         type=int, default=500, help="Episodes PER ARM (total = episodes × n_arms)")
+    p.add_argument("--checkpoint-every", type=int, default=5,   help="Save checkpoint every N episodes")
+    p.add_argument("--prior",            default=None,          help="Path to bandit_actor_prior.json (I4 output)")
+    p.add_argument("--scenario-url",     default=None,          help="Override tensornets server URL for /api/scenarios")
     p.add_argument("--patient-mode",     default="llm", choices=["llm", "scripted"], help="Patient generation mode")
     p.add_argument("--arms",             type=int, nargs="+", default=[1, 2, 3], choices=[1, 2, 3],
                    help="Which arms to include (e.g. --arms 1 3)")
@@ -460,7 +546,7 @@ if __name__ == "__main__":
     args = _parse_args()
     train(
         run_dir          = args.run_dir,
-        total_episodes   = args.episodes,
+        episodes_per_arm = args.episodes,
         checkpoint_every = args.checkpoint_every,
         prior_path       = args.prior,
         scenario_url     = args.scenario_url,

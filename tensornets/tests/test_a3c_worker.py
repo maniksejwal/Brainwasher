@@ -245,9 +245,12 @@ class TestA3CWorker:
         jsonl_path = Path(summary["jsonl_path"])
         assert jsonl_path.exists()
         lines = jsonl_path.read_text().strip().splitlines()
-        assert len(lines) == 2
+        # n_turns turn lines + 1 trailing episode_summary event
+        assert len(lines) == 3
         first = json.loads(lines[0])
         assert first["arm"] == "test_arm"
+        last = json.loads(lines[-1])
+        assert last.get("type") == "episode_summary"
 
     def test_checkpoint_saved(self, tmp_path):
         actor  = Actor()

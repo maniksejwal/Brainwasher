@@ -75,6 +75,24 @@ _BEDROCK_REGION  = os.environ.get("AWS_REGION",      "us-east-1")
 _SCOUT_MODEL   = "us.meta.llama4-scout-17b-instruct-v1:0"
 _MAVERICK_MODEL = "us.meta.llama4-maverick-17b-instruct-v1:0"
 
+# ── Goal-progress reward tiers ────────────────────────────────────────────────
+# Named constants so any change is explicit and tracked.
+# Values express the *per-turn* goal_progress reward [0, 1].
+#
+# Design rationale:
+#   ADVANCING   — companion delivered substantive clinical or therapeutic value
+#   QUESTIONING — eliciting new information; necessary but not yet delivering
+#   HOLDING     — empathy/validation; required for trust but not progressing goal
+#   SOCIAL      — rapport, chit-chat, light banter; positive because early-stage
+#                 trust-building IS therapeutic value, and the Socratic method
+#                 requires knowing the patient before advising them
+#   OTHER       — deflection, unclear, or off-topic — gentle penalty
+_GOAL_R_ADVANCING   = 0.75
+_GOAL_R_QUESTIONING = 0.55
+_GOAL_R_HOLDING     = 0.45
+_GOAL_R_SOCIAL      = 0.40   # small positive: rapport is not zero-value
+_GOAL_R_OTHER       = 0.30   # below neutral: unexplained tangents cost something
+
 
 def _http_post(url: str, payload: dict, timeout: float = 10.0) -> dict:
     """Minimal HTTP POST without httpx / requests dependency. Retries once on transient failure."""
@@ -143,12 +161,26 @@ class Arm1Worker(A3CWorker):
         m_trunc  = None
         scout_tokens = 0
 
+        # Arm 1 requires real physiological state — all scenarios must supply
+        # initial_physio via routes/training.js.  An empty dict means the
+        # scenario loader dropped the field or a new scenario was added without
+        # physio values.  Fix the scenario definition rather than inventing data.
+        physio = state.physio or {}
+        if not physio:
+            raise ValueError(
+                f"Arm1Worker (htn_mcts): scenario '{scenario.get('scenario_id', '?')}' "
+                f"has no physiological state (state.physio is empty). "
+                f"Add initial_physio to the scenario in routes/training.js or the "
+                f"scenario source file. Do not use silent defaults — invented physio "
+                f"degrades MCTS quality and produces meaningless training gradients."
+            )
+
         # Step 1: MCTS best action + M_trunc from tensornets bridge
         try:
             mcts_resp = _http_post(
                 f"{_TENSORNETS_URL}/mcts/best-action",
                 {
-                    "physio_state":      state.physio,
+                    "physio_state":      physio,
                     "candidate_actions": [action],
                     "mode":              state.therapeutic_mode or "standard",
                 },
@@ -164,7 +196,7 @@ class Arm1Worker(A3CWorker):
         try:
             _http_post(
                 f"{_TENSORNETS_URL}/physio/history/append",
-                {**state.physio, "subject_id": state.subject_id},
+                {**physio, "subject_id": state.subject_id},
                 timeout=3.0,
             )
         except Exception:
@@ -615,22 +647,43 @@ def _synthetic_reward(
     # scorer_reward_dims["goal_progress"] in worker.py.
     #
     # Here we use only the action-taxonomy signal (which IS independently
-    # grounded — advancing actions earn a small coverage boost, holding actions
-    # maintain it) combined with the orchestrator's coverage fraction. This is
-    # an unbiased, non-circular estimate for the MCTS cost function.
+    # grounded — advancing actions earn a bonus; questioning/probing actions
+    # earn a smaller bonus (they move the conversation but don't deliver value);
+    # holding actions are neutral; pure social/deflection penalises.
+    #
+    # IMPORTANT: goal_r is NOT derived from state.info_coverage (a turn-count
+    # proxy) because that conflates verbosity with quality.  The baseline is
+    # instead a fixed mid-range value that the action type shifts up or down.
+    # The orchestrator's real coverage_fraction feeds into info_r (dim 4) and
+    # into the next-state's info_coverage, providing the longitudinal signal.
     advancing = {
         "psychoeducation", "motivational_frame", "develop_discrepancy",
         "give_options", "summarise", "challenger_insight", "give_facts",
         "oars_summary", "loss_frame", "socratic_reframe",
         "share_circle_insight", "direct_advice", "future_planning",
     }
+    # Questioning actions surface information but don't deliver value by themselves.
+    questioning = {
+        "probing_question", "specific_question", "clarify_goal",
+        "elicit_change_talk", "explore_ambivalence",
+    }
     holding = {"validate", "empathic_reflection", "unconditional_regard", "acknowledge_only"}
+    # Social/rapport actions have therapeutic value — especially in precontemplation.
+    # Chit-chat is not wasted effort; it earns trust that makes the patient receptive.
+    social = {
+        "build_rapport", "small_talk", "normalise_experience", "share_self",
+        "celebrate_progress", "greet", "check_in",
+    }
     if action in advancing:
-        goal_r = min(1.0, state.info_coverage + 0.15)
+        goal_r = _GOAL_R_ADVANCING
+    elif action in questioning:
+        goal_r = _GOAL_R_QUESTIONING
     elif action in holding:
-        goal_r = state.info_coverage
+        goal_r = _GOAL_R_HOLDING
+    elif action in social:
+        goal_r = _GOAL_R_SOCIAL
     else:
-        goal_r = max(0.0, state.info_coverage - 0.05)
+        goal_r = _GOAL_R_OTHER
 
     # ── Dimension 3: Trust delta ──────────────────────────────────────────────
     words_lower = response_text.lower() if response_text else ""
@@ -645,7 +698,33 @@ def _synthetic_reward(
         trust_r    = 0.60 if stress_delta >= 0 else 0.40
 
     # ── Dimension 4: Info coverage ────────────────────────────────────────────
-    info_r = state.info_coverage
+    # Uses the LLM-scored info gain (novelty × 0.6 + relevance × 0.4) injected
+    # by worker.py as state._orchestrator_coverage.
+    # Additionally, a novelty discovery bonus rewards the agent for surfacing
+    # information the patient has not yet disclosed — the "fresh/rare info"
+    # signal the user expects.  This is the single strongest driver of
+    # information-exchange quality: the agent should ask questions and frame
+    # responses that elicit new disclosures, not recycle what it already knows.
+    #
+    # Bonus tiers (additive to gain, capped at 1.0 total):
+    #   novelty ≥ 0.80 → +0.20  (highly novel: patient revealed something new)
+    #   novelty ≥ 0.55 → +0.10  (moderately new)
+    #   novelty <  0.30 → −0.10 (repetition — agent cycling through known content)
+    orchestrator_coverage = getattr(state, "_orchestrator_coverage", None)
+    base_gain = orchestrator_coverage if orchestrator_coverage is not None else 0.5
+
+    novelty_score = getattr(state, "_info_novelty", None)
+    if novelty_score is not None:
+        if novelty_score >= 0.80:
+            novelty_bonus = 0.20
+        elif novelty_score >= 0.55:
+            novelty_bonus = 0.10
+        else:
+            novelty_bonus = -0.10 if novelty_score < 0.30 else 0.0
+    else:
+        novelty_bonus = 0.0
+
+    info_r = max(0.0, min(1.0, base_gain + novelty_bonus))
 
     # ── Dimension 5: Multi-agent consistency ─────────────────────────────────
     if action == state.last_action and not state.repetition_detected and state.turn_count > 1:
@@ -699,14 +778,25 @@ def _build_hysteresis_context(state: TurnState, scenario: dict) -> str:
     Build the natural-language physio + hysteresis context string for Arm 3.
 
     Mirrors the format of longitudinalHint from companions/utils/promptLoader.js.
+
+    Key normalisation: physio dicts use 'hrv_ms' (JS canonical) or 'hrv_rmssd_ms'
+    interchangeably.  We try both keys so the context is never "N/A" due to a
+    field-name mismatch, which was causing the hysteresis arm to operate without
+    any useful physiological context (blank prompt) and degrade over time.
     """
-    physio = state.physio
+    physio = state.physio or {}
     stress_label = _stress_label(state.stress_index)
+
+    # Normalise HRV key — JS uses hrv_ms, some scenarios use hrv_rmssd_ms
+    hrv = physio.get("hrv_ms") or physio.get("hrv_rmssd_ms") or physio.get("hrv", "N/A")
+    eda = physio.get("eda_us") or physio.get("eda", "N/A")
+    sleep = physio.get("sleep_pressure") or physio.get("sleep_deficit") or physio.get("sleep", "N/A")
+
     lines = [
         f"- Stress level: {stress_label} (index={state.stress_index:.2f})",
-        f"- HRV RMSSD: {physio.get('hrv_rmssd_ms', 'N/A')} ms",
-        f"- EDA: {physio.get('eda_us', 'N/A')} µS",
-        f"- Sleep pressure: {physio.get('sleep_pressure', 'N/A')}",
+        f"- HRV RMSSD: {hrv} ms",
+        f"- EDA: {eda} µS",
+        f"- Sleep pressure: {sleep}",
     ]
     hysteresis = scenario.get("hysteresis_context", {})
     if hysteresis:

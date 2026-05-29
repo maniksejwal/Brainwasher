@@ -80,12 +80,21 @@ class TurnScoreResult:
     dimensions: raw LLM output dict for audit logging
     critical_failure: bool — True if any dimension scores ≤ -2 (→ consider early stop)
     repetition_penalty: float [0, 1] — 0=no repetition, 1=severe semantic repetition
+    info_novelty: float [0, 1] — how new is the information in this turn?
+    info_relevance: float [0, 1] — how relevant to session goals?
     """
     integer_scores:    list[tuple[str, int, str]] = field(default_factory=list)
     continuous_score:  float = 0.5
     dimensions:        dict  = field(default_factory=dict)
     critical_failure:  bool  = False
     repetition_penalty: float = 0.0
+    info_novelty:      float = 0.5
+    info_relevance:    float = 0.5
+
+    @property
+    def info_gain(self) -> float:
+        """Composite info gain: 0.6 * novelty + 0.4 * relevance."""
+        return round(0.6 * self.info_novelty + 0.4 * self.info_relevance, 4)
 
     @property
     def total_integer(self) -> int:
@@ -210,10 +219,19 @@ Score integers use this scale: -3 critical failure | -2 serious | -1 minor | 0 n
 
   "repetitive_agent": false,
   "repetition_severity": 0.0,
-  "repetition_reason": ""
+  "repetition_reason": "",
+
+  "info_novelty": 0.5,
+  "info_relevance": 0.5,
+  "info_novelty_reason": ""
 }}
 
-Replace ALL 0 values with your actual assessment for this specific turn.
+Replace ALL 0 / 0.5 values with your actual assessment for this specific turn.
+
+For info_novelty (0.0–1.0): how much NEW information did the agent's response surface that was not already present in the conversation history?
+  1.0 = entirely fresh insight or patient disclosure; 0.0 = pure repetition of prior content.
+For info_relevance (0.0–1.0): how clinically/therapeutically pertinent is the response to the session goal?
+  1.0 = directly addresses a stated goal; 0.0 = off-topic social filler.
 """
 
 
@@ -387,12 +405,17 @@ class A3CScorer:
         rep_severity = float(raw.get("repetition_severity", 0.0))
         rep_severity = max(0.0, min(1.0, rep_severity))
 
+        info_novelty   = max(0.0, min(1.0, float(raw.get("info_novelty",   0.5))))
+        info_relevance = max(0.0, min(1.0, float(raw.get("info_relevance", 0.5))))
+
         return TurnScoreResult(
             integer_scores    = scores,
             continuous_score  = round(continuous, 4),
             dimensions        = raw,
             critical_failure  = critical,
             repetition_penalty = rep_severity,
+            info_novelty      = round(info_novelty,   4),
+            info_relevance    = round(info_relevance, 4),
         )
 
 

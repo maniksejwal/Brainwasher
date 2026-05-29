@@ -20,6 +20,7 @@ Ollama API reference: https://github.com/ollama/ollama/blob/main/docs/api.md
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Iterator, Optional
@@ -28,7 +29,7 @@ from urllib import request, error as urllib_error
 import torch
 
 
-OLLAMA_BASE_URL   = "http://localhost:11434"
+OLLAMA_BASE_URL   = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 DEFAULT_MODEL     = "mistral:latest"
 DEFAULT_TIMEOUT_S = 120
 

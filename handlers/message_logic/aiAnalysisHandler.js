@@ -247,7 +247,9 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
                         }
                     }
                 }
-            } catch (_) {}
+            } catch (speakerNameErr) {
+                console.warn('[AIAnalysisHandler] Could not resolve speaker names for fact normalisation:', speakerNameErr.message);
+            }
 
             // Normalise subject_id on facts that the LLM tagged with the speaker's name
             // instead of "self". These are self-reported facts, not third-party facts.

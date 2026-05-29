@@ -111,8 +111,10 @@ def get_scenario(scenario_id: str, force_refresh: bool = False) -> dict | None:
             _CACHE[cache_key] = scenario
         return scenario
     except Exception as exc:
-        log.error("Failed to load scenario '%s': %s", scenario_id, exc)
-        return None
+        raise RuntimeError(
+            f"Cannot load scenario '{scenario_id}' from Node.js ({_NODE_URL}{path}): {exc}\n"
+            "Start the Node.js server before running training."
+        ) from exc
 
 
 def random_scenario(

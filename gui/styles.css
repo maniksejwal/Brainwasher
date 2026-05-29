@@ -530,8 +530,8 @@ header.header-compact .header-left h2 {
 .reports-tab-content {
     display: flex !important;
     flex-direction: column;
-    overflow: hidden !important;         /* outer tab does NOT scroll */
-    height: calc(100vh - 140px);
+    overflow: hidden !important;
+    height: calc(100vh - 80px);    /* taller — header is compact on scroll */
     padding-right: 0 !important;
 }
 .reports-toolbar {
@@ -539,18 +539,19 @@ header.header-compact .header-left h2 {
     justify-content: space-between;
     align-items: flex-start;
     gap: 12px;
-    padding: 0 24px 10px;
+    padding: 8px 24px 8px;
     flex-shrink: 0;
     border-bottom: 1px solid var(--gray-200);
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 }
 .report-inline-frame {
     flex: 1;
+    min-height: 0;               /* flex child must allow shrink */
     border-radius: 8px;
     overflow: hidden;
     border: 1px solid var(--gray-200);
     background: #fff;
-    margin: 0 24px 16px;
+    margin: 0 24px 12px;
 }
 .report-inline-frame iframe {
     width: 100%;

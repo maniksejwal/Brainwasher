@@ -812,6 +812,7 @@ class A3CWorker:
         scenario: dict,
         prior_session: "dict | None" = None,
         patient_mode:  str = "llm",
+        episode_id:    "str | None" = None,
     ) -> dict:
         """
         Execute one full episode with a live SyntheticPatient and A3CScorer.
@@ -856,7 +857,8 @@ class A3CWorker:
         """
         from tensornets.a3c.synthetic_patient import CareCircleOrchestrator, _normalise_role
 
-        episode_id        = str(uuid.uuid4())
+        # Use caller-supplied id (so JSONL filename == DB episode_id) or generate fresh.
+        episode_id        = episode_id or str(uuid.uuid4())
         self._episode_log = []
         cumulative_reward = 0.0
         score_history:    list = []
@@ -1083,6 +1085,39 @@ class A3CWorker:
 
             # ── Build reward_dict from scorer output + arm-specific reward ───
             scorer_reward_dims = map_scorer_to_reward_dims(score_result)
+
+            # ── Info gain from scorer (no extra LLM call) ─────────────────────
+            # novelty + relevance are now part of the scorer's JSON output,
+            # so the A3CScorer call (every 2 turns) covers both quality scoring
+            # AND info gain.  On carry turns, the previous score_result's values
+            # are reused via the heuristic carry — same cost as before.
+            info_gain_result = {
+                "gain":      score_result.info_gain,
+                "novelty":   score_result.info_novelty,
+                "relevance": score_result.info_relevance,
+                "covered":   [],
+            }
+            # Accumulate coverage_fraction via info_gain signal.
+            # The scorer doesn't identify specific goal strings, so we treat each
+            # high-quality turn (info_gain ≥ 0.55) as advancing one goal element.
+            # This gives coverage_fraction a meaningful trajectory over the episode
+            # rather than staying frozen at the initial 0.3.
+            try:
+                if score_result.info_gain >= 0.55:
+                    n_goals = max(1, len(orchestrator.primary_patient.goals))
+                    # Synthesise a unique coverage token per advancing turn so the
+                    # set grows monotonically.  We cap at n_goals so coverage_fraction
+                    # reaches at most 1.0.
+                    token = f"_auto_{turn_idx}"
+                    if len(orchestrator.primary_patient.covered_elements) < n_goals:
+                        orchestrator.primary_patient.covered_elements.add(token)
+                orchestrator.primary_patient._advance_goal_pointer()
+            except Exception:
+                pass
+
+            # Inject onto state for compute_reward() in arms.py
+            state._orchestrator_coverage = info_gain_result["gain"]
+            state._info_novelty          = info_gain_result["novelty"]
             arm_reward_dims    = resp_dict.get("reward", {dim: 0.5 for dim in REWARD_DIMS})
 
             # ── Pestering penalty & rapport bonus ────────────────────────────
@@ -1137,12 +1172,15 @@ class A3CWorker:
             rapport_bonus = 0.07 if (patient_redirected and companion_engaged_personally) else 0.0
 
             # Merge: scorer dims override for quality/safety; arm dims for
-            # stress/trust where the arm has richer context
+            # stress/trust where the arm has richer context.
+            # info_coverage now uses the LLM-scored gain (novelty + relevance)
+            # instead of the keyword-match coverage_fraction.
             reward_dict = {
                 "stress":        arm_reward_dims.get("stress",        scorer_reward_dims["stress"]),
                 "trust_delta":   scorer_reward_dims["trust_delta"],
                 "goal_progress": scorer_reward_dims["goal_progress"],
-                "info_coverage": orchestrator.coverage_fraction,     # direct from patient coverage
+                "info_coverage": info_gain_result["gain"],       # LLM novelty+relevance
+                "info_novelty":  info_gain_result["novelty"],    # logged separately
                 "consistency":   scorer_reward_dims["consistency"],
                 "safety":        scorer_reward_dims["safety"],
                 "count_penalty": scorer_reward_dims["count_penalty"],
@@ -1238,6 +1276,25 @@ class A3CWorker:
             delivery_mod = max(-0.15, min(0.15, delivery_mod))
 
             r             = scalar_reward(reward_dict) - pester_penalty + rapport_bonus + p_mod + delivery_mod
+
+            # ── Escalation / caregiver-relay bonus ───────────────────────────────
+            # For multi-role scenarios (patient + caregiver/clinician), reward the
+            # companion for knowing WHEN to escalate or relay information.
+            # Three sub-bonuses, non-overlapping:
+            #   +0.15  escalate at high stress (stress_index ≥ 0.70) — correct triage
+            #   +0.10  share_circle_insight when a non-patient just spoke — timely relay
+            #   −0.10  escalate at low stress (< 0.40) — unnecessary alarm
+            is_multi_role = len(orchestrator.participants) > 1
+            if is_multi_role:
+                if action == "escalate":
+                    if state.stress_index >= 0.70:
+                        r += 0.15   # appropriate escalation to clinician under high stress
+                    elif state.stress_index < 0.40:
+                        r -= 0.10   # unnecessary escalation — undermines patient autonomy
+                elif action == "share_circle_insight":
+                    last_role = getattr(conv_ctx, "last_speaker_role", "patient")
+                    if last_role != "patient":
+                        r += 0.10   # timely relay of what a caregiver/clinician just shared
 
             # ── Negotiation convergence bonus ─────────────────────────────────
             # For negotiation scenarios (billing, professional critique, etc.),
@@ -1518,6 +1575,60 @@ class A3CWorker:
         episodes_dir.mkdir(parents=True, exist_ok=True)
 
         jsonl_path = episodes_dir / f"episode_{episode_id}.jsonl"
+
+        n_turns = len(self._episode_log)
+        mean_reward = cumulative_reward / max(n_turns, 1)
+
+        # Genuine metrics derived from turn log.
+        # info_coverage is the canonical goal-achievement signal: ≥ 0.75 means the
+        # agent surfaced enough high-quality information across the episode.
+        # (judge dict has no "goal_achieved" key — that was a stale lookup.)
+        stress_values = [
+            t.state.get("stress_index", 0) for t in self._episode_log if isinstance(t.state, dict)
+        ]
+        # stress_auc = mean(1 - stress_index) — same definition as run_episode().
+        # Higher is better: 1.0 means the patient was calm throughout; 0.0 means
+        # maximal stress every turn. Using raw mean(stress_index) here was inverted.
+        stress_auc = (sum(1.0 - v for v in stress_values) / len(stress_values)) if stress_values else 0.5
+        trust_deltas = [
+            t.reward.get("trust_delta", 0) for t in self._episode_log if isinstance(t.reward, dict)
+        ]
+        trust_delta_final = sum(trust_deltas)
+        # First turn where state.info_coverage crossed the goal threshold.
+        turns_to_goal = next(
+            (t.state.get("info_coverage", 0) >= 0.75
+             and t.turn_idx + 1
+             for t in self._episode_log
+             if isinstance(t.state, dict) and t.state.get("info_coverage", 0) >= 0.75),
+            None,
+        )
+        # Normalise: next() returns an int or None; False is falsy but not None-safe here.
+        if turns_to_goal is False:
+            turns_to_goal = None
+        goal_achieved = turns_to_goal is not None
+
+        genuine_metrics = {
+            "goal_achieved":    bool(goal_achieved),
+            "turns_to_goal":    turns_to_goal,
+            "stress_auc":       round(stress_auc, 5),
+            "trust_delta_final": round(trust_delta_final, 5),
+            "turn_count":       n_turns,
+        }
+
+        summary = {
+            "episode_id":        episode_id,
+            "arm":               self.ARM,
+            "worker_id":         self.worker_id,
+            "scenario_id":       scenario.get("scenario_id", "unknown"),
+            "subject_id":        scenario.get("subject_id", "synthetic"),
+            "n_turns":           n_turns,
+            "cumulative_reward": round(cumulative_reward, 5),
+            "mean_reward":       round(mean_reward, 5),
+            "timestamp":         datetime.now(timezone.utc).isoformat(),
+            "jsonl_path":        str(jsonl_path),
+            "genuine_metrics":   genuine_metrics,
+        }
+
         with jsonl_path.open("w", encoding="utf-8") as fh:
             for turn in self._episode_log:
                 line = {
@@ -1537,21 +1648,18 @@ class A3CWorker:
                     "discrepancy":    turn.discrepancy,
                 }
                 fh.write(json.dumps(line, ensure_ascii=False) + "\n")
-
-        n_turns = len(self._episode_log)
-        mean_reward = cumulative_reward / max(n_turns, 1)
-        summary = {
-            "episode_id":        episode_id,
-            "arm":               self.ARM,
-            "worker_id":         self.worker_id,
-            "scenario_id":       scenario.get("scenario_id", "unknown"),
-            "subject_id":        scenario.get("subject_id", "synthetic"),
-            "n_turns":           n_turns,
-            "cumulative_reward": round(cumulative_reward, 5),
-            "mean_reward":       round(mean_reward, 5),
-            "timestamp":         datetime.now(timezone.utc).isoformat(),
-            "jsonl_path":        str(jsonl_path),
-        }
+            # Trailing summary event — makes backfilling and auditing deterministic
+            fh.write(json.dumps({
+                "type":            "episode_summary",
+                "episode_id":      episode_id,
+                "episode_meta":    {
+                    "scenario_id": scenario.get("scenario_id", "unknown"),
+                    "n_turns":     n_turns,
+                    "started_at":  summary["timestamp"],
+                },
+                "cumulative_reward": summary["cumulative_reward"],
+                "genuine_metrics":   genuine_metrics,
+            }, ensure_ascii=False) + "\n")
         log.info(
             "[%s] episode %s  arm=%s  turns=%d  R=%.3f",
             self.worker_id, episode_id[:8], self.ARM, n_turns, cumulative_reward,
