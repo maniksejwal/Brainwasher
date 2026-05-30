@@ -263,6 +263,7 @@ class SyntheticParticipant:
         scripted_turns:  list[str] | None = None,
         change_stage:    str = "precontemplation",
         archetype:       str = "standard",
+        initial_physio:  dict | None = None,
     ) -> None:
         self.role            = role
         self.persona_prompt  = persona_prompt
@@ -271,6 +272,9 @@ class SyntheticParticipant:
         self.scripted_turns  = scripted_turns or []
         self.change_stage    = change_stage
         self.archetype       = archetype
+        # Per-participant physiological state — used by V_int / SharedTensorBuffer
+        # and exposed to the hysteresis arm's physio-context builder.
+        self.physio: dict    = initial_physio or {}
 
         self.current_goal_idx   = 0
         self.covered_elements:  set[str] = set()
@@ -543,7 +547,12 @@ class CareCircleOrchestrator:
         and optionally 'patient_prompt', 'caregiver_prompt', 'doctor_prompt'.
 
         For single-patient scenarios, creates exactly one participant.
+        Per-participant physio is sampled from role/context-aware distributions
+        unless the user dict already carries an 'initial_physio' override.
         """
+        from tensornets.a3c.physio_simulator import PhysioSimulator  # lazy import
+        physio_sim = PhysioSimulator(seed=rng_seed)
+
         users = scenario.get("users") or [{"role": "patient"}]
         participants = []
         for u in users:
@@ -571,6 +580,13 @@ class CareCircleOrchestrator:
             # Map old deaddiction_phase names to TTM names
             change_stage   = _MAP_PHASE_TO_TTM.get(change_stage, change_stage)
 
+            # Per-participant physio: honour explicit override in user dict,
+            # otherwise sample from a role × scenario-type distribution.
+            participant_physio = u.get("initial_physio") or physio_sim.sample(
+                role=role,
+                scenario_id=scenario.get("scenario_id", ""),
+            )
+
             p = SyntheticParticipant(
                 role           = role,
                 persona_prompt = persona_prompt,
@@ -579,6 +595,7 @@ class CareCircleOrchestrator:
                 scripted_turns = scenario.get(f"{_normalise_role(role)}_scripted_turns"),
                 change_stage   = change_stage,
                 archetype      = scenario.get("archetype", "standard"),
+                initial_physio = participant_physio,
             )
             participants.append(p)
 

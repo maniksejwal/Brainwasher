@@ -504,8 +504,11 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
             const start = Math.max(0, i - windowSize + 1);
             const slice = episodes.slice(start, i + 1);
 
-            const smoothed  = slice.reduce((s, r) => s + (r.cumulative_reward ?? 0), 0) / slice.length;
-            const variance  = slice.reduce((s, r) => s + Math.pow((r.cumulative_reward ?? 0) - smoothed, 2), 0) / slice.length;
+            // Normalize by turn_count so 3-turn episodes don't unfairly drag
+            // down the WMA vs 20-turn episodes (cumulative_reward scales with length)
+            const perTurn   = (r) => r.turn_count > 0 ? (r.cumulative_reward ?? 0) / r.turn_count : 0;
+            const smoothed  = slice.reduce((s, r) => s + perTurn(r), 0) / slice.length;
+            const variance  = slice.reduce((s, r) => s + Math.pow(perTurn(r) - smoothed, 2), 0) / slice.length;
             const stressWma = slice.reduce((s, r) => s + (r.stress_auc ?? 0), 0) / slice.length;
             const goalWma   = (() => {
                 // Only count episodes where goal_achieved is not NULL
@@ -513,6 +516,14 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
                 const measurable = slice.filter(r => r.goal_achieved !== null && r.goal_achieved !== undefined);
                 if (!measurable.length) return null;
                 return measurable.filter(r => r.goal_achieved).length / measurable.length;
+            })();
+
+            // Critical failure rate WMA: fraction of measurable episodes where goal
+            // was NOT achieved.  Mirrors goalWma but inverted — higher is worse.
+            const critFailWma = (() => {
+                const measurable = slice.filter(r => r.goal_achieved !== null && r.goal_achieved !== undefined);
+                if (!measurable.length) return null;
+                return measurable.filter(r => !r.goal_achieved).length / measurable.length;
             })();
 
             // Wall-clock hours since first episode across all arms (for aligned x-axis)
@@ -528,12 +539,15 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
                 run_restart:        isRestart,
                 hours_elapsed:      hoursElapsed,
                 cumulative_reward:  ep.cumulative_reward,
+                reward_per_turn:    ep.turn_count > 0 ? Math.round((ep.cumulative_reward ?? 0) / ep.turn_count * 1000) / 1000 : null,
+                turn_count:         ep.turn_count,
                 smoothed_reward:    Math.round(smoothed * 1000) / 1000,
                 stddev:             Math.round(Math.sqrt(variance) * 1000) / 1000,
                 stress_auc:         ep.stress_auc,
                 stress_auc_wma:     Math.round(stressWma * 1000) / 1000,
                 goal_achieved:      ep.goal_achieved,
-                goal_rate_wma:      goalWma !== null ? Math.round(goalWma * 1000) / 1000 : null,
+                goal_rate_wma:      goalWma     !== null ? Math.round(goalWma     * 1000) / 1000 : null,
+                crit_fail_rate_wma: critFailWma !== null ? Math.round(critFailWma * 1000) / 1000 : null,
                 trust_delta_final:  ep.trust_delta_final,
                 turns_to_goal:      ep.turns_to_goal,
                 turn_count:         ep.turn_count,
@@ -876,3 +890,29 @@ export async function getRewardComponentTimeline(windowSize = 20) {
     return out;
 }
 
+
+/**
+ * Insert a checkpoint event row.  Called from the /api/benchmarks/checkpoint POST route.
+ * @param {{run_id, arm, episode, stopped, ts}} data
+ */
+export async function insertCheckpointEvent({ run_id, arm, episode, stopped, ts }) {
+    const db = await getDb();
+    await db.run(
+        `INSERT INTO htn_benchmark_checkpoints (run_id, arm, episode, stopped, ts)
+         VALUES (?, ?, ?, ?, ?)`,
+        [run_id, arm, episode, stopped ? 1 : 0, ts]
+    );
+}
+
+/**
+ * Return all checkpoint events, ordered chronologically.
+ * Each row: { arm, episode, stopped, ts, run_id }
+ */
+export async function getCheckpointEvents() {
+    const db = await getDb();
+    return db.all(
+        `SELECT arm, episode, stopped, ts, run_id
+         FROM htn_benchmark_checkpoints
+         ORDER BY ts ASC`
+    );
+}

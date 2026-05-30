@@ -269,6 +269,42 @@ class TurnState:
     # None = patient has no active drug regimen (the common case)
     drug_regimen:           Optional[dict] = None
 
+    # Source of the physiological data for this episode.
+    #
+    #   "sensor"     — real wearable / clinical measurement (HRV monitor, EDA sensor, etc.)
+    #                  Full MCTS pipeline + history append.  Arm3 shows numeric values.
+    #                  stress_index is the device reading.
+    #
+    #   "simulated"  — derived from scenario description and/or persona profile.
+    #                  PhysioSimulator seeded by role + physio_narrative.  Internally
+    #                  consistent across turns.  Arm3 labels values as "estimated".
+    #                  stress_index starts from the narrative-derived sample.
+    #
+    #   "population" — pure population prior with no scenario-specific information.
+    #                  Used when neither sensor data nor a narrative description is
+    #                  available.  MCTS receives the values but should weight them less.
+    #                  Arm3 labels values as "population estimate".
+    #
+    #   "none"       — no physio data of any kind.  MCTS receives sentinel values
+    #                  (-1 for each field + physio_unknown=True) so it can apply a prior.
+    #                  Arm3 shows only the conversation-inferred stress bucket.
+    #                  stress_index starts at 0.5 (neutral/unknown).
+    #
+    physio_source:          str   = "sensor"   # "sensor"|"simulated"|"population"|"none"
+
+    # Conversation-inferred stress estimate — updated each turn from the scorer's
+    # assessment of the patient's actual response (acceptance, resistance, disclosure).
+    # This is SEPARATE from stress_index (which is physio-based / model-based).
+    #
+    # The delta  (stress_index - conversation_stress)  is a clinically meaningful
+    # signal fed into MCTS:
+    #   Δ > 0  → physio says stressed but patient seems calm → possible masking
+    #   Δ < 0  → patient expresses distress but physio is low → emotional outburst / panic
+    #   Δ ≈ 0  → physio and conversation in agreement
+    #
+    # Starts at 0.5 regardless of physio_source (no info at turn 0).
+    conversation_stress:    float = 0.5
+
     session_id:   str = ""
     subject_id:   str = ""
 
@@ -305,14 +341,67 @@ class TurnState:
     @classmethod
     def from_scenario(cls, scenario: dict) -> "TurnState":
         """Construct the turn-0 state from a scenario dict."""
-        initial_physio = scenario.get("initial_physio", {})
+        from tensornets.a3c.physio_simulator import PhysioSimulator  # lazy import
+
+        initial_physio = scenario.get("initial_physio") or {}
+        # physio_source resolution priority:
+        #   1. Explicit scenario key "physio_source" ("sensor"|"simulated"|"none")
+        #   2. Legacy boolean "sensor_present" key (backwards compat)
+        #   3. Presence/absence of initial_physio + embedded "_sensor_present" flag
+        explicit_source = scenario.get("physio_source", None)
+
+        if explicit_source in ("sensor", "simulated", "none"):
+            physio_source = explicit_source
+        elif scenario.get("sensor_present") is False:
+            physio_source = "none"
+        else:
+            physio_source = None  # resolve below from physio content
+
+        if not initial_physio:
+            # No physio dict — sample from role/context-aware distributions.
+            # physio_narrative in the scenario seeds the sampler with keyword cues.
+            from tensornets.a3c.physio_simulator import physio_from_narrative  # lazy
+            users = scenario.get("users", [{}])
+            role  = (users[0].get("role", "patient") if users else "patient")
+            narrative = scenario.get("physio_narrative", "")
+            if narrative:
+                initial_physio = physio_from_narrative(
+                    narrative, role=role,
+                    scenario_id=scenario.get("scenario_id", ""),
+                )
+                if physio_source is None:
+                    physio_source = "simulated"
+            else:
+                initial_physio = PhysioSimulator().sample(
+                    role=role,
+                    scenario_id=scenario.get("scenario_id", ""),
+                )
+                if physio_source is None:
+                    # No explicit source and no authored physio → population estimate
+                    physio_source = "simulated"
+        else:
+            if physio_source is None:
+                # Check for _sensor_present flag embedded by _physioFromPersona
+                embedded = initial_physio.get("_sensor_present", None)
+                physio_source = "sensor" if (embedded is None or embedded) else "simulated"
+
         stress = initial_physio.get("stress_index", scenario.get("initial_stress_index", 0.5))
+        # For no-sensor episodes, the stress index at turn 0 is unknown.
+        # Start at the neutral midpoint (0.5) so the arm isn't biased by sampled
+        # estimates — stress will evolve from conversation cues via _stress_after_response.
+        if physio_source == "none":
+            stress = 0.5
+        # Strip internal flags from the physio dict before storing.
+        clean_physio = {k: v for k, v in initial_physio.items()
+                        if k not in ("_sensor_present", "_physio_narrative")}
+        # For "none" source, keep the physio dict (arms use it for context/logging)
+        # but arms check physio_source before injecting it into LLM prompts.
         return cls(
             turn_idx=0,
             stress_index=stress,
             stress_bucket=cls.bucket_from_stress(stress),
             conversation_history=[],
-            physio=initial_physio,
+            physio=clean_physio,
             therapeutic_mode=scenario.get("therapeutic_mode", "standard"),
             deaddiction_phase=scenario.get("deaddiction_phase", "precontemplation"),
             last_action="none",
@@ -328,6 +417,7 @@ class TurnState:
             has_misconception=scenario.get("has_misconception", False),
             flooding_target_stress=scenario.get("flooding_target_stress", 0.80),
             drug_regimen=scenario.get("drug_regimen", None) or None,
+            physio_source=physio_source,
             session_id=scenario.get("session_id", str(uuid.uuid4())),
             subject_id=scenario.get("subject_id", "synthetic"),
         )
@@ -593,6 +683,7 @@ def apply_update(
     action: str,
     reward: float,
     terminal: bool = False,
+    update_lock: "threading.Lock | None" = None,
 ) -> dict[str, float]:
     """
     J4: Full per-turn update.
@@ -602,15 +693,29 @@ def apply_update(
     3.  Update actor log-biases via policy gradient.
     4.  Update critic weights via TD(0).
     5.  Return metrics dict for logging.
-    """
-    v_s     = critic.estimate(state)
-    v_next  = 0.0 if (terminal or next_state is None) else critic.estimate(next_state)
-    adv     = compute_advantage(reward, v_s, v_next)
-    entropy = actor.entropy(state.stress_bucket, state.therapeutic_mode)
 
-    actor.update(state.stress_bucket, action, adv + ENTROPY_COEF * entropy,
-                 mode=state.therapeutic_mode)
-    td_error = critic.update(state, reward + GAMMA_DISCOUNT * v_next)
+    update_lock
+    -----------
+    When multiple async workers share the same Actor and Critic (true A3C),
+    pass a threading.Lock here.  The entire read-modify-write (value estimate
+    + both weight updates) is atomic under the lock so workers do not corrupt
+    each other's log-bias tables or weight vectors.  Without a lock the
+    updates are still correct on average (the original A3C paper shows they
+    converge even with unsynchronised updates), but a lock eliminates the
+    small probability of a torn write on CPython's GIL-release boundaries.
+    """
+    import threading as _threading
+    _lock = update_lock or _threading.Lock()   # trivial no-op lock if none passed
+
+    with _lock:
+        v_s    = critic.estimate(state)
+        v_next = 0.0 if (terminal or next_state is None) else critic.estimate(next_state)
+        adv    = compute_advantage(reward, v_s, v_next)
+        entropy = actor.entropy(state.stress_bucket, state.therapeutic_mode)
+
+        actor.update(state.stress_bucket, action, adv + ENTROPY_COEF * entropy,
+                     mode=state.therapeutic_mode)
+        td_error = critic.update(state, reward + GAMMA_DISCOUNT * v_next)
 
     return {
         "v_s":        round(v_s, 5),
@@ -717,11 +822,16 @@ class A3CWorker:
         critic: Critic,
         run_dir: str | Path,
         worker_id: str | None = None,
+        update_lock: "threading.Lock | None" = None,
     ) -> None:
-        self.actor    = actor
-        self.critic   = critic
-        self.run_dir  = Path(run_dir)
-        self.worker_id = worker_id or str(uuid.uuid4())[:8]
+        import threading as _threading
+        self.actor       = actor
+        self.critic      = critic
+        self.run_dir     = Path(run_dir)
+        self.worker_id   = worker_id or str(uuid.uuid4())[:8]
+        # Shared lock used by apply_update() when multiple workers share one Actor/Critic.
+        # None means single-worker mode — apply_update creates a trivial per-call lock.
+        self.update_lock: "_threading.Lock | None" = update_lock
         self._episode_log: list[EpisodeTurn] = []
 
     # ── Subclass interface ───────────────────────────────────────────────────
@@ -780,6 +890,19 @@ class A3CWorker:
         new_repetition  = response_dict.get("repetition_detected", False)
         new_phase       = response_dict.get("deaddiction_phase", prev_state.deaddiction_phase)
         new_mode        = response_dict.get("therapeutic_mode", prev_state.therapeutic_mode)
+
+        # Update conversation-inferred stress from scorer signal (running estimate).
+        # _scorer_continuous is set by the episode runner after scoring each turn.
+        # Higher score → patient engaged/accepting → conversation stress trends down.
+        # Lower score or critical failure → patient resistant → stress trends up.
+        _scorer_signal  = response_dict.get("_scorer_continuous", None)
+        if _scorer_signal is not None:
+            _conv_delta     = (0.55 - float(_scorer_signal)) * 0.15   # max ±0.083 per turn
+            new_conv_stress = round(max(0.0, min(1.0,
+                prev_state.conversation_stress + _conv_delta)), 4)
+        else:
+            new_conv_stress = prev_state.conversation_stress  # no scorer update this turn
+
         # keep known_context + longitudinal_hint: they are session-scoped, not turn-scoped
         return TurnState(
             turn_idx=prev_state.turn_idx + 1,
@@ -801,6 +924,9 @@ class A3CWorker:
             archetype=prev_state.archetype,
             has_misconception=prev_state.has_misconception,
             flooding_target_stress=prev_state.flooding_target_stress,
+            drug_regimen=prev_state.drug_regimen,
+            physio_source=prev_state.physio_source,
+            conversation_stress=new_conv_stress,
             session_id=prev_state.session_id,
             subject_id=prev_state.subject_id,
         )
@@ -895,6 +1021,10 @@ class A3CWorker:
             for m in state.conversation_history:
                 orchestrator.primary_patient.conversation_history.append(m)
 
+        # ── PhysioSimulator for longitudinal per-participant dynamics ────────────
+        from tensornets.a3c.physio_simulator import PhysioSimulator as _PhysioSim
+        _physio_sim = _PhysioSim(seed=hash(episode_id) & 0xFFFF)
+
         # ── V_int / SharedTensorBuffer — G3 social coupling ───────────────────────
         # One slot per participant. V_int propagates HRV deltas between agents
         # after each speaker turn so the next companion sees updated physio context.
@@ -982,7 +1112,24 @@ class A3CWorker:
                     pass
 
             # ── Generate companion response ──────────────────────────────────
-            resp_dict  = self.generate_response(state, action, scenario)
+            # Compute conversation_correction from previous turn's score_result.
+            # Positive = patient more resistant than expected → push σ up.
+            # Negative = patient more accepting / info-sharing → pull σ down.
+            # First turn has no prior score, so correction is 0.
+            if score_history:
+                prev = score_history[-1]
+                # critical_failure or very low score → patient rejected the strategy
+                # high info_gain + high continuous_score → patient accepted / opened up
+                _expected_score = 0.55  # neutral expectation per turn
+                _discrepancy    = _expected_score - prev.continuous_score   # + = worse than expected
+                _conv_correction = round(max(-0.05, min(0.05, _discrepancy * 0.3)), 4)
+            else:
+                _conv_correction = 0.0
+
+            resp_dict  = self.generate_response(
+                state, action, scenario,
+                conversation_correction=_conv_correction,
+            )
             agent_resp = resp_dict.get("response", "")
 
             # ── SyntheticPatient generates the patient turn ──────────────────
@@ -1320,8 +1467,10 @@ class A3CWorker:
                 prev_state     = state,
                 response_dict  = {
                     **resp_dict,
-                    "info_coverage": orchestrator.coverage_fraction,
-                    "repetition_detected": score_result.repetition_penalty > 0.4,
+                    "info_coverage":        orchestrator.coverage_fraction,
+                    "repetition_detected":  score_result.repetition_penalty > 0.4,
+                    # Pass scorer signal so build_next_state can update conversation_stress
+                    "_scorer_continuous":   score_result.continuous_score,
                 },
                 user_message   = patient_msg,
                 context_window = context_window,
@@ -1331,13 +1480,14 @@ class A3CWorker:
 
             # ── J4 update ────────────────────────────────────────────────────
             update_metrics = apply_update(
-                actor      = self.actor,
-                critic     = self.critic,
-                state      = state,
-                next_state = None if terminal else next_state,
-                action     = action,
-                reward     = r,
-                terminal   = terminal,
+                actor       = self.actor,
+                critic      = self.critic,
+                state       = state,
+                next_state  = None if terminal else next_state,
+                action      = action,
+                reward      = r,
+                terminal    = terminal,
+                update_lock = self.update_lock,
             )
 
             turn_record = EpisodeTurn(
@@ -1385,6 +1535,22 @@ class A3CWorker:
                 discrepancy    = resp_dict.get("discrepancy", None),
             )
             self._episode_log.append(turn_record)
+
+            # ── Advance non-primary participants' physio (longitudinal dynamics) ─
+            # The primary patient's physio is stepped by arms.py via next_physio.
+            # Secondary participants (caregiver, doctor) get a stochastic step here
+            # so their profiles drift realistically across turns.
+            _safety_score = next(
+                (s for d, s, _ in score_result.integer_scores if d == "safety"),
+                score_result.dimensions.get("safety", 0),
+            )
+            emotionally_loaded = (
+                _safety_score < 0 or
+                state.stress_index > 0.65
+            )
+            for _p in orchestrator.participants:
+                if _p is not orchestrator.primary_patient and _p.physio:
+                    _p.physio = _physio_sim.step(_p.physio, emotionally_loaded=emotionally_loaded)
 
             # ── Genuine progress metric updates (per turn) ───────────────────
             _stress_samples.append(state.stress_index)

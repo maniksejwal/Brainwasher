@@ -323,6 +323,16 @@
                         <div id="goal-rate-lag"></div>
                     </div>
 
+                    <!-- Critical failure rate chart (time-series WMA) -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Critical Failure Rate over Episodes (Weighted Moving Average)</h4>
+                        <p style="font-size:11px;color:var(--gray-500);margin:0 0 8px;">Fraction of episodes where the goal was <em>not</em> achieved. ↓ lower is better. Complements the goal-rate chart above.</p>
+                        <div style="position:relative;height:220px;">
+                            <canvas id="crit-fail-rate-chart"></canvas>
+                        </div>
+                        <div id="crit-fail-rate-lag"></div>
+                    </div>
+
                     <!-- Cumulative reward stats table -->
                     <div style="margin-bottom:16px;" id="reward-stats-section">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Episode Reward Statistics</h4>
@@ -376,16 +386,30 @@
                     <!-- Scenario goal rates -->
                     <div style="margin-bottom:16px;">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Scenario Goal Rate by Experiment</h4>
-                        <div style="position:relative;height:220px;">
+                        <div style="position:relative;height:340px;overflow-x:auto;">
                             <canvas id="scenario-goal-chart"></canvas>
                         </div>
+                    </div>
+
+                    <!-- Scenario goal-rate ranked table -->
+                    <div style="margin-bottom:16px;">
+                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+                            <h4 style="margin:0;font-size:13px;color:var(--gray-700);">Scenarios Ranked by Goal Rate</h4>
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;" id="scenario-rank-toggles">
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="htn_mcts">Exp 1 HTN</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="oldschool">Exp 2 Old</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="hysteresis_prompt">Exp 3 Hyst</button>
+                                <button class="primary"   style="font-size:11px;padding:3px 10px;" data-arm="mean">Mean</button>
+                            </div>
+                        </div>
+                        <div id="scenario-rank-table" style="max-height:320px;overflow-y:auto;font-size:12px;"></div>
                     </div>
 
                     <!-- Critical failures -->
                     <div style="margin-bottom:16px;">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Critical Failures (goal not achieved)</h4>
                         <div id="crit-fail-stats-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;"></div>
-                        <div style="position:relative;height:200px;">
+                        <div style="position:relative;height:360px;overflow-x:auto;">
                             <canvas id="crit-fail-chart"></canvas>
                         </div>
                     </div>

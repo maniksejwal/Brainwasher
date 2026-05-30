@@ -54,6 +54,7 @@ async function _refresh() {
             _fetchPhysio(),
             _fetchCritFail(),
             _fetchRewardComponents(),
+            _fetchCheckpoints(),
         ]);
         _renderAll();
     } catch (e) { console.error('[benchmarks] refresh error', e); }
@@ -88,13 +89,19 @@ async function _fetchRewardComponents() {
         _state.rewardComponentData = rows;
     } catch { _state.rewardComponentData = null; }
 }
+async function _fetchCheckpoints() {
+    try {
+        const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/checkpoints`).then(r => r.json());
+        _state.checkpointEvents = rows;   // [{arm, episode, stopped, ts}]
+    } catch { _state.checkpointEvents = null; }
+}
 
 // -- Toolbar -----------------------------------------------------------------
 function _attachToolbar() {
     const rawCb = document.getElementById('show-raw-traces');
     if (rawCb) {
         rawCb.title = 'Show individual episode reward dots behind the Weighted Moving Average line.';
-        rawCb.addEventListener('change', () => { _state.showRawTraces = rawCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderStressAucChart(); });
+        rawCb.addEventListener('change', () => { _state.showRawTraces = rawCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderCritFailRateChart(); _renderStressAucChart(); });
         const lbl = rawCb.closest('label') || rawCb.parentElement;
         if (lbl && !lbl.querySelector('.trace-tooltip-hint')) {
             const hint = document.createElement('span');
@@ -104,7 +111,7 @@ function _attachToolbar() {
         }
     }
     const sdCb = document.getElementById('show-sd-band');
-    if (sdCb) sdCb.addEventListener('change', () => { _state.showSD = sdCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderStressAucChart(); });
+    if (sdCb) sdCb.addEventListener('change', () => { _state.showSD = sdCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderCritFailRateChart(); _renderStressAucChart(); });
     const critCb = document.getElementById('show-crit-fail');
     if (critCb) critCb.addEventListener('change', () => { _state.showCritFail = critCb.checked; _renderLearningCurves(); });
     const durSel = document.getElementById('duration-filter');
@@ -120,7 +127,7 @@ function _attachToolbar() {
         });
         wmaSlider.addEventListener('change', async () => {
             await _fetchTimeline();
-            _renderLearningCurves(); _renderGoalRateChart(); _renderStressAucChart(); _renderRewardStatsTable();
+            _renderLearningCurves(); _renderGoalRateChart(); _renderCritFailRateChart(); _renderStressAucChart(); _renderRewardStatsTable();
         });
     }
 
@@ -130,7 +137,7 @@ function _attachToolbar() {
             if (_state.activeExperiments.has(exp)) _state.activeExperiments.delete(exp);
             else _state.activeExperiments.add(exp);
             btn.classList.toggle('inactive', !_state.activeExperiments.has(exp));
-            _renderLearningCurves(); _renderGoalRateChart(); _renderStressAucChart();
+            _renderLearningCurves(); _renderGoalRateChart(); _renderCritFailRateChart(); _renderStressAucChart();
             _renderMetricBars(); _renderCritFailChart(); _renderPhysioScatter();
         });
     });
@@ -142,6 +149,7 @@ function _renderAll() {
     _renderCumulativeRewardDist();
     _renderLearningCurves();
     _renderGoalRateChart();
+    _renderCritFailRateChart();
     _renderStressAucChart();
     _renderRewardComponentCharts();
     _renderScenarioHeatmap();
@@ -224,12 +232,14 @@ function _buildLineDatasets(rows, yKey, wmaKey) {
 // Restart annotations ? now on episode-index axis
 function _buildRestartAnnotations() {
     const annotations = {};
+
+    // ── Run-restart lines (grey dashed) ──────────────────────────────────────
     for (const [arm] of Object.entries(EXP_META)) {
         if (!_state.activeExperiments.has(arm)) continue;
         const ep = (_state.timelineData || []).filter(r => r.arm === arm);
         ep.forEach((r, i) => {
             if (r.run_restart && i > 0) {
-                const key = `${arm}_${i}`;
+                const key = `restart_${arm}_${i}`;
                 annotations[key] = {
                     type: 'line', scaleID: 'x', value: i + 1,
                     borderColor: '#bbb', borderWidth: 1, borderDash: [4, 4],
@@ -238,6 +248,53 @@ function _buildRestartAnnotations() {
             }
         });
     }
+
+    // ── Checkpoint lines (per-arm coloured, thin dotted) ─────────────────────
+    // Each checkpoint is keyed to an episode index within that arm's sequence.
+    // We map (arm, episode_abs) → global_episode_idx using the timeline data.
+    const ckpts = _state.checkpointEvents || [];
+    if (ckpts.length) {
+        // Build a lookup: arm → sorted list of global_episode_idx values
+        const armIdx = {};
+        for (const [arm] of Object.entries(EXP_META)) {
+            armIdx[arm] = (_state.timelineData || [])
+                .filter(r => r.arm === arm)
+                .map((r, i) => ({ globalIdx: i + 1, absEp: r.cumulative_reward })); // we'll use episode order
+        }
+        // For each checkpoint event, find the closest global_episode_idx
+        // by matching the arm's episode count at that checkpoint.
+        const armAbsEpMap = {};
+        for (const [arm] of Object.entries(EXP_META)) {
+            armAbsEpMap[arm] = (_state.timelineData || [])
+                .filter(r => r.arm === arm);
+        }
+        ckpts.forEach((ck, ci) => {
+            if (!_state.activeExperiments.has(ck.arm)) return;
+            const armRows = armAbsEpMap[ck.arm] || [];
+            // ck.episode is the arm-local episode count at the checkpoint
+            // global_episode_idx in timeline is also 1-based per-arm
+            const xVal = Math.min(ck.episode, armRows.length);
+            if (xVal < 1) return;
+            const meta  = EXP_META[ck.arm];
+            const color = ck.stopped ? '#f59e0b' : meta?.color || '#888';
+            const dash  = ck.stopped ? [8, 4] : [2, 4];
+            const width = ck.stopped ? 2 : 1;
+            annotations[`ckpt_${ck.arm}_${ci}`] = {
+                type: 'line', scaleID: 'x', value: xVal,
+                borderColor: color, borderWidth: width, borderDash: dash,
+                label: {
+                    display: ck.stopped,
+                    content: 'STOP',
+                    position: 'start',
+                    font: { size: 9 },
+                    color,
+                    backgroundColor: 'transparent',
+                    padding: 2,
+                },
+            };
+        });
+    }
+
     return annotations;
 }
 
@@ -332,7 +389,7 @@ function _renderLearningCurves() {
     const rows = _filterByDuration(_state.timelineData);
     if (!rows?.length) return;
 
-    const datasets = _buildLineDatasets(rows, 'cumulative_reward', 'smoothed_reward');
+    const datasets = _buildLineDatasets(rows, 'reward_per_turn', 'smoothed_reward');
 
     if (_state.showCritFail) {
         for (const [arm, meta] of Object.entries(EXP_META)) {
@@ -357,7 +414,7 @@ function _renderLearningCurves() {
             interaction: { mode: 'index', intersect: false },
             scales: {
                 x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
-                y: { title: { display: true, text: 'Cumulative Reward', font: { size: 11 } } },
+                y: { title: { display: true, text: 'Reward per Turn (WMA)', font: { size: 11 } } },
             },
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
@@ -370,8 +427,14 @@ function _renderLearningCurves() {
                             const armKey = Object.entries(EXP_META).find(([,m]) => m.label === armLabel)?.[0];
                             const d = _state.timelineData?.find(r => r.arm === armKey && r.global_episode_idx === x);
                             if (!d) return [];
-                            const lines = [`Run: ${d.run_label}`, `Scenario: ${d.scenario_id || '?'}`, `Stress AUC: ${d.stress_auc?.toFixed(3) ?? '?'}`];
-                            if (d.run_restart) lines.push('? Restart (code change)');
+                            const lines = [
+                                `Run: ${d.run_label}`,
+                                `Scenario: ${d.scenario_id || '?'}`,
+                                `Turns: ${d.turn_count ?? '?'}  |  Reward/turn: ${d.reward_per_turn?.toFixed(3) ?? '?'}`,
+                                `Cumul. reward: ${d.cumulative_reward?.toFixed(3) ?? '?'}`,
+                                `Stress AUC: ${d.stress_auc?.toFixed(3) ?? '?'}`,
+                            ];
+                            if (d.run_restart) lines.push('⟳ Restart (code change)');
                             return lines;
                         },
                     },
@@ -414,6 +477,39 @@ function _renderGoalRateChart() {
         },
     });
     _renderLagBadges('goal-rate-lag');
+}
+
+// -- Critical Failure Rate Chart (time-series WMA) ----------------------------
+function _renderCritFailRateChart() {
+    if (typeof Chart === 'undefined') return;
+    const canvas = _destroyChart('crit-fail-rate-chart');
+    if (!canvas) return;
+    const rows = _filterByDuration(_state.timelineData);
+    if (!rows?.length) return;
+    const datasets = _buildLineDatasets(rows, 'goal_achieved', 'crit_fail_rate_wma');
+    new Chart(canvas, {
+        type: 'line', data: { datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
+                y: { min: 0, max: 1, title: { display: true, text: 'Critical Failure Rate (WMA)', font: { size: 11 } },
+                     ticks: { callback: v => (v * 100).toFixed(0) + '%' } },
+            },
+            plugins: {
+                legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
+                annotation: { annotations: _buildRestartAnnotations() },
+                tooltip: {
+                    callbacks: {
+                        label: item => `${item.dataset.label}: ${(item.parsed.y * 100).toFixed(1)}%`,
+                        afterBody: () => ['', '↓ Lower = fewer episodes without goal completion'],
+                    },
+                },
+            },
+        },
+    });
+    _renderLagBadges('crit-fail-rate-lag');
 }
 
 // -- Stress AUC Chart ----------------------------------------------------------
@@ -599,6 +695,75 @@ function _renderScenarioGoalRates() {
                 },
             },
         },
+    });
+    _renderScenarioRankTable('mean');   // default: show mean ranking
+    _wireScenarioRankToggles();
+}
+
+function _renderScenarioRankTable(armKey) {
+    const el = document.getElementById('scenario-rank-table');
+    if (!el) return;
+    const rows = _state.scenarioGoalData;
+    if (!rows?.length) { el.innerHTML = '<p class="muted">No scenario goal data.</p>'; return; }
+
+    const scenarios = [...new Set(rows.map(r => r.scenario_id))];
+
+    // Build per-scenario stats
+    const tableData = scenarios.map(sc => {
+        const armRows = EXP_KEYS.reduce((acc, arm) => {
+            const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
+            if (r) acc[arm] = { rate: r.goal_rate, n: r.episode_count };
+            return acc;
+        }, {});
+        const validRates = EXP_KEYS.map(a => armRows[a]?.rate).filter(v => v != null);
+        const meanRate = validRates.length ? validRates.reduce((a,b)=>a+b,0)/validRates.length : null;
+        return { sc, armRows, meanRate };
+    });
+
+    // Sort by selected arm, ascending (worst/0 at top for investigation)
+    tableData.sort((a, b) => {
+        const va = armKey === 'mean' ? a.meanRate : a.armRows[armKey]?.rate;
+        const vb = armKey === 'mean' ? b.meanRate : b.armRows[armKey]?.rate;
+        // Nulls go after 0s but before successes; 0s at top
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        return va - vb;
+    });
+
+    const fmt = v => v != null ? (v*100).toFixed(1)+'%' : '—';
+    const colorCell = (v, arm) => {
+        if (v == null) return `<td style="text-align:center;color:var(--gray-400);">—</td>`;
+        const col = EXP_META[arm]?.color ?? '#888';
+        const opacity = Math.round(20 + v * 70);
+        return `<td style="text-align:center;background:${col}${opacity.toString(16).padStart(2,'0')};font-weight:${v>=0.5?'600':'400'};">${fmt(v)}</td>`;
+    };
+
+    el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
+        <thead><tr style="background:var(--gray-50);position:sticky;top:0;border-bottom:1px solid var(--gray-200);">
+            <th style="text-align:left;padding:5px 8px;">#</th>
+            <th style="text-align:left;padding:5px 8px;">Scenario</th>
+            ${EXP_KEYS.map(a=>`<th style="padding:5px 8px;color:${EXP_META[a].color};">${EXP_META[a].shortLabel}</th>`).join('')}
+            <th style="padding:5px 8px;">Mean</th>
+        </tr></thead>
+        <tbody>${tableData.map((d, i) => `<tr style="border-bottom:1px solid var(--gray-100);">
+            <td style="padding:4px 8px;color:var(--gray-500);">${i+1}</td>
+            <td style="padding:4px 8px;font-family:monospace;font-size:11px;">${d.sc}</td>
+            ${EXP_KEYS.map(a => colorCell(d.armRows[a]?.rate, a)).join('')}
+            <td style="text-align:center;font-weight:600;">${fmt(d.meanRate)}</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+function _wireScenarioRankToggles() {
+    const container = document.getElementById('scenario-rank-toggles');
+    if (!container) return;
+    container.querySelectorAll('button[data-arm]').forEach(btn => {
+        btn.onclick = () => {
+            container.querySelectorAll('button').forEach(b => b.className = 'secondary');
+            btn.className = 'primary';
+            _renderScenarioRankTable(btn.dataset.arm);
+        };
     });
 }
 
@@ -833,33 +998,82 @@ function _renderMetricBars() {
     if (!rows?.length) return;
 
     const metrics = [
-        { key: 'mean_reward',        label: 'Mean Cumul. Reward',   canvas: 'metric-bar-reward'  },
-        { key: 'goal_rate',          label: 'Goal Rate',            canvas: 'metric-bar-goal'    },
-        { key: 'mean_stress_auc',    label: 'Stress AUC (↑ better)',  canvas: 'metric-bar-stress'  },
-        { key: 'safety_failures',    label: 'Safety Failures',      canvas: 'metric-bar-safety'  },
-        { key: 'discrepancy_turns',  label: 'Discrepancy Turns *',  canvas: 'metric-bar-disc'    },
-        { key: 'mean_goal_reward',   label: 'Reward: Goal',         canvas: 'metric-bar-rgoal'   },
-        { key: 'mean_stress_reward', label: 'Reward: Stress',       canvas: 'metric-bar-rstress' },
-        { key: 'mean_trust_reward',  label: 'Reward: Trust',        canvas: 'metric-bar-rtrust'  },
-        { key: 'mean_latency_ms',    label: 'Avg Latency (ms)',     canvas: 'metric-bar-latency' },
+        { key: 'mean_reward',        label: 'Mean Cumul. Reward',    canvas: 'metric-bar-reward'  },
+        { key: 'goal_rate',          label: 'Goal Rate',             canvas: 'metric-bar-goal'    },
+        { key: 'mean_stress_auc',    label: 'Stress AUC (↑ better)', canvas: 'metric-bar-stress'  },
+        { key: 'safety_failures',    label: 'Safety Failures',       canvas: 'metric-bar-safety'  },
+        { key: 'discrepancy_turns',  label: 'Discrepancy Turns *',   canvas: 'metric-bar-disc'    },
+        { key: 'mean_goal_reward',   label: 'Reward: Goal',          canvas: 'metric-bar-rgoal'   },
+        { key: 'mean_stress_reward', label: 'Reward: Stress',        canvas: 'metric-bar-rstress' },
+        { key: 'mean_trust_reward',  label: 'Reward: Trust',         canvas: 'metric-bar-rtrust'  },
+        { key: 'mean_latency_ms',    label: 'Avg Latency (ms)',      canvas: 'metric-bar-latency' },
     ];
     const runIds = [...new Set(rows.map(r => r.run_label?.split('/')[0]?.trim()))].sort();
+    const activeArms = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm));
 
     metrics.forEach(({ key, label, canvas: cid }) => {
         const cv = _destroyChart(cid);
         if (!cv) return;
-        const datasets = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm)).map(arm => {
-            const meta = EXP_META[arm];
+
+        // Pre-compute per-arm values so we can determine draw order.
+        const armValues = activeArms.map(arm => ({
+            arm,
+            meta: EXP_META[arm],
+            data: runIds.map(rid => {
+                const row = rows.find(r => r.arm === arm && r.run_label?.startsWith(rid));
+                if (!row) return null;
+                return Math.round((row[key] ?? 0) * 1000) / 1000;
+            }),
+        }));
+
+        // Draw order: largest-sum arm first (back), smallest-sum arm last (front).
+        // This ensures the shortest bar is always fully visible at the front.
+        const armSums = armValues.map(av => av.data.reduce((s, v) => s + (v ?? 0), 0));
+        const drawOrder = armValues
+            .map((_, i) => i)
+            .sort((a, b) => armSums[b] - armSums[a]);
+
+        const datasets = drawOrder.map((idx, rank) => {
+            const { arm, meta, data } = armValues[idx];
             return {
-                label: meta.label,
-                backgroundColor: meta.color + '88', borderColor: meta.color, borderWidth: 1.5,
-                borderRadius: 4, barPercentage: 0.95, categoryPercentage: 1.0,
-                data: runIds.map(rid => { const row = rows.find(r => r.arm === arm && r.run_label?.startsWith(rid)); if (!row) return null; const v = row[key] ?? 0; return Math.round(v*100)/100; }),
+                label: meta.shortLabel,
+                backgroundColor: meta.color + 'aa',
+                borderColor: meta.color,
+                borderWidth: 1.5,
+                borderRadius: 3,
+                // Full overlap — all bars occupy the same category slot
+                barPercentage: 0.85,
+                categoryPercentage: 1.0,
+                // Lower order = drawn later = on top in Chart.js
+                order: rank,
+                data,
             };
         });
+
         new Chart(cv, {
-            type: 'bar', data: { labels: runIds, datasets },
-            options: { responsive: true, maintainAspectRatio: false, scales: { x:{ticks:{font:{size:9}}}, y:{beginAtZero:true,ticks:{font:{size:10}}} }, plugins: { legend:{display:false}, title:{display:true,text:label,font:{size:11},padding:{bottom:4}} } },
+            type: 'bar',
+            data: { labels: runIds, datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: { ticks: { font: { size: 9 } } },
+                    y: { beginAtZero: true, ticks: { font: { size: 10 } } },
+                },
+                plugins: {
+                    legend: { display: false },
+                    title: { display: true, text: label, font: { size: 11 }, padding: { bottom: 4 } },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: (ctx) => {
+                                return ` ${ctx.dataset.label}: ${ctx.parsed.y ?? 'n/a'}`;
+                            },
+                        },
+                    },
+                },
+            },
         });
     });
 }

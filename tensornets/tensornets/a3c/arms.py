@@ -155,16 +155,20 @@ class Arm1Worker(A3CWorker):
         state: TurnState,
         action: str,
         scenario: dict,
+        conversation_correction: float = 0.0,
     ) -> dict:
         t_start  = time.perf_counter()
         fallback = False
         m_trunc  = None
         scout_tokens = 0
 
-        # Arm 1 requires real physiological state — all scenarios must supply
-        # initial_physio via routes/training.js.  An empty dict means the
-        # scenario loader dropped the field or a new scenario was added without
-        # physio values.  Fix the scenario definition rather than inventing data.
+        # Arm 1 ideally requires real physiological state for MCTS.
+        # Two valid states:
+        #   sensor_present=True  → real / authored physio → full MCTS pipeline
+        #   sensor_present=False → sampled estimates      → skip MCTS & physio
+        #                          history; use actor action only (graceful degrade)
+        # An *empty* physio dict is still an error — the scenario loader must always
+        # supply at least sampled values so the LLM prompt has context.
         physio = state.physio or {}
         if not physio:
             raise ValueError(
@@ -175,41 +179,87 @@ class Arm1Worker(A3CWorker):
                 f"degrades MCTS quality and produces meaningless training gradients."
             )
 
+        # physio_source determines how physio is presented to MCTS:
+        #   "sensor"    → real measurements     → pass as-is
+        #   "simulated" → scenario-derived      → pass as-is (MCTS treats as ground truth)
+        #   "none"      → no wearable           → pass sentinel values so MCTS can
+        #                                          interpolate from history or use prior
+        # We never skip MCTS entirely — unknown physio is a valid MCTS input state.
+        physio_source = getattr(state, "physio_source", "sensor")
+
+        # Build the physio state for MCTS.  For "none", replace every numeric field
+        # with -1 (the agreed sentinel for "unknown") and add physio_unknown=True.
+        # The MCTS bridge can then use a population prior or interpolate from history.
+        if physio_source == "none":
+            mcts_physio = {
+                "stress_index":    -1.0,
+                "hrv_ms":          -1.0,
+                "eda_us":          -1.0,
+                "sleep_deficit":   -1.0,
+                "glucose_mg_dl":   -1.0,
+                "physio_unknown":  True,
+                # Include conversation-inferred stress bucket as a soft signal
+                "stress_bucket":   state.stress_bucket,
+                # Conversation stress estimate (updated from scorer each turn)
+                "conversation_stress": getattr(state, "conversation_stress", 0.5),
+                # Delta is undefined when physio is unknown
+                "stress_discrepancy":  None,
+            }
+        else:
+            conv_stress  = getattr(state, "conversation_stress", 0.5)
+            discrepancy  = round(state.stress_index - conv_stress, 4)
+            mcts_physio  = {
+                **physio,
+                # Conversation-inferred estimate alongside sensor/simulated values
+                "conversation_stress": conv_stress,
+                # Δ = physio_stress − conversation_stress
+                # +ve → physio stressed but conversation calm → possible masking
+                # −ve → conversation stressed but physio calm → emotional outburst
+                "stress_discrepancy":  discrepancy,
+                "physio_source":       physio_source,
+            }
+
         # Step 1: MCTS best action + M_trunc from tensornets bridge
         try:
             mcts_resp = _http_post(
                 f"{_TENSORNETS_URL}/mcts/best-action",
                 {
-                    "physio_state":      physio,
+                    "physio_state":      mcts_physio,
                     "candidate_actions": [action],
                     "mode":              state.therapeutic_mode or "standard",
                 },
                 timeout=5.0,
             )
-            action   = mcts_resp.get("best_action", action)
-            m_trunc  = mcts_resp.get("M_trunc")      # constraint matrix (serialised)
+            action  = mcts_resp.get("best_action", action)
+            m_trunc = mcts_resp.get("M_trunc")
         except Exception as exc:
             log.warning("Arm1: MCTS call failed (%s), falling back to actor action", exc)
             fallback = True
 
-        # Step 2: physio history append (best-effort — non-fatal)
-        try:
-            _http_post(
-                f"{_TENSORNETS_URL}/physio/history/append",
-                {**physio, "subject_id": state.subject_id},
-                timeout=3.0,
-            )
-        except Exception:
-            pass
+        # Step 2: physio history append — skip for "none" (nothing real to record)
+        if physio_source != "none":
+            try:
+                _http_post(
+                    f"{_TENSORNETS_URL}/physio/history/append",
+                    {**physio, "subject_id": state.subject_id},
+                    timeout=3.0,
+                )
+            except Exception as append_exc:
+                log.warning("Arm1: physio/history/append failed (non-fatal): %s", append_exc)
 
         # Step 3 + 4: generate response (Scout, with M_trunc if available)
         response_text = self._call_scout(state, action, scenario, m_trunc=m_trunc)
         scout_tokens  = len(response_text.split()) * 2   # rough token estimate
 
-        # Step 5: synthetic reward from stress delta
-        next_stress = _stress_after_response(state.stress_index, action, state.archetype, state.drug_regimen)
+        # Step 5: synthetic reward from stress delta (with real-time conversation correction)
+        next_stress = _stress_after_response(
+            state.stress_index, action, state.archetype, state.drug_regimen,
+            conversation_correction=conversation_correction,
+        )
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
-        reward["safety"] = 1.0 if not fallback else 0.8
+        # Arm1: degrade safety score if MCTS fell back to actor-only (bridge was down)
+        if fallback:
+            reward["safety"] = min(reward["safety"], 0.8)
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
         return {
@@ -222,7 +272,7 @@ class Arm1Worker(A3CWorker):
             "next_physio":        {**state.physio, "stress_index": next_stress},
             "action_taken":       action,
             "frames_component":   None,   # MCTS supplies this when bridge is live
-            "info_coverage":      min(1.0, state.info_coverage + 0.06),  # normalised to match Exp 2/3
+            "info_coverage":      reward["info_coverage"],  # LLM-scored; drives next-turn state
             "repetition_detected":False,
             "discrepancy":        None,
             "arm1_fallback":      fallback,
@@ -255,7 +305,7 @@ class Arm1Worker(A3CWorker):
                 # The MCTS /best-action returns candidate_actions sorted the same way
                 # as the action_vocab in _build_M_trunc — we use ACTION_TAXONOMY as fallback
                 from tensornets.a3c.action_bandit import ACTION_TAXONOMY
-                vocab = list(ACTION_TAXONOMY.keys())[:len(dominant)]
+                vocab = ACTION_TAXONOMY[:len(dominant)]  # list[str], not dict
                 # Pair each action with its dominant-vector weight and take top 3
                 weighted = sorted(
                     zip(vocab, dominant), key=lambda x: abs(x[1]), reverse=True
@@ -267,8 +317,9 @@ class Arm1Worker(A3CWorker):
                         + ", ".join(top_actions) +
                         ". Bias your response toward these strategy types."
                     )
-            except Exception:
-                pass   # non-fatal; M_trunc injection is a soft hint only
+            except Exception as m_exc:
+                # M_trunc injection is a soft hint — log and continue without it
+                log.warning("Arm1: M_trunc constraint injection failed: %s", m_exc)
 
         try:
             system_prompt = self._system_prompt.format(
@@ -277,7 +328,8 @@ class Arm1Worker(A3CWorker):
                 stress_bucket=state.stress_bucket,
                 hysteresis_ctx="",
             )
-        except (KeyError, ValueError):
+        except (KeyError, ValueError) as fmt_exc:
+            log.warning("Arm1: system prompt format failed (%s), using fallback", fmt_exc)
             system_prompt = (
                 f"You are a clinical companion. Action strategy: {action}. "
                 f"Patient stress: {state.stress_index:.2f} ({state.stress_bucket}). "
@@ -335,6 +387,7 @@ class Arm2Worker(A3CWorker):
         state: TurnState,
         action: str,
         scenario: dict,
+        conversation_correction: float = 0.0,
     ) -> dict:
         t_start = time.perf_counter()
         user_msg = _last_user_message(state)
@@ -364,10 +417,13 @@ class Arm2Worker(A3CWorker):
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
 
-        next_stress = _stress_after_response(state.stress_index, action, state.archetype, state.drug_regimen)
+        next_stress = _stress_after_response(
+            state.stress_index, action, state.archetype, state.drug_regimen,
+            conversation_correction=conversation_correction,
+        )
 
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
-        reward["safety"] = 1.0
+        # Arm2: no safety override — _synthetic_reward handles the safety_protocol gate
 
         return {
             "response":          response_text,
@@ -379,7 +435,7 @@ class Arm2Worker(A3CWorker):
             "next_physio":       {**state.physio, "stress_index": next_stress},
             "action_taken":      action,
             "frames_component":  None,
-            "info_coverage":     min(1.0, state.info_coverage + 0.06),  # normalised to match Exp 1/3
+            "info_coverage":     reward["info_coverage"],  # LLM-scored; drives next-turn state
             "repetition_detected": False,
             "discrepancy":       None,
             "deferred_reward":   deferred,
@@ -428,6 +484,7 @@ class Arm3Worker(A3CWorker):
         state: TurnState,
         action: str,
         scenario: dict,
+        conversation_correction: float = 0.0,
     ) -> dict:
         t_start = time.perf_counter()
         user_msg = _last_user_message(state)
@@ -440,7 +497,8 @@ class Arm3Worker(A3CWorker):
                 stress_index=state.stress_index,
                 stress_bucket=state.stress_bucket,
             )
-        except (KeyError, ValueError):
+        except (KeyError, ValueError) as fmt_exc:
+            log.warning("Arm3: system prompt format failed (%s), using fallback", fmt_exc)
             system_prompt = (
                 f"You are a clinical companion.\n"
                 f"Physiological context:\n{hysteresis_ctx}\n"
@@ -469,9 +527,12 @@ class Arm3Worker(A3CWorker):
             raise RuntimeError(f"Arm3: Scout call failed: {exc}") from exc
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
-        next_stress = _stress_after_response(state.stress_index, action, state.archetype, state.drug_regimen)
+        next_stress = _stress_after_response(
+            state.stress_index, action, state.archetype, state.drug_regimen,
+            conversation_correction=conversation_correction,
+        )
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
-        reward["safety"] = 1.0  # normalised: same unconditional floor as Exp 1/2
+        # Arm3: no safety override — same unconditional floor as Exp 1/2 via _synthetic_reward
 
         return {
             "response":          response_text,
@@ -483,7 +544,7 @@ class Arm3Worker(A3CWorker):
             "next_physio":       {**state.physio, "stress_index": next_stress},
             "action_taken":      action,
             "frames_component":  None,
-            "info_coverage":     min(1.0, state.info_coverage + 0.06),  # normalised to match Exp 1/2
+            "info_coverage":     reward["info_coverage"],  # LLM-scored; drives next-turn state
             "repetition_detected": False,
             "discrepancy":       None,
         }
@@ -496,6 +557,7 @@ def _stress_after_response(
     action: str,
     archetype: str = "standard",
     drug_regimen_dict: "dict | None" = None,
+    conversation_correction: float = 0.0,
 ) -> float:
     """
     Continuous stress transition using CALMING_WEIGHT per action.
@@ -518,6 +580,15 @@ def _stress_after_response(
     DrugRegimen.gamma_modifier() is applied. Beta-blockers dampen stress rise;
     benzodiazepines reduce Γ sharply; naltrexone attenuates craving Γ spikes.
 
+    conversation_correction:
+    A real-time discrepancy signal derived from the scorer's assessment of the
+    patient's actual response vs. the expected response for the chosen action.
+    Positive = patient more stressed/resistant than expected (push up σ).
+    Negative = patient calmer/more accepting than expected (pull σ down).
+    This captures "the patient didn't accept the fact we expected" and forces
+    MCTS to update its model of the patient's state before the next action.
+    Max magnitude is capped at ±0.05 per turn to prevent instability.
+
     Falls back to 0.5 (neutral, zero delta) for unknown actions.
     """
     try:
@@ -537,8 +608,10 @@ def _stress_after_response(
         try:
             modifier = profile.gamma_modifier(current_stress)
             delta *= modifier
-        except Exception:
-            pass   # non-fatal; fall through to unmodified delta
+        except Exception as rp_exc:
+            raise RuntimeError(
+                f"ReactivityProfile.gamma_modifier failed for archetype '{archetype}': {rp_exc}"
+            ) from rp_exc
 
     # ── C5.4: apply DrugRegimen PK/PD Γ modifier ────────────────────────────
     # Drug modifier is applied to the raw delta magnitude. A beta-blocker
@@ -555,10 +628,19 @@ def _stress_after_response(
             cue_triggered = (action in ("spike_step", "direct_advice"))
             drug_mod = dr.gamma_modifier(cue_triggered=cue_triggered)
             delta *= drug_mod
-        except Exception:
-            pass   # non-fatal; ignore missing pkpd dependency
+        except ImportError as imp_exc:
+            raise ImportError(
+                f"tensornets.physio.pkpd.DrugRegimen not available — "
+                f"install the pkpd module or remove drug_regimen from scenario: {imp_exc}"
+            ) from imp_exc
+        except Exception as dr_exc:
+            raise RuntimeError(f"DrugRegimen.gamma_modifier failed: {dr_exc}") from dr_exc
 
-    return max(0.0, min(1.0, current_stress + delta))
+    # Apply conversation correction — capped at ±0.05 to prevent instability.
+    # This is the discrepancy signal: patient responded differently than the
+    # action model predicted.  Positive = more resistant, negative = more accepting.
+    correction = max(-0.05, min(0.05, conversation_correction))
+    return max(0.0, min(1.0, current_stress + delta + correction))
 
 
 def _synthetic_reward(
@@ -583,15 +665,23 @@ def _synthetic_reward(
     mode_str  = state.therapeutic_mode or "standard"
     phase_str = state.deaddiction_phase or "precontemplation"
 
+    # therapeutic_mode must be a valid Python TherapeuticMode value.
+    # Normalisation from JS category labels happens in routes/training.js
+    # (normalisePythonMode) before scenarios reach Python.  If an invalid
+    # value arrives here, the scenario source needs to be fixed — no silent
+    # fallback.
     try:
         mode  = TherapeuticMode(mode_str)
-        # Accept both old deaddiction phase names and new ChangeStage names
         from tensornets.therapy.modes import DEADDICTION_TO_CHANGESTAGE
         phase_str_mapped = DEADDICTION_TO_CHANGESTAGE.get(phase_str, phase_str)
         phase = ChangeStage(phase_str_mapped)
-    except ValueError:
-        mode  = TherapeuticMode.STANDARD
-        phase = ChangeStage.PRECONTEMPLATION
+    except ValueError as ve:
+        raise ValueError(
+            f"_synthetic_reward: invalid therapeutic_mode='{mode_str}' or "
+            f"deaddiction_phase='{phase_str}' in scenario. "
+            f"Valid modes: {sorted(m.value for m in TherapeuticMode)}. "
+            f"Fix normalisePythonMode() in routes/training.js. Error: {ve}"
+        ) from ve
 
     # ── Dimension 1: Mode-conditional stress reward ───────────────────────────
     stress_delta = state.stress_index - next_stress  # positive = stress went down
@@ -668,11 +758,17 @@ def _synthetic_reward(
         "elicit_change_talk", "explore_ambivalence",
     }
     holding = {"validate", "empathic_reflection", "unconditional_regard", "acknowledge_only"}
-    # Social/rapport actions have therapeutic value — especially in precontemplation.
-    # Chit-chat is not wasted effort; it earns trust that makes the patient receptive.
+    # Social/rapport actions — earn trust that makes the patient receptive.
+    # Must match ACTION_TAXONOMY in action_bandit.py exactly.
+    # "build_rapport", "small_talk", "greet", "check_in" are NOT in the taxonomy
+    # — those JS-side labels fall through to _GOAL_R_OTHER unless aliased here.
     social = {
-        "build_rapport", "small_talk", "normalise_experience", "share_self",
-        "celebrate_progress", "greet", "check_in",
+        "affirmation",          # OARS: genuine strength recognition
+        "validate",             # normalise experience
+        "unconditional_regard", # non-judgment signal
+        "build_alliance",       # therapeutic alliance reinforcement
+        "companion_handoff",    # session brief (end-of-session rapport)
+        "end_conversation",     # natural close (positive closure = rapport value)
     }
     if action in advancing:
         goal_r = _GOAL_R_ADVANCING
@@ -779,30 +875,55 @@ def _build_hysteresis_context(state: TurnState, scenario: dict) -> str:
 
     Mirrors the format of longitudinalHint from companions/utils/promptLoader.js.
 
-    Key normalisation: physio dicts use 'hrv_ms' (JS canonical) or 'hrv_rmssd_ms'
-    interchangeably.  We try both keys so the context is never "N/A" due to a
-    field-name mismatch, which was causing the hysteresis arm to operate without
-    any useful physiological context (blank prompt) and degrade over time.
+    physio_source controls how much detail is shown:
+      "sensor"    → full numeric values (real measurements)
+      "simulated" → numeric values labelled as "estimated" (scenario-derived)
+      "none"      → stress bucket only; no numeric values injected into prompt
     """
-    physio = state.physio or {}
-    stress_label = _stress_label(state.stress_index)
+    physio_source = getattr(state, "physio_source", "sensor")
+    stress_label  = _stress_label(state.stress_index)
+    conv_stress   = getattr(state, "conversation_stress", 0.5)
+    conv_label    = _stress_label(conv_stress)
 
-    # Normalise HRV key — JS uses hrv_ms, some scenarios use hrv_rmssd_ms
-    hrv = physio.get("hrv_ms") or physio.get("hrv_rmssd_ms") or physio.get("hrv", "N/A")
-    eda = physio.get("eda_us") or physio.get("eda", "N/A")
-    sleep = physio.get("sleep_pressure") or physio.get("sleep_deficit") or physio.get("sleep", "N/A")
+    if physio_source == "none":
+        # No wearable — show only conversation-inferred signal
+        lines = [
+            f"- Stress level (conversation cues): {conv_label} (no wearable data)",
+        ]
+    else:
+        physio = state.physio or {}
+        qualifier = {
+            "sensor":     "",
+            "simulated":  " (estimated from scenario)",
+            "population": " (population estimate)",
+        }.get(physio_source, "")
+        hrv   = physio.get("hrv_ms") or physio.get("hrv_rmssd_ms") or physio.get("hrv", "N/A")
+        eda   = physio.get("eda_us") or physio.get("eda", "N/A")
+        sleep = physio.get("sleep_pressure") or physio.get("sleep_deficit") or physio.get("sleep", "N/A")
 
-    lines = [
-        f"- Stress level: {stress_label} (index={state.stress_index:.2f})",
-        f"- HRV RMSSD: {hrv} ms",
-        f"- EDA: {eda} µS",
-        f"- Sleep pressure: {sleep}",
-    ]
+        # Compute and narrate the discrepancy between physio and conversation signals
+        discrepancy = state.stress_index - conv_stress
+        if abs(discrepancy) < 0.08:
+            disc_note = "physio and conversation signals agree"
+        elif discrepancy > 0:
+            disc_note = f"⚠ physio ({state.stress_index:.2f}) > conversation ({conv_stress:.2f}) — possible masking"
+        else:
+            disc_note = f"⚠ conversation ({conv_stress:.2f}) > physio ({state.stress_index:.2f}) — possible outburst"
+
+        lines = [
+            f"- Stress level (wearable): {stress_label} (index={state.stress_index:.2f}){qualifier}",
+            f"- Stress level (conversation): {conv_label} (index={conv_stress:.2f})",
+            f"- Signal alignment: {disc_note}",
+            f"- HRV RMSSD: {hrv} ms{qualifier}",
+            f"- EDA: {eda} µS{qualifier}",
+            f"- Sleep pressure: {sleep}{qualifier}",
+        ]
+
     hysteresis = scenario.get("hysteresis_context", {})
     if hysteresis:
         lines.append("Longitudinal trigger history:")
         for trigger_id, info in hysteresis.items():
-            pct = info.get("pct_extinguished", 0)
+            pct  = info.get("pct_extinguished", 0)
             suds = info.get("suds", "N/A")
             lines.append(f"  - {trigger_id}: {pct:.0f}% extinguished (SUDS={suds})")
     return "\n".join(lines)

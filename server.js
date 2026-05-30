@@ -174,6 +174,16 @@ app.get('/api/logs', (req, res) => {
     res.json({ logs: recent });
 });
 
+// ── Process-level crash guards ───────────────────────────────────────────────
+// Without these an unhandled promise rejection silently kills the Node process,
+// causing the reload button to fail with "connection refused" until manual restart.
+process.on('uncaughtException', (err) => {
+    console.error('[Server] UNCAUGHT EXCEPTION — server will stay up:', err);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[Server] UNHANDLED REJECTION — server will stay up:', reason);
+});
+
 // ========== STARTUP ==========
 
 const PORT = config.PORT || 3000; // Use config port or default to 3000? original used config.PORT

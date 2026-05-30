@@ -108,7 +108,10 @@ export function setupNavigationHandlers(api, state) {
                 loadInlineReport('report-inline-frame');
                 // Wire buttons (safe to re-attach; onclick overwrites previous)
                 const reloadBtn = document.getElementById('reload-report-btn');
-                if (reloadBtn) reloadBtn.onclick = () => loadInlineReport('report-inline-frame');
+                if (reloadBtn) reloadBtn.onclick = () => {
+                    loadInlineReport('report-inline-frame');
+                    refreshBenchmarksDashboard();   // also refresh benchmark charts
+                };
                 const genBtn = document.getElementById('generate-report-btn');
                 if (genBtn) genBtn.onclick = () => generateAndShowReport();
             } else if (tabName === 'benchmarks') {

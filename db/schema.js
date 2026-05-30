@@ -647,6 +647,19 @@ export async function addHTNBenchmarkTables(db) {
         CREATE INDEX IF NOT EXISTS idx_bench_episodes_run ON htn_benchmark_episodes(run_id);
         CREATE INDEX IF NOT EXISTS idx_bench_turns_ep     ON htn_benchmark_turns(episode_id);
 
+        -- Checkpoint events: written each time train.py saves actor/critic weights.
+        -- Used by the dashboard to draw vertical dashed lines on learning curves.
+        -- stopped=1 means STOP_AT_CHECKPOINT was honoured (training paused here).
+        CREATE TABLE IF NOT EXISTS htn_benchmark_checkpoints (
+            checkpoint_id  TEXT    PRIMARY KEY DEFAULT (lower(hex(randomblob(4)))),
+            run_id         TEXT    NOT NULL REFERENCES htn_benchmark_runs(run_id),
+            arm            TEXT    NOT NULL,
+            episode        INTEGER NOT NULL,
+            stopped        INTEGER NOT NULL DEFAULT 0,
+            ts             INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_bench_ckpt_arm ON htn_benchmark_checkpoints(arm, ts);
+
         -- Metadata / configuration table for benchmark system.
         -- Stores named key-value pairs: baseline cutoff timestamps, experiment labels,
         -- hyperparameter snapshots, and any other system-level annotations.

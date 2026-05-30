@@ -37,6 +37,8 @@ import {
     listEpisodesForViewer,
     getEpisodeConversation,
     getRewardComponentTimeline,
+    insertCheckpointEvent,
+    getCheckpointEvents,
 } from '../db/queries_benchmarks.js';
 
 const router = Router();
@@ -95,6 +97,25 @@ router.post('/turn', async (req, res) => {
 });
 
 // ─── Read endpoints (called from GUI dashboard + CLI) ─────────────────────────
+
+// Checkpoint events — write (from Python train.py) and read (from dashboard)
+router.post('/checkpoint', async (req, res) => {
+    try {
+        await insertCheckpointEvent(req.body);
+        res.json({ ok: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/checkpoints', async (req, res) => {
+    try {
+        const rows = await getCheckpointEvents();
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 
 router.post('/compare', async (req, res) => {
     try {
