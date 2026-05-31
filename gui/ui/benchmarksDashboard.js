@@ -14,11 +14,24 @@
 import config from '../config.js';
 
 const EXP_META = {
-    htn_mcts:          { label: 'Exp 1 \u2014 HTN + MCTS',                shortLabel: 'Exp 1', color: '#4285F4', bg: 'rgba(66,133,244,0.18)'  },
-    oldschool:         { label: 'Exp 2 \u2014 LLM Agents w/o Physiology', shortLabel: 'Exp 2', color: '#34A853', bg: 'rgba(52,168,83,0.18)'   },
-    hysteresis_prompt: { label: 'Exp 3 \u2014 Hysteresis Prompt',         shortLabel: 'Exp 3', color: '#EA4335', bg: 'rgba(234,67,53,0.18)'   },
+    physio_llm:                          { label: 'Exp 0 \u2014 PhysioLLM',               shortLabel: 'Exp 0', color: '#EA4335', bg: 'rgba(234,67,53,0.18)'    },
+    physio_llm_cot_mcts:                 { label: 'Exp 1 \u2014 PhysioLLM CoT-MCTS',      shortLabel: 'Exp 1', color: '#FF6D00', bg: 'rgba(255,109,0,0.18)'    },
+    physio_mps_mcts:                     { label: 'Exp 2 \u2014 PhysioMPS-MCTS',          shortLabel: 'Exp 2', color: '#4285F4', bg: 'rgba(66,133,244,0.18)'   },
+    inertial_physio_mps_mcts:            { label: 'Exp 3 \u2014 Inertial PhysioMPS-MCTS', shortLabel: 'Exp 3', color: '#9C27B0', bg: 'rgba(156,39,176,0.18)'   },
+    inertial_physio_llm_cot_mcts:        { label: 'Exp 4 \u2014 Inertial PhysioLLM CoT',  shortLabel: 'Exp 4', color: '#00897B', bg: 'rgba(0,137,123,0.18)'    },
+    oldschool:                           { label: 'Exp 5 \u2014 Oldschool (no physio)',    shortLabel: 'Exp 5', color: '#34A853', bg: 'rgba(52,168,83,0.18)'    },
+    inertial_hpvoot_physio_mps_mcts:     { label: 'Exp 6 \u2014 Inertial HPVOOT MPS',     shortLabel: 'Exp 6', color: '#E91E8C', bg: 'rgba(233,30,140,0.18)'   },
+    inertial_hpvoot_physio_llm_cot_mcts: { label: 'Exp 7 \u2014 Inertial HPVOOT CoT',     shortLabel: 'Exp 7', color: '#FF9800', bg: 'rgba(255,152,0,0.18)'    },
 };
 const EXP_KEYS = Object.keys(EXP_META);
+
+// Legacy arm-name aliases: rows with these arm values are folded into the
+// canonical arm for display so that old + new training data plots as one
+// continuous line (with a gray partition mark where the rename happened).
+const LEGACY_ALIAS = {
+    htn_mcts:          'physio_mps_mcts',
+    hysteresis_prompt: 'physio_llm',
+};
 
 let _state = {
     activeExperiments: new Set(EXP_KEYS),
@@ -62,26 +75,84 @@ async function _refresh() {
 }
 
 // -- Fetchers -----------------------------------------------------------------
+// All fetchers canonicalize legacy arm names (LEGACY_ALIAS) at the point of
+// storage so every render function can assume only canonical EXP_KEYS names.
+function _canonicalizeArm(r) {
+    const arm = LEGACY_ALIAS[r.arm] ?? r.arm;
+    return arm === r.arm ? r : { ...r, arm };
+}
+
 async function _fetchTimeline() {
     const data = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/experiment-timeline?window=${_state.wmaWindow}`).then(r=>r.json());
-    _state.timelineData = data.rows;
-    _state.armEpisodeCounts = data.armEpisodeCounts || {};
+    _state.timelineData = (data.rows || []).map(_canonicalizeArm);
+    // Also canonicalize the armEpisodeCounts keys
+    const raw = data.armEpisodeCounts || {};
+    const merged = {};
+    for (const [arm, n] of Object.entries(raw)) {
+        const canon = LEGACY_ALIAS[arm] ?? arm;
+        merged[canon] = (merged[canon] || 0) + n;
+    }
+    _state.armEpisodeCounts = merged;
 }
 async function _fetchMetrics() {
     const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/experiment-metrics`).then(r=>r.json());
-    _state.metricsData = rows;
+    // Merge duplicate arm rows (e.g. htn_mcts + physio_mps_mcts → physio_mps_mcts)
+    const merged = {};
+    for (const r of (rows || []).map(_canonicalizeArm)) {
+        const key = `${r.arm}|${r.run_id}`;
+        if (!merged[key]) { merged[key] = { ...r }; }
+        else {
+            // Sum episode counts, weighted-average rates
+            const a = merged[key], b = r;
+            const totalN = (a.total_episodes || 0) + (b.total_episodes || 0);
+            if (totalN > 0) {
+                a.mean_reward    = ((a.mean_reward    || 0) * (a.total_episodes || 0) + (b.mean_reward    || 0) * (b.total_episodes || 0)) / totalN;
+                a.goal_rate      = ((a.goal_rate      || 0) * (a.total_episodes || 0) + (b.goal_rate      || 0) * (b.total_episodes || 0)) / totalN;
+                a.mean_stress_auc= ((a.mean_stress_auc|| 0) * (a.total_episodes || 0) + (b.mean_stress_auc|| 0) * (b.total_episodes || 0)) / totalN;
+            }
+            a.total_episodes = totalN;
+        }
+    }
+    _state.metricsData = Object.values(merged);
 }
 async function _fetchSimStats() {
     try { const r = await fetch(`${config.ORCHESTRATOR_URL}/api/analysis/stats`); if (r.ok) _state.simStats = await r.json(); } catch { _state.simStats = null; }
 }
 async function _fetchScenarioGoals() {
-    try { const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/scenario-goal-rates`).then(r=>r.json()); _state.scenarioGoalData = rows; } catch { _state.scenarioGoalData = null; }
+    try {
+        const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/scenario-goal-rates`).then(r=>r.json());
+        // Merge legacy arm rows into canonical arms
+        const merged = {};
+        for (const r of (rows || []).map(_canonicalizeArm)) {
+            const key = `${r.arm}|${r.scenario_id}`;
+            if (!merged[key]) { merged[key] = { ...r }; }
+            else {
+                const a = merged[key], b = r;
+                const totalN = (a.episode_count || 0) + (b.episode_count || 0);
+                a.goal_rate = totalN ? ((a.goal_rate || 0) * (a.episode_count || 0) + (b.goal_rate || 0) * (b.episode_count || 0)) / totalN : 0;
+                a.episode_count = totalN;
+            }
+        }
+        _state.scenarioGoalData = Object.values(merged);
+    } catch { _state.scenarioGoalData = null; }
 }
 async function _fetchPhysio() {
-    try { const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/physio-reward`).then(r=>r.json()); _state.physioData = rows; } catch { _state.physioData = null; }
+    try { const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/physio-reward`).then(r=>r.json()); _state.physioData = (rows || []).map(_canonicalizeArm); } catch { _state.physioData = null; }
 }
 async function _fetchCritFail() {
-    try { const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/critical-failures`).then(r=>r.json()); _state.critFailData = rows; } catch { _state.critFailData = null; }
+    try {
+        const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/critical-failures`).then(r=>r.json());
+        const merged = {};
+        for (const r of (rows || []).map(_canonicalizeArm)) {
+            const key = `${r.arm}|${r.scenario_id}`;
+            if (!merged[key]) { merged[key] = { ...r }; }
+            else {
+                merged[key].total_episodes  = (merged[key].total_episodes  || 0) + (r.total_episodes  || 0);
+                merged[key].failed_episodes = (merged[key].failed_episodes || 0) + (r.failed_episodes || 0);
+            }
+        }
+        _state.critFailData = Object.values(merged);
+    } catch { _state.critFailData = null; }
 }
 async function _fetchRewardComponents() {
     try {
@@ -157,7 +228,9 @@ function _renderAll() {
     _renderCritFailStats();
     _renderCritFailChart();
     _renderMetricBars();
+    _renderCostCharts();
     _renderPhysioScatter();
+    _renderSensorComparison();
 }
 
 // -- Helpers ------------------------------------------------------------------
@@ -179,8 +252,29 @@ function _destroyChart(id) {
 // No whitespace is introduced for idle periods between runs.
 // missing_arm_slot=true rows are shown as tiny error markers (red ?) to
 // distinguish "arm fell behind because of errors" from "arm simply hasn't run yet".
+//
+// Legacy arms (htn_mcts, hysteresis_prompt) are merged into their canonical
+// counterparts before building datasets so the full historical data is visible.
+
+// Shared zoom/pan config applied to every line chart.
+const _ZOOM_PLUGIN = {
+    zoom:  { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+    pan:   { enabled: true, mode: 'x' },
+    limits: { x: { min: 'original', max: 'original' } },
+};
+
+function _mergeRows(rows) {
+    if (!rows?.length) return rows;
+    return rows.map(r => {
+        const canonical = LEGACY_ALIAS[r.arm];
+        if (!canonical) return r;
+        return { ...r, arm: canonical, _legacy: true };
+    });
+}
+
 function _buildLineDatasets(rows, yKey, wmaKey) {
     const datasets = [];
+    // timelineData is already canonical; no per-call merging needed
     for (const [arm, meta] of Object.entries(EXP_META)) {
         if (!_state.activeExperiments.has(arm)) continue;
         const ep = rows.filter(r => r.arm === arm);
@@ -204,7 +298,7 @@ function _buildLineDatasets(rows, yKey, wmaKey) {
         });
 
         datasets.push({
-            label: meta.label,
+            label: meta.shortLabel,
             data,
             borderColor: meta.color, backgroundColor: 'transparent',
             borderWidth: 2.5, pointRadius: 0, tension: 0.3,
@@ -229,14 +323,27 @@ function _buildLineDatasets(rows, yKey, wmaKey) {
     return datasets;
 }
 
-// Restart annotations ? now on episode-index axis
+// Restart annotations — episode-index axis
+// Only two kinds of markers are shown:
+//   1. Grey dashed vertical line at each run_restart boundary (code change / restart)
+//   2. Amber vertical line labelled "STOP" where STOP_AT_CHECKPOINT was honoured
+// Periodic checkpoint bars (every N episodes) were removed — they provided no
+// analytical signal and cluttered the chart at high episode counts.
+//
+// Additionally, a bold purple "NEW EXPERIMENTS" line is drawn at the episode
+// boundary where the 6-experiment redesign begins (first episode with a new ARM string).
+// This makes the train-then-continue boundary visually unambiguous.
 function _buildRestartAnnotations() {
     const annotations = {};
+    const LEGACY_ARMS = new Set(Object.keys(LEGACY_ALIAS));
+    const NEW_ARMS    = new Set(EXP_KEYS);
 
     // ── Run-restart lines (grey dashed) ──────────────────────────────────────
     for (const [arm] of Object.entries(EXP_META)) {
         if (!_state.activeExperiments.has(arm)) continue;
-        const ep = (_state.timelineData || []).filter(r => r.arm === arm);
+        const allRows = _state.timelineData?.episodes || _state.timelineData || [];
+        // timelineData is already canonical
+        const ep = allRows.filter(r => r.arm === arm);
         ep.forEach((r, i) => {
             if (r.run_restart && i > 0) {
                 const key = `restart_${arm}_${i}`;
@@ -249,45 +356,30 @@ function _buildRestartAnnotations() {
         });
     }
 
-    // ── Checkpoint lines (per-arm coloured, thin dotted) ─────────────────────
-    // Each checkpoint is keyed to an episode index within that arm's sequence.
-    // We map (arm, episode_abs) → global_episode_idx using the timeline data.
-    const ckpts = _state.checkpointEvents || [];
+    // ── STOP-at-checkpoint lines (amber, labelled) ───────────────────────────
+    const ckpts = (_state.checkpointEvents || []).filter(ck => ck.stopped);
     if (ckpts.length) {
-        // Build a lookup: arm → sorted list of global_episode_idx values
-        const armIdx = {};
-        for (const [arm] of Object.entries(EXP_META)) {
-            armIdx[arm] = (_state.timelineData || [])
-                .filter(r => r.arm === arm)
-                .map((r, i) => ({ globalIdx: i + 1, absEp: r.cumulative_reward })); // we'll use episode order
-        }
-        // For each checkpoint event, find the closest global_episode_idx
-        // by matching the arm's episode count at that checkpoint.
+        const allRows = _state.timelineData?.episodes || _state.timelineData || [];
+        const mergedRows = allRows; // already canonical
         const armAbsEpMap = {};
         for (const [arm] of Object.entries(EXP_META)) {
-            armAbsEpMap[arm] = (_state.timelineData || [])
-                .filter(r => r.arm === arm);
+            armAbsEpMap[arm] = mergedRows.filter(r => r.arm === arm);
         }
         ckpts.forEach((ck, ci) => {
-            if (!_state.activeExperiments.has(ck.arm)) return;
-            const armRows = armAbsEpMap[ck.arm] || [];
-            // ck.episode is the arm-local episode count at the checkpoint
-            // global_episode_idx in timeline is also 1-based per-arm
+            const canonArm = LEGACY_ALIAS[ck.arm] ?? ck.arm;
+            if (!_state.activeExperiments.has(canonArm)) return;
+            const armRows = armAbsEpMap[canonArm] || [];
             const xVal = Math.min(ck.episode, armRows.length);
             if (xVal < 1) return;
-            const meta  = EXP_META[ck.arm];
-            const color = ck.stopped ? '#f59e0b' : meta?.color || '#888';
-            const dash  = ck.stopped ? [8, 4] : [2, 4];
-            const width = ck.stopped ? 2 : 1;
-            annotations[`ckpt_${ck.arm}_${ci}`] = {
+            annotations[`stop_${canonArm}_${ci}`] = {
                 type: 'line', scaleID: 'x', value: xVal,
-                borderColor: color, borderWidth: width, borderDash: dash,
+                borderColor: '#f59e0b', borderWidth: 2, borderDash: [8, 4],
                 label: {
-                    display: ck.stopped,
+                    display: true,
                     content: 'STOP',
                     position: 'start',
                     font: { size: 9 },
-                    color,
+                    color: '#f59e0b',
                     backgroundColor: 'transparent',
                     padding: 2,
                 },
@@ -295,10 +387,24 @@ function _buildRestartAnnotations() {
         });
     }
 
+    // ── Legacy → new experiment rename boundary (gray solid line) ────────────
+    // Drawn at the x position where legacy data ends and new arm name begins,
+    // for each arm that has legacy data folded in.
+    const allRows = _state.timelineData?.episodes || _state.timelineData || [];
+    for (const [legacyArm, canonArm] of Object.entries(LEGACY_ALIAS)) {
+        if (!_state.activeExperiments.has(canonArm)) continue;
+        const legacyCount = allRows.filter(r => r.arm === legacyArm).length;
+        if (legacyCount > 0 && allRows.some(r => r.arm === canonArm)) {
+            annotations[`legacy_boundary_${canonArm}`] = {
+                type: 'line', scaleID: 'x', value: legacyCount,
+                borderColor: '#9ca3af', borderWidth: 1.5, borderDash: [0, 0],
+                label: { display: false },
+            };
+        }
+    }
+
     return annotations;
 }
-
-// Lag badge: rendered below chart canvases to indicate which arm is furthest ahead
 function _renderLagBadges(containerId) {
     const el = document.getElementById(containerId);
     if (!el) return;
@@ -323,22 +429,24 @@ function _renderLagBadges(containerId) {
 function _renderSimOverview() {
     const el = document.getElementById('simulation-overview-stats');
     if (!el) return;
-    const dbRows = _state.metricsData;
-    const total = dbRows?.reduce((a, r) => a + (r.total_episodes || 0), 0) ?? 0;
-    const runs  = new Set(dbRows?.map(r => r.run_id) ?? []).size;
+    // metricsData is already canonical (merged in _fetchMetrics)
+    const dbRows = _state.metricsData || [];
+    const total = dbRows.reduce((a, r) => a + (r.total_episodes || 0), 0);
+    const runs  = new Set(dbRows.map(r => r.run_id)).size;
     let peakSmoothed = 0;
-    _state.timelineData?.forEach(r => { if (r.smoothed_reward > peakSmoothed) peakSmoothed = r.smoothed_reward; });
-    const goalSum   = dbRows?.reduce((a, r) => a + (r.goal_rate || 0) * (r.total_episodes || 0), 0) ?? 0;
-    const goalRate  = total ? (goalSum / total * 100).toFixed(1) + '%' : '?';
+    (_state.timelineData || []).forEach(r => { if ((r.smoothed_reward || 0) > peakSmoothed) peakSmoothed = r.smoothed_reward; });
+    const goalSum  = dbRows.reduce((a, r) => a + (r.goal_rate || 0) * (r.total_episodes || 0), 0);
+    const goalRate = total ? (goalSum / total * 100).toFixed(1) + '%' : '?';
+    const activeExpCount = EXP_KEYS.filter(k => dbRows.some(r => r.arm === k)).length;
     el.innerHTML = `
         <div class="stat-card"><span class="stat-value">${total}</span><span class="stat-label">Training Episodes</span></div>
         <div class="stat-card"><span class="stat-value">${runs}</span><span class="stat-label">Training Runs</span></div>
         <div class="stat-card"><span class="stat-value">${goalRate}</span><span class="stat-label">Overall Goal Rate</span></div>
         <div class="stat-card" title="Peak ${_state.wmaWindow}-episode Weighted Moving Average of cumulative per-turn reward">
             <span class="stat-value">${peakSmoothed.toFixed(2)}</span>
-            <span class="stat-label">Peak WMA Reward ?</span>
+            <span class="stat-label">Peak WMA Reward ⓘ</span>
         </div>
-        <div class="stat-card"><span class="stat-value">${EXP_KEYS.length}</span><span class="stat-label">Experiments</span></div>
+        <div class="stat-card"><span class="stat-value">${activeExpCount}</span><span class="stat-label">Active Experiments</span></div>
     `;
 }
 
@@ -346,6 +454,7 @@ function _renderSimOverview() {
 function _renderRewardStatsTable() {
     const el = document.getElementById('reward-stats-table');
     if (!el || !_state.timelineData?.length) return;
+    // timelineData is already canonicalized by _fetchTimeline
     const rows = _filterByDuration(_state.timelineData) ?? [];
     const stats = EXP_KEYS.map(arm => {
         const ep = rows.filter(r => r.arm === arm);
@@ -419,6 +528,7 @@ function _renderLearningCurves() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 annotation: { annotations: _buildRestartAnnotations() },
+                zoom: _ZOOM_PLUGIN,
                 tooltip: {
                     callbacks: {
                         footer(items) {
@@ -468,6 +578,7 @@ function _renderGoalRateChart() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 annotation: { annotations: _buildRestartAnnotations() },
+                zoom: _ZOOM_PLUGIN,
                 tooltip: {
                     callbacks: {
                         label: item => `${item.dataset.label}: ${(item.parsed.y * 100).toFixed(1)}%`,
@@ -500,6 +611,7 @@ function _renderCritFailRateChart() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 annotation: { annotations: _buildRestartAnnotations() },
+                zoom: _ZOOM_PLUGIN,
                 tooltip: {
                     callbacks: {
                         label: item => `${item.dataset.label}: ${(item.parsed.y * 100).toFixed(1)}%`,
@@ -532,6 +644,7 @@ function _renderStressAucChart() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 annotation: { annotations: _buildRestartAnnotations() },
+                zoom: _ZOOM_PLUGIN,
                 tooltip: {
                     callbacks: {
                         afterBody: () => ['', '↑ Higher = calmer patient throughout the session'],
@@ -659,30 +772,67 @@ function _renderScenarioGoalRates() {
     if (typeof Chart === 'undefined') return;
     const canvas = _destroyChart('scenario-goal-chart');
     if (!canvas) return;
+    // scenarioGoalData is already canonical from _fetchScenarioGoals
     const rows = _state.scenarioGoalData;
     if (!rows?.length) return;
+
     const scenarios = [...new Set(rows.map(r => r.scenario_id))].sort();
-    const datasets = EXP_KEYS.map(arm => ({
-        label: EXP_META[arm].label,
-        backgroundColor: EXP_META[arm].color + 'BB', borderColor: EXP_META[arm].color, borderWidth: 1.5,
+    const activeArms = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm) && rows.some(r => r.arm === arm));
+
+    // Sort arms by mean goal rate DESC so the smallest bar (worst arm) is drawn last (front).
+    const armMeans = activeArms.map(arm => {
+        const vals = scenarios.map(sc => {
+            const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
+            return r?.goal_rate ?? null;
+        }).filter(v => v != null);
+        return { arm, mean: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0 };
+    });
+    armMeans.sort((a, b) => b.mean - a.mean);  // best arm drawn first (back)
+
+    const datasets = armMeans.map(({ arm }) => ({
+        label: EXP_META[arm].shortLabel,
+        backgroundColor: EXP_META[arm].color + 'BB',
+        borderColor: EXP_META[arm].color,
+        borderWidth: 1.5,
+        borderRadius: 2,
+        // Overlapping bars: all arms share the full category width.
+        // This is identical to the metric bar chart approach.
+        barPercentage:      1.0,
+        categoryPercentage: 0.85,
         _armKey: arm,
-        // Store episode_count per scenario for tooltip
-        _epCounts: scenarios.map(sc => { const row = rows.find(r => r.arm === arm && r.scenario_id === sc); return row?.episode_count ?? 0; }),
-        data: scenarios.map(sc => { const row = rows.find(r => r.arm === arm && r.scenario_id === sc); return row ? Math.round(row.goal_rate*1000)/1000 : null; }),
+        _epCounts: scenarios.map(sc => {
+            const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
+            return r?.episode_count ?? 0;
+        }),
+        data: scenarios.map(sc => {
+            const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
+            return r ? Math.round(r.goal_rate * 1000) / 1000 : null;
+        }),
     }));
-    // Dynamic canvas width for 100+ scenarios
-    const dynamicW = Math.max(600, scenarios.length * 28);
+
+    // Dynamic canvas width: 12px per scenario (was 28px per scenario × N arms).
+    // Overlapping means we no longer scale by arm count.
+    const dynamicW = Math.max(600, scenarios.length * 14);
     canvas.parentElement.style.overflowX = 'auto';
-    canvas.style.width = dynamicW + 'px';
+    canvas.style.width    = dynamicW + 'px';
     canvas.style.minWidth = dynamicW + 'px';
-    canvas.width = dynamicW;
+    canvas.width          = dynamicW;
+
     new Chart(canvas, {
-        type: 'bar', data: { labels: scenarios.map(s=>s.replace(/_/g,' ')), datasets },
+        type: 'bar',
+        data: { labels: scenarios.map(s => s.replace(/_/g, ' ')), datasets },
         options: {
             responsive: false, maintainAspectRatio: false,
-            scales: { x: { ticks:{font:{size:9},maxRotation:55} }, y: { min:0,max:1,title:{display:true,text:'Goal Rate',font:{size:11}},ticks:{callback:v=>(v*100).toFixed(0)+'%'} } },
+            scales: {
+                x: { ticks: { font: { size: 9 }, maxRotation: 55 } },
+                y: {
+                    min: 0, max: 1,
+                    title: { display: true, text: 'Goal Rate', font: { size: 11 } },
+                    ticks: { callback: v => (v * 100).toFixed(0) + '%' },
+                },
+            },
             plugins: {
-                legend: { position:'top', labels:{boxWidth:12,font:{size:11}} },
+                legend: { position: 'top', labels: { boxWidth: 10, font: { size: 11 } } },
                 tooltip: {
                     callbacks: {
                         label: ctx => {
@@ -696,60 +846,74 @@ function _renderScenarioGoalRates() {
             },
         },
     });
-    _renderScenarioRankTable('mean');   // default: show mean ranking
+    _renderScenarioRankTable('mean');
     _wireScenarioRankToggles();
 }
 
 function _renderScenarioRankTable(armKey) {
     const el = document.getElementById('scenario-rank-table');
     if (!el) return;
+    // scenarioGoalData is already canonical from _fetchScenarioGoals
     const rows = _state.scenarioGoalData;
     if (!rows?.length) { el.innerHTML = '<p class="muted">No scenario goal data.</p>'; return; }
 
     const scenarios = [...new Set(rows.map(r => r.scenario_id))];
+    // Only show arms that have at least one data row
+    const armsWithData = EXP_KEYS.filter(arm => rows.some(r => r.arm === arm));
 
-    // Build per-scenario stats
+    // Episode totals per arm (sum across all scenarios)
+    const armTotals = {};
+    armsWithData.forEach(arm => {
+        armTotals[arm] = rows.filter(r => r.arm === arm)
+                             .reduce((s, r) => s + (r.episode_count || 0), 0);
+    });
+
     const tableData = scenarios.map(sc => {
-        const armRows = EXP_KEYS.reduce((acc, arm) => {
+        const armRows = armsWithData.reduce((acc, arm) => {
             const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
             if (r) acc[arm] = { rate: r.goal_rate, n: r.episode_count };
             return acc;
         }, {});
-        const validRates = EXP_KEYS.map(a => armRows[a]?.rate).filter(v => v != null);
-        const meanRate = validRates.length ? validRates.reduce((a,b)=>a+b,0)/validRates.length : null;
+        const validRates = armsWithData.map(a => armRows[a]?.rate).filter(v => v != null);
+        const meanRate = validRates.length ? validRates.reduce((a, b) => a + b, 0) / validRates.length : null;
         return { sc, armRows, meanRate };
     });
 
-    // Sort by selected arm, ascending (worst/0 at top for investigation)
     tableData.sort((a, b) => {
         const va = armKey === 'mean' ? a.meanRate : a.armRows[armKey]?.rate;
         const vb = armKey === 'mean' ? b.meanRate : b.armRows[armKey]?.rate;
-        // Nulls go after 0s but before successes; 0s at top
         if (va == null && vb == null) return 0;
         if (va == null) return 1;
         if (vb == null) return -1;
         return va - vb;
     });
 
-    const fmt = v => v != null ? (v*100).toFixed(1)+'%' : '—';
+    const fmt = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
     const colorCell = (v, arm) => {
         if (v == null) return `<td style="text-align:center;color:var(--gray-400);">—</td>`;
-        const col = EXP_META[arm]?.color ?? '#888';
+        const col     = EXP_META[arm]?.color ?? '#888';
         const opacity = Math.round(20 + v * 70);
-        return `<td style="text-align:center;background:${col}${opacity.toString(16).padStart(2,'0')};font-weight:${v>=0.5?'600':'400'};">${fmt(v)}</td>`;
+        return `<td style="text-align:center;background:${col}${opacity.toString(16).padStart(2, '0')};font-weight:${v >= 0.5 ? '600' : '400'};">${fmt(v)}</td>`;
     };
 
     el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
-        <thead><tr style="background:var(--gray-50);position:sticky;top:0;border-bottom:1px solid var(--gray-200);">
+        <thead>
+          <tr style="background:var(--gray-50);position:sticky;top:0;border-bottom:1px solid var(--gray-200);">
             <th style="text-align:left;padding:5px 8px;">#</th>
             <th style="text-align:left;padding:5px 8px;">Scenario</th>
-            ${EXP_KEYS.map(a=>`<th style="padding:5px 8px;color:${EXP_META[a].color};">${EXP_META[a].shortLabel}</th>`).join('')}
+            ${armsWithData.map(a => `<th style="padding:5px 8px;color:${EXP_META[a].color};">${EXP_META[a].shortLabel}</th>`).join('')}
             <th style="padding:5px 8px;">Mean</th>
-        </tr></thead>
+          </tr>
+          <tr style="background:var(--gray-100);position:sticky;top:28px;border-bottom:2px solid var(--gray-200);font-size:11px;color:var(--gray-500);">
+            <td colspan="2" style="padding:3px 8px;font-style:italic;">Episodes (total incl. legacy)</td>
+            ${armsWithData.map(a => `<td style="text-align:center;padding:3px 8px;">${armTotals[a] ?? 0}</td>`).join('')}
+            <td></td>
+          </tr>
+        </thead>
         <tbody>${tableData.map((d, i) => `<tr style="border-bottom:1px solid var(--gray-100);">
-            <td style="padding:4px 8px;color:var(--gray-500);">${i+1}</td>
+            <td style="padding:4px 8px;color:var(--gray-500);">${i + 1}</td>
             <td style="padding:4px 8px;font-family:monospace;font-size:11px;">${d.sc}</td>
-            ${EXP_KEYS.map(a => colorCell(d.armRows[a]?.rate, a)).join('')}
+            ${armsWithData.map(a => colorCell(d.armRows[a]?.rate, a)).join('')}
             <td style="text-align:center;font-weight:600;">${fmt(d.meanRate)}</td>
         </tr>`).join('')}</tbody>
     </table>`;
@@ -789,15 +953,31 @@ function _renderCritFailChart() {
     const rows = _state.critFailData;
     if (!rows?.length) return;
 
-    // Bar chart: x = scenario, y = failure rate, one bar series per experiment
-    const scenarios = [...new Set(rows.map(r => r.scenario_id))].sort();
-    const datasets = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm)).map(arm => {
+    // All data is already canonicalized by _fetchCritFail
+    const scenarios = [...new Set(rows.map(r => r.scenario_id).filter(Boolean))].sort();
+    if (!scenarios.length) return;
+
+    // Overlapping bars — sort by mean failure rate DESC (worst first = back)
+    const armMeansF = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm) && rows.some(r => r.arm === arm)).map(arm => {
+        const vals = scenarios.map(sc => {
+            const row = rows.find(r => r.arm === arm && r.scenario_id === sc);
+            if (!row || !row.total_episodes) return 0;
+            return row.failed_episodes / row.total_episodes;
+        });
+        return { arm, mean: vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length) };
+    });
+    if (!armMeansF.length) return;
+    armMeansF.sort((a, b) => b.mean - a.mean);
+
+    const datasets = armMeansF.map(({ arm }) => {
         const meta = EXP_META[arm];
         return {
-            label: meta.label,
+            label: meta.shortLabel,
             backgroundColor: meta.color + 'bb',
             borderColor:     meta.color,
             borderWidth: 1,
+            barPercentage:      1.0,
+            categoryPercentage: 0.85,
             _epCounts: scenarios.map(sc => {
                 const row = rows.find(r => r.arm === arm && r.scenario_id === sc);
                 return row ? row.total_episodes : 0;
@@ -805,12 +985,12 @@ function _renderCritFailChart() {
             data: scenarios.map(sc => {
                 const row = rows.find(r => r.arm === arm && r.scenario_id === sc);
                 if (!row || !row.total_episodes) return 0;
-                return Math.round(row.failed_episodes / row.total_episodes * 1000) / 10; // percent
+                return Math.round(row.failed_episodes / row.total_episodes * 1000) / 10;
             }),
         };
     });
 
-    const dynamicW = Math.max(600, scenarios.length * 28);
+    const dynamicW = Math.max(600, scenarios.length * 14);
     canvas.parentElement.style.overflowX = 'auto';
     canvas.style.width = dynamicW + 'px';
     canvas.style.minWidth = dynamicW + 'px';
@@ -961,7 +1141,7 @@ function _renderRewardComponentCharts() {
                 const ep   = byArm[arm];
                 const data = ep.map((r, i) => ({ x: i + 1, y: r[dim.key] != null ? +r[dim.key].toFixed(4) : null }));
                 return {
-                    label: meta.label,
+                    label: meta.shortLabel,
                     data,
                     borderColor:     meta.color,
                     backgroundColor: meta.bg,
@@ -994,8 +1174,9 @@ function _renderRewardComponentCharts() {
 // -- Metric Bar Charts (per-run, overlapping per experiment) ------------------
 function _renderMetricBars() {
     if (typeof Chart === 'undefined') return;
-    const rows = _state.metricsData;
-    if (!rows?.length) return;
+    // metricsData is already canonical from _fetchMetrics
+    const rows = _state.metricsData || [];
+    if (!rows.length) return;
 
     const metrics = [
         { key: 'mean_reward',        label: 'Mean Cumul. Reward',    canvas: 'metric-bar-reward'  },
@@ -1007,9 +1188,15 @@ function _renderMetricBars() {
         { key: 'mean_stress_reward', label: 'Reward: Stress',        canvas: 'metric-bar-rstress' },
         { key: 'mean_trust_reward',  label: 'Reward: Trust',         canvas: 'metric-bar-rtrust'  },
         { key: 'mean_latency_ms',    label: 'Avg Latency (ms)',      canvas: 'metric-bar-latency' },
+        { key: 'cost_usd_total',     label: 'Cost USD/episode',      canvas: 'metric-bar-cost'    },
+        { key: 'llm_calls_total',    label: 'LLM calls/episode',     canvas: 'metric-bar-llmcalls'},
     ];
-    const runIds = [...new Set(rows.map(r => r.run_label?.split('/')[0]?.trim()))].sort();
-    const activeArms = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm));
+    const runIds = [...new Set(rows.map(r => r.run_label?.split('/')[0]?.trim()))].filter(Boolean).sort();
+    // Only show arms that have actual data in this run set (after legacy merge)
+    const activeArms = EXP_KEYS.filter(arm =>
+        _state.activeExperiments.has(arm) && rows.some(r => r.arm === arm)
+    );
+    if (!activeArms.length || !runIds.length) return;
 
     metrics.forEach(({ key, label, canvas: cid }) => {
         const cv = _destroyChart(cid);
@@ -1044,6 +1231,7 @@ function _renderMetricBars() {
                 // Full overlap — all bars occupy the same category slot
                 barPercentage: 0.85,
                 categoryPercentage: 1.0,
+                maxBarThickness: 36,
                 // Lower order = drawn later = on top in Chart.js
                 order: rank,
                 data,
@@ -1057,7 +1245,7 @@ function _renderMetricBars() {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    x: { ticks: { font: { size: 9 } } },
+                    x: { ticks: { font: { size: 9 }, maxRotation: 45 } },
                     y: { beginAtZero: true, ticks: { font: { size: 10 } } },
                 },
                 plugins: {
@@ -1078,6 +1266,75 @@ function _renderMetricBars() {
     });
 }
 
+// -- Cost & LLM Calls Charts ---------------------------------------------------
+function _renderCostCharts() {
+    if (typeof Chart === 'undefined') return;
+    // timelineData is an array of episode rows (same source as learning curves)
+    const rows = _state.timelineData;
+    if (!rows?.length) return;
+
+    // Cost per episode line chart
+    const cvCost = _destroyChart('cost-per-episode-chart');
+    if (cvCost) {
+        const datasets = [];
+        for (const [arm, meta] of Object.entries(EXP_META)) {
+            if (!_state.activeExperiments.has(arm)) continue;
+            const ep = rows.filter(r => r.arm === arm && r.cost_usd_total != null);
+            if (!ep.length) continue;
+            datasets.push({
+                label: meta.shortLabel,
+                data:  ep.map((r, i) => ({ x: i + 1, y: r.cost_usd_total })),
+                borderColor: meta.color, backgroundColor: 'transparent',
+                borderWidth: 2, pointRadius: 0, tension: 0.3,
+            });
+        }
+        if (datasets.length) {
+            new Chart(cvCost, {
+                type: 'line',
+                data: { datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { position: 'top' }, title: { display: true, text: 'Cost per Episode (USD)' } },
+                    scales: { x: { title: { display: true, text: 'Episode #' } }, y: { title: { display: true, text: 'USD' } } },
+                },
+            });
+        }
+    }
+
+    // LLM calls per episode bar chart (stacked by model)
+    const cvCalls = _destroyChart('llm-calls-per-episode-chart');
+    if (cvCalls) {
+        const armData = {};
+        for (const [arm, meta] of Object.entries(EXP_META)) {
+            if (!_state.activeExperiments.has(arm)) continue;
+            const ep = rows.filter(r => r.arm === arm && r.llm_calls_total != null);
+            if (!ep.length) continue;
+            const mean = ep.reduce((s, r) => s + r.llm_calls_total, 0) / ep.length;
+            armData[arm] = { meta, mean };
+        }
+        if (Object.keys(armData).length) {
+            new Chart(cvCalls, {
+                type: 'bar',
+                data: {
+                    labels: Object.values(armData).map(d => d.meta.shortLabel),
+                    datasets: [{
+                        label: 'Mean LLM Calls / Episode',
+                        data: Object.values(armData).map(d => d.mean.toFixed(2)),
+                        backgroundColor: Object.values(armData).map(d => d.meta.color + 'CC'),
+                        borderColor: Object.values(armData).map(d => d.meta.color),
+                        borderWidth: 1.5,
+                    }],
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, title: { display: true, text: 'Mean LLM API Calls per Episode' } },
+                    scales: { y: { title: { display: true, text: 'LLM calls' }, beginAtZero: true } },
+                },
+            });
+        }
+    }
+}
+
 // -- Physio Scatter -----------------------------------------------------------
 function _renderPhysioScatter() {
     if (typeof Chart === 'undefined') return;
@@ -1092,7 +1349,7 @@ function _renderScatter(cid, rows, xKey, yKey, xLabel, yLabel) {
     const datasets = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm)).map(arm => {
         const meta = EXP_META[arm];
         const ep = rows.filter(r => r.arm === arm && r[xKey] != null && r[yKey] != null);
-        return { label: meta.label, backgroundColor: meta.color + '88', borderColor: meta.color, borderWidth: 0.5, pointRadius: 3, data: ep.map(r => ({ x: r[xKey], y: r[yKey] })) };
+        return { label: meta.shortLabel, backgroundColor: meta.color + '88', borderColor: meta.color, borderWidth: 0.5, pointRadius: 3, data: ep.map(r => ({ x: r[xKey], y: r[yKey] })) };
     });
     new Chart(cv, {
         type: 'scatter', data: { datasets },
@@ -1240,6 +1497,165 @@ function _renderConversation({ episode, turns, transcript }) {
 
     html += '</div>';
     return html;
+}
+
+// -- Sensor vs No-Sensor Comparison -------------------------------------------
+// The split is determined by physio_source in the scenario, not the arm name:
+//   • "sensor" / "simulated" scenarios  → sensor group
+//   • scenario_id ending "_no_sensor"   → no-sensor group (physio_source="none")
+//   • oldschool arm                     → no-sensor group (ignores physio always)
+//
+// This lets us compare across ALL arms for the same scenario type, rather than
+// just contrasting the oldschool arm vs the rest.
+
+function _renderSensorComparison() {
+    const container = document.getElementById('sensor-comparison-section');
+    if (!container) return;
+    // Both datasets are already canonical from fetchers
+    const goalRows = _state.scenarioGoalData || [];
+    const tlRows   = _filterByDuration(_state.timelineData) || [];
+
+    if (!goalRows.length && !tlRows.length) {
+        container.innerHTML = '<p class="muted" style="padding:8px;">No data yet.</p>';
+        return;
+    }
+
+    // Classify each (arm, scenario_id) pair:
+    //   no-sensor: scenario ends in _no_sensor OR arm is oldschool
+    //   sensor: everything else
+    const _isNoSensor = (arm, scenarioId) =>
+        arm === 'oldschool' || (typeof scenarioId === 'string' && scenarioId.endsWith('_no_sensor'));
+
+    // Aggregate by base scenario (strip _no_sensor suffix for grouping)
+    const _baseScenario = sid =>
+        typeof sid === 'string' && sid.endsWith('_no_sensor')
+            ? sid.slice(0, -'_no_sensor'.length)
+            : sid;
+
+    const baseScenarios = [...new Set(goalRows.map(r => _baseScenario(r.scenario_id)))].sort();
+
+    const sensorGoal   = baseScenarios.map(base => {
+        const relevant = goalRows.filter(r => !_isNoSensor(r.arm, r.scenario_id)
+            && _baseScenario(r.scenario_id) === base);
+        if (!relevant.length) return null;
+        const totalN = relevant.reduce((s, r) => s + (r.episode_count || 0), 0);
+        return totalN ? relevant.reduce((s, r) => s + (r.goal_rate || 0) * (r.episode_count || 0), 0) / totalN : null;
+    });
+    const noSensorGoal = baseScenarios.map(base => {
+        const relevant = goalRows.filter(r => _isNoSensor(r.arm, r.scenario_id)
+            && _baseScenario(r.scenario_id) === base);
+        if (!relevant.length) return null;
+        const totalN = relevant.reduce((s, r) => s + (r.episode_count || 0), 0);
+        return totalN ? relevant.reduce((s, r) => s + (r.goal_rate || 0) * (r.episode_count || 0), 0) / totalN : null;
+    });
+
+    // Overall episode counts & mean metrics per group
+    const sensorEps   = tlRows.filter(r => !_isNoSensor(r.arm, r.scenario_id)).length;
+    const noSensorEps = tlRows.filter(r => _isNoSensor(r.arm, r.scenario_id)).length;
+
+    const _groupMean = (rows, key) => {
+        const vals = rows.map(r => r[key]).filter(v => v != null);
+        return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) : null;
+    };
+    const sensorMeanReward   = _groupMean(tlRows.filter(r => !_isNoSensor(r.arm, r.scenario_id)), 'cumulative_reward');
+    const noSensorMeanReward = _groupMean(tlRows.filter(r => _isNoSensor(r.arm, r.scenario_id)), 'cumulative_reward');
+    const sensorStressAuc    = _groupMean(tlRows.filter(r => !_isNoSensor(r.arm, r.scenario_id)), 'stress_auc');
+    const noSensorStressAuc  = _groupMean(tlRows.filter(r => _isNoSensor(r.arm, r.scenario_id)), 'stress_auc');
+
+    const fmt = (v, dec=3) => v != null ? v.toFixed(dec) : '—';
+    const cardHtml = [
+        { label: 'With Sensor (physio_source=sensor/simulated)', color: '#4285F4',
+          eps: sensorEps, reward: sensorMeanReward, stress: sensorStressAuc },
+        { label: 'No Sensor (_no_sensor suffix or oldschool)', color: '#34A853',
+          eps: noSensorEps, reward: noSensorMeanReward, stress: noSensorStressAuc },
+    ].map(g => `
+        <div class="stat-card" style="border-left:4px solid ${g.color};">
+            <span class="stat-value" style="color:${g.color};">${g.eps}</span>
+            <span class="stat-label">${g.label}<br>
+            <small>Mean Reward: ${fmt(g.reward)} &nbsp;|&nbsp; Stress AUC: ${fmt(g.stress)}</small></span>
+        </div>`).join('');
+
+    container.innerHTML = `
+        <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">${cardHtml}</div>
+        <p style="font-size:11px;color:var(--gray-500);margin:0 0 6px;">
+            Goal rate per base scenario — sensor vs no-sensor variants.
+            Each bar is a weighted average across all arms that ran that scenario type.
+            Scroll/pinch to zoom.
+        </p>
+        <div style="overflow-x:auto;">
+            <canvas id="sensor-comparison-chart" height="220"></canvas>
+        </div>`;
+
+    if (typeof Chart === 'undefined') return;
+    const cv = document.getElementById('sensor-comparison-chart');
+    if (!cv) return;
+    const dynamicW = Math.max(400, baseScenarios.length * 26);
+    cv.parentElement.style.overflowX = 'auto';
+    cv.style.width    = dynamicW + 'px';
+    cv.style.minWidth = dynamicW + 'px';
+    cv.width          = dynamicW;
+
+    const hasAnyData = sensorGoal.some(v => v != null) || noSensorGoal.some(v => v != null);
+    if (!hasAnyData) {
+        cv.parentElement.innerHTML = '<p class="muted" style="padding:8px 0;">No scenario goal data available yet.</p>';
+        return;
+    }
+
+    new Chart(cv, {
+        type: 'bar',
+        data: {
+            labels: baseScenarios.map(s => s.replace(/_/g, ' ')),
+            datasets: [
+                {
+                    label: 'Sensor / Simulated',
+                    data: sensorGoal,
+                    backgroundColor: 'rgba(66,133,244,0.7)',
+                    borderColor: '#4285F4', borderWidth: 1.5,
+                    barPercentage: 0.8, categoryPercentage: 0.7,
+                },
+                {
+                    label: 'No Sensor',
+                    data: noSensorGoal,
+                    backgroundColor: 'rgba(52,168,83,0.7)',
+                    borderColor: '#34A853', borderWidth: 1.5,
+                    barPercentage: 0.8, categoryPercentage: 0.7,
+                },
+            ],
+        },
+        options: {
+            responsive: false, maintainAspectRatio: false,
+            scales: {
+                x: { ticks: { font: { size: 9 }, maxRotation: 55 } },
+                y: {
+                    min: 0, max: 1,
+                    title: { display: true, text: 'Goal Rate', font: { size: 11 } },
+                    ticks: { callback: v => (v * 100).toFixed(0) + '%' },
+                },
+            },
+            plugins: {
+                legend: { position: 'top', labels: { boxWidth: 10, font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => ctx.parsed.y != null
+                            ? ` ${ctx.dataset.label}: ${(ctx.parsed.y * 100).toFixed(1)}%`
+                            : ` ${ctx.dataset.label}: no data`,
+                        footer: items => {
+                            const base = baseScenarios[items[0]?.dataIndex];
+                            if (!base) return [];
+                            const sCnt = goalRows.filter(r => !_isNoSensor(r.arm, r.scenario_id)
+                                && _baseScenario(r.scenario_id) === base)
+                                .reduce((s, r) => s + (r.episode_count || 0), 0);
+                            const nsCnt = goalRows.filter(r => _isNoSensor(r.arm, r.scenario_id)
+                                && _baseScenario(r.scenario_id) === base)
+                                .reduce((s, r) => s + (r.episode_count || 0), 0);
+                            return [`sensor n=${sCnt}  |  no-sensor n=${nsCnt}`];
+                        },
+                    },
+                    mode: 'index', intersect: false,
+                },
+            },
+        },
+    });
 }
 
 function _escapeHtml(str) {

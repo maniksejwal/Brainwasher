@@ -108,17 +108,21 @@ export async function finaliseBenchmarkEpisode(episode_id, metrics = {}) {
         trust_delta_final, tokens_scout, tokens_maverick, latency_ms_mean, summary,
         // Python sends n_turns; JS simulation sends turn_count — accept both
         turn_count, n_turns,
+        // Cost and LLM metrics (new 6-exp columns)
+        cost_usd_total, llm_calls_total, hysteresis_zone_changes,
     } = metrics;
     const resolvedTurnCount = turn_count ?? n_turns ?? 0;
     await d.run(
         `UPDATE htn_benchmark_episodes
          SET completed_at=?, turn_count=?, cumulative_reward=?, stress_auc=?,
              goal_achieved=?, turns_to_goal=?, trust_delta_final=?,
-             tokens_scout=?, tokens_maverick=?, latency_ms_mean=?, summary=?
+             tokens_scout=?, tokens_maverick=?, latency_ms_mean=?,
+             cost_usd_total=?, llm_calls_total=?, hysteresis_zone_changes=?, summary=?
          WHERE episode_id=?`,
         [Date.now(), resolvedTurnCount, cumulative_reward ?? null, stress_auc ?? null,
          goal_achieved ? 1 : 0, turns_to_goal ?? null, trust_delta_final ?? null,
          tokens_scout ?? 0, tokens_maverick ?? 0, latency_ms_mean ?? null,
+         cost_usd_total ?? null, llm_calls_total ?? 0, hysteresis_zone_changes ?? 0,
          summary ? JSON.stringify(summary) : null, episode_id]
     );
     // Update parent run episode count
@@ -145,6 +149,8 @@ export async function recordBenchmarkTurn(episode_id, run_id, arm, turn) {
         judge_clinical, judge_empathy, judge_safety, judge_goal, judge_strategy,
         linguistic_stress, discrepancy_flag,
         tokens_scout, tokens_maverick, latency_ms,
+        // Cost and hysteresis columns (new 6-exp columns)
+        cost_usd_turn, llm_calls_turn, hysteresis_zone, hysteresis_zone_name,
     } = turn;
     await d.run(
         `INSERT INTO htn_benchmark_turns
@@ -152,8 +158,9 @@ export async function recordBenchmarkTurn(episode_id, run_id, arm, turn) {
           hrv_ms, stress_label, stress_index,
           reward_stress, reward_trust, reward_goal, reward_info, reward_consistency,
           judge_clinical, judge_empathy, judge_safety, judge_goal, judge_strategy,
-          linguistic_stress, discrepancy_flag, tokens_scout, tokens_maverick, latency_ms)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          linguistic_stress, discrepancy_flag, tokens_scout, tokens_maverick, latency_ms,
+          cost_usd_turn, llm_calls_turn, hysteresis_zone, hysteresis_zone_name)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [episode_id, run_id, arm, turn_number, action ?? null, response ?? null,
          hrv_ms ?? null, stress_label ?? null, stress_index ?? null,
          reward_stress ?? null, reward_trust ?? null, reward_goal ?? null,
@@ -161,7 +168,9 @@ export async function recordBenchmarkTurn(episode_id, run_id, arm, turn) {
          judge_clinical ?? null, judge_empathy ?? null, judge_safety ?? null,
          judge_goal ?? null, judge_strategy ?? null,
          linguistic_stress ?? null, discrepancy_flag ? 1 : 0,
-         tokens_scout ?? 0, tokens_maverick ?? 0, latency_ms ?? null]
+         tokens_scout ?? 0, tokens_maverick ?? 0, latency_ms ?? null,
+         cost_usd_turn ?? null, llm_calls_turn ?? 1,
+         hysteresis_zone ?? null, hysteresis_zone_name ?? null]
     );
 }
 

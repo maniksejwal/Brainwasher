@@ -84,8 +84,27 @@ _NODE_URL       = os.environ.get("NODE_SERVER_URL", "http://localhost:8247")
 def _get_arm_classes():
     global _ARM_CLASSES
     if _ARM_CLASSES is None:
-        from tensornets.a3c.arms import Arm1Worker, Arm2Worker, Arm3Worker
-        _ARM_CLASSES = [Arm1Worker, Arm2Worker, Arm3Worker]
+        from tensornets.a3c.arms import (
+            PhysioLLMWorker,
+            PhysioLLMCoTMCTSWorker,
+            PhysioMPSMCTSWorker,
+            InertialPhysioMPSMCTSWorker,
+            InertialPhysioLLMCoTMCTSWorker,
+            OldschoolWorker,
+            InertialHPVOOTPhysioMPSMCTSWorker,
+            InertialHPVOOTPhysioLLMCoTMCTSWorker,
+        )
+        # Ordered by experiment number: 0-7
+        _ARM_CLASSES = [
+            PhysioLLMWorker,                       # Exp 0: physio_llm
+            PhysioLLMCoTMCTSWorker,                # Exp 1: physio_llm_cot_mcts
+            PhysioMPSMCTSWorker,                   # Exp 2: physio_mps_mcts
+            InertialPhysioMPSMCTSWorker,           # Exp 3: inertial_physio_mps_mcts
+            InertialPhysioLLMCoTMCTSWorker,        # Exp 4: inertial_physio_llm_cot_mcts
+            OldschoolWorker,                       # Exp 5: oldschool
+            InertialHPVOOTPhysioMPSMCTSWorker,     # Exp 6: inertial_hpvoot_physio_mps_mcts
+            InertialHPVOOTPhysioLLMCoTMCTSWorker,  # Exp 7: inertial_hpvoot_physio_llm_cot_mcts
+        ]
     return _ARM_CLASSES
 
 
@@ -145,13 +164,20 @@ def _db_finalise_episode(db_episode_id: Optional[str], summary: dict) -> None:
     _db_post("/episode/finalise", {
         "episode_id": db_episode_id,
         "metrics": {
-            "n_turns":           summary.get("n_turns", 0),
-            "cumulative_reward": summary.get("cumulative_reward", 0.0),
-            "mean_reward":       summary.get("mean_reward", 0.0),
-            "goal_achieved":     gm.get("goal_achieved", False),
-            "turns_to_goal":     gm.get("turns_to_goal"),
-            "stress_auc":        gm.get("stress_auc"),
-            "trust_delta_final": gm.get("trust_delta_final"),
+            "n_turns":                summary.get("n_turns", 0),
+            "cumulative_reward":      summary.get("cumulative_reward", 0.0),
+            "mean_reward":            summary.get("mean_reward", 0.0),
+            "goal_achieved":          gm.get("goal_achieved", False),
+            "turns_to_goal":          gm.get("turns_to_goal"),
+            "stress_auc":             gm.get("stress_auc"),
+            "trust_delta_final":      gm.get("trust_delta_final"),
+            # Cost and LLM metrics
+            "cost_usd_total":         gm.get("cost_usd_total"),
+            "llm_calls_total":        gm.get("llm_calls_total", 0),
+            "hysteresis_zone_changes": gm.get("hysteresis_zone_changes", 0),
+            # Token totals for backwards-compat latency/token columns
+            "tokens_scout":           gm.get("tokens_scout_total", 0),
+            "tokens_maverick":        gm.get("tokens_maverick_total", 0),
         },
     })
 
@@ -519,6 +545,10 @@ def train(
                 s["db_run_id"], s["name"], scenario.get("scenario_id", ""), ep_uuid
             )
 
+            # Reset the HysteresisGate between episodes for inertial workers.
+            if hasattr(thread_worker, "reset_gate"):
+                thread_worker.reset_gate()
+
             try:
                 summary = thread_worker.run_episode(
                     scenario      = scenario,
@@ -545,13 +575,13 @@ def train(
             _db_finalise_episode(db_episode_id or summary.get("episode_id"), summary)
 
             log.info(
-                "arm=%-18s  w%d  ep=%04d/%d  scenario=%-35s  reward=%.3f  turns=%d  "
-                "| htn=%d old=%d hyst=%d  total_new=%d/%d",
+                "arm=%-32s  w%d  ep=%04d/%d  scenario=%-35s  reward=%.3f  turns=%d  "
+                "| ep_counts=%s  total_new=%d/%d",
                 s["name"], worker_idx, arm_ep, target,
                 scenario.get("scenario_id", "?")[:35],
                 summary.get("mean_reward", 0.0),
                 summary.get("n_turns", 0),
-                arm_states[0]["ep_count"], arm_states[1]["ep_count"], arm_states[2]["ep_count"],
+                ",".join(str(a["ep_count"]) for a in arm_states),
                 sum(max(0, a["ep_count"] - a["start_ep"]) for a in arm_states),
                 episodes_per_arm * n_arms,
             )
@@ -734,6 +764,18 @@ def train(
     for t in threads:
         t.join()
 
+    # ── Post a "cap stop" checkpoint event for each arm so the dashboard renders
+    # a visible STOP marker at the final episode of this training session.
+    # This fires when stop_event was set by the global cap (_claim_global_slot)
+    # rather than by STOP_AT_CHECKPOINT (which already posts its own checkpoint).
+    stop_sentinel = Path(run_dir) / "STOP_AT_CHECKPOINT"
+    if not stop_sentinel.exists() and _global_ep_cap is not None:
+        for s in arm_states:
+            ep_now = s["ep_count"]
+            if ep_now > 0:
+                _db_post_checkpoint(s["db_run_id"], s["name"], ep_now, stopped=True)
+                log.info("Global-cap stop checkpoint posted: arm=%s ep=%d", s["name"], ep_now)
+
     # Save final state for all arms
     for s in arm_states:
         _save_run_state(s["state_path"], {
@@ -747,7 +789,6 @@ def train(
         })
 
     # Clean up sentinel if present
-    stop_sentinel = Path(run_dir) / "STOP_AT_CHECKPOINT"
     if stop_sentinel.exists():
         stop_sentinel.unlink(missing_ok=True)
         log.info("All arm states saved. Exiting cleanly.")
@@ -773,8 +814,8 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--prior",            default=None,          help="Path to bandit_actor_prior.json (I4 output)")
     p.add_argument("--scenario-url",     default=None,          help="Override tensornets server URL for /api/scenarios")
     p.add_argument("--patient-mode",     default="llm", choices=["llm", "scripted"], help="Patient generation mode")
-    p.add_argument("--arms",             type=int, nargs="+", default=[1, 2, 3], choices=[1, 2, 3],
-                   help="Which experiments to include (e.g. --arms 1 3)")
+    p.add_argument("--arms",             type=int, nargs="+", default=[1, 2, 3], choices=[1, 2, 3, 4, 5, 6, 7, 8],
+                   help="Which experiments to run by number (1=Exp0 … 8=Exp7)")
     p.add_argument("--workers",          type=int, default=1,
                    help="Parallel worker threads per experiment (default 1; use 3 for real A3C)")
     p.add_argument("--total-episodes",   type=int, default=None,

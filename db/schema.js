@@ -372,7 +372,30 @@ export async function migrateDatabase(db) {
             }
         }
 
-    } catch (error) {
+        // htn_benchmark_episodes: cost and hysteresis tracking columns (added for 6-exp redesign)
+        const benchEpCols = {
+            cost_usd_total:          'REAL',
+            llm_calls_total:         'INTEGER',
+            hysteresis_zone_changes: 'INTEGER',
+        };
+        for (const [col, colType] of Object.entries(benchEpCols)) {
+            try {
+                await db.run(`ALTER TABLE htn_benchmark_episodes ADD COLUMN ${col} ${colType}`);
+            } catch (_e) { /* column already exists — SQLite throws on duplicate ADD */ }
+        }
+
+        // htn_benchmark_turns: per-turn cost and hysteresis columns
+        const benchTurnCols = {
+            cost_usd_turn:        'REAL',
+            llm_calls_turn:       'INTEGER',
+            hysteresis_zone:      'INTEGER',
+            hysteresis_zone_name: 'TEXT',
+        };
+        for (const [col, colType] of Object.entries(benchTurnCols)) {
+            try {
+                await db.run(`ALTER TABLE htn_benchmark_turns ADD COLUMN ${col} ${colType}`);
+            } catch (_e) { /* column already exists */ }
+        }
         console.warn('[Schema Migration] Error migrating database:', error.message);
     }
 }
@@ -610,6 +633,9 @@ export async function addHTNBenchmarkTables(db) {
             tokens_scout    INTEGER DEFAULT 0,
             tokens_maverick INTEGER DEFAULT 0,
             latency_ms_mean REAL,
+            cost_usd_total  REAL,            -- total USD cost for all LLM calls in episode
+            llm_calls_total INTEGER DEFAULT 0, -- total LLM API calls in episode
+            hysteresis_zone_changes INTEGER DEFAULT 0, -- zone transitions fired (Exp 3/4 only)
             started_at      INTEGER NOT NULL,
             completed_at    INTEGER,
             summary         TEXT   -- JSON: final state snapshot
@@ -640,7 +666,11 @@ export async function addHTNBenchmarkTables(db) {
             discrepancy_flag INTEGER DEFAULT 0,
             tokens_scout    INTEGER DEFAULT 0,
             tokens_maverick INTEGER DEFAULT 0,
-            latency_ms      INTEGER
+            latency_ms      INTEGER,
+            cost_usd_turn   REAL,            -- estimated USD cost for this single turn
+            llm_calls_turn  INTEGER DEFAULT 1, -- LLM API calls this turn (1 normal; 2 CoT)
+            hysteresis_zone INTEGER,         -- locked zone id at this turn (Exp 3/4 only)
+            hysteresis_zone_name TEXT        -- locked zone name (Exp 3/4 only)
         );
 
         CREATE INDEX IF NOT EXISTS idx_bench_runs_arm     ON htn_benchmark_runs(arm);

@@ -82,6 +82,8 @@ class TurnScoreResult:
     repetition_penalty: float [0, 1] — 0=no repetition, 1=severe semantic repetition
     info_novelty: float [0, 1] — how new is the information in this turn?
     info_relevance: float [0, 1] — how relevant to session goals?
+    scorer_tokens_in: int — prompt tokens for the scorer LLM call (0 if heuristic carry)
+    scorer_tokens_out: int — completion tokens for the scorer LLM call
     """
     integer_scores:    list[tuple[str, int, str]] = field(default_factory=list)
     continuous_score:  float = 0.5
@@ -90,6 +92,8 @@ class TurnScoreResult:
     repetition_penalty: float = 0.0
     info_novelty:      float = 0.5
     info_relevance:    float = 0.5
+    scorer_tokens_in:  int   = 0
+    scorer_tokens_out: int   = 0
 
     @property
     def info_gain(self) -> float:
@@ -323,7 +327,12 @@ class A3CScorer:
             self._fail_count += 1
             raise RuntimeError(f"A3CScorer: LLM call failed: {exc}") from exc
 
-        return self._parse_raw(raw)
+        result = self._parse_raw(raw)
+        # Attach real token counts from the backend response
+        usage = resp.get("usage", {})
+        result.scorer_tokens_in  = usage.get("input_tokens",  0)
+        result.scorer_tokens_out = usage.get("output_tokens", 0)
+        return result
 
     def should_terminate_early(
         self,

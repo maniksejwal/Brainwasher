@@ -118,7 +118,52 @@ ENTROPY_COEF: float   = 0.01        # entropy bonus weight (prevents collapse)
 MAX_TURNS: int        = 50          # episode truncation; individual scenarios may override
 
 
-# ── Reward dimensionality (must match HTN judge output schema) ────────────────
+# ── Per-turn LLM cost estimator ───────────────────────────────────────────────
+
+def _compute_turn_cost(tokens: dict) -> float:
+    """
+    Estimate USD cost for one turn given its token dict from generate_response().
+
+    Token dict keys:
+        scout        : total scout tokens (in + out combined, if in/out not split)
+        scout_in     : scout input tokens (optional; used when split is available)
+        scout_out    : scout output tokens (optional)
+        maverick     : total maverick tokens (in + out combined)
+        maverick_in  : maverick input tokens (optional)
+        maverick_out : maverick output tokens (optional)
+
+    Uses the same per-token rates as cost_tracker.py / judge.py.
+    Raises ValueError if tokens dict contains unrecognised model keys
+    beyond {scout, maverick, scout_in, scout_out, maverick_in, maverick_out}.
+    """
+    from tensornets.a3c.cost_tracker import _cost_usd
+
+    known_keys = {"scout", "scout_in", "scout_out", "maverick", "maverick_in", "maverick_out"}
+    unknown = set(tokens.keys()) - known_keys
+    if unknown:
+        raise ValueError(
+            f"_compute_turn_cost: unrecognised token keys {unknown}. "
+            f"Add the model to cost_tracker.py with its per-token rate."
+        )
+
+    cost = 0.0
+
+    # Scout
+    if "scout_in" in tokens or "scout_out" in tokens:
+        cost += _cost_usd("scout", tokens.get("scout_in", 0), tokens.get("scout_out", 0))
+    elif "scout" in tokens:
+        # Combined total — split 40/60 as typical prompt/completion ratio for short calls
+        total = tokens["scout"]
+        cost += _cost_usd("scout", int(total * 0.4), int(total * 0.6))
+
+    # Maverick
+    if "maverick_in" in tokens or "maverick_out" in tokens:
+        cost += _cost_usd("maverick", tokens.get("maverick_in", 0), tokens.get("maverick_out", 0))
+    elif tokens.get("maverick", 0) > 0:
+        total = tokens["maverick"]
+        cost += _cost_usd("maverick", int(total * 0.4), int(total * 0.6))
+
+    return round(cost, 8)
 
 REWARD_DIMS = ("stress", "trust_delta", "goal_progress", "info_coverage",
                "consistency", "safety", "count_penalty")
@@ -791,6 +836,8 @@ class EpisodeTurn:
     update_metrics:   dict
     tokens:           dict[str, int]
     latency_ms:       float
+    cost_usd:         float = 0.0  # estimated USD cost for all LLM calls this turn
+    llm_calls:        int   = 1    # number of LLM API calls this turn
     discrepancy:      Any = None
 
 
@@ -1532,6 +1579,24 @@ class A3CWorker:
                 update_metrics = update_metrics,
                 tokens         = resp_dict.get("tokens", {}),
                 latency_ms     = round(latency_ms, 1),
+                cost_usd       = (
+                    _compute_turn_cost(resp_dict.get("tokens", {}))
+                    # Add scorer cost (0 on heuristic carry turns)
+                    + _compute_turn_cost({
+                        "scout_in":  score_result.scorer_tokens_in,
+                        "scout_out": score_result.scorer_tokens_out,
+                    })
+                    # Add patient LLM cost (0 on scripted turns)
+                    + _compute_turn_cost({
+                        "scout_in":  getattr(speaker, "_last_tokens_in",  0),
+                        "scout_out": getattr(speaker, "_last_tokens_out", 0),
+                    })
+                ),
+                llm_calls      = (
+                    resp_dict.get("llm_calls", 1)
+                    + (1 if score_result.scorer_tokens_out > 0 else 0)   # scorer used LLM
+                    + (1 if getattr(speaker, "_last_tokens_out", 0) > 0 else 0)  # patient used LLM
+                ),
                 discrepancy    = resp_dict.get("discrepancy", None),
             )
             self._episode_log.append(turn_record)
@@ -1668,6 +1733,16 @@ class A3CWorker:
                 1 for c in dialogue_state.commitments if c.is_clinical
             ) if dialogue_state else 0,
             "escalation_requested": dialogue_state.escalation_requested if dialogue_state else False,
+            # Cost and LLM call metrics (aggregated from EpisodeTurn records)
+            "cost_usd_total":      round(sum(t.cost_usd for t in self._episode_log), 6),
+            "llm_calls_total":     sum(t.llm_calls for t in self._episode_log),
+            "tokens_scout_total":  sum(t.tokens.get("scout", 0) for t in self._episode_log),
+            "tokens_maverick_total": sum(t.tokens.get("maverick", 0) for t in self._episode_log),
+            # Hysteresis gate metrics (non-zero only for Exp 3/4)
+            "hysteresis_zone_changes": sum(
+                1 for t in self._episode_log
+                if t.state.get("hysteresis_changed", False)
+            ),
         }
         # Attach session memory for multi-session continuity
         summary["session_memory"] = {

@@ -12,6 +12,8 @@
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <!-- Environment Config (Injected during deploy) -->
     <script src="env.js"></script>
 </head>
@@ -270,9 +272,16 @@
                         <span style="font-weight:600;font-size:13px;color:var(--gray-700);">Benchmarks</span>
                         <span id="bench-refresh-spinner" style="display:none;font-size:11px;color:var(--gray-500);">⏳ loading…</span>
                         <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                            <button class="secondary bench-exp-btn" data-exp-toggle="htn_mcts" style="font-size:11px;padding:4px 10px;border-left:4px solid #4285F4;">Exp 1 MCTS</button>
-                            <button class="secondary bench-exp-btn" data-exp-toggle="oldschool" style="font-size:11px;padding:4px 10px;border-left:4px solid #34A853;">Exp 2 JS</button>
-                            <button class="secondary bench-exp-btn" data-exp-toggle="hysteresis_prompt" style="font-size:11px;padding:4px 10px;border-left:4px solid #EA4335;">Exp 3 Hyst</button>
+                            <!-- New 6-experiment filter toggles -->
+                            <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm"                   style="font-size:11px;padding:4px 10px;border-left:4px solid #EA4335;">Exp 0 PhysioLLM</button>
+                            <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm_cot_mcts"          style="font-size:11px;padding:4px 10px;border-left:4px solid #FF6D00;">Exp 1 CoT-MCTS</button>
+                            <button class="secondary bench-exp-btn" data-exp-toggle="physio_mps_mcts"              style="font-size:11px;padding:4px 10px;border-left:4px solid #4285F4;">Exp 2 MPS-MCTS</button>
+                            <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_mps_mcts"     style="font-size:11px;padding:4px 10px;border-left:4px solid #9C27B0;">Exp 3 Inertial-MPS</button>
+                            <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_llm_cot_mcts" style="font-size:11px;padding:4px 10px;border-left:4px solid #00897B;">Exp 4 Inertial-CoT</button>
+                            <button class="secondary bench-exp-btn" data-exp-toggle="oldschool"                    style="font-size:11px;padding:4px 10px;border-left:4px solid #34A853;">Exp 5 Oldschool</button>
+                            <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_mps_mcts"     style="font-size:11px;padding:4px 10px;border-left:4px solid #E91E8C;">Exp 6 HPVOOT-MPS</button>
+                            <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_llm_cot_mcts" style="font-size:11px;padding:4px 10px;border-left:4px solid #FF9800;">Exp 7 HPVOOT-CoT</button>
+                            <!-- Legacy arms (htn_mcts, hysteresis_prompt) are merged into Exp 0/2 at fetch time -->
                         </div>
                         <select id="duration-filter" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid var(--gray-300);">
                             <option value="0">All time</option>
@@ -396,13 +405,29 @@
                         <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
                             <h4 style="margin:0;font-size:13px;color:var(--gray-700);">Scenarios Ranked by Goal Rate</h4>
                             <div style="display:flex;gap:6px;flex-wrap:wrap;" id="scenario-rank-toggles">
-                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="htn_mcts">Exp 1 HTN</button>
-                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="oldschool">Exp 2 Old</button>
-                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="hysteresis_prompt">Exp 3 Hyst</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_llm">E0</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_llm_cot_mcts">E1</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_mps_mcts">E2</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_physio_mps_mcts">E3</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_physio_llm_cot_mcts">E4</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="oldschool">E5</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_hpvoot_physio_mps_mcts">E6</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_hpvoot_physio_llm_cot_mcts">E7</button>
                                 <button class="primary"   style="font-size:11px;padding:3px 10px;" data-arm="mean">Mean</button>
                             </div>
                         </div>
                         <div id="scenario-rank-table" style="max-height:320px;overflow-y:auto;font-size:12px;"></div>
+                    </div>
+
+                    <!-- Sensor vs No-Sensor Comparison -->
+                    <div style="margin-bottom:16px;border-top:1px solid var(--gray-200);padding-top:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">
+                            Sensor vs No-Sensor Comparison
+                            <span style="font-size:11px;font-weight:400;color:var(--gray-500);margin-left:6px;">
+                                Physio-aware arms vs Exp 5 (no sensor) — weighted goal rate per scenario
+                            </span>
+                        </h4>
+                        <div id="sensor-comparison-section"></div>
                     </div>
 
                     <!-- Critical failures -->
@@ -427,6 +452,8 @@
                             <div style="position:relative;height:180px;"><canvas id="metric-bar-rstress"></canvas></div>
                             <div style="position:relative;height:180px;"><canvas id="metric-bar-rtrust"></canvas></div>
                             <div style="position:relative;height:180px;"><canvas id="metric-bar-latency"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-cost"></canvas></div>
+                            <div style="position:relative;height:180px;"><canvas id="metric-bar-llmcalls"></canvas></div>
                         </div>
                     </div>
 
@@ -448,15 +475,37 @@
 
                     <div id="benchmarks-dashboard"></div>
 
+                    <!-- Cost & LLM Calls Charts -->
+                    <div style="margin-bottom:20px;border-top:1px solid var(--gray-200);padding-top:16px;">
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Cost & LLM Usage</h4>
+                        <p style="font-size:11px;color:var(--gray-500);margin:0 0 10px;">USD cost per episode and LLM API calls per episode across all experiments. CoT-MCTS experiments (Exp 1, 4) use 2 calls/turn (Maverick CoT + Scout generation). MPS-MCTS (Exp 2, 3) use 1 Scout call/turn.</p>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                            <div>
+                                <div style="font-size:11px;color:var(--gray-600);margin-bottom:4px;">Episode Cost (USD)</div>
+                                <div style="position:relative;height:220px;"><canvas id="cost-per-episode-chart"></canvas></div>
+                            </div>
+                            <div>
+                                <div style="font-size:11px;color:var(--gray-600);margin-bottom:4px;">Mean LLM Calls / Episode</div>
+                                <div style="position:relative;height:220px;"><canvas id="llm-calls-per-episode-chart"></canvas></div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Episode conversation viewer -->
                     <div style="margin-bottom:16px;border-top:1px solid var(--gray-200);padding-top:16px;">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Episode Conversation Viewer</h4>
                         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
                             <select id="conv-exp-select" style="font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid var(--gray-300);">
                                 <option value="">-- Select Experiment --</option>
-                                <option value="htn_mcts">Exp 1 — HTN + MCTS</option>
-                                <option value="oldschool">Exp 2 — LLM Agents w/o Physiology</option>
-                                <option value="hysteresis_prompt">Exp 3 — Hysteresis Prompt</option>
+                                <option value="physio_llm">Exp 0 — PhysioLLM</option>
+                                <option value="physio_llm_cot_mcts">Exp 1 — PhysioLLM CoT-MCTS</option>
+                                <option value="physio_mps_mcts">Exp 2 — PhysioMPS-MCTS</option>
+                                <option value="inertial_physio_mps_mcts">Exp 3 — Inertial PhysioMPS-MCTS</option>
+                                <option value="inertial_physio_llm_cot_mcts">Exp 4 — Inertial PhysioLLM CoT</option>
+                                <option value="oldschool">Exp 5 — Oldschool (no physio)</option>
+                                <option value="inertial_hpvoot_physio_mps_mcts">Exp 6 — Inertial HPVOOT MPS-MCTS</option>
+                                <option value="inertial_hpvoot_physio_llm_cot_mcts">Exp 7 — Inertial HPVOOT CoT-MCTS</option>
+                                <!-- Legacy arm names (htn_mcts, hysteresis_prompt) redirect to their canonical arms in the DB -->
                             </select>
                             <select id="conv-scenario-select" style="font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid var(--gray-300);">
                                 <option value="">-- All Scenarios --</option>

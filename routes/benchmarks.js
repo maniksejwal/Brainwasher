@@ -179,8 +179,8 @@ router.get('/experiment-timeline', async (req, res) => {
             windowSize: parseInt(window) || 20,
         });
         const armEpisodeCounts = rows._armEpisodeCounts || {};
-        // strip the non-array property before sending
-        const cleanRows = rows.filter ? rows : Array.from(rows);
+        // strip the non-array property before sending; use explicit field on object
+        const cleanRows = Array.isArray(rows) ? rows : Array.from(rows);
         res.json({ rows: cleanRows, armEpisodeCounts });
     } catch (e) {
         res.status(500).json({ error: e.message });

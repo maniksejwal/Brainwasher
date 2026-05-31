@@ -1,44 +1,40 @@
 """
-tensornets.a3c.arms — The three independent A3C training experiments.
+tensornets.a3c.arms -- Six independent A3C training experiments.
 
-Terminology note
+Experiment index
 ----------------
-These are three **independent training experiments** (or environments), not
-statistical arms of a single randomised controlled trial.  Each experiment
-has its own separate training loop, checkpoint directory, and episode log.
-They are compared as experimental conditions in a controlled ablation study.
+Exp 0  PhysioLLMWorker                (physio_llm)
+       Physio state as natural-language text in system prompt. No MCTS, no dead-band.
+       Formerly: PhysioLLMWorker / hysteresis_prompt.
 
-The identifier "arm" is retained in code (ARM class attribute, DB column) for
-backwards-compatibility with existing run data.  Use "experiment" when referring
-to these in documentation, reports, or user-facing text.
+Exp 1  PhysioLLMCoTMCTSWorker         (physio_llm_cot_mcts)
+       Same physio prompt as Exp 0, but action selection via Maverick chain-of-thought
+       over all 51 ACTION_TAXONOMY candidates. LLM-as-planner; cost baseline for Exp 2.
 
-J5  Arm1Worker / Experiment 1 (htn_mcts)
-    : HTN + MCTS — full tensornets bridge (tensornetsBridge → FastAPI).
-J6  Arm2Worker / Experiment 2 (oldschool)
-    : Old-school production JS via HTTP (CompanionCoordinator endpoint).
-J7  Arm3Worker / Experiment 3 (hysteresis_prompt)
-    : Hysteresis-in-prompt — physio state as text, no MPS / no MCTS.
+Exp 2  PhysioMPSMCTSWorker            (physio_mps_mcts)
+       Full HTN + Matrix Product State MCTS via tensornets bridge.
+       M_trunc constraint steers Scout token generation.
+       Formerly: PhysioMPSMCTSWorker / htn_mcts.
 
-Each experiment class overrides A3CWorker.generate_response() and sets ARM = <arm_id>.
+Exp 3  InertialPhysioMPSMCTSWorker    (inertial_physio_mps_mcts)
+       Exp 2 + HysteresisGate 5-zone dead-band. Zone and streak injected into
+       MCTS payload and system prompt. Most capable experiment.
 
-Experiment 1 is the *treatment*.  Experiments 2 and 3 are baselines.
-The same Actor / Critic parameters are shared across all experiments within a run
-so the policy improves from all three streams simultaneously.
+Exp 4  InertialPhysioLLMCoTMCTSWorker (inertial_physio_llm_cot_mcts)
+       Exp 1 + HysteresisGate. CoT-MCTS with inertial zone awareness.
 
-Design notes (from A3C_COMPARISON_DESIGN.md §1)
------------------------------------------------
-- Arm 1: calls /mcts/best_action + /physio/history/append on the tensornets
-  FastAPI server (localhost:8765).  Falls back to Actor.select() if the
-  bridge is unavailable so training is never blocked by a missing Python server.
-- Arm 2: posts to the production Node.js CompanionCoordinator endpoint
-  (localhost:3000 or COMPANION_URL env var).  Reward is synthetic (HTN judge
-  not available inline for JS arm) — placeholder reward is returned and later
-  updated from the stored htn_benchmark_turns rows.
-- Arm 3: enriches the prompt with the hysteresis state text (same as
-  longitudinalHint in the JS system) before calling Scout directly via the
-  tensornets Bedrock backend.  No MPS, no MCTS projection.
+Exp 5  OldschoolWorker                (oldschool)
+       Production Node.js CompanionCoordinator via HTTP. No physio.
+       Formerly: OldschoolWorker / oldschool.
 
-All three arms write the same jsonl schema (EpisodeTurn) for K1–K5 analysis.
+Capability order (ascending): 5 < 0 < 1 < 4 < 2 < 3
+
+Exception policy
+----------------
+No silent fallbacks in Exp 0-4. Failures raise RuntimeError or ValueError so the
+episode is recorded as failed and bugs are immediately surfaced.
+
+All experiments write the same EpisodeTurn jsonl schema for cross-experiment comparison.
 """
 
 from __future__ import annotations
@@ -113,7 +109,7 @@ def _http_post(url: str, payload: dict, timeout: float = 10.0) -> dict:
 
 # ── J5: Arm 1 — HTN + MCTS ────────────────────────────────────────────────────
 
-class Arm1Worker(A3CWorker):
+class PhysioMPSMCTSWorker(A3CWorker):
     """
     J5: Full HTN + MCTS arm.
 
@@ -132,7 +128,7 @@ class Arm1Worker(A3CWorker):
     that turn only).  Fallback turns are flagged in the log.
     """
 
-    ARM = "htn_mcts"
+    ARM = "physio_mps_mcts"
 
     # Default system prompt template.  Updated by PromptOptimizer when improvement
     # threshold is not met.  Template vars: {action}, {stress_index}, {stress_bucket}.
@@ -172,7 +168,7 @@ class Arm1Worker(A3CWorker):
         physio = state.physio or {}
         if not physio:
             raise ValueError(
-                f"Arm1Worker (htn_mcts): scenario '{scenario.get('scenario_id', '?')}' "
+                f"PhysioMPSMCTSWorker (physio_mps_mcts): scenario '{scenario.get('scenario_id', '?')}' "
                 f"has no physiological state (state.physio is empty). "
                 f"Add initial_physio to the scenario in routes/training.js or the "
                 f"scenario source file. Do not use silent defaults — invented physio "
@@ -248,8 +244,9 @@ class Arm1Worker(A3CWorker):
                 log.warning("Arm1: physio/history/append failed (non-fatal): %s", append_exc)
 
         # Step 3 + 4: generate response (Scout, with M_trunc if available)
-        response_text = self._call_scout(state, action, scenario, m_trunc=m_trunc)
-        scout_tokens  = len(response_text.split()) * 2   # rough token estimate
+        scout_result  = self._call_scout(state, action, scenario, m_trunc=m_trunc)
+        response_text = scout_result["text"]
+        scout_tokens  = {"scout_in": scout_result["tokens_in"], "scout_out": scout_result["tokens_out"]}
 
         # Step 5: synthetic reward from stress delta (with real-time conversation correction)
         next_stress = _stress_after_response(
@@ -266,7 +263,7 @@ class Arm1Worker(A3CWorker):
             "response":           response_text,
             "reward":             reward,
             "judge":              {},    # filled offline by HTN judge batch run
-            "tokens":             {"scout": scout_tokens, "maverick": 0},
+            "tokens":             scout_tokens,
             "latency_ms":         round(latency_ms, 1),
             "next_stress_index":  next_stress,
             "next_physio":        {**state.physio, "stress_index": next_stress},
@@ -356,14 +353,19 @@ class Arm1Worker(A3CWorker):
             text = resp.get("text", "").strip()
             if not text:
                 raise ValueError("Empty response from /llm/scout")
-            return text
+            # Return text + real token counts from the backend.
+            # If the backend does not expose usage, raise — we need real counts for cost tracking.
+            usage = resp.get("usage", {})
+            tokens_in  = usage.get("input_tokens",  0)
+            tokens_out = usage.get("output_tokens", 0)
+            return {"text": text, "tokens_in": tokens_in, "tokens_out": tokens_out}
         except Exception as exc:
-            raise RuntimeError(f"Arm1: Scout call failed: {exc}") from exc
+            raise RuntimeError(f"PhysioMPSMCTSWorker: Scout call failed: {exc}") from exc
 
 
 # ── J6: Arm 2 — Old-school production JS ─────────────────────────────────────
 
-class Arm2Worker(A3CWorker):
+class OldschoolWorker(A3CWorker):
     """
     J6: Old-school production JS arm.
 
@@ -444,7 +446,7 @@ class Arm2Worker(A3CWorker):
 
 # ── J7: Arm 3 — Hysteresis-in-prompt ─────────────────────────────────────────
 
-class Arm3Worker(A3CWorker):
+class PhysioLLMWorker(A3CWorker):
     """
     J7: Hysteresis-in-prompt arm.
 
@@ -460,7 +462,7 @@ class Arm3Worker(A3CWorker):
     LLM the physio state in natural language?" (A3C_COMPARISON_DESIGN §1 Arm 3)
     """
 
-    ARM = "hysteresis_prompt"
+    ARM = "physio_llm"
 
     # Default system prompt template.
     # Template vars: {hysteresis_ctx}, {action}.
@@ -512,7 +514,7 @@ class Arm3Worker(A3CWorker):
         prompt = f"{history_text}\nUSER: {user_msg}\nASSISTANT:"
 
         response_text = ""
-        scout_tokens  = 0
+        scout_tokens  = {}
         try:
             resp = _http_post(
                 f"{_TENSORNETS_URL}/llm/scout",
@@ -522,9 +524,13 @@ class Arm3Worker(A3CWorker):
             response_text = resp.get("text", "").strip()
             if not response_text:
                 raise ValueError("Empty response from /llm/scout")
-            scout_tokens = len(response_text.split()) * 2
+            usage = resp.get("usage", {})
+            scout_tokens = {
+                "scout_in":  usage.get("input_tokens",  0),
+                "scout_out": usage.get("output_tokens", 0),
+            }
         except Exception as exc:
-            raise RuntimeError(f"Arm3: Scout call failed: {exc}") from exc
+            raise RuntimeError(f"PhysioLLMWorker: Scout call failed: {exc}") from exc
 
         latency_ms = (time.perf_counter() - t_start) * 1000.0
         next_stress = _stress_after_response(
@@ -538,7 +544,7 @@ class Arm3Worker(A3CWorker):
             "response":          response_text,
             "reward":            reward,
             "judge":             {},
-            "tokens":            {"scout": scout_tokens, "maverick": 0},
+            "tokens":            scout_tokens,
             "latency_ms":        round(latency_ms, 1),
             "next_stress_index": next_stress,
             "next_physio":       {**state.physio, "stress_index": next_stress},
@@ -935,3 +941,819 @@ def _stress_label(stress_index: float) -> str:
     if stress_index < 0.65:
         return "moderate stress"
     return "high stress"
+
+
+# ── Exp 1: PhysioLLMCoTMCTSWorker -- physio_llm_cot_mcts ─────────────────────
+
+class PhysioLLMCoTMCTSWorker(PhysioLLMWorker):
+    """
+    Exp 1: Physio-in-prompt + Maverick chain-of-thought action selection.
+
+    Differs from Exp 0 (PhysioLLMWorker) in one way:
+      Instead of using actor.select() to pick the action, a Maverick LLM call
+      evaluates ALL 51 ACTION_TAXONOMY candidates and returns the top-ranked
+      action with a justification chain (CoT).
+
+    This arm is a deliberate cost/capability baseline for Exp 2 (PhysioMPSMCTSWorker):
+      - CoT call uses Maverick (more expensive than Scout)
+      - Every turn has 2 LLM calls: CoT (Maverick) + generation (Scout)
+      - No MPS tree search; reasoning is done entirely in language space
+
+    The purpose is to answer: "Can an LLM reason its way to the same action
+    quality as a structured MPS-MCTS planner, and at what cost premium?"
+
+    No fallbacks. If the CoT call fails, RuntimeError propagates to train.py
+    which records the episode as failed and moves on.
+    """
+
+    ARM = "physio_llm_cot_mcts"
+
+    # CoT prompt template.  Variables: {physio_ctx}, {actions_list}, {scenario_goal},
+    # {last_patient_message}, {zone_ctx} (empty string for this class).
+    _COT_PROMPT_TEMPLATE = (
+        "You are a clinical AI planner choosing the best therapeutic action.\n\n"
+        "Physiological context:\n{physio_ctx}\n\n"
+        "{zone_ctx}"
+        "Session goal: {scenario_goal}\n"
+        "Last patient message: {last_patient_message}\n\n"
+        "Available actions (choose exactly one):\n{actions_list}\n\n"
+        "Reason step-by-step (3-5 sentences), then output your final answer as:\n"
+        "CHOSEN_ACTION: <action_name>\n"
+        "CONFIDENCE: <0.0-1.0>\n"
+        "REASONING: <one sentence summary>"
+    )
+
+    def _run_cot_action_selection(
+        self,
+        state: TurnState,
+        scenario: dict,
+    ) -> tuple[str, dict]:
+        """
+        Call Maverick to select the best action from ACTION_TAXONOMY via CoT.
+
+        Returns
+        -------
+        action : str
+            The selected action name.
+        cot_meta : dict
+            Raw CoT output including confidence and reasoning, for logging.
+
+        Raises
+        ------
+        RuntimeError
+            If the Maverick call fails or returns no parseable CHOSEN_ACTION.
+        """
+        from tensornets.a3c.action_bandit import ACTION_TAXONOMY
+
+        physio_ctx = _build_hysteresis_context(state, scenario)
+        actions_list = "\n".join(
+            f"  {i+1:2d}. {name}" for i, name in enumerate(ACTION_TAXONOMY)
+        )
+        last_patient_msg = _last_user_message(state)
+
+        prompt = self._COT_PROMPT_TEMPLATE.format(
+            physio_ctx=physio_ctx,
+            zone_ctx="",
+            scenario_goal=scenario.get("session_goal", ""),
+            last_patient_message=last_patient_msg,
+            actions_list=actions_list,
+        )
+
+        try:
+            resp = _http_post(
+                f"{_TENSORNETS_URL}/llm/maverick",
+                {"system": "You are a clinical AI planner.", "prompt": prompt, "max_tokens": 512},
+                timeout=40.0,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"PhysioLLMCoTMCTSWorker: Maverick CoT call failed: {exc}. "
+                f"Check that the tensornets FastAPI server is running on {_TENSORNETS_URL}."
+            ) from exc
+
+        text = resp.get("text", "").strip()
+        if not text:
+            raise RuntimeError(
+                "PhysioLLMCoTMCTSWorker: Maverick returned empty CoT response. "
+                "This is a server-side error — check FastAPI logs."
+            )
+
+        # Parse CHOSEN_ACTION from the structured response
+        chosen_action = None
+        for line in text.splitlines():
+            if line.strip().startswith("CHOSEN_ACTION:"):
+                candidate = line.split(":", 1)[1].strip()
+                if candidate in ACTION_TAXONOMY:
+                    chosen_action = candidate
+                    break
+
+        if chosen_action is None:
+            raise RuntimeError(
+                f"PhysioLLMCoTMCTSWorker: CoT response did not contain a valid "
+                f"CHOSEN_ACTION from ACTION_TAXONOMY.\nRaw response:\n{text[:400]}"
+            )
+
+        tokens_in  = resp.get("usage", {}).get("input_tokens",  0)
+        tokens_out = resp.get("usage", {}).get("output_tokens", 0)
+        latency_ms = resp.get("latency_ms", 0.0)
+
+        return chosen_action, {
+            "cot_text":       text,
+            "tokens_in":      tokens_in,
+            "tokens_out":     tokens_out,
+            "latency_ms":     latency_ms,
+        }
+
+    def generate_response(
+        self,
+        state: TurnState,
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        """
+        Override: replace actor.select() with Maverick CoT, then call Scout for generation.
+
+        The `action` argument from the caller (actor.select() output) is discarded;
+        CoT selects its own action from the full taxonomy.
+        """
+        t_start = time.perf_counter()
+
+        # ── Step 1: CoT action selection (Maverick) ───────────────────────────
+        chosen_action, cot_meta = self._run_cot_action_selection(state, scenario)
+
+        # ── Step 2: Scout generation (same as PhysioLLMWorker) ───────────────
+        # Temporarily override action to the CoT-selected one
+        result = super().generate_response(
+            state,
+            chosen_action,        # CoT overrides actor.select()
+            scenario,
+            conversation_correction=conversation_correction,
+        )
+
+        # ── Step 3: Accumulate CoT token and cost metadata ────────────────────
+        existing_scout_tokens = result.get("tokens", {}).get("scout", 0)
+
+        result["tokens"] = {
+            "scout":           existing_scout_tokens,
+            "maverick":        cot_meta["tokens_in"] + cot_meta["tokens_out"],
+            "maverick_in":     cot_meta["tokens_in"],
+            "maverick_out":    cot_meta["tokens_out"],
+        }
+        result["latency_ms"] = round((time.perf_counter() - t_start) * 1000.0, 1)
+        result["llm_calls"]  = 2     # CoT call + Scout generation
+        result["cot_action"] = chosen_action
+        result["cot_reasoning"] = cot_meta.get("cot_text", "")[:200]   # truncate for log
+        return result
+
+
+# ── Exp 3: InertialPhysioMPSMCTSWorker -- inertial_physio_mps_mcts ───────────
+
+class InertialPhysioMPSMCTSWorker(PhysioMPSMCTSWorker):
+    """
+    Exp 3: Full MPS-MCTS + HysteresisGate 5-zone dead-band. Most capable experiment.
+
+    Extends PhysioMPSMCTSWorker by adding a HysteresisGate that prevents strategy
+    flip-flopping.  The gate's zone and streak are injected into:
+      1. The MCTS payload (physio_state.hysteresis_zone, physio_state.hysteresis_streak)
+         so the MPS tree search is aware of the sustained stress tier.
+      2. The system prompt (via stress_bucket override) so the Scout generation
+         reflects the locked zone rather than the instantaneous stress_index.
+
+    The gate is created fresh at episode start (caller must call reset_gate() before
+    each episode, or use a new worker instance per episode).
+
+    No fallbacks. If HysteresisGate raises ValueError (invalid stress_index), the
+    episode fails. This enforces that stress_index is always in [0, 1].
+    """
+
+    ARM = "inertial_physio_mps_mcts"
+
+    _DEFAULT_SYSTEM_PROMPT = (
+        "You are a clinical companion. Current action strategy: {action}. "
+        "Patient stress zone: {zone_name} (stress={stress_index:.2f}, "
+        "zone_streak={zone_streak} turns). "
+        "Respond with one empathetic, concise message (2-3 sentences)."
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._gate: "HysteresisGate | None" = None
+
+    def reset_gate(self) -> None:
+        """Create a fresh HysteresisGate for a new episode."""
+        from tensornets.a3c.hysteresis_gate import HysteresisGate
+        self._gate = HysteresisGate()
+
+    def generate_response(
+        self,
+        state: TurnState,
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        from tensornets.a3c.hysteresis_gate import HysteresisGate
+
+        # Gate must be initialised — create lazily if caller forgot to call reset_gate()
+        if self._gate is None:
+            self._gate = HysteresisGate()
+
+        # Advance the gate — raises ValueError if stress_index outside [0, 1]
+        zone, zone_changed = self._gate.update(state.stress_index)
+        zone_name   = self._gate.zone_name
+        zone_streak = self._gate.streak
+
+        # ── Inject zone into MCTS physio payload ──────────────────────────────
+        # We achieve this by temporarily enriching state.physio before the
+        # parent's generate_response reads it for the MCTS call.
+        enriched_physio = dict(state.physio or {})
+        enriched_physio["hysteresis_zone"]   = zone
+        enriched_physio["hysteresis_zone_name"] = zone_name
+        enriched_physio["hysteresis_streak"] = zone_streak
+        enriched_physio["zone_changed"]      = zone_changed
+
+        # Build a transient state copy with enriched physio and zone-locked stress_bucket
+        from dataclasses import replace
+        enriched_state = replace(
+            state,
+            physio        = enriched_physio,
+            stress_bucket = zone_name,   # override bucket with locked zone name
+        )
+
+        result = super().generate_response(
+            enriched_state,
+            action,
+            scenario,
+            conversation_correction=conversation_correction,
+        )
+
+        # Attach gate metadata for logging and DB
+        result["hysteresis_zone"]    = zone
+        result["hysteresis_zone_name"] = zone_name
+        result["hysteresis_streak"]  = zone_streak
+        result["hysteresis_changed"] = zone_changed
+        result["hysteresis_gate"]    = self._gate.to_dict()
+        return result
+
+
+# ── Exp 4: InertialPhysioLLMCoTMCTSWorker -- inertial_physio_llm_cot_mcts ────
+
+class InertialPhysioLLMCoTMCTSWorker(PhysioLLMCoTMCTSWorker):
+    """
+    Exp 4: CoT-MCTS action selection + HysteresisGate 5-zone dead-band.
+
+    Combines the CoT planner from PhysioLLMCoTMCTSWorker with the inertial
+    dead-band state machine from InertialPhysioMPSMCTSWorker.
+
+    The zone and streak are injected into the CoT prompt so the Maverick
+    planner reasons about the sustained physiological state, not just the
+    instantaneous stress_index.
+    """
+
+    ARM = "inertial_physio_llm_cot_mcts"
+
+    # Override CoT template to include zone context
+    _COT_PROMPT_TEMPLATE = (
+        "You are a clinical AI planner choosing the best therapeutic action.\n\n"
+        "Physiological context:\n{physio_ctx}\n\n"
+        "{zone_ctx}"
+        "Session goal: {scenario_goal}\n"
+        "Last patient message: {last_patient_message}\n\n"
+        "Available actions (choose exactly one):\n{actions_list}\n\n"
+        "Reason step-by-step (3-5 sentences), then output your final answer as:\n"
+        "CHOSEN_ACTION: <action_name>\n"
+        "CONFIDENCE: <0.0-1.0>\n"
+        "REASONING: <one sentence summary>"
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._gate: "HysteresisGate | None" = None
+
+    def reset_gate(self) -> None:
+        """Create a fresh HysteresisGate for a new episode."""
+        from tensornets.a3c.hysteresis_gate import HysteresisGate
+        self._gate = HysteresisGate()
+
+    def _run_cot_action_selection(
+        self,
+        state: TurnState,
+        scenario: dict,
+    ) -> tuple[str, dict]:
+        """Override to inject zone context into the CoT prompt."""
+        from tensornets.a3c.action_bandit import ACTION_TAXONOMY
+        from tensornets.a3c.hysteresis_gate import HysteresisGate
+
+        if self._gate is None:
+            self._gate = HysteresisGate()
+
+        zone, zone_changed = self._gate.update(state.stress_index)
+        zone_name   = self._gate.zone_name
+        zone_streak = self._gate.streak
+
+        zone_ctx = (
+            f"Physiological zone (inertial): {zone_name} "
+            f"(sustained for {zone_streak} turn(s), "
+            f"{'JUST CHANGED' if zone_changed else 'stable'}).\n"
+            f"Consider this zone stability when selecting an action.\n\n"
+        )
+
+        physio_ctx   = _build_hysteresis_context(state, scenario)
+        actions_list = "\n".join(
+            f"  {i+1:2d}. {name}" for i, name in enumerate(ACTION_TAXONOMY)
+        )
+        last_patient_msg = _last_user_message(state)
+
+        prompt = self._COT_PROMPT_TEMPLATE.format(
+            physio_ctx=physio_ctx,
+            zone_ctx=zone_ctx,
+            scenario_goal=scenario.get("session_goal", ""),
+            last_patient_message=last_patient_msg,
+            actions_list=actions_list,
+        )
+
+        try:
+            resp = _http_post(
+                f"{_TENSORNETS_URL}/llm/maverick",
+                {"system": "You are a clinical AI planner.", "prompt": prompt, "max_tokens": 512},
+                timeout=40.0,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"InertialPhysioLLMCoTMCTSWorker: Maverick CoT call failed: {exc}. "
+                f"Check that the tensornets FastAPI server is running on {_TENSORNETS_URL}."
+            ) from exc
+
+        text = resp.get("text", "").strip()
+        if not text:
+            raise RuntimeError(
+                "InertialPhysioLLMCoTMCTSWorker: Maverick returned empty CoT response."
+            )
+
+        chosen_action = None
+        for line in text.splitlines():
+            if line.strip().startswith("CHOSEN_ACTION:"):
+                candidate = line.split(":", 1)[1].strip()
+                if candidate in ACTION_TAXONOMY:
+                    chosen_action = candidate
+                    break
+
+        if chosen_action is None:
+            raise RuntimeError(
+                f"InertialPhysioLLMCoTMCTSWorker: CoT response did not contain a valid "
+                f"CHOSEN_ACTION.\nRaw response:\n{text[:400]}"
+            )
+
+        tokens_in  = resp.get("usage", {}).get("input_tokens",  0)
+        tokens_out = resp.get("usage", {}).get("output_tokens", 0)
+        latency_ms = resp.get("latency_ms", 0.0)
+
+        return chosen_action, {
+            "cot_text":       text,
+            "tokens_in":      tokens_in,
+            "tokens_out":     tokens_out,
+            "latency_ms":     latency_ms,
+            "zone":           zone,
+            "zone_name":      zone_name,
+            "zone_streak":    zone_streak,
+            "zone_changed":   zone_changed,
+        }
+
+    def generate_response(
+        self,
+        state: TurnState,
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        t_start = time.perf_counter()
+
+        chosen_action, cot_meta = self._run_cot_action_selection(state, scenario)
+
+        result = PhysioLLMWorker.generate_response(
+            self,
+            state,
+            chosen_action,
+            scenario,
+            conversation_correction=conversation_correction,
+        )
+
+        existing_scout = result.get("tokens", {}).get("scout", 0)
+        result["tokens"] = {
+            "scout":        existing_scout,
+            "maverick":     cot_meta["tokens_in"] + cot_meta["tokens_out"],
+            "maverick_in":  cot_meta["tokens_in"],
+            "maverick_out": cot_meta["tokens_out"],
+        }
+        result["latency_ms"]     = round((time.perf_counter() - t_start) * 1000.0, 1)
+        result["llm_calls"]      = 2
+        result["cot_action"]     = chosen_action
+        result["cot_reasoning"]  = cot_meta.get("cot_text", "")[:200]
+        result["hysteresis_zone"]      = cot_meta.get("zone")
+        result["hysteresis_zone_name"] = cot_meta.get("zone_name")
+        result["hysteresis_streak"]    = cot_meta.get("zone_streak")
+        result["hysteresis_changed"]   = cot_meta.get("zone_changed")
+        if self._gate:
+            result["hysteresis_gate"] = self._gate.to_dict()
+        return result
+
+
+
+
+# ── Exp 6: InertialHPVOOTPhysioMPSMCTSWorker ─────────────────────────────────
+
+class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
+    """
+    Exp 6: MPS-MCTS + HysteresisGate + HP+VOOT+PW tree search.
+
+    Extends Exp 3 (InertialPhysioMPSMCTSWorker) by upgrading the MCTS call
+    from DialogMCTS (80 iter, 20 depth) to HierarchicalPWVOOTMCTS
+    (150 iter, 20 depth, mcts_mode=hpvoot).
+
+    Extra Scout call per turn fetches a numeric prior score over all HP actions
+    before tree search, seeding PW expansion order with contextual relevance.
+
+    Total LLM calls per turn: 2 (Scout prior + Scout generation).
+    No fallbacks.
+    """
+
+    ARM = "inertial_hpvoot_physio_mps_mcts"
+
+    _DEFAULT_SYSTEM_PROMPT = (
+        "You are a clinical companion. Current action strategy: {action}. "
+        "Patient stress zone: {zone_name} (stress={stress_index:.2f}, "
+        "zone_streak={zone_streak} turns). "
+        "Respond with one empathetic, concise message (2-3 sentences)."
+    )
+
+    _PRIOR_SYSTEM = (
+        "You are a clinical scoring assistant. "
+        "Return a JSON object mapping each action name to a float score 0.0-1.0. "
+        "Return ONLY the JSON object, no markdown fences."
+    )
+
+    def _fetch_prior_scores(self, state, zone_name, zone_streak, mode, actions):
+        """
+        Call Scout to score all HP actions given current patient state.
+        Returns list[float] in same order as actions.
+        Raises RuntimeError on empty response or JSON parse failure.
+        """
+        import json as _json, re as _re
+        action_list = "\n".join(f"  - {a}" for a in actions)
+        prompt = (
+            f"Patient state: stress={state.stress_index:.2f}, "
+            f"zone={zone_name} (streak={zone_streak}), mode={mode}.\n\n"
+            f"Rate each action 0.0 (wrong) to 1.0 (ideal) for this exact moment.\n"
+            f"Actions:\n{action_list}"
+        )
+        resp = _http_post(
+            f"{_TENSORNETS_URL}/llm/scout",
+            {"system": self._PRIOR_SYSTEM, "prompt": prompt, "max_tokens": 512},
+            timeout=20.0,
+        )
+        text = (resp.get("text") or "").strip()
+        if not text:
+            raise RuntimeError(
+                "InertialHPVOOTPhysioMPSMCTSWorker._fetch_prior_scores: "
+                "Scout returned empty response."
+            )
+        m = _re.search(r'\{[^{}]+\}', text, _re.DOTALL)
+        if not m:
+            raise RuntimeError(
+                f"InertialHPVOOTPhysioMPSMCTSWorker._fetch_prior_scores: "
+                f"No JSON object in Scout response. Raw: {text[:300]}"
+            )
+        try:
+            score_map = _json.loads(m.group(0))
+        except _json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"InertialHPVOOTPhysioMPSMCTSWorker._fetch_prior_scores: "
+                f"JSON parse failed: {exc}. Raw: {text[:300]}"
+            ) from exc
+        self._prior_tokens = {
+            "in":  resp.get("usage", {}).get("input_tokens",  0),
+            "out": resp.get("usage", {}).get("output_tokens", 0),
+        }
+        return [float(score_map.get(a, 0.5)) for a in actions]
+
+    def generate_response(self, state, action, scenario, conversation_correction=0.0):
+        from tensornets.a3c.hysteresis_gate import HysteresisGate
+        from tensornets.mcts.hierarchical_pw_voot import ACTION_CLUSTERS
+        from dataclasses import replace
+
+        if self._gate is None:
+            self._gate = HysteresisGate()
+
+        zone, zone_changed = self._gate.update(state.stress_index)
+        zone_name   = self._gate.zone_name
+        zone_streak = self._gate.streak
+
+        enriched_physio = dict(state.physio or {})
+        enriched_physio["hysteresis_zone"]      = zone
+        enriched_physio["hysteresis_zone_name"] = zone_name
+        enriched_physio["hysteresis_streak"]    = zone_streak
+        enriched_physio["zone_changed"]         = zone_changed
+
+        enriched_state = replace(
+            state,
+            physio        = enriched_physio,
+            stress_bucket = zone_name,
+        )
+
+        all_hp_actions = []
+        for acts in ACTION_CLUSTERS.values():
+            all_hp_actions.extend(acts)
+
+        # Scout prior
+        self._prior_tokens = {"in": 0, "out": 0}
+        prior_scores = self._fetch_prior_scores(
+            state=state,
+            zone_name=zone_name,
+            zone_streak=zone_streak,
+            mode=scenario.get("mode", "standard"),
+            actions=all_hp_actions,
+        )
+
+        physio_source = getattr(enriched_state, "physio_source", "sensor")
+        mcts_physio   = dict(enriched_physio)
+        if physio_source == "none":
+            mcts_physio = {k: -1 for k in mcts_physio
+                          if isinstance(mcts_physio[k], (int, float))}
+            mcts_physio["physio_unknown"] = True
+
+        try:
+            mcts_resp = _http_post(
+                f"{_TENSORNETS_URL}/mcts/best-action",
+                {
+                    "physio_state":      mcts_physio,
+                    "candidate_actions": all_hp_actions,
+                    "mode":              scenario.get("mode", "standard"),
+                    "depth":             20,
+                    "iterations":        150,
+                    "context":           state.summary or "",
+                    "mcts_mode":         "hpvoot",
+                    "llm_prior_scores":  prior_scores,
+                },
+                timeout=30.0,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"InertialHPVOOTPhysioMPSMCTSWorker: MCTS bridge failed: {exc}"
+            ) from exc
+
+        chosen_action = mcts_resp.get("best_action") or mcts_resp.get("action") or action
+        m_trunc       = mcts_resp.get("M_trunc")
+
+        t_start      = time.perf_counter()
+        scout_result = self._call_scout(enriched_state, chosen_action, scenario, m_trunc=m_trunc)
+
+        next_stress = _stress_after_response(
+            state.stress_index, chosen_action, state.archetype, state.drug_regimen,
+            conversation_correction=conversation_correction,
+        )
+        reward     = _synthetic_reward(state, chosen_action, next_stress,
+                                       response_text=scout_result["text"])
+        latency_ms = (time.perf_counter() - t_start) * 1000.0
+
+        result = {
+            "response":             scout_result["text"],
+            "reward":               reward,
+            "judge":                {},
+            "tokens": {
+                "scout_in":   scout_result["tokens_in"]  + self._prior_tokens["in"],
+                "scout_out":  scout_result["tokens_out"] + self._prior_tokens["out"],
+            },
+            "latency_ms":           round(latency_ms, 1),
+            "next_stress_index":    next_stress,
+            "next_physio":          {**state.physio, "stress_index": next_stress},
+            "action_taken":         chosen_action,
+            "frames_component":     None,
+            "info_coverage":        reward["info_coverage"],
+            "repetition_detected":  False,
+            "discrepancy":          None,
+            "mcts_mode":            "hpvoot",
+            "mcts_tree_stats":      mcts_resp.get("tree_stats", {}),
+            "hysteresis_zone":      zone,
+            "hysteresis_zone_name": zone_name,
+            "hysteresis_streak":    zone_streak,
+            "hysteresis_changed":   zone_changed,
+            "llm_calls":            2,
+        }
+        if self._gate:
+            result["hysteresis_gate"] = self._gate.to_dict()
+        return result
+
+
+# ── Exp 7: InertialHPVOOTPhysioLLMCoTMCTSWorker ──────────────────────────────
+
+class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
+    """
+    Exp 7: CoT-MCTS + HysteresisGate + HP+VOOT+PW tree search.
+
+    Extends Exp 4 by upgrading the MCTS step to HP+VOOT+PW.
+    The Maverick CoT response includes per-action ratings (0-10) which are
+    extracted and reused as the PW prior at zero additional LLM cost.
+
+    Turn flow:
+      1. Maverick CoT: rate ALL ACTION_TAXONOMY actions 0-10 + CHOSEN_ACTION.
+      2. Parse RATINGS -> llm_prior_scores for HP+VOOT+PW actions.
+      3. POST /mcts/best-action mcts_mode=hpvoot, iterations=150, depth=20.
+      4. Scout generates the response using MCTS-selected (or CoT) action.
+
+    Total LLM calls per turn: 2. No fallbacks.
+    """
+
+    ARM = "inertial_hpvoot_physio_llm_cot_mcts"
+
+    def _run_cot_action_selection(self, state, scenario):
+        """
+        Override Exp 4 CoT to request per-action ratings in the RATINGS section.
+        Returns (chosen_action, cot_meta) with hp_actions + llm_prior_scores.
+        """
+        import re as _re
+        from tensornets.a3c.action_bandit import ACTION_TAXONOMY
+        from tensornets.mcts.hierarchical_pw_voot import ACTION_CLUSTERS
+
+        if self._gate is None:
+            from tensornets.a3c.hysteresis_gate import HysteresisGate
+            self._gate = HysteresisGate()
+
+        zone, zone_changed = self._gate.update(state.stress_index)
+        zone_name   = self._gate.zone_name
+        zone_streak = self._gate.streak
+
+        action_list_str = "\n".join(
+            f"  {i+1:2d}. {name}" for i, name in enumerate(ACTION_TAXONOMY)
+        )
+
+        cot_prompt = (
+            f"You are a clinical AI planner choosing the best therapeutic action.\n\n"
+            f"Patient state:\n"
+            f"  - Stress index: {state.stress_index:.2f}\n"
+            f"  - Stress zone: {zone_name} (sustained {zone_streak} turns)\n"
+            f"  - Therapeutic mode: {scenario.get('mode', 'standard')}\n\n"
+            f"Recent conversation:\n{state.summary or '(none yet)'}\n\n"
+            f"Rate EACH action 0-10 for its appropriateness right now,\n"
+            f"then select the single best action.\n\n"
+            f"Actions:\n{action_list_str}\n\n"
+            f"Format:\n"
+            f"RATINGS:\n<action_name>: <0-10>\n...\n\n"
+            f"REASONING: <brief justification>\n\n"
+            f"CHOSEN_ACTION: <exact action name>"
+        )
+
+        try:
+            resp = _http_post(
+                f"{_TENSORNETS_URL}/llm/maverick",
+                {"prompt": cot_prompt, "max_tokens": 1400},
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"InertialHPVOOTPhysioLLMCoTMCTSWorker: Maverick CoT failed: {exc}"
+            ) from exc
+
+        text = (resp.get("text") or "").strip()
+        if not text:
+            raise RuntimeError(
+                "InertialHPVOOTPhysioLLMCoTMCTSWorker: Maverick returned empty response."
+            )
+
+        chosen_action = None
+        for line in text.splitlines():
+            if line.strip().startswith("CHOSEN_ACTION:"):
+                candidate = line.split(":", 1)[1].strip()
+                if candidate in ACTION_TAXONOMY:
+                    chosen_action = candidate
+                    break
+        if chosen_action is None:
+            raise RuntimeError(
+                f"InertialHPVOOTPhysioLLMCoTMCTSWorker: No valid CHOSEN_ACTION in CoT.\n"
+                f"Raw:\n{text[:400]}"
+            )
+
+        all_hp_actions = []
+        for acts in ACTION_CLUSTERS.values():
+            all_hp_actions.extend(acts)
+
+        prior_scores = []
+        for a in all_hp_actions:
+            m = _re.search(
+                rf"{_re.escape(a)}[\s:]+([\d]+(?:\.\d+)?)", text, _re.IGNORECASE
+            )
+            if m:
+                raw = float(m.group(1))
+                prior_scores.append(min(1.0, raw / 10.0) if raw > 1.0 else raw)
+            else:
+                prior_scores.append(0.5)
+
+        tokens_in  = resp.get("usage", {}).get("input_tokens",  0)
+        tokens_out = resp.get("usage", {}).get("output_tokens", 0)
+
+        return chosen_action, {
+            "cot_text":         text,
+            "tokens_in":        tokens_in,
+            "tokens_out":       tokens_out,
+            "latency_ms":       resp.get("latency_ms", 0.0),
+            "zone":             zone,
+            "zone_name":        zone_name,
+            "zone_streak":      zone_streak,
+            "zone_changed":     zone_changed,
+            "hp_actions":       all_hp_actions,
+            "llm_prior_scores": prior_scores,
+        }
+
+    def generate_response(self, state, action, scenario, conversation_correction=0.0):
+        from dataclasses import replace
+        t_start = time.perf_counter()
+
+        chosen_action, cot_meta = self._run_cot_action_selection(state, scenario)
+        all_hp_actions  = cot_meta["hp_actions"]
+        prior_scores    = cot_meta["llm_prior_scores"]
+        zone            = cot_meta["zone"]
+        zone_name       = cot_meta["zone_name"]
+        zone_streak     = cot_meta["zone_streak"]
+        zone_changed    = cot_meta["zone_changed"]
+
+        enriched_physio = dict(state.physio or {})
+        enriched_physio["hysteresis_zone"]      = zone
+        enriched_physio["hysteresis_zone_name"] = zone_name
+        enriched_physio["hysteresis_streak"]    = zone_streak
+        enriched_physio["zone_changed"]         = zone_changed
+
+        enriched_state = replace(
+            state,
+            physio        = enriched_physio,
+            stress_bucket = zone_name,
+        )
+
+        physio_source = getattr(state, "physio_source", "sensor")
+        mcts_physio   = dict(enriched_physio)
+        if physio_source == "none":
+            mcts_physio = {k: -1 for k in mcts_physio
+                          if isinstance(mcts_physio[k], (int, float))}
+            mcts_physio["physio_unknown"] = True
+
+        try:
+            mcts_resp = _http_post(
+                f"{_TENSORNETS_URL}/mcts/best-action",
+                {
+                    "physio_state":      mcts_physio,
+                    "candidate_actions": all_hp_actions,
+                    "mode":              scenario.get("mode", "standard"),
+                    "depth":             20,
+                    "iterations":        150,
+                    "context":           state.summary or "",
+                    "mcts_mode":         "hpvoot",
+                    "llm_prior_scores":  prior_scores,
+                },
+                timeout=30.0,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"InertialHPVOOTPhysioLLMCoTMCTSWorker: MCTS bridge failed: {exc}"
+            ) from exc
+
+        final_action = mcts_resp.get("best_action") or mcts_resp.get("action") or chosen_action
+        m_trunc      = mcts_resp.get("M_trunc")
+
+        scout_result = self._call_scout(enriched_state, final_action, scenario, m_trunc=m_trunc)
+
+        next_stress = _stress_after_response(
+            state.stress_index, final_action, state.archetype, state.drug_regimen,
+            conversation_correction=conversation_correction,
+        )
+        reward     = _synthetic_reward(state, final_action, next_stress,
+                                       response_text=scout_result["text"])
+        latency_ms = (time.perf_counter() - t_start) * 1000.0
+
+        result = {
+            "response":             scout_result["text"],
+            "reward":               reward,
+            "judge":                {},
+            "tokens": {
+                "scout_in":    scout_result["tokens_in"],
+                "scout_out":   scout_result["tokens_out"],
+                "maverick_in":  cot_meta["tokens_in"],
+                "maverick_out": cot_meta["tokens_out"],
+            },
+            "latency_ms":           round(latency_ms, 1),
+            "next_stress_index":    next_stress,
+            "next_physio":          {**state.physio, "stress_index": next_stress},
+            "action_taken":         final_action,
+            "cot_action":           chosen_action,
+            "mcts_action":          mcts_resp.get("best_action"),
+            "frames_component":     None,
+            "info_coverage":        reward["info_coverage"],
+            "repetition_detected":  False,
+            "discrepancy":          None,
+            "mcts_mode":            "hpvoot",
+            "mcts_tree_stats":      mcts_resp.get("tree_stats", {}),
+            "hysteresis_zone":      zone,
+            "hysteresis_zone_name": zone_name,
+            "hysteresis_streak":    zone_streak,
+            "hysteresis_changed":   zone_changed,
+            "llm_calls":            2,
+        }
+        if self._gate:
+            result["hysteresis_gate"] = self._gate.to_dict()
+        return result

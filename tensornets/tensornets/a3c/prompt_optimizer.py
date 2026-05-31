@@ -229,6 +229,16 @@ def _request_rewrite(
         if words < MIN_PROMPT_TOKENS or words > MAX_PROMPT_TOKENS * 2:
             log.warning("[PromptOpt] arm=%s  rewrite word count %d out of range", arm_name, words)
             return None
+        # Log cost of this Maverick call so it appears in training logs.
+        # This is run overhead — not part of per-episode cost in EpisodeTurn.
+        usage = resp.get("usage", {})
+        tok_in  = usage.get("input_tokens",  0)
+        tok_out = usage.get("output_tokens", 0)
+        cost = (tok_in / 1000.0) * 0.00022 + (tok_out / 1000.0) * 0.00088
+        log.info(
+            "[PromptOpt] arm=%s  Maverick rewrite: tokens_in=%d  tokens_out=%d  cost=$%.5f",
+            arm_name, tok_in, tok_out, cost,
+        )
         return text
     except Exception as exc:
         log.warning("[PromptOpt] arm=%s  rewrite request failed: %s", arm_name, exc)

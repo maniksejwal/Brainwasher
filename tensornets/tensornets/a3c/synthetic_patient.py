@@ -279,6 +279,9 @@ class SyntheticParticipant:
         self.current_goal_idx   = 0
         self.covered_elements:  set[str] = set()
         self.conversation_history: list[dict] = []
+        # Token counts from the most recent LLM call — read by worker.py after generate_message()
+        self._last_tokens_in:  int = 0
+        self._last_tokens_out: int = 0
         self.turn_count          = 0
 
     # ── Public API ──────────────────────────────────────────────────────────
@@ -431,6 +434,10 @@ class SyntheticParticipant:
             msg = resp.get("text", "").strip()
             if not msg:
                 raise ValueError("Empty response from /llm/scout")
+            usage = resp.get("usage", {})
+            # Return message with token metadata for cost tracking in worker.py
+            self._last_tokens_in  = usage.get("input_tokens",  0)
+            self._last_tokens_out = usage.get("output_tokens", 0)
             return msg
         except Exception as exc:
             raise RuntimeError(f"SyntheticParticipant LLM call failed: {exc}") from exc

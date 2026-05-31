@@ -888,7 +888,7 @@ class MCTSActionIn(BaseModel):
     physio_state:            dict
     candidate_actions:       list[str]
     mode:                    str   = "standard"
-    depth:                   int   = 10       # lookahead depth; capped to remaining turns if session-aware
+    depth:                   int   = 20       # lookahead depth; capped to remaining turns if session-aware
     iterations:              int   = 80
     context:                 str   = ""
     flooding_target_stress:  float = 0.7
@@ -896,6 +896,12 @@ class MCTSActionIn(BaseModel):
     max_turns:               int   = 0        # 0 = no cap (backward-compat); set to session length for capping
     # Multi-user: pass all participants' physio states; MCTS uses mean-weighted aggregate
     participants:            list[dict] = []  # [{agent_id, physio_state, weight}]; empty = single-user
+    # HP+VOOT+PW mode: pass "hpvoot" to use HierarchicalPWVOOTMCTS
+    mcts_mode:               str   = "standard"  # "standard" | "hpvoot"
+    # LLM prior scores: caller-supplied scores over all actions in same order as
+    # candidate_actions.  Required when mcts_mode="hpvoot".  Length must match
+    # candidate_actions.  If omitted for hpvoot, CALMING_WEIGHT heuristic is used.
+    llm_prior_scores:        list[float] = []
 
 
 @app.post("/mcts/best-action")
@@ -944,11 +950,41 @@ def mcts_best_action(req: MCTSActionIn):
         'flooding_target_stress':    req.flooding_target_stress,
     }
 
-    mcts = DialogMCTS(
-        mode=req.mode,
-        iterations=req.iterations,
-        max_depth=effective_depth,
-    )
+    if req.mcts_mode == "hpvoot":
+        from tensornets.mcts.hierarchical_pw_voot import HierarchicalPWVOOTMCTS
+        from tensornets.a3c.action_bandit import CALMING_WEIGHT
+
+        # Build llm_prior_fn: use caller-supplied scores if provided, else
+        # fall back to CALMING_WEIGHT heuristic (zone-adjusted).
+        if req.llm_prior_scores and len(req.llm_prior_scores) == len(req.candidate_actions):
+            score_map = dict(zip(req.candidate_actions, req.llm_prior_scores))
+            def llm_prior_fn(actions: list, state: dict) -> list:
+                return [score_map.get(a, 0.0) for a in actions]
+        else:
+            # Heuristic prior: CALMING_WEIGHT adjusted by current stress
+            si = stress_index
+            def llm_prior_fn(actions: list, state: dict) -> list:  # type: ignore[misc]
+                scores = []
+                for a in actions:
+                    cw = CALMING_WEIGHT.get(a, 0.5)
+                    # Under high stress prefer calming; under low stress prefer activating
+                    score = cw * si + (1.0 - cw) * (1.0 - si)
+                    scores.append(score)
+                return scores
+
+        mcts = HierarchicalPWVOOTMCTS(
+            llm_prior_fn=llm_prior_fn,
+            mode=req.mode,
+            iterations=req.iterations,
+            max_depth=effective_depth,
+        )
+    else:
+        mcts = DialogMCTS(
+            mode=req.mode,
+            iterations=req.iterations,
+            max_depth=effective_depth,
+        )
+
     result = mcts.best_action(initial_state)
     return result
 

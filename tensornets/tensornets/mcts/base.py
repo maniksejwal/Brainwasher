@@ -184,7 +184,7 @@ class BaseMCTS(ABC):
         self,
         mode: str = 'standard',
         iterations: int = 80,
-        max_depth: int = 10,
+        max_depth: int = 20,
         exploration_c: float = 1.414,
         reward_weights: dict | None = None,
         seed: int | None = None,

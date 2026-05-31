@@ -106,11 +106,17 @@ export function setupNavigationHandlers(api, state) {
             } else if (tabName === 'reports') {
                 // Auto-load existing report inline; generate is manual via button
                 loadInlineReport('report-inline-frame');
-                // Wire buttons (safe to re-attach; onclick overwrites previous)
+                // Wire reload button each time the tab is opened
                 const reloadBtn = document.getElementById('reload-report-btn');
-                if (reloadBtn) reloadBtn.onclick = () => {
-                    loadInlineReport('report-inline-frame');
-                    refreshBenchmarksDashboard();   // also refresh benchmark charts
+                if (reloadBtn) reloadBtn.onclick = async () => {
+                    reloadBtn.disabled = true;
+                    reloadBtn.textContent = '⏳ Reloading…';
+                    try {
+                        await loadInlineReport('report-inline-frame');
+                    } finally {
+                        reloadBtn.disabled = false;
+                        reloadBtn.textContent = '↻ Reload';
+                    }
                 };
                 const genBtn = document.getElementById('generate-report-btn');
                 if (genBtn) genBtn.onclick = () => generateAndShowReport();
