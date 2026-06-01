@@ -1,7 +1,7 @@
 import { switchView, loadCircleInfo, loadMyCirclesData, loadPatientsData, loadFeedbackData, loadConversationsData, loadServerLogs, loadBusinessData, loadBusinessSectionData } from './dataLoaders.js';
 import { loadConversationLogs } from './simulationLogsUI.js';
 import { generateAndShowReport } from './reportUI.js';
-import { initBenchmarksDashboard, refreshBenchmarksDashboard, loadInlineReport, initConversationViewer } from './benchmarksDashboard.js';
+import { initBenchmarksDashboard, refreshBenchmarksDashboard, renderRecentStatsTable, loadInlineReport, initConversationViewer } from './benchmarksDashboard.js';
 
 export function setupNavigationHandlers(api, state) {
     // Listen for circle view refresh events
@@ -135,6 +135,19 @@ export function setupNavigationHandlers(api, state) {
                         try { await refreshBenchmarksDashboard(); }
                         finally { refreshBtn.disabled = false; refreshBtn.textContent = '↻ Refresh'; }
                     };
+                }
+
+                // Wire the "Apply" button for the recent-N stats table
+                const recentApply = document.getElementById('recent-stats-apply');
+                if (recentApply) {
+                    recentApply.onclick = () => renderRecentStatsTable();
+                }
+                // Also re-render on Enter inside the number input
+                const recentN = document.getElementById('recent-stats-n');
+                if (recentN) {
+                    recentN.addEventListener('keydown', e => {
+                        if (e.key === 'Enter') renderRecentStatsTable();
+                    });
                 }
             }
         });

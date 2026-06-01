@@ -124,6 +124,7 @@ export async function initBenchmarksDashboard() {
     await _refresh();
 }
 export async function refreshBenchmarksDashboard() { await _refresh(); }
+export function renderRecentStatsTable() { _renderRecentStatsTable(); }
 
 async function _refresh() {
     _showSpinner(true);
@@ -297,6 +298,7 @@ function _attachToolbar() {
 function _renderAll() {
     _renderSimOverview();
     _renderRewardStatsTable();
+    _renderRecentStatsTable();
     _renderCumulativeRewardDist();
     _renderLearningCurves();
     _renderGoalRateChart();
@@ -533,29 +535,55 @@ function _buildRestartAnnotations() {
     const globalMax = Math.max(1, ...Object.values(armEpCounts));
 
     // ── Run-restart lines (grey dashed) ──────────────────────────────────────
-    // Only draw a boundary when BOTH adjacent runs had ≥ 50 episodes for this arm.
-    // Two workers in the same training session often have different run_ids and
-    // alternate in time order, creating hundreds of spurious restart markers.
-    // A 50-episode threshold filters all of these while still showing real
-    // training-session boundaries (which always have 60+ episodes per arm).
-    const MIN_RUN_EPS = 50;
+    // Draws a dashed line only at *true* training-session boundaries — i.e. when
+    // the agent was stopped and then restarted at a different time.
+    //
+    // The problem with a simple episode-count threshold:
+    //   Within one session, two workers share the same arm and interleave their
+    //   episodes in time order.  Each worker has its own run_id, so consecutive
+    //   rows alternate between two run_ids hundreds of times.  Even a high
+    //   episode-count threshold doesn't help because each worker can accumulate
+    //   100+ episodes of its own.
+    //
+    // Correct heuristic — detect interleaved (concurrent) run pairs:
+    //   If run_id A and run_id B alternate back and forth ≥ 3 times, they are
+    //   concurrent workers in the same session.  Mark that pair as "concurrent"
+    //   and suppress all restart lines between them.
+    //   A true restart only ever transitions once: all of run A, then all of run B.
     for (const [arm] of Object.entries(EXP_META)) {
         if (!_state.activeExperiments.has(arm)) continue;
         const ep = allRows.filter(r => r.arm === arm);
         const offset = globalMax - ep.length;
 
-        // Pre-count episodes per run_id for this arm
+        // Count back-and-forth transitions between every pair of run_ids
+        const pairTransitions = {};   // "idA|idB" (sorted) → count
+        for (let i = 1; i < ep.length; i++) {
+            if (ep[i].run_id !== ep[i - 1].run_id) {
+                const pair = [ep[i - 1].run_id, ep[i].run_id].sort().join('|');
+                pairTransitions[pair] = (pairTransitions[pair] || 0) + 1;
+            }
+        }
+        // Pairs that alternate ≥ 3 times are concurrent workers — not restarts
+        const concurrentPairs = new Set(
+            Object.entries(pairTransitions)
+                .filter(([, n]) => n >= 3)
+                .map(([pair]) => pair),
+        );
+
+        // Only count episodes per run_id for large-run sanity check (≥ 30 eps)
         const runCounts = {};
         for (const r of ep) runCounts[r.run_id] = (runCounts[r.run_id] || 0) + 1;
 
         let prevRunId = null;
         ep.forEach((r, i) => {
-            if (r.run_restart && i > 0) {
-                const prevCount = prevRunId ? (runCounts[prevRunId] || 0) : 0;
-                const thisCount = runCounts[r.run_id] || 0;
-                if (prevCount >= MIN_RUN_EPS && thisCount >= MIN_RUN_EPS) {
-                    const key = `restart_${arm}_${i}`;
-                    annotations[key] = {
+            if (r.run_restart && i > 0 && prevRunId) {
+                const pair = [prevRunId, r.run_id].sort().join('|');
+                const isConcurrent = concurrentPairs.has(pair);
+                const prevCount    = runCounts[prevRunId] || 0;
+                const thisCount    = runCounts[r.run_id]  || 0;
+                // Draw only if not a concurrent pair AND both runs are substantial
+                if (!isConcurrent && prevCount >= 30 && thisCount >= 30) {
+                    annotations[`restart_${arm}_${i}`] = {
                         type: 'line', scaleID: 'x', value: offset + i + 1,
                         borderColor: '#bbb', borderWidth: 1, borderDash: [4, 4],
                         label: { display: false },
@@ -642,41 +670,77 @@ function _renderSimOverview() {
 
 // -- Reward Stats Table -------------------------------------------------------
 function _renderRewardStatsTable() {
-    const el = document.getElementById('reward-stats-table');
+    _renderStatsTableInto('reward-stats-table', null);  // null = all episodes
+}
+
+/**
+ * Render the "last N episodes" stats table.
+ * N is read from the #recent-stats-n input (default 100).
+ */
+function _renderRecentStatsTable() {
+    const n = parseInt(document.getElementById('recent-stats-n')?.value || '100', 10) || 100;
+    _renderStatsTableInto('recent-stats-table', n);
+}
+
+/**
+ * Core stats table renderer used by both all-time and recent-N variants.
+ *
+ * @param {string} targetId  - DOM element id to write into
+ * @param {number|null} lastN - if non-null, only use the last N episodes per arm
+ */
+function _renderStatsTableInto(targetId, lastN) {
+    const el = document.getElementById(targetId);
     if (!el || !_state.timelineData?.length) return;
-    // timelineData is already canonicalized by _fetchTimeline
-    const rows = _filterByDuration(_state.timelineData) ?? [];
+
+    const allRows = _filterByDuration(_state.timelineData) ?? [];
+
     const stats = EXP_KEYS.map(arm => {
-        const ep = rows.filter(r => r.arm === arm);
+        let ep = allRows.filter(r => r.arm === arm);
         if (!ep.length) return null;
+        // Slice to the last N if requested (most recent = end of sorted array)
+        if (lastN != null && ep.length > lastN) ep = ep.slice(ep.length - lastN);
+
         const vals = ep.map(r => r.cumulative_reward).filter(v => v != null);
-        const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-        const sd   = Math.sqrt(vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length);
+        if (!vals.length) return null;
+        const mean    = vals.reduce((a, b) => a + b, 0) / vals.length;
+        const sd      = Math.sqrt(vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length);
         const goalPct = (ep.filter(r => r.goal_achieved).length / ep.length * 100).toFixed(1);
-        const stressVals = ep.map(r => r.stress_auc).filter(v => v != null);
-        const stressMean = stressVals.length ? (stressVals.reduce((a, b) => a + b, 0) / stressVals.length).toFixed(3) : '?';
-        return { arm, meta: EXP_META[arm], n: vals.length, min: Math.min(...vals).toFixed(2), max: Math.max(...vals).toFixed(2), mean: mean.toFixed(2), sd: sd.toFixed(2), goalPct, stressMean };
+        const stressVals  = ep.map(r => r.stress_auc).filter(v => v != null);
+        const stressMean  = stressVals.length
+            ? (stressVals.reduce((a, b) => a + b, 0) / stressVals.length).toFixed(3) : '—';
+        return { arm, meta: EXP_META[arm], n: vals.length, totalAvail: allRows.filter(r => r.arm === arm).length,
+                 min: Math.min(...vals).toFixed(2), max: Math.max(...vals).toFixed(2),
+                 mean: mean.toFixed(2), sd: sd.toFixed(2), goalPct, stressMean };
     }).filter(Boolean);
 
+    const nLabel = lastN != null ? `(last&nbsp;${lastN})` : '';
     el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
         <thead><tr style="background:var(--gray-50);border-bottom:1px solid var(--gray-200);">
             <th style="text-align:left;padding:6px 10px;">Experiment</th>
-            <th style="padding:6px 10px;">N</th>
-            <th style="padding:6px 10px;">Min Reward</th>
-            <th style="padding:6px 10px;">Max Reward</th>
+            <th style="padding:6px 10px;" title="Episodes included in this window">N ${nLabel}</th>
+            <th style="padding:6px 10px;">Min</th>
+            <th style="padding:6px 10px;">Max</th>
             <th style="padding:6px 10px;">Mean &plusmn; SD</th>
-            <th style="padding:6px 10px;">Goal Rate</th>
-            <th style="padding:6px 10px;" title="Mean calmness per episode = avg(1−stress_index). Higher ↑ is better. 1.0 = calm throughout, 0.0 = maximally stressed every turn.">Avg Stress AUC ↑</th>
+            <th style="padding:6px 10px;">Goal %</th>
+            <th style="padding:6px 10px;" title="Mean calmness AUC: (1−stress). Higher is calmer.">Stress AUC ↑</th>
         </tr></thead>
-        <tbody>${stats.map(s => `<tr style="border-bottom:1px solid var(--gray-100);">
-            <td style="padding:6px 10px;"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.meta.color};margin-right:6px;"></span>${s.meta.label}</td>
-            <td style="text-align:center;padding:6px 10px;">${s.n}</td>
-            <td style="text-align:center;padding:6px 10px;">${s.min}</td>
-            <td style="text-align:center;padding:6px 10px;">${s.max}</td>
-            <td style="text-align:center;padding:6px 10px;">${s.mean} ± ${s.sd}</td>
-            <td style="text-align:center;padding:6px 10px;">${s.goalPct}%</td>
-            <td style="text-align:center;padding:6px 10px;">${s.stressMean}</td>
-        </tr>`).join('')}</tbody>
+        <tbody>${stats.map(s => {
+            const sliced = lastN != null && s.n < s.totalAvail;
+            return `<tr style="border-bottom:1px solid var(--gray-100);">
+                <td style="padding:6px 10px;">
+                    <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.meta.color};margin-right:6px;"></span>
+                    ${s.meta.label}
+                </td>
+                <td style="text-align:center;padding:6px 10px;">
+                    ${s.n}${sliced ? `<span style="color:var(--gray-400);font-size:10px;"> /${s.totalAvail}</span>` : ''}
+                </td>
+                <td style="text-align:center;padding:6px 10px;">${s.min}</td>
+                <td style="text-align:center;padding:6px 10px;">${s.max}</td>
+                <td style="text-align:center;padding:6px 10px;">${s.mean} &plusmn; ${s.sd}</td>
+                <td style="text-align:center;padding:6px 10px;">${s.goalPct}%</td>
+                <td style="text-align:center;padding:6px 10px;">${s.stressMean}</td>
+            </tr>`;
+        }).join('')}</tbody>
     </table>`;
 }
 
