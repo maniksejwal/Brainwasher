@@ -39,6 +39,8 @@ import {
     getRewardComponentTimeline,
     insertCheckpointEvent,
     getCheckpointEvents,
+    getActionStats,
+    getActionStatsSummary,
 } from '../db/queries_benchmarks.js';
 
 const router = Router();
@@ -292,6 +294,42 @@ router.get('/prompt-versions', async (req, res) => {
         res.json({ rows });
     } catch (e) {
         res.status(500).json({ error: e.message, rows: [] });
+    }
+});
+
+// ── Action usage statistics ───────────────────────────────────────────────────
+router.get('/action-stats', async (req, res) => {
+    try {
+        const rows = await getActionStatsSummary();
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+router.get('/action-stats-by-scenario', async (req, res) => {
+    try {
+        const rows = await getActionStats();
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// ── Scenario goals (session goals + required elements from scenario definitions) ─
+router.get('/scenario-goals', async (req, res) => {
+    try {
+        const { SCENARIOS } = await import('../training/simulation/scenarios/index.js');
+        const scenarios = Object.entries(SCENARIOS).map(([id, s]) => ({
+            id,
+            session_goal:      s.session_goal       ?? null,
+            required_elements: s.required_elements  ?? [],
+            difficulty:        s.difficulty         ?? 'standard',
+            therapeutic_mode:  s.therapeutic_mode   ?? null,
+        }));
+        res.json({ scenarios });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
     }
 });
 

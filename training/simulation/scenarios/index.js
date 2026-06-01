@@ -3,6 +3,7 @@
  * Organizes scenarios into logical groups for easier management
  */
 
+import { COMPOSITE_SCENARIOS } from './composite_scenarios.js';
 import { BASIC_SCENARIOS } from './basic_scenarios.js';
 import { AVOIDANCE_SCENARIOS } from './avoidance_scenarios.js';
 import { FUTURE_PLANNING_SCENARIOS } from './future_planning_scenarios.js';
@@ -69,7 +70,9 @@ export const SCENARIOS = {
     ...document_scenarios,
     ...NOTIFICATION_SCENARIOS,
     // World scenarios (multi-care circle scenarios)
-    ...WORLD_SCENARIOS_DEFINITIONS
+    ...WORLD_SCENARIOS_DEFINITIONS,
+    // Composite (multi-stressor) scenarios — added run_015 (2026-05-31)
+    ...COMPOSITE_SCENARIOS,
 };
 
 // Export individual groups for selective import

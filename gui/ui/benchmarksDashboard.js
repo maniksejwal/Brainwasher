@@ -1,14 +1,78 @@
 /**
- * @fileoverview gui/ui/benchmarksDashboard.js ? Benchmarks view v3
+ * @fileoverview gui/ui/benchmarksDashboard.js — A3C Benchmarks Dashboard (v4)
  *
- * v3 additions:
- *  - WMA window slider (default 20, range 5-50)
- *  - Stress AUC WMA line chart
- *  - Reward stats table (min/max/mean/SD per experiment)
- *  - Prompt version markers on learning curves
- *  - Scenario goal-rate per-scenario line chart
- *  - Metric bar charts show all missing metrics
- *  - All per-episode line charts respect WMA window
+ * ## What it is
+ * The single-page dashboard that visualises all A3C training data stored in
+ * `htn_benchmark_*` tables.  It is imported by `gui/ui/navigationHandlers.js`
+ * and mounted when the user navigates to the "Benchmarks" tab.
+ *
+ * ## Why it exists
+ * Training runs are long (hours–days) and produce hundreds of episodes per arm.
+ * Raw SQLite rows are not human-readable.  This module turns those rows into
+ * interactive Chart.js charts and summary tables so the team can evaluate:
+ *   - Which experiment arms are learning faster (learning curves)
+ *   - Which scenarios are hardest (scenario goal-rate heatmap + rank table)
+ *   - Whether physio-sensor data actually helps (sensor vs. no-sensor split)
+ *   - Cost/latency trade-offs between LLM-heavy (CoT-MCTS) and MPS arms
+ *   - Critical failure rates per scenario
+ *
+ * ## Logic and data flow (with citations)
+ *
+ * ### Experiment naming
+ * Historical runs used legacy arm names (`htn_mcts`, `hysteresis_prompt`).
+ * These are mapped to canonical names at **fetch time** via `LEGACY_ALIAS`
+ * so that old + new training data plot as one continuous line with a grey
+ * partition marker.  The rename happened at run_015 (2026-05-31).
+ * See: [A3C Redesign chat](bd00417c-24b7-4ba3-8825-da1f77089b74)
+ *
+ * ### Fetch → canonicalize → render pipeline
+ *   1. `_refresh()` fires all fetchers in parallel via `Promise.all`.
+ *   2. Each fetcher (e.g. `_fetchTimeline`) calls `_canonicalizeArm(r)` on
+ *      every row before storing into `_state`.  Rows with legacy arm names
+ *      are remapped; rows with duplicate arm+scenario keys are merged
+ *      (weighted-average for rates, sum for counts).
+ *   3. `_renderAll()` calls every render function with data from `_state`
+ *      that is guaranteed to contain only canonical arm names (`EXP_KEYS`).
+ *
+ * ### Experiment order and colour palette
+ * Defined in `EXP_META` (top of file).  Each entry has `label`, `shortLabel`,
+ * `color` (hex), and `bg` (rgba for fill bands).  The order matches the
+ * `--arms` CLI index in `tensornets/a3c/train.py` (1=Exp0 … 8=Exp7).
+ *
+ * ### Chart types
+ *   - **Learning curves** (`_buildLineDatasets`): per-arm WMA of cumulative
+ *     reward, goal rate, stress AUC.  Episode index on x-axis; run-restart
+ *     gaps injected as `null` points (Chart.js `spanGaps:false`).
+ *   - **Scenario goal-rate bar chart** (`_renderScenarioGoalRates`): overlapping
+ *     bars sorted worst-first (tallest bar behind, shortest in front) so all
+ *     arms are visible without stacking.  `barPercentage:1, categoryPercentage:0.85`.
+ *   - **Scenario rank table** (`_renderScenarioRankTable`): heat-coloured cells,
+ *     sortable by arm or mean.  Sticky episode-count row shows total episodes
+ *     including legacy data.
+ *   - **Sensor vs. no-sensor** (`_renderSensorComparison`): classifies rows by
+ *     `scenario_id.endsWith('_no_sensor')` OR `arm==='oldschool'`.  Produces
+ *     stat cards + grouped bar chart.
+ *   - **Cost / latency charts** (`_renderCostCharts`): per-arm box plots of
+ *     latency_ms and estimated USD cost tracked by `CostTracker` in Python.
+ *   - **Metric bars** (`_renderMetricBars`): overlapping bars for goal rate,
+ *     mean reward, stress AUC per run (not per episode), coloured by arm.
+ *
+ * ### Zoom / pan
+ * All line charts share `_ZOOM_PLUGIN` (chartjs-plugin-zoom + hammerjs) for
+ * Ctrl+mouse-wheel zoom and drag-pan on the x-axis (pinch zoom on touch).
+ * Normal scroll is never intercepted — only Ctrl+wheel triggers zoom.
+ *
+ * ## Module structure
+ *   Constants  : EXP_META, EXP_KEYS, LEGACY_ALIAS, _ZOOM_PLUGIN
+ *   State      : _state (single mutable object, never exported)
+ *   Public API : initBenchmarksDashboard(), refreshBenchmarksDashboard()
+ *   Fetchers   : _fetchTimeline, _fetchMetrics, _fetchScenarioGoals,
+ *                _fetchPhysio, _fetchCritFail, _fetchRewardComponents,
+ *                _fetchCheckpoints, _fetchSimStats
+ *   Helpers    : _canonicalizeArm, _mergeRows, _buildLineDatasets,
+ *                _buildRestartAnnotations, _filterByDuration,
+ *                _destroyChart, _showSpinner, _attachToolbar
+ *   Renderers  : _renderAll → calls every _render* function in order
  */
 
 import config from '../config.js';
@@ -40,6 +104,7 @@ let _state = {
     showCritFail:   false,
     durationDays:   0,
     wmaWindow:      20,
+    scenarioFilter: 'all',   // 'all' | 'composite' | 'escalation'
     timelineData:   null,
     armEpisodeCounts: {},
     metricsData:    null,
@@ -48,6 +113,10 @@ let _state = {
     physioData:     null,
     critFailData:   null,
     rewardComponentData: null,
+    actionStatsData: null,     // arm-level action usage summary
+    actionStatsByScenario: null, // per-scenario action usage
+    actionStatsView: 'exp',    // 'exp' | 'scenario'
+    actionStatsScenario: null, // selected scenario for per-scenario view
 };
 
 export async function initBenchmarksDashboard() {
@@ -68,6 +137,7 @@ async function _refresh() {
             _fetchCritFail(),
             _fetchRewardComponents(),
             _fetchCheckpoints(),
+            _fetchActionStats(),
         ]);
         _renderAll();
     } catch (e) { console.error('[benchmarks] refresh error', e); }
@@ -166,6 +236,16 @@ async function _fetchCheckpoints() {
         _state.checkpointEvents = rows;   // [{arm, episode, stopped, ts}]
     } catch { _state.checkpointEvents = null; }
 }
+async function _fetchActionStats() {
+    try {
+        const [sumResp, scResp] = await Promise.all([
+            fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/action-stats`).then(r => r.json()),
+            fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/action-stats-by-scenario`).then(r => r.json()),
+        ]);
+        _state.actionStatsData        = (sumResp.rows  || []).map(_canonicalizeArm);
+        _state.actionStatsByScenario  = (scResp.rows   || []).map(_canonicalizeArm);
+    } catch { _state.actionStatsData = null; _state.actionStatsByScenario = null; }
+}
 
 // -- Toolbar -----------------------------------------------------------------
 function _attachToolbar() {
@@ -209,7 +289,7 @@ function _attachToolbar() {
             else _state.activeExperiments.add(exp);
             btn.classList.toggle('inactive', !_state.activeExperiments.has(exp));
             _renderLearningCurves(); _renderGoalRateChart(); _renderCritFailRateChart(); _renderStressAucChart();
-            _renderMetricBars(); _renderCritFailChart(); _renderPhysioScatter();
+            _renderMetricBars(); _renderCritFailTable(); _renderPhysioScatter();
         });
     });
 }
@@ -225,12 +305,14 @@ function _renderAll() {
     _renderRewardComponentCharts();
     _renderScenarioHeatmap();
     _renderScenarioGoalRates();
+    _renderScenarioRewardStats();
     _renderCritFailStats();
-    _renderCritFailChart();
+    _renderCritFailTable();
     _renderMetricBars();
     _renderCostCharts();
     _renderPhysioScatter();
     _renderSensorComparison();
+    _renderActionStatsTable();
 }
 
 // -- Helpers ------------------------------------------------------------------
@@ -257,9 +339,21 @@ function _destroyChart(id) {
 // counterparts before building datasets so the full historical data is visible.
 
 // Shared zoom/pan config applied to every line chart.
+// Wheel zoom requires Ctrl/Cmd held (standard UX: scroll = page, Ctrl+scroll = zoom)
+// so normal page scrolling is never blocked.
+// Pinch (touch) zoom is always enabled without modifier.
 const _ZOOM_PLUGIN = {
-    zoom:  { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
-    pan:   { enabled: true, mode: 'x' },
+    zoom: {
+        wheel:  { enabled: true, modifierKey: 'ctrl', speed: 0.1 },
+        pinch:  { enabled: true },
+        mode:   'x',
+    },
+    pan: {
+        enabled: true,
+        mode:    'x',
+        // Only pan when the user holds the mouse button; free scroll otherwise.
+        modifierKey: null,
+    },
     limits: { x: { min: 'original', max: 'original' } },
 };
 
@@ -274,27 +368,41 @@ function _mergeRows(rows) {
 
 function _buildLineDatasets(rows, yKey, wmaKey) {
     const datasets = [];
+
+    // Right-align all arms so their last episode lands at the same x position.
+    // Arms with fewer episodes are shifted rightward (offset = globalMax - armLen),
+    // making new experiments appear as starting "after" the legacy data, which
+    // mirrors the actual chronological ordering.
+    const armEpCounts = {};
+    for (const [arm] of Object.entries(EXP_META)) {
+        if (!_state.activeExperiments.has(arm)) continue;
+        const ep = rows.filter(r => r.arm === arm);
+        if (ep.length) armEpCounts[arm] = ep.length;
+    }
+    const globalMax = Math.max(1, ...Object.values(armEpCounts));
+
+    // Expose offsets globally so tooltip callbacks can compute actual episode numbers.
+    _state._lineOffsets = {};
+
     // timelineData is already canonical; no per-call merging needed
     for (const [arm, meta] of Object.entries(EXP_META)) {
         if (!_state.activeExperiments.has(arm)) continue;
         const ep = rows.filter(r => r.arm === arm);
         if (!ep.length) continue;
 
-        // Re-index per arm so x = 1, 2, 3... regardless of wall-clock gaps
+        // Right-shift offset so this arm's last episode aligns with globalMax
+        const offset = globalMax - ep.length;
+        _state._lineOffsets[arm] = offset;
+
         const data = [];
-        const errorData = [];   // missing_arm_slot points
         ep.forEach((r, i) => {
-            if (r.missing_arm_slot) {
-                errorData.push({ x: i + 1, y: null });
-                return;
-            }
+            if (r.missing_arm_slot) return;
             if (r.run_restart && i > 0) {
-                data.push({ x: i, y: null }); // single null = visible break, no whitespace
+                // null break point — use shifted x
+                data.push({ x: offset + i, y: null });
             }
             const yVal = r[wmaKey ?? yKey];
-            // null WMA means data genuinely unavailable (old-format episodes without goal tracking)
-            // push null so spanGaps:false leaves a gap rather than connecting across missing data
-            data.push({ x: i + 1, y: (yVal !== null && yVal !== undefined) ? yVal : null });
+            data.push({ x: offset + i + 1, y: (yVal !== null && yVal !== undefined) ? yVal : null });
         });
 
         datasets.push({
@@ -302,25 +410,102 @@ function _buildLineDatasets(rows, yKey, wmaKey) {
             data,
             borderColor: meta.color, backgroundColor: 'transparent',
             borderWidth: 2.5, pointRadius: 0, tension: 0.3,
-            spanGaps: false,  // null gaps render as breaks in the line
+            spanGaps: false,
             order: 1,
+            // tag with arm key so tooltip can reverse-lookup offset and episode rows
+            _arm: arm,
         });
 
-        // Arm-lag is now shown as a badge below the chart (see _renderLagBadges).
-        // No triangle markers here ? they caused a blank canvas extension to the right.
-
         if (_state.showSD && wmaKey === 'smoothed_reward') {
-            const sdData    = ep.map((r, i) => ({ x: i + 1, y: r.smoothed_reward + r.stddev }));
-            const sdDataLow = ep.map((r, i) => ({ x: i + 1, y: Math.max(0, r.smoothed_reward - r.stddev) }));
+            const sdData    = ep.map((r, i) => ({ x: offset + i + 1, y: r.smoothed_reward + r.stddev }));
+            const sdDataLow = ep.map((r, i) => ({ x: offset + i + 1, y: Math.max(0, r.smoothed_reward - r.stddev) }));
             datasets.push({ label: '_+sd', data: sdData,    borderColor: 'transparent', backgroundColor: meta.bg, fill: '+1', pointRadius: 0, tension: 0.3, spanGaps: false, order: 3 });
             datasets.push({ label: '_-sd', data: sdDataLow, borderColor: 'transparent', backgroundColor: meta.bg, fill: false, pointRadius: 0, tension: 0.3, spanGaps: false, order: 3 });
         }
 
         if (_state.showRawTraces && yKey) {
-            datasets.push({ label: '_raw', data: ep.map((r, i) => ({ x: i + 1, y: r[yKey] })), borderColor: meta.color, backgroundColor: meta.color + '44', borderWidth: 0, pointRadius: 2.5, showLine: false, order: 2 });
+            datasets.push({ label: '_raw', data: ep.map((r, i) => ({ x: offset + i + 1, y: r[yKey] })), borderColor: meta.color, backgroundColor: meta.color + '44', borderWidth: 0, pointRadius: 2.5, showLine: false, order: 2 });
         }
     }
     return datasets;
+}
+
+/**
+ * Shared tooltip callbacks for all line charts.
+ *
+ * `label` — shows "Exp N: <value>  (ep <actualEpisode>)" for every active arm,
+ *            including arms that have no point at the hovered x (shown as "—")
+ *            so the user always sees all 8 experiments in one tooltip.
+ *
+ * `footer` — for the learning-curve chart, shows per-episode metadata
+ *            (scenario, run, turns, reward) for the arm whose label the user
+ *            is closest to.  Only the learning-curve chart passes `withFooter`.
+ *
+ * @param {string} [valueFormat='decimal'] - 'decimal' or 'percent'
+ * @param {boolean} [withFooter=false]     - include the metadata footer row
+ */
+function _lineTooltipCallbacks(valueFormat = 'decimal', withFooter = false) {
+    return {
+        // Replace the default per-dataset label with episode-number-aware text.
+        // We iterate all EXP_META arms so every experiment appears, even if its
+        // line has a null at the hovered x (i.e. data hasn't reached that episode).
+        label(item) {
+            if (item.dataset.label?.startsWith('_')) return null;   // hide SD / raw bands
+            const arm = item.dataset._arm;
+            if (!arm) return item.dataset.label;
+
+            const displayX = item.parsed.x;
+            const offset   = _state._lineOffsets?.[arm] ?? 0;
+            const epNum    = Math.round(displayX - offset);         // actual episode # for this arm
+            const yVal     = item.parsed.y;
+            const valStr   = (yVal == null) ? '—'
+                : valueFormat === 'percent' ? (yVal * 100).toFixed(1) + '%'
+                : yVal.toFixed(3);
+            const epStr    = (epNum > 0) ? `ep ${epNum}` : '—';
+            return `${item.dataset.label}: ${valStr}  (${epStr})`;
+        },
+
+        // Inject rows for every active arm that is NOT in the current tooltip items
+        // (i.e. its line has a gap/null at the hovered x — it still needs to appear).
+        afterBody(items) {
+            if (!items.length) return [];
+            const displayX   = items[0].parsed.x;
+            const shownArms  = new Set(items.map(i => i.dataset._arm).filter(Boolean));
+            const extraLines = [];
+            for (const [arm, meta] of Object.entries(EXP_META)) {
+                if (!_state.activeExperiments.has(arm)) continue;
+                if (shownArms.has(arm)) continue;                   // already in tooltip
+                const offset = _state._lineOffsets?.[arm] ?? 0;
+                const epNum  = Math.round(displayX - offset);
+                const epStr  = (epNum > 0 && epNum <= (_state.armEpisodeCounts?.[arm] ?? 0))
+                    ? `ep ${epNum}` : 'no data';
+                extraLines.push(`${meta.shortLabel}: —  (${epStr})`);
+            }
+            return extraLines;
+        },
+
+        footer: withFooter ? function(items) {
+            // Show metadata for the first non-helper dataset item
+            const item = items.find(i => !i.dataset.label?.startsWith('_'));
+            if (!item) return [];
+            const arm      = item.dataset._arm;
+            const displayX = item.parsed.x;
+            const offset   = _state._lineOffsets?.[arm] ?? 0;
+            const epNum    = Math.round(displayX - offset);
+            const allRows  = _state.timelineData?.episodes || _state.timelineData || [];
+            const armRows  = allRows.filter(r => r.arm === arm);
+            const d        = armRows[epNum - 1];  // 1-indexed → 0-indexed
+            if (!d) return [];
+            return [
+                `─── ${EXP_META[arm]?.label ?? arm} ───`,
+                `Run: ${d.run_label ?? '?'}`,
+                `Scenario: ${d.scenario_id ?? '?'}`,
+                `Turns: ${d.turn_count ?? '?'}  |  R/turn: ${d.reward_per_turn?.toFixed(3) ?? '?'}`,
+                `Cumul. reward: ${d.cumulative_reward?.toFixed(3) ?? '?'}`,
+                `Stress AUC: ${d.stress_auc?.toFixed(3) ?? '?'}`,
+            ];
+        } : undefined,
+    };
 }
 
 // Restart annotations — episode-index axis
@@ -335,68 +520,68 @@ function _buildLineDatasets(rows, yKey, wmaKey) {
 // This makes the train-then-continue boundary visually unambiguous.
 function _buildRestartAnnotations() {
     const annotations = {};
-    const LEGACY_ARMS = new Set(Object.keys(LEGACY_ALIAS));
-    const NEW_ARMS    = new Set(EXP_KEYS);
 
-    // ── Run-restart lines (grey dashed) ──────────────────────────────────────
+    const allRows = _state.timelineData?.episodes || _state.timelineData || [];
+
+    // Compute right-align offsets matching _buildLineDatasets
+    const armEpCounts = {};
     for (const [arm] of Object.entries(EXP_META)) {
         if (!_state.activeExperiments.has(arm)) continue;
-        const allRows = _state.timelineData?.episodes || _state.timelineData || [];
-        // timelineData is already canonical
+        const n = allRows.filter(r => r.arm === arm).length;
+        if (n) armEpCounts[arm] = n;
+    }
+    const globalMax = Math.max(1, ...Object.values(armEpCounts));
+
+    // ── Run-restart lines (grey dashed) ──────────────────────────────────────
+    // Only draw a boundary when BOTH adjacent runs had ≥ 50 episodes for this arm.
+    // Two workers in the same training session often have different run_ids and
+    // alternate in time order, creating hundreds of spurious restart markers.
+    // A 50-episode threshold filters all of these while still showing real
+    // training-session boundaries (which always have 60+ episodes per arm).
+    const MIN_RUN_EPS = 50;
+    for (const [arm] of Object.entries(EXP_META)) {
+        if (!_state.activeExperiments.has(arm)) continue;
         const ep = allRows.filter(r => r.arm === arm);
+        const offset = globalMax - ep.length;
+
+        // Pre-count episodes per run_id for this arm
+        const runCounts = {};
+        for (const r of ep) runCounts[r.run_id] = (runCounts[r.run_id] || 0) + 1;
+
+        let prevRunId = null;
         ep.forEach((r, i) => {
             if (r.run_restart && i > 0) {
-                const key = `restart_${arm}_${i}`;
-                annotations[key] = {
-                    type: 'line', scaleID: 'x', value: i + 1,
-                    borderColor: '#bbb', borderWidth: 1, borderDash: [4, 4],
-                    label: { display: false },
-                };
+                const prevCount = prevRunId ? (runCounts[prevRunId] || 0) : 0;
+                const thisCount = runCounts[r.run_id] || 0;
+                if (prevCount >= MIN_RUN_EPS && thisCount >= MIN_RUN_EPS) {
+                    const key = `restart_${arm}_${i}`;
+                    annotations[key] = {
+                        type: 'line', scaleID: 'x', value: offset + i + 1,
+                        borderColor: '#bbb', borderWidth: 1, borderDash: [4, 4],
+                        label: { display: false },
+                    };
+                }
             }
+            prevRunId = r.run_id;
         });
     }
 
-    // ── STOP-at-checkpoint lines (amber, labelled) ───────────────────────────
-    const ckpts = (_state.checkpointEvents || []).filter(ck => ck.stopped);
-    if (ckpts.length) {
-        const allRows = _state.timelineData?.episodes || _state.timelineData || [];
-        const mergedRows = allRows; // already canonical
-        const armAbsEpMap = {};
-        for (const [arm] of Object.entries(EXP_META)) {
-            armAbsEpMap[arm] = mergedRows.filter(r => r.arm === arm);
-        }
-        ckpts.forEach((ck, ci) => {
-            const canonArm = LEGACY_ALIAS[ck.arm] ?? ck.arm;
-            if (!_state.activeExperiments.has(canonArm)) return;
-            const armRows = armAbsEpMap[canonArm] || [];
-            const xVal = Math.min(ck.episode, armRows.length);
-            if (xVal < 1) return;
-            annotations[`stop_${canonArm}_${ci}`] = {
-                type: 'line', scaleID: 'x', value: xVal,
-                borderColor: '#f59e0b', borderWidth: 2, borderDash: [8, 4],
-                label: {
-                    display: true,
-                    content: 'STOP',
-                    position: 'start',
-                    font: { size: 9 },
-                    color: '#f59e0b',
-                    backgroundColor: 'transparent',
-                    padding: 2,
-                },
-            };
-        });
-    }
+    // Stop-at-checkpoint lines were removed per user request.
+    // The checkpoint events are still stored in the DB but not rendered
+    // as visual interruptions in the line charts (they added visual noise
+    // without conveying actionable information in the current workflow).
 
     // ── Legacy → new experiment rename boundary (gray solid line) ────────────
-    // Drawn at the x position where legacy data ends and new arm name begins,
-    // for each arm that has legacy data folded in.
-    const allRows = _state.timelineData?.episodes || _state.timelineData || [];
+    // Drawn at the right-aligned x position where legacy data ends.
     for (const [legacyArm, canonArm] of Object.entries(LEGACY_ALIAS)) {
         if (!_state.activeExperiments.has(canonArm)) continue;
         const legacyCount = allRows.filter(r => r.arm === legacyArm).length;
-        if (legacyCount > 0 && allRows.some(r => r.arm === canonArm)) {
+        const canonCount  = allRows.filter(r => r.arm === canonArm).length;
+        if (legacyCount > 0 && canonCount > 0) {
+            const totalForArm = legacyCount + canonCount;
+            const offset      = globalMax - totalForArm;
             annotations[`legacy_boundary_${canonArm}`] = {
-                type: 'line', scaleID: 'x', value: legacyCount,
+                type: 'line', scaleID: 'x', value: offset + legacyCount,
                 borderColor: '#9ca3af', borderWidth: 1.5, borderDash: [0, 0],
                 label: { display: false },
             };
@@ -437,7 +622,12 @@ function _renderSimOverview() {
     (_state.timelineData || []).forEach(r => { if ((r.smoothed_reward || 0) > peakSmoothed) peakSmoothed = r.smoothed_reward; });
     const goalSum  = dbRows.reduce((a, r) => a + (r.goal_rate || 0) * (r.total_episodes || 0), 0);
     const goalRate = total ? (goalSum / total * 100).toFixed(1) + '%' : '?';
-    const activeExpCount = EXP_KEYS.filter(k => dbRows.some(r => r.arm === k)).length;
+    // Count active experiments: any arm that has at least one completed episode in
+    // either metricsData or timelineData.  This ensures arms that have completed
+    // episodes but no turn rows (e.g. HPVOOT arms) are still counted.
+    const timelineArms = new Set((_state.timelineData || []).map(r => r.arm));
+    const metricsArms  = new Set(dbRows.map(r => r.arm));
+    const activeExpCount = EXP_KEYS.filter(k => metricsArms.has(k) || timelineArms.has(k)).length;
     el.innerHTML = `
         <div class="stat-card"><span class="stat-value">${total}</span><span class="stat-label">Training Episodes</span></div>
         <div class="stat-card"><span class="stat-value">${runs}</span><span class="stat-label">Training Runs</span></div>
@@ -530,24 +720,7 @@ function _renderLearningCurves() {
                 annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
                 tooltip: {
-                    callbacks: {
-                        footer(items) {
-                            const x = items[0]?.parsed?.x;
-                            const armLabel = items.find(i => !i.dataset.label.startsWith('_'))?.dataset?.label;
-                            const armKey = Object.entries(EXP_META).find(([,m]) => m.label === armLabel)?.[0];
-                            const d = _state.timelineData?.find(r => r.arm === armKey && r.global_episode_idx === x);
-                            if (!d) return [];
-                            const lines = [
-                                `Run: ${d.run_label}`,
-                                `Scenario: ${d.scenario_id || '?'}`,
-                                `Turns: ${d.turn_count ?? '?'}  |  Reward/turn: ${d.reward_per_turn?.toFixed(3) ?? '?'}`,
-                                `Cumul. reward: ${d.cumulative_reward?.toFixed(3) ?? '?'}`,
-                                `Stress AUC: ${d.stress_auc?.toFixed(3) ?? '?'}`,
-                            ];
-                            if (d.run_restart) lines.push('⟳ Restart (code change)');
-                            return lines;
-                        },
-                    },
+                    callbacks: _lineTooltipCallbacks('decimal', true),
                 },
             },
         },
@@ -580,9 +753,7 @@ function _renderGoalRateChart() {
                 annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
                 tooltip: {
-                    callbacks: {
-                        label: item => `${item.dataset.label}: ${(item.parsed.y * 100).toFixed(1)}%`,
-                    }
+                    callbacks: _lineTooltipCallbacks('percent'),
                 },
             },
         },
@@ -613,10 +784,7 @@ function _renderCritFailRateChart() {
                 annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
                 tooltip: {
-                    callbacks: {
-                        label: item => `${item.dataset.label}: ${(item.parsed.y * 100).toFixed(1)}%`,
-                        afterBody: () => ['', '↓ Lower = fewer episodes without goal completion'],
-                    },
+                    callbacks: _lineTooltipCallbacks('percent'),
                 },
             },
         },
@@ -646,9 +814,7 @@ function _renderStressAucChart() {
                 annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
                 tooltip: {
-                    callbacks: {
-                        afterBody: () => ['', '↑ Higher = calmer patient throughout the session'],
-                    }
+                    callbacks: _lineTooltipCallbacks('decimal'),
                 },
             },
         },
@@ -776,13 +942,23 @@ function _renderScenarioGoalRates() {
     const rows = _state.scenarioGoalData;
     if (!rows?.length) return;
 
-    const scenarios = [...new Set(rows.map(r => r.scenario_id))].sort();
-    const activeArms = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm) && rows.some(r => r.arm === arm));
+    // Apply scenario category filter
+    const filterRows = r => {
+        if (_state.scenarioFilter === 'all') return true;
+        if (_state.scenarioFilter === 'composite') return r.scenario_id.startsWith('js_composite_');
+        if (_state.scenarioFilter === 'escalation') return r.scenario_id.includes('crisis') || r.scenario_id.includes('suicidal') || r.scenario_id.includes('emergency') || r.scenario_id.includes('burnout');
+        return true;
+    };
+    const filteredRows = rows.filter(filterRows);
+    if (!filteredRows.length) return;
+
+    const scenarios = [...new Set(filteredRows.map(r => r.scenario_id))].sort();
+    const activeArms = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm) && filteredRows.some(r => r.arm === arm));
 
     // Sort arms by mean goal rate DESC so the smallest bar (worst arm) is drawn last (front).
     const armMeans = activeArms.map(arm => {
         const vals = scenarios.map(sc => {
-            const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
+            const r = filteredRows.find(x => x.arm === arm && x.scenario_id === sc);
             return r?.goal_rate ?? null;
         }).filter(v => v != null);
         return { arm, mean: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0 };
@@ -801,11 +977,11 @@ function _renderScenarioGoalRates() {
         categoryPercentage: 0.85,
         _armKey: arm,
         _epCounts: scenarios.map(sc => {
-            const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
+            const r = filteredRows.find(x => x.arm === arm && x.scenario_id === sc);
             return r?.episode_count ?? 0;
         }),
         data: scenarios.map(sc => {
-            const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
+            const r = filteredRows.find(x => x.arm === arm && x.scenario_id === sc);
             return r ? Math.round(r.goal_rate * 1000) / 1000 : null;
         }),
     }));
@@ -854,8 +1030,18 @@ function _renderScenarioRankTable(armKey) {
     const el = document.getElementById('scenario-rank-table');
     if (!el) return;
     // scenarioGoalData is already canonical from _fetchScenarioGoals
-    const rows = _state.scenarioGoalData;
-    if (!rows?.length) { el.innerHTML = '<p class="muted">No scenario goal data.</p>'; return; }
+    const allRows = _state.scenarioGoalData;
+    if (!allRows?.length) { el.innerHTML = '<p class="muted">No scenario goal data.</p>'; return; }
+
+    // Apply scenario category filter matching the active filter button
+    const filterFn = r => {
+        if (_state.scenarioFilter === 'all') return true;
+        if (_state.scenarioFilter === 'composite') return r.scenario_id.startsWith('js_composite_');
+        if (_state.scenarioFilter === 'escalation') return r.scenario_id.includes('crisis') || r.scenario_id.includes('suicidal') || r.scenario_id.includes('emergency') || r.scenario_id.includes('burnout');
+        return true;
+    };
+    const rows = allRows.filter(filterFn);
+    if (!rows.length) { el.innerHTML = '<p class="muted">No data for this filter.</p>'; return; }
 
     const scenarios = [...new Set(rows.map(r => r.scenario_id))];
     // Only show arms that have at least one data row
@@ -889,11 +1075,12 @@ function _renderScenarioRankTable(armKey) {
     });
 
     const fmt = v => v != null ? (v * 100).toFixed(1) + '%' : '—';
-    const colorCell = (v, arm) => {
+    const colorCell = (v, arm, n) => {
         if (v == null) return `<td style="text-align:center;color:var(--gray-400);">—</td>`;
         const col     = EXP_META[arm]?.color ?? '#888';
         const opacity = Math.round(20 + v * 70);
-        return `<td style="text-align:center;background:${col}${opacity.toString(16).padStart(2, '0')};font-weight:${v >= 0.5 ? '600' : '400'};">${fmt(v)}</td>`;
+        const nStr    = n != null ? `<span style="font-size:10px;color:var(--gray-500);display:block;">(n=${n})</span>` : '';
+        return `<td style="text-align:center;background:${col}${opacity.toString(16).padStart(2, '0')};font-weight:${v >= 0.5 ? '600' : '400'};">${fmt(v)}${nStr}</td>`;
     };
 
     el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
@@ -903,19 +1090,25 @@ function _renderScenarioRankTable(armKey) {
             <th style="text-align:left;padding:5px 8px;">Scenario</th>
             ${armsWithData.map(a => `<th style="padding:5px 8px;color:${EXP_META[a].color};">${EXP_META[a].shortLabel}</th>`).join('')}
             <th style="padding:5px 8px;">Mean</th>
+            <th style="padding:5px 8px;color:var(--gray-500);">Total n</th>
           </tr>
           <tr style="background:var(--gray-100);position:sticky;top:28px;border-bottom:2px solid var(--gray-200);font-size:11px;color:var(--gray-500);">
             <td colspan="2" style="padding:3px 8px;font-style:italic;">Episodes (total incl. legacy)</td>
             ${armsWithData.map(a => `<td style="text-align:center;padding:3px 8px;">${armTotals[a] ?? 0}</td>`).join('')}
             <td></td>
+            <td style="text-align:center;padding:3px 8px;">${armsWithData.reduce((s, a) => s + (armTotals[a] ?? 0), 0)}</td>
           </tr>
         </thead>
-        <tbody>${tableData.map((d, i) => `<tr style="border-bottom:1px solid var(--gray-100);">
+        <tbody>${tableData.map((d, i) => {
+            const rowTotal = armsWithData.reduce((s, a) => s + (d.armRows[a]?.n ?? 0), 0);
+            return `<tr style="border-bottom:1px solid var(--gray-100);">
             <td style="padding:4px 8px;color:var(--gray-500);">${i + 1}</td>
             <td style="padding:4px 8px;font-family:monospace;font-size:11px;">${d.sc}</td>
-            ${armsWithData.map(a => colorCell(d.armRows[a]?.rate, a)).join('')}
+            ${armsWithData.map(a => colorCell(d.armRows[a]?.rate, a, d.armRows[a]?.n)).join('')}
             <td style="text-align:center;font-weight:600;">${fmt(d.meanRate)}</td>
-        </tr>`).join('')}</tbody>
+            <td style="text-align:center;color:var(--gray-600);font-size:11px;">${rowTotal || '—'}</td>
+        </tr>`;
+        }).join('')}</tbody>
     </table>`;
 }
 
@@ -924,11 +1117,252 @@ function _wireScenarioRankToggles() {
     if (!container) return;
     container.querySelectorAll('button[data-arm]').forEach(btn => {
         btn.onclick = () => {
-            container.querySelectorAll('button').forEach(b => b.className = 'secondary');
+            container.querySelectorAll('button[data-arm]').forEach(b => b.className = 'secondary');
             btn.className = 'primary';
             _renderScenarioRankTable(btn.dataset.arm);
         };
     });
+
+    // Scenario category filter buttons
+    document.querySelectorAll('[data-scenario-filter]').forEach(btn => {
+        btn.onclick = () => {
+            document.querySelectorAll('[data-scenario-filter]').forEach(b => b.className = 'secondary');
+            btn.className = 'primary';
+            _state.scenarioFilter = btn.dataset.scenarioFilter;
+            // Re-render both the bar chart and the rank table
+            _renderScenarioGoalRates();
+            _renderScenarioRewardStats();
+            const activeArmBtn = document.querySelector('#scenario-rank-toggles button.primary');
+            _renderScenarioRankTable(activeArmBtn?.dataset.arm ?? 'mean');
+        };
+    });
+}
+
+// -- Scenario Reward Stats Table -----------------------------------------------
+// Renders per-scenario avg reward per experiment, sorted worst-first (ascending mean).
+// Uses _state.scenarioGoalData (already fetched, contains avg_reward per arm×scenario).
+function _renderScenarioRewardStats() {
+    const el = document.getElementById('scenario-reward-stats-wrap');
+    if (!el) return;
+    const allRows = _state.scenarioGoalData;
+    if (!allRows?.length) { el.innerHTML = '<p class="muted" style="padding:8px;">No scenario data.</p>'; return; }
+
+    const filterFn = r => {
+        if (_state.scenarioFilter === 'all') return true;
+        if (_state.scenarioFilter === 'composite') return r.scenario_id.startsWith('js_composite_');
+        if (_state.scenarioFilter === 'escalation') return r.scenario_id.includes('crisis') || r.scenario_id.includes('suicidal') || r.scenario_id.includes('emergency') || r.scenario_id.includes('burnout');
+        return true;
+    };
+    const rows = allRows.filter(filterFn);
+    if (!rows.length) { el.innerHTML = '<p class="muted" style="padding:8px;">No data for this filter.</p>'; return; }
+
+    const scenarios    = [...new Set(rows.map(r => r.scenario_id))];
+    const armsWithData = EXP_KEYS.filter(arm => rows.some(r => r.arm === arm));
+
+    // Compute per-scenario mean reward across all arms
+    const tableData = scenarios.map(sc => {
+        const armRewards = armsWithData.reduce((acc, arm) => {
+            const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
+            if (r?.avg_reward != null) acc[arm] = { reward: r.avg_reward, n: r.episode_count };
+            return acc;
+        }, {});
+        const validRewards = armsWithData.map(a => armRewards[a]?.reward).filter(v => v != null);
+        const meanReward   = validRewards.length ? validRewards.reduce((a, b) => a + b, 0) / validRewards.length : null;
+        return { sc, armRewards, meanReward };
+    });
+
+    // Sort ascending by mean reward (worst first)
+    tableData.sort((a, b) => {
+        if (a.meanReward == null && b.meanReward == null) return 0;
+        if (a.meanReward == null) return 1;
+        if (b.meanReward == null) return -1;
+        return a.meanReward - b.meanReward;
+    });
+
+    // Determine reward range for opacity scaling
+    const allRewards = tableData.flatMap(d => armsWithData.map(a => d.armRewards[a]?.reward).filter(v => v != null));
+    const minR = allRewards.length ? Math.min(...allRewards) : 0;
+    const maxR = allRewards.length ? Math.max(...allRewards) : 1;
+    const range = maxR - minR || 1;
+
+    const colorCell = (arm, reward, n) => {
+        if (reward == null) return `<td style="text-align:center;color:var(--gray-400);">—</td>`;
+        const col     = EXP_META[arm]?.color ?? '#888';
+        const opacity = Math.round(15 + ((reward - minR) / range) * 65);
+        const nStr    = n != null ? `<span style="font-size:10px;color:var(--gray-500);display:block;">(n=${n})</span>` : '';
+        return `<td style="text-align:center;background:${col}${opacity.toString(16).padStart(2, '0')};">${reward.toFixed(2)}${nStr}</td>`;
+    };
+
+    el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
+        <thead>
+          <tr style="background:var(--gray-50);position:sticky;top:0;border-bottom:1px solid var(--gray-200);">
+            <th style="text-align:left;padding:5px 8px;">#</th>
+            <th style="text-align:left;padding:5px 8px;">Scenario</th>
+            ${armsWithData.map(a => `<th style="padding:5px 8px;color:${EXP_META[a].color};">${EXP_META[a].shortLabel}</th>`).join('')}
+            <th style="padding:5px 8px;">Mean Reward</th>
+            <th style="padding:5px 8px;color:var(--gray-500);">Total n</th>
+          </tr>
+        </thead>
+        <tbody>${tableData.map((d, i) => {
+            const rowTotal = armsWithData.reduce((s, a) => s + (d.armRewards[a]?.n ?? 0), 0);
+            return `<tr style="border-bottom:1px solid var(--gray-100);">
+              <td style="padding:4px 8px;color:var(--gray-500);">${i + 1}</td>
+              <td style="padding:4px 8px;font-family:monospace;font-size:11px;">${d.sc}</td>
+              ${armsWithData.map(a => colorCell(a, d.armRewards[a]?.reward, d.armRewards[a]?.n)).join('')}
+              <td style="text-align:center;font-weight:600;">${d.meanReward != null ? d.meanReward.toFixed(2) : '—'}</td>
+              <td style="text-align:center;color:var(--gray-600);font-size:11px;">${rowTotal || '—'}</td>
+            </tr>`;
+        }).join('')}</tbody>
+    </table>`;
+}
+
+// -- Action Usage Statistics Table --------------------------------------------
+// Renders an interactive table with actions as rows and experiments as columns.
+// Supports "Per Experiment" (default) and "Per Scenario" views via toggle buttons.
+function _renderActionStatsTable() {
+    const wrap = document.getElementById('action-stats-wrap');
+    if (!wrap) return;
+    _wireActionStatsToggles();
+
+    if (_state.actionStatsView === 'scenario') {
+        _renderActionStatsByScenario(wrap);
+    } else {
+        _renderActionStatsByExp(wrap);
+    }
+}
+
+function _wireActionStatsToggles() {
+    const btnExp = document.getElementById('action-stats-view-exp');
+    const btnSc  = document.getElementById('action-stats-view-sc');
+    const scFilter = document.getElementById('action-stats-sc-filter');
+    if (!btnExp || !btnSc) return;
+
+    btnExp.onclick = () => {
+        _state.actionStatsView = 'exp';
+        btnExp.classList.add('active'); btnSc.classList.remove('active');
+        if (scFilter) scFilter.style.display = 'none';
+        _renderActionStatsTable();
+    };
+    btnSc.onclick = () => {
+        _state.actionStatsView = 'scenario';
+        btnSc.classList.add('active'); btnExp.classList.remove('active');
+        if (scFilter) {
+            scFilter.style.display = '';
+            _populateActionScenarioFilter(scFilter);
+        }
+        _renderActionStatsTable();
+    };
+    if (scFilter) {
+        scFilter.onchange = () => {
+            _state.actionStatsScenario = scFilter.value || null;
+            _renderActionStatsByScenario(document.getElementById('action-stats-wrap'));
+        };
+    }
+}
+
+function _populateActionScenarioFilter(sel) {
+    const rows = _state.actionStatsByScenario || [];
+    const scenarios = [...new Set(rows.map(r => r.scenario_id).filter(Boolean))].sort();
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All scenarios</option>' +
+        scenarios.map(sc => `<option value="${sc}"${sc === current ? ' selected' : ''}>${sc}</option>`).join('');
+    if (!_state.actionStatsScenario && scenarios.length) _state.actionStatsScenario = scenarios[0];
+    if (_state.actionStatsScenario && !sel.value) sel.value = _state.actionStatsScenario;
+}
+
+function _renderActionStatsByExp(wrap) {
+    const rows = _state.actionStatsData;
+    if (!rows?.length) { wrap.innerHTML = '<p class="muted" style="padding:8px;">No action stats yet.</p>'; return; }
+
+    const arms    = EXP_KEYS.filter(arm => rows.some(r => r.arm === arm));
+    const actions = [...new Set(rows.map(r => r.action))].sort();
+
+    const totalsByArm = {};
+    arms.forEach(arm => {
+        totalsByArm[arm] = rows.filter(r => r.arm === arm).reduce((s, r) => s + (r.turn_count || 0), 0);
+    });
+
+    const cell = (arm, action) => {
+        const r = rows.find(x => x.arm === arm && x.action === action);
+        if (!r) return `<td style="text-align:center;color:var(--gray-300);">—</td>`;
+        const col  = EXP_META[arm]?.color ?? '#888';
+        const frac = totalsByArm[arm] ? r.turn_count / totalsByArm[arm] : 0;
+        const op   = Math.round(15 + frac * 75).toString(16).padStart(2, '0');
+        const goalPct = r.goal_rate != null ? (r.goal_rate * 100).toFixed(0) + '%' : '?';
+        return `<td style="text-align:center;background:${col}${op};white-space:nowrap;">${r.turn_count}<br><span style="font-size:10px;color:var(--gray-600);">${goalPct}</span></td>`;
+    };
+
+    const totals = {};
+    actions.forEach(action => {
+        totals[action] = rows.filter(r => r.action === action).reduce((s, r) => s + (r.turn_count || 0), 0);
+    });
+
+    wrap.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
+        <thead>
+          <tr style="background:var(--gray-50);position:sticky;top:0;border-bottom:1px solid var(--gray-200);">
+            <th style="text-align:left;padding:5px 8px;">Action</th>
+            ${arms.map(a => `<th style="padding:5px 8px;color:${EXP_META[a].color};">${EXP_META[a].shortLabel}</th>`).join('')}
+            <th style="padding:5px 8px;">Total</th>
+          </tr>
+        </thead>
+        <tbody>${actions.map(action => `
+          <tr style="border-bottom:1px solid var(--gray-100);">
+            <td style="padding:4px 8px;font-family:monospace;font-size:11px;">${action}</td>
+            ${arms.map(arm => cell(arm, action)).join('')}
+            <td style="text-align:center;font-weight:600;">${totals[action] || 0}</td>
+          </tr>`).join('')}
+        </tbody>
+    </table>`;
+}
+
+function _renderActionStatsByScenario(wrap) {
+    const allRows = _state.actionStatsByScenario;
+    if (!allRows?.length) { wrap.innerHTML = '<p class="muted" style="padding:8px;">No per-scenario action stats yet.</p>'; return; }
+
+    const targetSc = _state.actionStatsScenario;
+    const rows     = targetSc ? allRows.filter(r => r.scenario_id === targetSc) : allRows;
+
+    if (!rows.length) { wrap.innerHTML = `<p class="muted" style="padding:8px;">No data for "${targetSc || 'selected scenario'}".</p>`; return; }
+
+    const arms    = EXP_KEYS.filter(arm => rows.some(r => r.arm === arm));
+    const actions = [...new Set(rows.map(r => r.action))].sort();
+
+    const totalsByArm = {};
+    arms.forEach(arm => {
+        totalsByArm[arm] = rows.filter(r => r.arm === arm).reduce((s, r) => s + (r.turn_count || 0), 0);
+    });
+
+    const cell = (arm, action) => {
+        const r = rows.find(x => x.arm === arm && x.action === action);
+        if (!r) return `<td style="text-align:center;color:var(--gray-300);">—</td>`;
+        const col  = EXP_META[arm]?.color ?? '#888';
+        const frac = totalsByArm[arm] ? r.turn_count / totalsByArm[arm] : 0;
+        const op   = Math.round(15 + frac * 75).toString(16).padStart(2, '0');
+        const goalPct = r.goal_rate != null ? (r.goal_rate * 100).toFixed(0) + '%' : '?';
+        return `<td style="text-align:center;background:${col}${op};white-space:nowrap;">${r.turn_count}<br><span style="font-size:10px;color:var(--gray-600);">${goalPct}</span></td>`;
+    };
+
+    const totals = {};
+    actions.forEach(action => {
+        totals[action] = rows.filter(r => r.action === action).reduce((s, r) => s + (r.turn_count || 0), 0);
+    });
+
+    wrap.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
+        <thead>
+          <tr style="background:var(--gray-50);position:sticky;top:0;border-bottom:1px solid var(--gray-200);">
+            <th style="text-align:left;padding:5px 8px;">Action</th>
+            ${arms.map(a => `<th style="padding:5px 8px;color:${EXP_META[a].color};">${EXP_META[a].shortLabel}</th>`).join('')}
+            <th style="padding:5px 8px;">Total</th>
+          </tr>
+        </thead>
+        <tbody>${actions.map(action => `
+          <tr style="border-bottom:1px solid var(--gray-100);">
+            <td style="padding:4px 8px;font-family:monospace;font-size:11px;">${action}</td>
+            ${arms.map(arm => cell(arm, action)).join('')}
+            <td style="text-align:center;font-weight:600;">${totals[action] || 0}</td>
+          </tr>`).join('')}
+        </tbody>
+    </table>`;
 }
 
 // -- Critical Failure Stats ----------------------------------------------------
@@ -946,80 +1380,54 @@ function _renderCritFailStats() {
     }).join('');
 }
 
-function _renderCritFailChart() {
-    if (typeof Chart === 'undefined') return;
-    const canvas = _destroyChart('crit-fail-chart');
-    if (!canvas) return;
+function _renderCritFailTable() {
+    const el = document.getElementById('crit-fail-table');
+    if (!el) return;
     const rows = _state.critFailData;
-    if (!rows?.length) return;
+    if (!rows?.length) { el.innerHTML = '<p class="muted" style="padding:8px;">No critical failure data yet.</p>'; return; }
 
-    // All data is already canonicalized by _fetchCritFail
-    const scenarios = [...new Set(rows.map(r => r.scenario_id).filter(Boolean))].sort();
-    if (!scenarios.length) return;
+    const armsWithData = EXP_KEYS.filter(arm => rows.some(r => r.arm === arm));
+    const scenarios    = [...new Set(rows.map(r => r.scenario_id).filter(Boolean))].sort();
 
-    // Overlapping bars — sort by mean failure rate DESC (worst first = back)
-    const armMeansF = EXP_KEYS.filter(arm => _state.activeExperiments.has(arm) && rows.some(r => r.arm === arm)).map(arm => {
-        const vals = scenarios.map(sc => {
-            const row = rows.find(r => r.arm === arm && r.scenario_id === sc);
-            if (!row || !row.total_episodes) return 0;
-            return row.failed_episodes / row.total_episodes;
-        });
-        return { arm, mean: vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length) };
+    // Sort scenarios by worst mean failure rate (most problematic first)
+    const scenarioMeans = scenarios.map(sc => {
+        const vals = armsWithData.map(arm => {
+            const r = rows.find(x => x.arm === arm && x.scenario_id === sc);
+            return (r && r.total_episodes) ? r.failed_episodes / r.total_episodes : null;
+        }).filter(v => v != null);
+        return { sc, mean: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0 };
     });
-    if (!armMeansF.length) return;
-    armMeansF.sort((a, b) => b.mean - a.mean);
+    scenarioMeans.sort((a, b) => b.mean - a.mean);
 
-    const datasets = armMeansF.map(({ arm }) => {
-        const meta = EXP_META[arm];
-        return {
-            label: meta.shortLabel,
-            backgroundColor: meta.color + 'bb',
-            borderColor:     meta.color,
-            borderWidth: 1,
-            barPercentage:      1.0,
-            categoryPercentage: 0.85,
-            _epCounts: scenarios.map(sc => {
-                const row = rows.find(r => r.arm === arm && r.scenario_id === sc);
-                return row ? row.total_episodes : 0;
-            }),
-            data: scenarios.map(sc => {
-                const row = rows.find(r => r.arm === arm && r.scenario_id === sc);
-                if (!row || !row.total_episodes) return 0;
-                return Math.round(row.failed_episodes / row.total_episodes * 1000) / 10;
-            }),
-        };
-    });
+    const fmtRate = (r, arm) => {
+        if (!r || !r.total_episodes) return `<td style="text-align:center;color:var(--gray-300);">—</td>`;
+        const pct = (r.failed_episodes / r.total_episodes * 100);
+        const col = EXP_META[arm]?.color ?? '#888';
+        const opacity = Math.round(15 + pct * 0.7).toString(16).padStart(2, '0');
+        return `<td style="text-align:center;background:${col}${opacity};font-weight:${pct > 20 ? '600' : '400'};">
+            ${pct.toFixed(1)}%<small style="display:block;color:var(--gray-500);font-size:10px;">${r.failed_episodes}/${r.total_episodes}</small>
+        </td>`;
+    };
 
-    const dynamicW = Math.max(600, scenarios.length * 14);
-    canvas.parentElement.style.overflowX = 'auto';
-    canvas.style.width = dynamicW + 'px';
-    canvas.style.minWidth = dynamicW + 'px';
-    canvas.width = dynamicW;
-
-    new Chart(canvas, {
-        type: 'bar',
-        data: { labels: scenarios.map(s => s.replace(/_/g, ' ')), datasets },
-        options: {
-            responsive: false, maintainAspectRatio: false,
-            scales: {
-                x: { ticks: { font: { size: 9 }, maxRotation: 55 } },
-                y: { min: 0, max: 100, title: { display: true, text: 'Critical Failure %', font: { size: 11 } },
-                     ticks: { callback: v => v + '%' } },
-            },
-            plugins: {
-                legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
-                tooltip: {
-                    callbacks: {
-                        label: ctx => {
-                            const n = ctx.dataset._epCounts?.[ctx.dataIndex] ?? '?';
-                            return ` ${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%  (n=${n})`;
-                        },
-                    },
-                    mode: 'index', intersect: false,
-                },
-            },
-        },
-    });
+    el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
+        <thead>
+          <tr style="background:var(--gray-50);position:sticky;top:0;border-bottom:1px solid var(--gray-200);">
+            <th style="text-align:left;padding:5px 8px;">#</th>
+            <th style="text-align:left;padding:5px 8px;">Scenario</th>
+            ${armsWithData.map(a => `<th style="padding:5px 8px;color:${EXP_META[a].color};">${EXP_META[a].shortLabel}</th>`).join('')}
+            <th style="padding:5px 8px;">Mean</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${scenarioMeans.map((d, i) => `
+            <tr style="border-bottom:1px solid var(--gray-100);">
+              <td style="padding:4px 8px;color:var(--gray-500);">${i + 1}</td>
+              <td style="padding:4px 8px;font-family:monospace;font-size:11px;">${d.sc}</td>
+              ${armsWithData.map(arm => fmtRate(rows.find(r => r.arm === arm && r.scenario_id === d.sc), arm)).join('')}
+              <td style="text-align:center;font-weight:600;">${d.mean > 0 ? (d.mean * 100).toFixed(1) + '%' : '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+    </table>`;
 }
 
 // -- Cumulative Reward Distribution (min/mean/max per experiment per run) ------
@@ -1131,7 +1539,7 @@ function _renderRewardComponentCharts() {
         const canvasId = `rc-chart-${dim.key}`;
         const wrap2 = document.createElement('div');
         wrap2.style.cssText = 'margin-bottom:28px;';
-        wrap2.innerHTML = `<h4 style="margin:0 0 6px;font-size:13px;color:var(--gray-700);">${dim.label} ? WMA (window ${_state.wmaWindow})</h4><canvas id="${canvasId}" height="130"></canvas>`;
+        wrap2.innerHTML = `<h4 style="margin:0 0 6px;font-size:13px;color:var(--gray-700);">${dim.label} <span title="Weighted Moving Average (WMA) of per-turn reward component across the window" style="cursor:help;opacity:.6;">ⓘ</span> WMA (window ${_state.wmaWindow})</h4><canvas id="${canvasId}" height="130"></canvas>`;
         wrap.appendChild(wrap2);
 
         const datasets = EXP_KEYS
@@ -1161,7 +1569,19 @@ function _renderRewardComponentCharts() {
                 animation: false,
                 responsive: true,
                 parsing: false,
-                plugins: { legend: { labels: { font: { size: 11 } } }, tooltip: { mode: 'index', intersect: false } },
+                plugins: {
+                    legend: { labels: { font: { size: 11 } } },
+                    tooltip: {
+                        mode: 'index', intersect: false,
+                        callbacks: {
+                            label: item => {
+                                const val = item.parsed.y != null ? item.parsed.y.toFixed(3) : '—';
+                                return `${item.dataset.label}: ${val}  (ep ${Math.round(item.parsed.x)})`;
+                            },
+                        },
+                    },
+                    zoom: _ZOOM_PLUGIN,
+                },
                 scales: {
                     x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)' }, ticks: { callback: v => Math.round(v) } },
                     y: { min: 0, max: 1, title: { display: true, text: dim.label } },
@@ -1174,7 +1594,9 @@ function _renderRewardComponentCharts() {
 // -- Metric Bar Charts (per-run, overlapping per experiment) ------------------
 function _renderMetricBars() {
     if (typeof Chart === 'undefined') return;
-    // metricsData is already canonical from _fetchMetrics
+    // metricsData is already canonical from _fetchMetrics.
+    // One row per (arm, run_id); we aggregate to one value per arm by
+    // weighted-averaging over all runs (weight = episode count).
     const rows = _state.metricsData || [];
     if (!rows.length) return;
 
@@ -1191,72 +1613,67 @@ function _renderMetricBars() {
         { key: 'cost_usd_total',     label: 'Cost USD/episode',      canvas: 'metric-bar-cost'    },
         { key: 'llm_calls_total',    label: 'LLM calls/episode',     canvas: 'metric-bar-llmcalls'},
     ];
-    const runIds = [...new Set(rows.map(r => r.run_label?.split('/')[0]?.trim()))].filter(Boolean).sort();
-    // Only show arms that have actual data in this run set (after legacy merge)
+
+    // Aggregate per arm: weighted average over all runs for each metric
     const activeArms = EXP_KEYS.filter(arm =>
         _state.activeExperiments.has(arm) && rows.some(r => r.arm === arm)
     );
-    if (!activeArms.length || !runIds.length) return;
+    if (!activeArms.length) return;
+
+    const armAgg = {};
+    for (const arm of activeArms) {
+        const armRows = rows.filter(r => r.arm === arm);
+        const totalN  = armRows.reduce((s, r) => s + (r.total_episodes || 0), 0);
+        armAgg[arm] = {};
+        for (const { key } of metrics) {
+            if (!totalN) { armAgg[arm][key] = null; continue; }
+            const wsum = armRows.reduce((s, r) => s + (r[key] ?? 0) * (r.total_episodes || 0), 0);
+            armAgg[arm][key] = Math.round(wsum / totalN * 10000) / 10000;
+        }
+        armAgg[arm]._totalEpisodes = totalN;
+    }
+
+    // x-axis labels = experiment short labels
+    const labels = activeArms.map(a => EXP_META[a].shortLabel);
 
     metrics.forEach(({ key, label, canvas: cid }) => {
         const cv = _destroyChart(cid);
         if (!cv) return;
 
-        // Pre-compute per-arm values so we can determine draw order.
-        const armValues = activeArms.map(arm => ({
-            arm,
-            meta: EXP_META[arm],
-            data: runIds.map(rid => {
-                const row = rows.find(r => r.arm === arm && r.run_label?.startsWith(rid));
-                if (!row) return null;
-                return Math.round((row[key] ?? 0) * 1000) / 1000;
-            }),
-        }));
-
-        // Draw order: largest-sum arm first (back), smallest-sum arm last (front).
-        // This ensures the shortest bar is always fully visible at the front.
-        const armSums = armValues.map(av => av.data.reduce((s, v) => s + (v ?? 0), 0));
-        const drawOrder = armValues
-            .map((_, i) => i)
-            .sort((a, b) => armSums[b] - armSums[a]);
-
-        const datasets = drawOrder.map((idx, rank) => {
-            const { arm, meta, data } = armValues[idx];
-            return {
-                label: meta.shortLabel,
-                backgroundColor: meta.color + 'aa',
-                borderColor: meta.color,
-                borderWidth: 1.5,
-                borderRadius: 3,
-                // Full overlap — all bars occupy the same category slot
-                barPercentage: 0.85,
-                categoryPercentage: 1.0,
-                maxBarThickness: 36,
-                // Lower order = drawn later = on top in Chart.js
-                order: rank,
-                data,
-            };
-        });
+        const data   = activeArms.map(arm => armAgg[arm][key]);
+        const colors = activeArms.map(arm => EXP_META[arm].color + 'cc');
+        const borders= activeArms.map(arm => EXP_META[arm].color);
 
         new Chart(cv, {
             type: 'bar',
-            data: { labels: runIds, datasets },
+            data: {
+                labels,
+                datasets: [{
+                    label,
+                    data,
+                    backgroundColor: colors,
+                    borderColor:     borders,
+                    borderWidth: 1.5,
+                    borderRadius: 3,
+                    maxBarThickness: 36,
+                }],
+            },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    x: { ticks: { font: { size: 9 }, maxRotation: 45 } },
+                    x: { ticks: { font: { size: 10 } } },
                     y: { beginAtZero: true, ticks: { font: { size: 10 } } },
                 },
                 plugins: {
                     legend: { display: false },
                     title: { display: true, text: label, font: { size: 11 }, padding: { bottom: 4 } },
                     tooltip: {
-                        mode: 'index',
-                        intersect: false,
                         callbacks: {
-                            label: (ctx) => {
-                                return ` ${ctx.dataset.label}: ${ctx.parsed.y ?? 'n/a'}`;
+                            label: ctx => {
+                                const arm = activeArms[ctx.dataIndex];
+                                const n   = armAgg[arm]?._totalEpisodes ?? '?';
+                                return ` ${EXP_META[arm].label}: ${ctx.parsed.y ?? 'n/a'}  (n=${n} eps)`;
                             },
                         },
                     },
@@ -1580,7 +1997,7 @@ function _renderSensorComparison() {
         <p style="font-size:11px;color:var(--gray-500);margin:0 0 6px;">
             Goal rate per base scenario — sensor vs no-sensor variants.
             Each bar is a weighted average across all arms that ran that scenario type.
-            Scroll/pinch to zoom.
+            Ctrl+scroll or pinch to zoom.
         </p>
         <div style="overflow-x:auto;">
             <canvas id="sensor-comparison-chart" height="220"></canvas>

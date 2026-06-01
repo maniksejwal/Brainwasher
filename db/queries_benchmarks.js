@@ -142,16 +142,27 @@ export async function finaliseBenchmarkEpisode(episode_id, metrics = {}) {
  */
 export async function recordBenchmarkTurn(episode_id, run_id, arm, turn) {
     const d = await _db();
+
+    // Python flattens `reward: {goal, stress, trust, info, consistency}` into the
+    // top-level payload via `payload.update(req.reward)`, so the keys arrive as
+    // `goal`, `stress`, etc.  Older code expected `reward_goal`, `reward_stress`.
+    // Accept both forms so legacy and new episodes both write correctly.
+    const rg = (k) => turn[`reward_${k}`] ?? turn[k] ?? null;
+
     const {
         turn_number, action, response,
         hrv_ms, stress_label, stress_index,
-        reward_stress, reward_trust, reward_goal, reward_info, reward_consistency,
         judge_clinical, judge_empathy, judge_safety, judge_goal, judge_strategy,
         linguistic_stress, discrepancy_flag,
         tokens_scout, tokens_maverick, latency_ms,
         // Cost and hysteresis columns (new 6-exp columns)
         cost_usd_turn, llm_calls_turn, hysteresis_zone, hysteresis_zone_name,
     } = turn;
+    const reward_goal        = rg('goal');
+    const reward_stress      = rg('stress');
+    const reward_trust       = rg('trust');
+    const reward_info        = rg('info');
+    const reward_consistency = rg('consistency');
     await d.run(
         `INSERT INTO htn_benchmark_turns
          (episode_id, run_id, arm, turn_number, action, response,
@@ -474,6 +485,10 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
     const where = arm ? `WHERE e.arm = ?` : '';
     const params = arm ? [arm] : [];
 
+    // Filter to completed episodes only (completed_at IS NOT NULL).
+    // Ghost rows (episode row created but run_episode() threw before _flush_episode)
+    // have completed_at = NULL and turn_count = 0 — they must be excluded so that
+    // arms with 100% failures don't show up on the timeline with null data.
     const rows = await db.all(
         `SELECT e.episode_id, e.arm,
                 r.label as run_label, r.run_id, r.started_at as run_started_at,
@@ -483,7 +498,7 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
                 e.scenario_id, e.started_at
          FROM htn_benchmark_episodes e
          JOIN htn_benchmark_runs r ON r.run_id = e.run_id
-         ${where ? where + ' AND' : 'WHERE'} e.turn_count > 0
+         ${where ? where + ' AND' : 'WHERE'} e.completed_at IS NOT NULL
          ORDER BY e.arm, e.started_at ASC`,
         params
     );
@@ -601,27 +616,32 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
  */
 export async function getExperimentMetricSummary() {
     const db = await getDb();
+    // LEFT JOIN turns: new arms that have no turn rows yet (e.g. HPVOOT during early
+    // training) must still appear in the summary so the dashboard can count them as
+    // active experiments.  Turn-level aggregates (safety_failures, latency, per-reward
+    // component averages) will be NULL for those arms until turns are populated.
     return db.all(
         `SELECT e.arm,
                 r.label as run_label, r.run_id,
-                COUNT(DISTINCT e.episode_id) as total_episodes,
-                AVG(e.cumulative_reward)      as mean_reward,
-                MIN(e.cumulative_reward)      as min_reward,
-                MAX(e.cumulative_reward)      as max_reward,
-                AVG(e.goal_achieved)          as goal_rate,
-                AVG(e.stress_auc)             as mean_stress_auc,
+                COUNT(DISTINCT e.episode_id)  as total_episodes,
+                AVG(e.cumulative_reward)       as mean_reward,
+                MIN(e.cumulative_reward)       as min_reward,
+                MAX(e.cumulative_reward)       as max_reward,
+                AVG(e.goal_achieved)           as goal_rate,
+                AVG(e.stress_auc)              as mean_stress_auc,
                 SUM(CASE WHEN t.judge_safety IS NOT NULL AND t.judge_safety < 0.5 THEN 1 ELSE 0 END) as safety_failures,
                 SUM(CASE WHEN t.discrepancy_flag = 1 THEN 1 ELSE 0 END) as discrepancy_turns,
-                AVG(t.latency_ms)             as mean_latency_ms,
-                AVG(t.reward_goal)            as mean_goal_reward,
-                AVG(t.reward_stress)          as mean_stress_reward,
-                AVG(t.reward_trust)           as mean_trust_reward,
-                AVG(t.reward_info)            as mean_info_reward,
-                AVG(t.reward_consistency)     as mean_consistency_reward
+                AVG(t.latency_ms)              as mean_latency_ms,
+                AVG(t.reward_goal)             as mean_goal_reward,
+                AVG(t.reward_stress)           as mean_stress_reward,
+                AVG(t.reward_trust)            as mean_trust_reward,
+                AVG(t.reward_info)             as mean_info_reward,
+                AVG(t.reward_consistency)      as mean_consistency_reward
          FROM htn_benchmark_runs r
-         JOIN htn_benchmark_episodes e ON e.run_id = r.run_id
-         JOIN htn_benchmark_turns t ON t.episode_id = e.episode_id
+         JOIN htn_benchmark_episodes e ON e.run_id = r.run_id AND e.turn_count > 0
+         LEFT JOIN htn_benchmark_turns t ON t.episode_id = e.episode_id
          GROUP BY e.arm, r.run_id
+         HAVING COUNT(DISTINCT e.episode_id) > 0
          ORDER BY e.arm, r.started_at`
     );
 }
@@ -848,18 +868,19 @@ export async function getRewardComponentTimeline(windowSize = 20) {
     const db  = await getDb();
     const rows = await db.all(
         `SELECT e.arm,
-                e.episode_id, e.episode_index,
+                e.episode_id,
                 e.started_at,
                 r.label      as run_label,
-                AVG(t.reward_goal)        as mean_goal,
-                AVG(t.reward_stress)      as mean_stress,
-                AVG(t.reward_trust)       as mean_trust,
-                AVG(t.reward_info)        as mean_info,
-                AVG(t.reward_consistency) as mean_consistency
+                AVG(COALESCE(t.reward_goal,        0)) as mean_goal,
+                AVG(COALESCE(t.reward_stress,      0)) as mean_stress,
+                AVG(COALESCE(t.reward_trust,       0)) as mean_trust,
+                AVG(COALESCE(t.reward_info,        0)) as mean_info,
+                AVG(COALESCE(t.reward_consistency, 0)) as mean_consistency
          FROM htn_benchmark_episodes e
-         JOIN htn_benchmark_runs r     ON r.run_id = e.run_id
-         JOIN htn_benchmark_turns t    ON t.episode_id = e.episode_id
+         JOIN htn_benchmark_runs r         ON r.run_id = e.run_id
+         LEFT JOIN htn_benchmark_turns t   ON t.episode_id = e.episode_id
          WHERE e.started_at IS NOT NULL
+           AND e.completed_at IS NOT NULL
          GROUP BY e.episode_id
          ORDER BY e.arm, e.started_at ASC`
     );
@@ -923,5 +944,56 @@ export async function getCheckpointEvents() {
         `SELECT arm, episode, stopped, ts, run_id
          FROM htn_benchmark_checkpoints
          ORDER BY ts ASC`
+    );
+}
+
+/**
+ * Action usage statistics per arm, action, and scenario.
+ * Used for the Action Usage Statistics table on the benchmarks dashboard.
+ *
+ * @returns {Promise<Array<{arm, action, scenario_id, turn_count, goal_rate, avg_episode_reward, avg_turn_reward}>>}
+ */
+export async function getActionStats() {
+    const db = await getDb();
+    return db.all(
+        `SELECT
+           t.arm,
+           t.action,
+           e.scenario_id,
+           COUNT(*)                      AS turn_count,
+           AVG(e.goal_achieved)          AS goal_rate,
+           AVG(e.cumulative_reward)      AS avg_episode_reward,
+           AVG(t.reward_goal + t.reward_stress + t.reward_trust + t.reward_info + t.reward_consistency)
+                                         AS avg_turn_reward
+         FROM htn_benchmark_turns t
+         JOIN htn_benchmark_episodes e ON e.episode_id = t.episode_id
+         WHERE t.action IS NOT NULL AND t.action != ''
+           AND e.completed_at IS NOT NULL
+         GROUP BY t.arm, t.action, e.scenario_id
+         ORDER BY t.arm, turn_count DESC`
+    );
+}
+
+/**
+ * Action usage statistics rolled up to arm level (no scenario breakdown).
+ * Used for the default "Per Experiment" view in the Action Usage Statistics table.
+ *
+ * @returns {Promise<Array<{arm, action, turn_count, goal_rate, avg_episode_reward}>>}
+ */
+export async function getActionStatsSummary() {
+    const db = await getDb();
+    return db.all(
+        `SELECT
+           t.arm,
+           t.action,
+           COUNT(*)                      AS turn_count,
+           AVG(e.goal_achieved)          AS goal_rate,
+           AVG(e.cumulative_reward)      AS avg_episode_reward
+         FROM htn_benchmark_turns t
+         JOIN htn_benchmark_episodes e ON e.episode_id = t.episode_id
+         WHERE t.action IS NOT NULL AND t.action != ''
+           AND e.completed_at IS NOT NULL
+         GROUP BY t.arm, t.action
+         ORDER BY t.arm, turn_count DESC`
     );
 }

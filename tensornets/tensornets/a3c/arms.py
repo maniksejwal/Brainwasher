@@ -61,11 +61,19 @@ from tensornets.therapy.modes import TherapeuticMode, DeaddictionPhase, ChangeSt
 
 log = logging.getLogger("tensornets.a3c.arms")
 
-# ── Environment defaults ──────────────────────────────────────────────────────
+# ── Client imports ────────────────────────────────────────────────────────────
+# All HTTP calls to Node.js are routed through node_client.  Calls to the
+# tensornets FastAPI server (LLM, MCTS, physio) stay inline here since they
+# are tightly coupled to arm-specific request schemas.
+from tensornets.a3c.node_client import (  # noqa: E402
+    http_post as _http_post,
+    NODE_URL        as _COMPANION_URL,
+    TENSORNETS_URL  as _TENSORNETS_URL,
+    send_benchmark_message as _node_benchmark_message,
+)
 
-_TENSORNETS_URL  = os.environ.get("TENSORNETS_URL",  "http://localhost:8765")
-_COMPANION_URL   = os.environ.get("COMPANION_URL",   "http://localhost:8247")
-_BEDROCK_REGION  = os.environ.get("AWS_REGION",      "us-east-1")
+# ── Environment defaults ──────────────────────────────────────────────────────
+_BEDROCK_REGION  = os.environ.get("AWS_REGION", "us-east-1")
 
 # Scout (fast) for action selection; Maverick for value / judge
 _SCOUT_MODEL   = "us.meta.llama4-scout-17b-instruct-v1:0"
@@ -90,21 +98,6 @@ _GOAL_R_SOCIAL      = 0.40   # small positive: rapport is not zero-value
 _GOAL_R_OTHER       = 0.30   # below neutral: unexplained tangents cost something
 
 
-def _http_post(url: str, payload: dict, timeout: float = 10.0) -> dict:
-    """Minimal HTTP POST without httpx / requests dependency. Retries once on transient failure."""
-    import json as _json, urllib.request as _req, time as _time
-    data = _json.dumps(payload).encode()
-    req  = _req.Request(url, data=data, headers={"Content-Type": "application/json"})
-    last_exc = None
-    for attempt in range(2):
-        try:
-            with _req.urlopen(req, timeout=timeout) as resp:
-                return _json.loads(resp.read())
-        except Exception as exc:
-            last_exc = exc
-            if attempt == 0:
-                _time.sleep(1.5)
-    raise ConnectionError(f"POST {url} failed: {last_exc}") from last_exc
 
 
 # ── J5: Arm 1 — HTN + MCTS ────────────────────────────────────────────────────
@@ -394,21 +387,15 @@ class OldschoolWorker(A3CWorker):
         t_start = time.perf_counter()
         user_msg = _last_user_message(state)
 
-        payload = {
-            "message":    user_msg,
-            "circleId":   scenario.get("circle_id", "benchmark_circle"),
-            "userId":     state.subject_id,
-            "sessionId":  state.session_id,
-            "benchmark":  True,
-            "arm":        self.ARM,
-        }
-
         deferred = True
         try:
-            resp = _http_post(
-                f"{_COMPANION_URL}/api/benchmark/message",
-                payload,
-                timeout=90.0,
+            resp = _node_benchmark_message(
+                message    = user_msg,
+                circle_id  = scenario.get("circle_id", "benchmark_circle"),
+                user_id    = state.subject_id,
+                session_id = state.session_id,
+                arm        = self.ARM,
+                timeout    = 90.0,
             )
             response_text = resp.get("response", resp.get("message", "")).strip()
             if not response_text:
@@ -1131,8 +1118,8 @@ class InertialPhysioMPSMCTSWorker(PhysioMPSMCTSWorker):
 
     _DEFAULT_SYSTEM_PROMPT = (
         "You are a clinical companion. Current action strategy: {action}. "
-        "Patient stress zone: {zone_name} (stress={stress_index:.2f}, "
-        "zone_streak={zone_streak} turns). "
+        "Patient stress: {stress_index:.2f} (zone: {stress_bucket}). "
+        "{hysteresis_ctx}"
         "Respond with one empathetic, concise message (2-3 sentences)."
     )
 
@@ -1381,8 +1368,8 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
 
     _DEFAULT_SYSTEM_PROMPT = (
         "You are a clinical companion. Current action strategy: {action}. "
-        "Patient stress zone: {zone_name} (stress={stress_index:.2f}, "
-        "zone_streak={zone_streak} turns). "
+        "Patient stress: {stress_index:.2f} (bucket: {stress_bucket}). "
+        "{hysteresis_ctx}"
         "Respond with one empathetic, concise message (2-3 sentences)."
     )
 
@@ -1395,8 +1382,14 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
     def _fetch_prior_scores(self, state, zone_name, zone_streak, mode, actions):
         """
         Call Scout to score all HP actions given current patient state.
-        Returns list[float] in same order as actions.
-        Raises RuntimeError on empty response or JSON parse failure.
+        Returns list[float] in same order as ``actions``.
+        Raises RuntimeError on empty response.
+
+        Extraction strategy (robust to truncated responses):
+        1. Try to parse the full JSON object if one can be found.
+        2. Fall back to scanning individual "key": value lines so partial
+           responses still yield useful priors instead of failing entirely.
+        3. Default score = 0.5 for any action not found in the response.
         """
         import json as _json, re as _re
         action_list = "\n".join(f"  - {a}" for a in actions)
@@ -1406,10 +1399,11 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
             f"Rate each action 0.0 (wrong) to 1.0 (ideal) for this exact moment.\n"
             f"Actions:\n{action_list}"
         )
+        # max_tokens large enough for all actions (avg ~8 chars/key, ~5 chars/val, ~30 actions)
         resp = _http_post(
             f"{_TENSORNETS_URL}/llm/scout",
-            {"system": self._PRIOR_SYSTEM, "prompt": prompt, "max_tokens": 512},
-            timeout=20.0,
+            {"system": self._PRIOR_SYSTEM, "prompt": prompt, "max_tokens": 800},
+            timeout=25.0,
         )
         text = (resp.get("text") or "").strip()
         if not text:
@@ -1417,19 +1411,27 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
                 "InertialHPVOOTPhysioMPSMCTSWorker._fetch_prior_scores: "
                 "Scout returned empty response."
             )
-        m = _re.search(r'\{[^{}]+\}', text, _re.DOTALL)
-        if not m:
-            raise RuntimeError(
-                f"InertialHPVOOTPhysioMPSMCTSWorker._fetch_prior_scores: "
-                f"No JSON object in Scout response. Raw: {text[:300]}"
-            )
-        try:
-            score_map = _json.loads(m.group(0))
-        except _json.JSONDecodeError as exc:
-            raise RuntimeError(
-                f"InertialHPVOOTPhysioMPSMCTSWorker._fetch_prior_scores: "
-                f"JSON parse failed: {exc}. Raw: {text[:300]}"
-            ) from exc
+
+        score_map = {}
+
+        # Strategy 1: full JSON object (handles well-formed responses)
+        m = _re.search(r'\{([^{}]*)\}', text, _re.DOTALL)
+        if m:
+            try:
+                score_map = _json.loads('{' + m.group(1) + '}')
+            except _json.JSONDecodeError:
+                pass  # fall through to strategy 2
+
+        # Strategy 2: line-by-line key:value scan (handles truncated JSON)
+        if not score_map:
+            for line in text.splitlines():
+                kv = _re.match(
+                    r'["\s]*([a-zA-Z_][a-zA-Z0-9_\s]*?)["\s]*:\s*([\d.]+)',
+                    line.strip(),
+                )
+                if kv:
+                    score_map[kv.group(1).strip()] = float(kv.group(2))
+
         self._prior_tokens = {
             "in":  resp.get("usage", {}).get("input_tokens",  0),
             "out": resp.get("usage", {}).get("output_tokens", 0),
@@ -1714,25 +1716,31 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
             ) from exc
 
         final_action = mcts_resp.get("best_action") or mcts_resp.get("action") or chosen_action
-        m_trunc      = mcts_resp.get("M_trunc")
 
-        scout_result = self._call_scout(enriched_state, final_action, scenario, m_trunc=m_trunc)
-
-        next_stress = _stress_after_response(
-            state.stress_index, final_action, state.archetype, state.drug_regimen,
+        # Call Scout via PhysioLLMWorker.generate_response (which owns the Scout call
+        # and reward computation).  This arm's parent chain is CoT → PhysioLLMWorker,
+        # so _call_scout is NOT available here; we use the parent generate_response
+        # as the Scout + reward stage instead.
+        scout_result = PhysioLLMWorker.generate_response(
+            self,
+            enriched_state,
+            final_action,
+            scenario,
             conversation_correction=conversation_correction,
         )
-        reward     = _synthetic_reward(state, final_action, next_stress,
-                                       response_text=scout_result["text"])
-        latency_ms = (time.perf_counter() - t_start) * 1000.0
 
+        next_stress = scout_result.get("next_stress_index", state.stress_index)
+        reward      = scout_result.get("reward", {})
+        latency_ms  = (time.perf_counter() - t_start) * 1000.0
+
+        scout_tokens = scout_result.get("tokens", {})
         result = {
-            "response":             scout_result["text"],
+            "response":             scout_result["response"],
             "reward":               reward,
-            "judge":                {},
+            "judge":                scout_result.get("judge", {}),
             "tokens": {
-                "scout_in":    scout_result["tokens_in"],
-                "scout_out":   scout_result["tokens_out"],
+                "scout_in":     scout_tokens.get("scout_in", 0),
+                "scout_out":    scout_tokens.get("scout_out", 0),
                 "maverick_in":  cot_meta["tokens_in"],
                 "maverick_out": cot_meta["tokens_out"],
             },
@@ -1743,7 +1751,7 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
             "cot_action":           chosen_action,
             "mcts_action":          mcts_resp.get("best_action"),
             "frames_component":     None,
-            "info_coverage":        reward["info_coverage"],
+            "info_coverage":        reward.get("info_coverage", 0.0),
             "repetition_detected":  False,
             "discrepancy":          None,
             "mcts_mode":            "hpvoot",

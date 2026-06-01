@@ -67,6 +67,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from tensornets.a3c import node_client as _nc
+
 log = logging.getLogger("tensornets.a3c.train")
 logging.basicConfig(
     level=logging.INFO,
@@ -77,8 +79,15 @@ logging.basicConfig(
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _ARM_CLASSES = None   # lazy import to avoid circular deps at module load
-_TENSORNETS_URL = os.environ.get("TENSORNETS_URL", "http://localhost:8765")
-_NODE_URL       = os.environ.get("NODE_SERVER_URL", "http://localhost:8247")
+
+# Probability of using the prior session for longitudinal continuity in any
+# given episode.  Set below 1.0 so the training distribution is not dominated
+# by prior-session episodes: most episodes should start fresh, keeping the
+# agent robust to cold-start scenarios.  0.20 = 1 in 5 episodes carry forward.
+_PRIOR_SESSION_PROB = 0.20
+# URL constants are owned by node_client; read them from there for consistency.
+_TENSORNETS_URL = _nc.TENSORNETS_URL
+_NODE_URL       = _nc.NODE_URL
 
 
 def _get_arm_classes():
@@ -108,105 +117,40 @@ def _get_arm_classes():
     return _ARM_CLASSES
 
 
-# ── Benchmark DB helpers (non-fatal — training continues if DB is down) ───────
-
-def _db_post(path: str, payload: dict) -> dict:
-    """Forward a benchmark record to the Node.js server (which writes to the SQLite DB)."""
-    import urllib.request as _ureq
-    url = f"{_NODE_URL}/api/benchmarks{path}"
-    data = json.dumps(payload).encode()
-    req = _ureq.Request(url, data=data,
-                        headers={"Content-Type": "application/json"},
-                        method="POST")
-    try:
-        with _ureq.urlopen(req, timeout=3) as resp:
-            return json.loads(resp.read())
-    except Exception as exc:
-        log.warning("DB write skipped (%s %s): %s", path, payload.get("arm", ""), exc)
-        return {}
-
+# ── Benchmark DB helpers ───────────────────────────────────────────────────────
+# All persistence calls are now routed through node_client so there is a single
+# place that owns the HTTP transport and URL configuration.  These thin wrappers
+# keep call-sites in the training loop unchanged while delegating to _nc.
 
 def _db_create_run(run_dir: str, arm: str, total_episodes: int,
                    patient_mode: str) -> Optional[str]:
-    """Create one benchmark run record per arm. Matches BenchmarkRunIn schema."""
-    r = _db_post("/run", {
-        "arm":          arm,
-        "label":        f"{Path(run_dir).name} / {arm}",
-        "scenario_set": "a3c_training",
-        "config": {
-            "run_dir":       Path(run_dir).name,
-            "total_episodes": total_episodes,
-            "patient_mode":  patient_mode,
-        },
-    })
-    return r.get("run_id")
+    """Create one benchmark run record per arm. Delegates to node_client.create_run."""
+    return _nc.create_run(run_dir, arm, total_episodes, patient_mode)
 
 
 def _db_create_episode(run_id: Optional[str], arm: str, scenario_id: str,
                        episode_id: str) -> Optional[str]:
+    """Register an episode at its start. Delegates to node_client.create_episode."""
     if not run_id:
         return None
-    r = _db_post("/episode", {
-        "run_id":      run_id,
-        "arm":         arm,
-        "scenario_id": scenario_id,
-        "persona_id":  "",
-        # Pass the worker's own uuid so JSONL filename == DB episode_id.
-        "episode_id":  episode_id,
-    })
-    return r.get("episode_id") or episode_id
+    return _nc.create_episode(run_id, arm, scenario_id, episode_id)
 
 
 def _db_finalise_episode(db_episode_id: Optional[str], summary: dict) -> None:
-    if not db_episode_id:
-        return
-    gm = summary.get("genuine_metrics", {})
-    _db_post("/episode/finalise", {
-        "episode_id": db_episode_id,
-        "metrics": {
-            "n_turns":                summary.get("n_turns", 0),
-            "cumulative_reward":      summary.get("cumulative_reward", 0.0),
-            "mean_reward":            summary.get("mean_reward", 0.0),
-            "goal_achieved":          gm.get("goal_achieved", False),
-            "turns_to_goal":          gm.get("turns_to_goal"),
-            "stress_auc":             gm.get("stress_auc"),
-            "trust_delta_final":      gm.get("trust_delta_final"),
-            # Cost and LLM metrics
-            "cost_usd_total":         gm.get("cost_usd_total"),
-            "llm_calls_total":        gm.get("llm_calls_total", 0),
-            "hysteresis_zone_changes": gm.get("hysteresis_zone_changes", 0),
-            # Token totals for backwards-compat latency/token columns
-            "tokens_scout":           gm.get("tokens_scout_total", 0),
-            "tokens_maverick":        gm.get("tokens_maverick_total", 0),
-        },
-    })
+    """Persist end-of-episode metrics. Delegates to node_client.finalise_episode."""
+    _nc.finalise_episode(db_episode_id, summary)
 
 
 def _db_finalise_run(run_id: Optional[str], total_eps: int,
                      successful_eps: int) -> None:
-    if not run_id:
-        return
-    _db_post("/run/finalise", {
-        "run_id": run_id,
-        "metrics": {
-            "total_episodes":      total_eps,
-            "successful_episodes": successful_eps,
-        },
-    })
+    """Mark a run completed. Delegates to node_client.finalise_run."""
+    _nc.finalise_run(run_id, total_eps, successful_eps)
 
 
 def _db_post_checkpoint(run_id: Optional[str], arm: str, episode: int,
                         stopped: bool = False) -> None:
     """Record a checkpoint event so the dashboard can draw a vertical marker."""
-    if not run_id:
-        return
-    _db_post("/checkpoint", {
-        "run_id":  run_id,
-        "arm":     arm,
-        "episode": episode,
-        "stopped": stopped,   # True when STOP_AT_CHECKPOINT was honoured
-        "ts":      int(__import__("time").time() * 1000),
-    })
+    _nc.post_checkpoint(run_id, arm, episode, stopped)
 
 
 def _db_cleanup_ghosts(run_dir: Path) -> None:
@@ -538,7 +482,7 @@ def train(
             _weights   = [1.0 if (sc.get("turns") or sc.get("max_turns") or 8) > 4 else 0.33
                           for sc in scenarios]
             scenario   = random.choices(scenarios, weights=_weights, k=1)[0]
-            use_prior = (s["prior_sess"] is not None) and (random.random() < 0.20)
+            use_prior = (s["prior_sess"] is not None) and (random.random() < _PRIOR_SESSION_PROB)
             ep_uuid   = str(uuid.uuid4())
 
             db_episode_id = _db_create_episode(
@@ -555,6 +499,7 @@ def train(
                     prior_session = s["prior_sess"] if use_prior else None,
                     patient_mode  = patient_mode,
                     episode_id    = ep_uuid,
+                    run_id        = s.get("db_run_id"),
                 )
             except Exception as exc:
                 log.error("Episode failed (%s w%d %s): %s — skipping",

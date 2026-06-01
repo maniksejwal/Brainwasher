@@ -38,6 +38,48 @@ from typing import Any, Optional
 
 from tensornets.a3c.action_bandit import ACTION_TAXONOMY, STRESS_BUCKETS
 from tensornets.a3c.scorer import A3CScorer, TurnScoreResult, map_scorer_to_reward_dims
+from tensornets.a3c import node_client as _nc
+
+
+def _log_turn_to_db(
+    episode_id: str,
+    run_id: str,
+    arm: str,
+    turn_idx: int,
+    action: str,
+    response: str,
+    state: "TurnState",
+    reward_dict: dict,
+    score_result: "TurnScoreResult",
+    latency_ms: float,
+    cost_usd: float,
+    llm_calls: int,
+) -> None:
+    """
+    Persist one turn to the DB via node_client.record_turn().
+
+    Thin wrapper that unpacks worker-internal types (TurnState, TurnScoreResult)
+    into the flat keyword args that node_client expects.  Failures are non-fatal.
+    """
+    try:
+        _nc.record_turn(
+            episode_id   = episode_id,
+            run_id       = run_id,
+            arm          = arm,
+            turn_idx     = turn_idx,
+            action       = action,
+            response     = response,
+            stress_index = state.stress_index,
+            stress_bucket= state.stress_bucket,
+            hrv_ms       = state.physio.get("hrv_ms") if state.physio else None,
+            reward       = reward_dict,
+            judge        = score_result.dimensions or {},
+            latency_ms   = latency_ms,
+            cost_usd     = cost_usd,
+            llm_calls    = llm_calls,
+        )
+    except Exception as exc:
+        log.warning("Turn DB log failed (non-fatal): %s", exc)
 
 # V_int / SharedTensorBuffer — lazy import (no torch requirement at module level)
 _SharedTensorBuffer = None
@@ -336,6 +378,12 @@ class TurnState:
     #                  stress_index starts at 0.5 (neutral/unknown).
     #
     physio_source:          str   = "sensor"   # "sensor"|"simulated"|"population"|"none"
+
+    # Rolling natural-language summary of the conversation so far.
+    # Built incrementally by the episode loop and injected into CoT prompts
+    # so the model has a compact context rather than the full raw history.
+    # None until the first turn completes.
+    summary:                Optional[str] = None
 
     # Conversation-inferred stress estimate — updated each turn from the scorer's
     # assessment of the patient's actual response (acceptance, resistance, disclosure).
@@ -986,6 +1034,7 @@ class A3CWorker:
         prior_session: "dict | None" = None,
         patient_mode:  str = "llm",
         episode_id:    "str | None" = None,
+        run_id:        "str | None" = None,
     ) -> dict:
         """
         Execute one full episode with a live SyntheticPatient and A3CScorer.
@@ -1031,8 +1080,9 @@ class A3CWorker:
         from tensornets.a3c.synthetic_patient import CareCircleOrchestrator, _normalise_role
 
         # Use caller-supplied id (so JSONL filename == DB episode_id) or generate fresh.
-        episode_id        = episode_id or str(uuid.uuid4())
-        self._episode_log = []
+        episode_id           = episode_id or str(uuid.uuid4())
+        self._current_run_id = run_id or ""   # stored for _log_turn_to_db
+        self._episode_log    = []
         cumulative_reward = 0.0
         score_history:    list = []
 
@@ -1285,29 +1335,40 @@ class A3CWorker:
             # so the A3CScorer call (every 2 turns) covers both quality scoring
             # AND info gain.  On carry turns, the previous score_result's values
             # are reused via the heuristic carry — same cost as before.
+            #
+            # TASK 1 FIX: _auto_ tokens were fired on BOTH scorer turns AND carry
+            # turns because _heuristic_score_carry preserves info_novelty/relevance
+            # unchanged, making info_gain carry its previous value.  This caused
+            # double-fire: coverage filled in ~n_goals turns instead of ~2*n_goals.
+            # Fix: only add covered_goals on real scorer turns (use_llm_scorer=True).
+            #
+            # TASK 2: Replace synthetic _auto_ tokens with real goal strings from
+            # the scorer's covered_goals field.  score_and_advance() is called with
+            # the pre-computed covered list so no second LLM call is made.
+            covered_from_scorer: list[str] = (
+                score_result.covered_goals if use_llm_scorer else []
+            )
             info_gain_result = {
                 "gain":      score_result.info_gain,
                 "novelty":   score_result.info_novelty,
                 "relevance": score_result.info_relevance,
-                "covered":   [],
+                "covered":   covered_from_scorer,
             }
-            # Accumulate coverage_fraction via info_gain signal.
-            # The scorer doesn't identify specific goal strings, so we treat each
-            # high-quality turn (info_gain ≥ 0.55) as advancing one goal element.
-            # This gives coverage_fraction a meaningful trajectory over the episode
-            # rather than staying frozen at the initial 0.3.
+            # On scorer turns, wire real goal strings into covered_elements via
+            # score_and_advance() (no extra LLM call — covered list is passed in).
+            # On carry turns, only advance the goal pointer without adding new coverage.
             try:
-                if score_result.info_gain >= 0.55:
-                    n_goals = max(1, len(orchestrator.primary_patient.goals))
-                    # Synthesise a unique coverage token per advancing turn so the
-                    # set grows monotonically.  We cap at n_goals so coverage_fraction
-                    # reaches at most 1.0.
-                    token = f"_auto_{turn_idx}"
-                    if len(orchestrator.primary_patient.covered_elements) < n_goals:
-                        orchestrator.primary_patient.covered_elements.add(token)
-                orchestrator.primary_patient._advance_goal_pointer()
+                if use_llm_scorer:
+                    orchestrator.primary_patient.score_and_advance(
+                        agent_resp, turn_idx, covered=covered_from_scorer
+                    )
+                else:
+                    orchestrator.primary_patient._advance_goal_pointer()
             except Exception:
-                pass
+                import logging as _log
+                _log.getLogger("tensornets.a3c.worker").warning(
+                    "score_and_advance failed at turn %d — coverage not updated", turn_idx
+                )
 
             # Inject onto state for compute_reward() in arms.py
             state._orchestrator_coverage = info_gain_result["gain"]
@@ -1601,6 +1662,25 @@ class A3CWorker:
             )
             self._episode_log.append(turn_record)
 
+            # ── Persist turn to DB (non-fatal) ────────────────────────────────
+            # Only log for non-oldschool arms; oldschool turns are logged by the
+            # Node.js companion API automatically.
+            if self.ARM != "oldschool":
+                _log_turn_to_db(
+                    episode_id  = episode_id,
+                    run_id      = getattr(self, "_current_run_id", ""),
+                    arm         = self.ARM,
+                    turn_idx    = turn_idx,
+                    action      = action,
+                    response    = agent_resp,
+                    state       = state,
+                    reward_dict = reward_dict,
+                    score_result= score_result,
+                    latency_ms  = latency_ms,
+                    cost_usd    = turn_record.cost_usd,
+                    llm_calls   = turn_record.llm_calls,
+                )
+
             # ── Advance non-primary participants' physio (longitudinal dynamics) ─
             # The primary patient's physio is stepped by arms.py via next_physio.
             # Secondary participants (caregiver, doctor) get a stochastic step here
@@ -1773,12 +1853,37 @@ class A3CWorker:
         Build the initial TurnState, optionally loading from a prior session
         for multi-session continuity (Q5a).
 
+        Why this function exists
+        -----------------------
+        Longitudinal training simulates a patient who attends multiple sessions
+        with the same companion.  Carrying forward physio, conversation history,
+        and goal-coverage creates realistic continuity — the agent should not
+        re-discover facts already established in a prior session.
+
         When prior_session is provided:
         - The initial physio, stress, and conversation history come from the
           prior session's saved state.
         - The session_goal is from the NEW scenario (patient has a new clinical
           objective this session, even if the persona is the same).
         - longitudinal_hint is updated to summarise what happened in prior session.
+
+        RISKS / EDGE CASES
+        ------------------
+        1. Coverage carry-over inflation: a prior session with info_coverage=1.0
+           would set initial_info_coverage=1.0 → goal_achieved=True before turn 0.
+           Guard: ``initial_info_coverage`` is capped at 0.5 regardless of the
+           prior value.  Even a near-perfect prior session should not pre-solve
+           the new episode; the new scenario has its own required_elements.
+
+        2. Goal pointer inflation: the prior session's goal_idx and covered_elements
+           are imported (see run_episode()).  If the new scenario has fewer elements,
+           the pointer is clamped by _advance_goal_pointer().  This is safe.
+
+        3. Phase lock-in: prior session's deaddiction_phase is inherited, which
+           can artificially keep the patient in a late stage (e.g. "maintenance")
+           even when the new scenario starts at "precontemplation".  Currently
+           accepted as realistic — a returning patient is unlikely to regress
+           fully.  If this becomes a problem, add a cap here similar to coverage.
         """
         if prior_session is None:
             return TurnState.from_scenario(scenario)
@@ -1786,7 +1891,12 @@ class A3CWorker:
         # Build a merged scenario: new scenario goals + prior session context
         merged = dict(scenario)
         merged["initial_physio"]     = prior_session.get("physio", scenario.get("initial_physio", {}))
-        merged["initial_info_coverage"] = prior_session.get("info_coverage", 0.3)
+
+        # Cap at 0.5 — even a great prior session should not pre-solve the new episode.
+        # A value of 1.0 would mean goal_achieved=True before the first agent turn.
+        prior_coverage = prior_session.get("info_coverage", 0.3)
+        merged["initial_info_coverage"] = min(prior_coverage, 0.5)
+
         merged["known_context"]      = prior_session.get("known_context", "")
         merged["longitudinal_hint"]  = (
             f"[Prior session {prior_session.get('scenario_id','?')}]: "

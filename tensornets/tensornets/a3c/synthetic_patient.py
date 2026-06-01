@@ -55,26 +55,7 @@ from typing import Any, Optional
 
 log = logging.getLogger("tensornets.a3c.synthetic_patient")
 
-# FastAPI server URL (same as arms.py)
-import os
-_TENSORNETS_URL = os.environ.get("TENSORNETS_URL", "http://localhost:8765")
-
-
-def _http_post(url: str, payload: dict, timeout: float = 15.0) -> dict:
-    """Minimal HTTP POST without external dependencies. Retries once on timeout."""
-    import json as _json, urllib.request as _req, time as _time
-    data = _json.dumps(payload).encode()
-    req  = _req.Request(url, data=data, headers={"Content-Type": "application/json"})
-    last_exc = None
-    for attempt in range(2):
-        try:
-            with _req.urlopen(req, timeout=timeout) as resp:
-                return _json.loads(resp.read())
-        except Exception as exc:
-            last_exc = exc
-            if attempt == 0:
-                _time.sleep(1.5)  # brief pause before retry
-    raise ConnectionError(f"POST {url} failed: {last_exc}") from last_exc
+from tensornets.a3c.node_client import http_post as _http_post, TENSORNETS_URL as _TENSORNETS_URL
 
 
 def score_info_gain(
@@ -333,20 +314,49 @@ class SyntheticParticipant:
         self,
         agent_response: str,
         turn_idx: int,
+        covered: "list[str] | None" = None,
     ) -> dict:
         """
-        Score the agent response for information gain (novelty + relevance) using
-        the LLM-powered scorer, update covered elements from the result, and
-        advance the goal pointer.
+        Update covered elements and advance the goal pointer.
 
-        Returns the raw score_info_gain dict so worker.py can use novelty/gain
-        in the reward without an extra LLM call.
+        When ``covered`` is provided (e.g. extracted from the A3CScorer's
+        ``covered_goals`` field), the function skips the extra
+        ``score_info_gain()`` LLM call and uses the supplied list directly.
+        This is the preferred path inside the episode loop — the scorer has
+        already done the analysis; there is no need to pay a second Scout call.
+
+        When ``covered`` is None the original behaviour is preserved: a
+        ``score_info_gain()`` LLM call is made to identify which goals were
+        addressed.  This path is still valid for standalone / test use.
+
+        Returns
+        -------
+        dict  with keys ``novelty``, ``relevance``, ``gain``, ``covered``,
+              ``rationale``.  When ``covered`` is passed in, novelty/relevance/
+              gain are synthetic placeholders (0.0) so callers should not rely on
+              them for reward computation — use the scorer's values instead.
 
         Raises
         ------
-        Propagates any exception from score_info_gain (ConnectionError, RuntimeError,
-        json.JSONDecodeError) — callers should handle or let the episode abort.
+        Propagates any exception from score_info_gain (ConnectionError,
+        RuntimeError, json.JSONDecodeError) when covered is None.
         """
+        if covered is not None:
+            # Fast path: pre-computed covered list from the A3CScorer.
+            # No extra LLM call — just update the set and advance the pointer.
+            for g in covered:
+                if isinstance(g, str) and g.strip():
+                    self.covered_elements.add(g.lower())
+            self._advance_goal_pointer()
+            return {
+                "novelty":   0.0,
+                "relevance": 0.0,
+                "gain":      0.0,
+                "covered":   list(covered),
+                "rationale": "(pre-computed from scorer)",
+            }
+
+        # Slow path: make a dedicated score_info_gain() LLM call.
         result = score_info_gain(
             agent_response       = agent_response,
             conversation_history = self.conversation_history,

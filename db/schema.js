@@ -396,6 +396,7 @@ export async function migrateDatabase(db) {
                 await db.run(`ALTER TABLE htn_benchmark_turns ADD COLUMN ${col} ${colType}`);
             } catch (_e) { /* column already exists */ }
         }
+    } catch (error) {
         console.warn('[Schema Migration] Error migrating database:', error.message);
     }
 }

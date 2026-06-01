@@ -98,6 +98,8 @@ const JS_MODE_TO_PYTHON = {
     // world scenario categories
     role_inversion:            'standard',
     family_network:            'standard',
+    // composite scenarios (multi-concern, used for advanced benchmarking)
+    composite:                 'standard',
 };
 
 /**
@@ -404,13 +406,19 @@ function _buildCanonicalScenarios() {
             archetype:              sc.archetype || 'standard',
             has_misconception:      false,
             flooding_target_stress: 0.0,
-            initial_physio: {
-                stress_index:  isEscalation ? 0.65 : 0.40,
-                hrv_ms:        isEscalation ? 22   : 38,
-                eda_us:        2.5,
-                sleep_deficit: 0,
-                glucose_mg_dl: 95,
-            },
+            initial_physio: sc.physio_baseline
+                ? _samplePhysio(
+                    (users[0]?.role || 'patient'),
+                    `js_${key}`,
+                    sc.physio_baseline,
+                  )
+                : {
+                    stress_index:  isEscalation ? 0.65 : 0.40,
+                    hrv_ms:        isEscalation ? 22   : 38,
+                    eda_us:        2.5,
+                    sleep_deficit: 0,
+                    glucose_mg_dl: 95,
+                  },
             patient_prompt:         instrPatient,
             caregiver_prompt:       instrCaregiver,
             doctor_prompt:          instrDoctor,
@@ -421,6 +429,7 @@ function _buildCanonicalScenarios() {
             consent_boundary_test:  isConsent,
             multi_role:             isMulti,
             is_world_scenario:      isWorld,
+            difficulty:             sc.difficulty || null,
         });
         seenIds.add(sid);
     }

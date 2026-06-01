@@ -124,6 +124,18 @@ export function setupNavigationHandlers(api, state) {
                 // Re-render benchmarks fresh on every tab activation
                 initBenchmarksDashboard();
                 initConversationViewer();
+
+                // Wire the refresh button: re-fetch all data then re-render (same as a page reload
+                // of just this tab, but without logging the user out)
+                const refreshBtn = document.getElementById('bench-refresh-btn');
+                if (refreshBtn) {
+                    refreshBtn.onclick = async () => {
+                        refreshBtn.disabled = true;
+                        refreshBtn.textContent = '⏳';
+                        try { await refreshBenchmarksDashboard(); }
+                        finally { refreshBtn.disabled = false; refreshBtn.textContent = '↻ Refresh'; }
+                    };
+                }
             }
         });
     });

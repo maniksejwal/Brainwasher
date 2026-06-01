@@ -271,6 +271,7 @@
                     <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:16px;padding:12px;background:var(--gray-50);border-radius:8px;border:1px solid var(--gray-200);">
                         <span style="font-weight:600;font-size:13px;color:var(--gray-700);">Benchmarks</span>
                         <span id="bench-refresh-spinner" style="display:none;font-size:11px;color:var(--gray-500);">⏳ loading…</span>
+                        <button id="bench-refresh-btn" class="secondary" style="font-size:11px;padding:4px 10px;">↻ Refresh</button>
                         <div style="display:flex;gap:6px;flex-wrap:wrap;">
                             <!-- New 6-experiment filter toggles -->
                             <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm"                   style="font-size:11px;padding:4px 10px;border-left:4px solid #EA4335;">Exp 0 PhysioLLM</button>
@@ -392,18 +393,26 @@
                         </div>
                     </div>
 
-                    <!-- Scenario goal rates -->
-                    <div style="margin-bottom:16px;">
-                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Scenario Goal Rate by Experiment</h4>
-                        <div style="position:relative;height:340px;overflow-x:auto;">
+                    <!-- ── Scenario Analysis: Block A — Scenario Goal Rates ──────────── -->
+                    <hr style="border:none;border-top:1px solid var(--gray-200);margin:16px 0;">
+                    <details open style="margin-bottom:16px;">
+                        <summary style="font-weight:600;font-size:13px;cursor:pointer;padding:6px 0;position:sticky;top:0;background:white;z-index:2;">Scenario Goal Rates</summary>
+                        <!-- Scenario filter buttons -->
+                        <div style="display:flex;align-items:center;gap:12px;margin:8px 0 6px;flex-wrap:wrap;">
+                            <div style="display:flex;gap:6px;align-items:center;">
+                                <span style="font-size:11px;color:var(--gray-500);">Filter:</span>
+                                <button class="primary"  style="font-size:11px;padding:3px 10px;" data-scenario-filter="all">All</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-scenario-filter="composite">Composite</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-scenario-filter="escalation">Escalation</button>
+                            </div>
+                        </div>
+                        <!-- Scenario goal rate bar chart -->
+                        <div style="position:relative;height:340px;overflow-x:auto;margin-bottom:10px;">
                             <canvas id="scenario-goal-chart"></canvas>
                         </div>
-                    </div>
-
-                    <!-- Scenario goal-rate ranked table -->
-                    <div style="margin-bottom:16px;">
-                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
-                            <h4 style="margin:0;font-size:13px;color:var(--gray-700);">Scenarios Ranked by Goal Rate</h4>
+                        <!-- Scenario rank table with arm sort toggles -->
+                        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+                            <span style="font-size:12px;font-weight:600;color:var(--gray-700);">Scenarios Ranked by Goal Rate</span>
                             <div style="display:flex;gap:6px;flex-wrap:wrap;" id="scenario-rank-toggles">
                                 <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_llm">E0</button>
                                 <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_llm_cot_mcts">E1</button>
@@ -417,26 +426,35 @@
                             </div>
                         </div>
                         <div id="scenario-rank-table" style="max-height:320px;overflow-y:auto;font-size:12px;"></div>
-                    </div>
+                    </details>
 
-                    <!-- Sensor vs No-Sensor Comparison -->
-                    <div style="margin-bottom:16px;border-top:1px solid var(--gray-200);padding-top:16px;">
-                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">
+                    <!-- ── Scenario Analysis: Block B — Scenario Reward Stats ────────── -->
+                    <hr style="border:none;border-top:1px solid var(--gray-200);margin:16px 0;">
+                    <details open style="margin-bottom:16px;">
+                        <summary style="font-weight:600;font-size:13px;cursor:pointer;padding:6px 0;position:sticky;top:0;background:white;z-index:2;">Scenario Reward Stats</summary>
+                        <p style="font-size:11px;color:var(--gray-500);margin:6px 0 8px;">
+                            Average cumulative reward per scenario per experiment, sorted worst-first. Color intensity reflects reward magnitude.
+                        </p>
+                        <div id="scenario-reward-stats-wrap" style="max-height:380px;overflow-y:auto;font-size:12px;overflow-x:auto;"></div>
+                    </details>
+
+                    <!-- ── Scenario Analysis: Block C — Sensor vs No-Sensor ─────────── -->
+                    <hr style="border:none;border-top:1px solid var(--gray-200);margin:16px 0;">
+                    <details open style="margin-bottom:16px;">
+                        <summary style="font-weight:600;font-size:13px;cursor:pointer;padding:6px 0;position:sticky;top:0;background:white;z-index:2;">
                             Sensor vs No-Sensor Comparison
                             <span style="font-size:11px;font-weight:400;color:var(--gray-500);margin-left:6px;">
                                 Physio-aware arms vs Exp 5 (no sensor) — weighted goal rate per scenario
                             </span>
-                        </h4>
-                        <div id="sensor-comparison-section"></div>
-                    </div>
+                        </summary>
+                        <div id="sensor-comparison-section" style="margin-top:8px;"></div>
+                    </details>
 
                     <!-- Critical failures -->
                     <div style="margin-bottom:16px;">
-                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Critical Failures (goal not achieved)</h4>
+                        <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Critical Failures — by Scenario</h4>
                         <div id="crit-fail-stats-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;"></div>
-                        <div style="position:relative;height:360px;overflow-x:auto;">
-                            <canvas id="crit-fail-chart"></canvas>
-                        </div>
+                        <div id="crit-fail-table" style="max-height:320px;overflow-y:auto;font-size:12px;"></div>
                     </div>
 
                     <!-- Metric line charts (replaced bars) -->
@@ -455,6 +473,19 @@
                             <div style="position:relative;height:180px;"><canvas id="metric-bar-cost"></canvas></div>
                             <div style="position:relative;height:180px;"><canvas id="metric-bar-llmcalls"></canvas></div>
                         </div>
+                    </div>
+
+                    <!-- Action Usage Statistics -->
+                    <div style="margin-bottom:16px;border-top:1px solid var(--gray-200);padding-top:16px;">
+                        <details open>
+                            <summary style="font-weight:600;font-size:13px;cursor:pointer;padding:6px 0;">Action Usage Statistics</summary>
+                            <div style="margin-top:8px;display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                                <button id="action-stats-view-exp" class="secondary active" style="font-size:11px;padding:4px 10px;">Per Experiment</button>
+                                <button id="action-stats-view-sc" class="secondary" style="font-size:11px;padding:4px 10px;">Per Scenario</button>
+                                <select id="action-stats-sc-filter" style="display:none;font-size:11px;"></select>
+                            </div>
+                            <div id="action-stats-wrap" style="overflow-x:auto;font-size:12px;max-height:420px;overflow-y:auto;"></div>
+                        </details>
                     </div>
 
                     <!-- Physio-reward correlation -->

@@ -82,6 +82,7 @@ class TurnScoreResult:
     repetition_penalty: float [0, 1] — 0=no repetition, 1=severe semantic repetition
     info_novelty: float [0, 1] — how new is the information in this turn?
     info_relevance: float [0, 1] — how relevant to session goals?
+    covered_goals: list[str] — scenario goal strings explicitly addressed this turn
     scorer_tokens_in: int — prompt tokens for the scorer LLM call (0 if heuristic carry)
     scorer_tokens_out: int — completion tokens for the scorer LLM call
     """
@@ -92,6 +93,7 @@ class TurnScoreResult:
     repetition_penalty: float = 0.0
     info_novelty:      float = 0.5
     info_relevance:    float = 0.5
+    covered_goals:     list  = field(default_factory=list)
     scorer_tokens_in:  int   = 0
     scorer_tokens_out: int   = 0
 
@@ -227,7 +229,9 @@ Score integers use this scale: -3 critical failure | -2 serious | -1 minor | 0 n
 
   "info_novelty": 0.5,
   "info_relevance": 0.5,
-  "info_novelty_reason": ""
+  "info_novelty_reason": "",
+
+  "covered_goals": []
 }}
 
 Replace ALL 0 / 0.5 values with your actual assessment for this specific turn.
@@ -236,6 +240,8 @@ For info_novelty (0.0–1.0): how much NEW information did the agent's response 
   1.0 = entirely fresh insight or patient disclosure; 0.0 = pure repetition of prior content.
 For info_relevance (0.0–1.0): how clinically/therapeutically pertinent is the response to the session goal?
   1.0 = directly addresses a stated goal; 0.0 = off-topic social filler.
+For covered_goals: list any goal strings from SCENARIO GOAL that the agent's response explicitly and meaningfully addressed this turn.
+  Use the exact wording from SCENARIO GOAL where possible.  Leave empty [] if no goals were addressed.
 """
 
 
@@ -411,11 +417,26 @@ class A3CScorer:
 
         critical = any(s <= -2 for _, s, _ in scores)
 
-        rep_severity = float(raw.get("repetition_severity", 0.0))
+        rep_severity = 0.0
+        try:
+            rep_severity = float(raw.get("repetition_severity", 0.0))
+        except (TypeError, ValueError):
+            pass
         rep_severity = max(0.0, min(1.0, rep_severity))
 
-        info_novelty   = max(0.0, min(1.0, float(raw.get("info_novelty",   0.5))))
-        info_relevance = max(0.0, min(1.0, float(raw.get("info_relevance", 0.5))))
+        try:
+            info_novelty = max(0.0, min(1.0, float(raw.get("info_novelty", 0.5))))
+        except (TypeError, ValueError):
+            info_novelty = 0.5
+        try:
+            info_relevance = max(0.0, min(1.0, float(raw.get("info_relevance", 0.5))))
+        except (TypeError, ValueError):
+            info_relevance = 0.5
+
+        # covered_goals: list of scenario goal strings addressed this turn.
+        # The LLM returns them as a JSON array; guard against malformed output.
+        raw_covered = raw.get("covered_goals") or []
+        covered_goals = [g for g in raw_covered if isinstance(g, str)] if isinstance(raw_covered, list) else []
 
         return TurnScoreResult(
             integer_scores    = scores,
@@ -425,6 +446,7 @@ class A3CScorer:
             repetition_penalty = rep_severity,
             info_novelty      = round(info_novelty,   4),
             info_relevance    = round(info_relevance, 4),
+            covered_goals     = covered_goals,
         )
 
 
