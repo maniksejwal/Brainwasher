@@ -209,14 +209,20 @@ def _compute_turn_cost(tokens: dict) -> float:
 
 REWARD_DIMS = ("stress", "trust_delta", "goal_progress", "info_coverage",
                "consistency", "safety", "count_penalty")
+# Weights must sum to 1.0.
+# goal_progress + info_coverage together form the primary goal-achievement
+# signal.  They were previously under-weighted (0.20 + 0.10 = 0.30) vs the
+# stress signal alone (0.30), which caused the A3C to learn emotionally
+# supportive behaviour that reduced stress but never covered scenario goals.
+# Rebalanced so goal signals = 0.45 and stress = 0.20.
 REWARD_WEIGHTS: dict[str, float] = {
-    "stress":        0.30,
-    "trust_delta":   0.20,
-    "goal_progress": 0.20,
-    "info_coverage": 0.10,
+    "stress":        0.20,   # was 0.30 — still important but no longer dominant
+    "trust_delta":   0.18,   # was 0.20
+    "goal_progress": 0.28,   # was 0.20 — primary goal signal (↑)
+    "info_coverage": 0.17,   # was 0.10 — LLM-scored novelty/relevance per turn (↑)
     "consistency":   0.08,
-    "safety":        0.07,
-    "count_penalty": 0.05,   # Poisson K repetition penalty (Q4b, Q6a)
+    "safety":        0.06,   # was 0.07
+    "count_penalty": 0.03,   # was 0.05
 }
 
 
@@ -1181,9 +1187,13 @@ class A3CWorker:
         _turns_to_goal: int | None   = None   # first turn where info_coverage ≥ 0.75
         _start_change_stage: str     = state.deaddiction_phase
         _trust_acc: float            = 0.0    # accumulated trust_delta over episode
-        # adjustment so the reward signal is still turn-level granular.
-        # This halves Scout calls from the scorer (−33 % total per episode).
-        _SCORE_EVERY_N = 2
+        _ended_crit_fail: bool       = False  # set True when 2-strike break fires
+        # Score every turn so every turn is a chance to advance goal coverage.
+        # With only 10-15 turns per episode and a 0.75 info_coverage threshold
+        # to achieve the goal, skipping odd turns cuts goal-coverage opportunities
+        # nearly in half.  The extra Scout calls increase episode cost slightly
+        # but are worth it for accurate gradient signal.
+        _SCORE_EVERY_N = 1
 
         for turn_idx in range(max_turns_ep):
             t_start = time.perf_counter()
@@ -1733,6 +1743,7 @@ class A3CWorker:
                         "[%s] 2-strike critical failure at turn %d", self.worker_id, turn_idx
                     )
                     cumulative_reward -= 1.5
+                    _ended_crit_fail = True
                     break
                 if counts_as_strike:
                     warned_once = True
@@ -1742,6 +1753,60 @@ class A3CWorker:
 
             last_user_msg = patient_msg
             state = next_state
+
+        # ── Terminal reward signal ────────────────────────────────────────────
+        # Per-turn weights alone leave a sycophancy gap: a policy that soothes
+        # without delivering earns ~0.46 max per-turn reward (stress=0.20 +
+        # trust=0.18 + consistency=0.08) while never advancing the clinical goal.
+        # Terminal bonus/penalty closes that gap.
+        #
+        # Penalty is stage-aware and progress-aware:
+        #
+        #   +3.0  goal achieved  → always rewarded; primary gradient signal
+        #   -0.5  session fell short of goal BUT had real utility — trust
+        #          accumulated (>0.5) OR coverage grew ≥ 15pp this session.
+        #          A mild push rather than a punishment.
+        #   -1.0  early-stage (precontemplation/contemplation) session where
+        #          rapport/listening IS the therapeutic goal. Moderate nudge.
+        #   -1.0  late-stage session with partial absolute coverage (≥ 0.40).
+        #   -2.0  late-stage, low coverage, low trust — genuine sycophancy
+        #          or no-op policy. Reserved for sessions with no measurable
+        #          progress on any axis.
+        #
+        # "Stage" is assessed at session START, not end: a session that begins
+        # in precontemplation should be judged as rapport-first regardless of
+        # where it ends.
+        #
+        # 2-strike episodes already applied -1.5 in-loop; no extra penalty.
+        _EARLY_STAGE_SET   = {"precontemplation", "contemplation"}
+        _final_coverage    = state.info_coverage
+        _prior_coverage    = float(scenario.get("initial_info_coverage", 0.0))
+        _coverage_delta    = _final_coverage - _prior_coverage  # progress this session only
+        _early_stage       = _start_change_stage in _EARLY_STAGE_SET
+        # Trust and coverage-delta are independent axes of session utility.
+        # Either alone is sufficient to avoid the full penalty.
+        _session_had_utility = (_trust_acc > 0.5) or (_coverage_delta >= 0.15)
+
+        if _turns_to_goal is not None:
+            cumulative_reward += 3.0
+            log.debug("[%s] terminal +3.0 (goal achieved, cov=%.2f)", self.worker_id, _final_coverage)
+        elif not _ended_crit_fail:
+            if _session_had_utility:
+                cumulative_reward -= 0.5
+                log.debug("[%s] terminal -0.5 (utility met: cov_delta=%.2f trust=%.2f)",
+                          self.worker_id, _coverage_delta, _trust_acc)
+            elif _early_stage:
+                cumulative_reward -= 1.0
+                log.debug("[%s] terminal -1.0 (early-stage session, cov=%.2f trust=%.2f)",
+                          self.worker_id, _final_coverage, _trust_acc)
+            elif _final_coverage >= 0.40:
+                cumulative_reward -= 1.0
+                log.debug("[%s] terminal -1.0 (late-stage partial cov=%.2f)",
+                          self.worker_id, _final_coverage)
+            else:
+                cumulative_reward -= 2.0
+                log.debug("[%s] terminal -2.0 (late-stage low cov=%.2f, no trust)",
+                          self.worker_id, _final_coverage)
 
         summary = self._flush_episode(episode_id, scenario, cumulative_reward)
 

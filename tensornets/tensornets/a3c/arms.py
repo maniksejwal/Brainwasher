@@ -72,6 +72,32 @@ from tensornets.a3c.node_client import (  # noqa: E402
     send_benchmark_message as _node_benchmark_message,
 )
 
+# ── Physio key normalizer ─────────────────────────────────────────────────────
+# Internal physio dicts use simulation-friendly keys (hrv_ms, glucose_mg_dl,
+# sleep_deficit) while the FastAPI PhysioStateIn model uses clinical names.
+# This adapter runs before any call to /physio/* endpoints.
+def _physio_to_api(physio: dict, *, physio_source: str = "simulated",
+                   subject_id: str | None = None) -> dict:
+    """Map internal physio keys → PhysioStateIn field names."""
+    glucose_raw = physio.get("blood_glucose_mmol") or (
+        physio.get("glucose_mg_dl", 90.0) / 18.016
+    )
+    sleep_deficit = physio.get("sleep_deficit_hours") or physio.get("sleep_deficit", 1.0)
+    return {
+        "hrv_rmssd_ms":          physio.get("hrv_rmssd_ms") or physio.get("hrv_ms", 35.0),
+        "blood_glucose_mmol":    round(float(glucose_raw), 2),
+        "eda_us":                physio.get("eda_us", 2.0),
+        "time_of_day_h":         physio.get("time_of_day_h", 12.0),
+        "location_stress_index": physio.get("location_stress_index",
+                                            physio.get("stress_index", 0.4)),
+        "sleep_hours_last_night": physio.get("sleep_hours_last_night",
+                                             max(0.0, 8.0 - float(sleep_deficit))),
+        "sleep_deficit_hours":   float(sleep_deficit),
+        "is_simulated":          physio_source != "sensor",
+        "subject_id":            subject_id,
+    }
+
+
 # ── Environment defaults ──────────────────────────────────────────────────────
 _BEDROCK_REGION  = os.environ.get("AWS_REGION", "us-east-1")
 
@@ -230,7 +256,8 @@ class PhysioMPSMCTSWorker(A3CWorker):
             try:
                 _http_post(
                     f"{_TENSORNETS_URL}/physio/history/append",
-                    {**physio, "subject_id": state.subject_id},
+                    _physio_to_api(physio, physio_source=physio_source,
+                                   subject_id=state.subject_id),
                     timeout=3.0,
                 )
             except Exception as append_exc:

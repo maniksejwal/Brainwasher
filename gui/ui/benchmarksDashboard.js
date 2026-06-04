@@ -128,6 +128,8 @@ export function renderRecentStatsTable() { _renderRecentStatsTable(); }
 
 async function _refresh() {
     _showSpinner(true);
+    _resetLazy();
+    _state.statsTimelineData = null;   // reset so stats tables re-fetch on next scroll
     try {
         await Promise.all([
             _fetchTimeline(),
@@ -154,6 +156,10 @@ function _canonicalizeArm(r) {
 }
 
 async function _fetchTimeline() {
+    // Slim fetch: WMA + run metadata only — used by all line charts.
+    // Heavy stats fields (tokens, scenario_id, latency, etc.) are fetched
+    // separately via _fetchTimelineForStats(), triggered lazily when the
+    // stats table sections scroll into view.
     const data = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/experiment-timeline?window=${_state.wmaWindow}`).then(r=>r.json());
     _state.timelineData = (data.rows || []).map(_canonicalizeArm);
     // Also canonicalize the armEpisodeCounts keys
@@ -164,6 +170,13 @@ async function _fetchTimeline() {
         merged[canon] = (merged[canon] || 0) + n;
     }
     _state.armEpisodeCounts = merged;
+}
+
+async function _fetchTimelineForStats() {
+    // Full fetch: includes tokens, scenario_id, latency, trust_delta, etc.
+    // Only called when a stats table section scrolls into view.
+    const data = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/experiment-timeline/full?window=${_state.wmaWindow}`).then(r=>r.json());
+    _state.statsTimelineData = (data.rows || []).map(_canonicalizeArm);
 }
 async function _fetchMetrics() {
     const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/experiment-metrics`).then(r=>r.json());
@@ -296,25 +309,30 @@ function _attachToolbar() {
 }
 
 function _renderAll() {
+    // ── Always-visible (above the fold) — render immediately ──────────────────
     _renderSimOverview();
     _renderRewardStatsTable();
     _renderRecentStatsTable();
-    _renderCumulativeRewardDist();
     _renderLearningCurves();
     _renderGoalRateChart();
     _renderCritFailRateChart();
     _renderStressAucChart();
-    _renderRewardComponentCharts();
-    _renderScenarioHeatmap();
-    _renderScenarioGoalRates();
-    _renderScenarioRewardStats();
-    _renderCritFailStats();
-    _renderCritFailTable();
-    _renderMetricBars();
-    _renderCostCharts();
-    _renderPhysioScatter();
-    _renderSensorComparison();
-    _renderActionStatsTable();
+
+    // ── Below the fold — defer until scrolled into view ────────────────────────
+    // Each call registers an IntersectionObserver on the wrapper div; the render
+    // fn fires the first time that div becomes visible.  On subsequent refreshes
+    // _resetLazy() clears the registry so these are re-observed with fresh data.
+    _lazyRender('reward-stats-section',       _renderCumulativeRewardDist);
+    _lazyRender('reward-component-charts-section', _renderRewardComponentCharts);
+    _lazyRender('metric-bars-section',        _renderMetricBars);
+    _lazyRender('cost-charts-section',        _renderCostCharts);
+    _lazyRender('scenario-heatmap-section', _renderScenarioHeatmap);
+    _lazyRender('scenario-goal-section',      _renderScenarioGoalRates);
+    _lazyRender('scenario-reward-section',    _renderScenarioRewardStats);
+    _lazyRender('sensor-comparison-section',  _renderSensorComparison);
+    _lazyRender('crit-fail-section',          () => { _renderCritFailStats(); _renderCritFailTable(); });
+    _lazyRender('physio-section',             _renderPhysioScatter);
+    _lazyRender('action-stats-section',       _renderActionStatsTable);
 }
 
 // -- Helpers ------------------------------------------------------------------
@@ -328,6 +346,50 @@ function _destroyChart(id) {
     const cv = document.getElementById(id);
     if (cv) { const c = Chart.getChart(cv); if (c) c.destroy(); }
     return cv;
+}
+
+// ── Lazy chart rendering via IntersectionObserver ─────────────────────────────
+// Charts that are not in the initial viewport (reward components, scenario
+// heatmap, cost charts, etc.) are deferred until they scroll into view.
+// This is the single biggest render-time win: Chart.js initialisation for
+// off-screen canvases is skipped entirely on load.
+//
+// Usage: _lazyRender(canvasId, renderFn)
+//   - canvasId   : the canvas or its wrapper element id
+//   - renderFn   : zero-arg function that creates the chart
+//
+// If IntersectionObserver is unavailable (e.g. Node test env) the fn is called
+// immediately as a fallback.
+const _lazyObserved = new Map();   // id → { fn, rendered }
+const _lazyObserver = (typeof IntersectionObserver !== 'undefined')
+    ? new IntersectionObserver(entries => {
+        for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            const rec = _lazyObserved.get(entry.target.id);
+            if (rec && !rec.rendered) {
+                rec.rendered = true;
+                rec.fn();
+            }
+            _lazyObserver.unobserve(entry.target);
+        }
+    }, { rootMargin: '200px' })   // start rendering 200px before entering viewport
+    : null;
+
+function _lazyRender(wrapperId, renderFn) {
+    const el = document.getElementById(wrapperId);
+    if (!el || !_lazyObserver) { renderFn(); return; }
+    _lazyObserved.set(wrapperId, { fn: renderFn, rendered: false });
+    _lazyObserver.observe(el);
+}
+
+// Reset all lazy records (called at the start of each _refresh so charts
+// re-render with fresh data when the user clicks ↻ Refresh).
+function _resetLazy() {
+    for (const [id] of _lazyObserved) {
+        const el = document.getElementById(id);
+        if (el) _lazyObserver?.unobserve(el);
+    }
+    _lazyObserved.clear();
 }
 
 // Build line datasets using episode index as x-axis (per arm).
@@ -357,6 +419,18 @@ const _ZOOM_PLUGIN = {
         modifierKey: null,
     },
     limits: { x: { min: 'original', max: 'original' } },
+};
+
+// Shared options block for every line chart in the dashboard.
+// animation:false + tension:0 are the two biggest render-time wins for
+// large episode datasets (1k+ points per arm × 8 arms = 8k+ points).
+// Straight-line segments (tension=0) avoid per-frame bezier recalculation;
+// animation:false skips the 60fps draw loop entirely on first paint.
+const _LINE_CHART_OPTIONS = {
+    responsive: true, maintainAspectRatio: false,
+    animation: false,
+    elements: { line: { tension: 0.3 } },
+    interaction: { mode: 'index', intersect: false },
 };
 
 function _mergeRows(rows) {
@@ -690,9 +764,21 @@ function _renderRecentStatsTable() {
  */
 function _renderStatsTableInto(targetId, lastN) {
     const el = document.getElementById(targetId);
-    if (!el || !_state.timelineData?.length) return;
+    // Use the full stats timeline (has cumulative_reward, stress_auc, etc.)
+    // If not yet loaded, kick off a fetch and re-render when it arrives.
+    if (!_state.statsTimelineData?.length) {
+        if (!_state.statsTimelineData) {
+            _state.statsTimelineData = [];   // prevent duplicate fetches
+            _fetchTimelineForStats().then(() => {
+                _renderStatsTableInto(targetId, lastN);
+            });
+        }
+        if (el) el.innerHTML = '<p style="font-size:12px;color:var(--gray-400);padding:8px;">Loading…</p>';
+        return;
+    }
+    if (!el) return;
 
-    const allRows = _filterByDuration(_state.timelineData) ?? [];
+    const allRows = _filterByDuration(_state.statsTimelineData) ?? [];
 
     const stats = EXP_KEYS.map(arm => {
         let ep = allRows.filter(r => r.arm === arm);
@@ -773,8 +859,7 @@ function _renderLearningCurves() {
     new Chart(canvas, {
         type: 'line', data: { datasets },
         options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
+            ..._LINE_CHART_OPTIONS,
             scales: {
                 x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
                 y: { title: { display: true, text: 'Reward per Turn (WMA)', font: { size: 11 } } },
@@ -783,9 +868,7 @@ function _renderLearningCurves() {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: {
-                    callbacks: _lineTooltipCallbacks('decimal', true),
-                },
+                tooltip: { callbacks: _lineTooltipCallbacks('decimal', true) },
             },
         },
     });
@@ -799,15 +882,11 @@ function _renderGoalRateChart() {
     if (!canvas) return;
     const rows = _filterByDuration(_state.timelineData);
     if (!rows?.length) return;
-    // Only include episodes where goal_achieved is not null ? NULL episodes were
-    // old-format runs without goal tracking and have been removed from the DB.
-    // Lines end naturally where data ends; no bridging or interpolation.
     const datasets = _buildLineDatasets(rows, 'goal_achieved', 'goal_rate_wma');
     new Chart(canvas, {
         type: 'line', data: { datasets },
         options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
+            ..._LINE_CHART_OPTIONS,
             scales: {
                 x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
                 y: { min: 0, max: 1, title: { display: true, text: 'Goal Rate (WMA)', font: { size: 11 } }, ticks: { callback: v => (v*100).toFixed(0)+'%' } },
@@ -816,9 +895,7 @@ function _renderGoalRateChart() {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: {
-                    callbacks: _lineTooltipCallbacks('percent'),
-                },
+                tooltip: { callbacks: _lineTooltipCallbacks('percent') },
             },
         },
     });
@@ -836,8 +913,7 @@ function _renderCritFailRateChart() {
     new Chart(canvas, {
         type: 'line', data: { datasets },
         options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
+            ..._LINE_CHART_OPTIONS,
             scales: {
                 x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
                 y: { min: 0, max: 1, title: { display: true, text: 'Critical Failure Rate (WMA)', font: { size: 11 } },
@@ -847,9 +923,7 @@ function _renderCritFailRateChart() {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: {
-                    callbacks: _lineTooltipCallbacks('percent'),
-                },
+                tooltip: { callbacks: _lineTooltipCallbacks('percent') },
             },
         },
     });
@@ -867,8 +941,7 @@ function _renderStressAucChart() {
     new Chart(canvas, {
         type: 'line', data: { datasets },
         options: {
-            responsive: true, maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
+            ..._LINE_CHART_OPTIONS,
             scales: {
                 x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
                 y: { min: 0, max: 1, title: { display: true, text: 'Stress AUC (↑ better)', font: { size: 11 } } },
@@ -877,9 +950,7 @@ function _renderStressAucChart() {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: {
-                    callbacks: _lineTooltipCallbacks('decimal'),
-                },
+                tooltip: { callbacks: _lineTooltipCallbacks('decimal') },
             },
         },
     });
@@ -1598,13 +1669,24 @@ function _renderRewardComponentCharts() {
     const byArm = {};
     for (const r of rows) (byArm[r.arm] = byArm[r.arm] || []).push(r);
 
-    // One chart per dimension, all 3 experiments on the same chart
+    // One chart per dimension — laid out in a 2-column grid matching the rest
+    // of the dashboard.  A position:relative wrapper with a fixed height is
+    // required for Chart.js responsive mode to honour the height constraint.
+    const grid = document.createElement('div');
+    grid.style.cssText = 'display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;';
+    wrap.appendChild(grid);
+
     for (const dim of dims) {
         const canvasId = `rc-chart-${dim.key}`;
-        const wrap2 = document.createElement('div');
-        wrap2.style.cssText = 'margin-bottom:28px;';
-        wrap2.innerHTML = `<h4 style="margin:0 0 6px;font-size:13px;color:var(--gray-700);">${dim.label} <span title="Weighted Moving Average (WMA) of per-turn reward component across the window" style="cursor:help;opacity:.6;">ⓘ</span> WMA (window ${_state.wmaWindow})</h4><canvas id="${canvasId}" height="130"></canvas>`;
-        wrap.appendChild(wrap2);
+        const cell = document.createElement('div');
+        cell.innerHTML = `
+            <div style="font-size:11px;color:var(--gray-600);margin-bottom:4px;">
+                ${dim.label}
+                <span title="Weighted Moving Average across the scoring window" style="cursor:help;opacity:.5;">ⓘ</span>
+            </div>
+            <div style="position:relative;height:180px;">
+                <canvas id="${canvasId}"></canvas>
+            </div>`;
 
         const datasets = EXP_KEYS
             .filter(arm => _state.activeExperiments.has(arm) && byArm[arm])
@@ -1624,14 +1706,15 @@ function _renderRewardComponentCharts() {
                 };
             });
 
+        grid.appendChild(cell);
+
         const ctx = document.getElementById(canvasId)?.getContext('2d');
         if (!ctx) continue;
         new Chart(ctx, {
             type: 'line',
             data: { datasets },
             options: {
-                animation: false,
-                responsive: true,
+                ..._LINE_CHART_OPTIONS,
                 parsing: false,
                 plugins: {
                     legend: { labels: { font: { size: 11 } } },
@@ -1774,7 +1857,7 @@ function _renderCostCharts() {
                 type: 'line',
                 data: { datasets },
                 options: {
-                    responsive: true, maintainAspectRatio: false,
+                    ..._LINE_CHART_OPTIONS,
                     plugins: { legend: { position: 'top' }, title: { display: true, text: 'Cost per Episode (USD)' } },
                     scales: { x: { title: { display: true, text: 'Episode #' } }, y: { title: { display: true, text: 'USD' } } },
                 },

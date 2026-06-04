@@ -33,6 +33,7 @@ except ImportError:
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -59,6 +60,7 @@ from tensornets.physio.hrv import (
     gamma_from_state,
     gamma_to_lambda1,
     stress_half_life_turns,
+    estimate_baseline_from_history,
 )
 from tensornets.physio.simulator import SubjectProfile, PhysiologicalSimulator
 
@@ -266,7 +268,7 @@ def physio_history_append(req: PhysioStateIn):
         "current":            _physio_summary(state),
         "stress_trajectory":  [round(x, 4) for x in hist.stress_trajectory()],
         "hrv_trajectory":     [round(x, 2) for x in hist.hrv_trajectory()],
-        "estimated_baseline": round(hist.estimate_baseline_from_history(hist), 2),
+        "estimated_baseline": round(estimate_baseline_from_history(hist), 2),
     }
 
 
@@ -1333,6 +1335,34 @@ _LLM_MODELS = {
     "maverick": "us.meta.llama4-maverick-17b-instruct-v1:0",
 }
 
+# ── Concurrency pool ──────────────────────────────────────────────────────────
+# With 8 arms × 2 workers = up to ~20 simultaneous in-flight Bedrock calls,
+# the per-account concurrency limit gets hit and returns 502 throttling errors.
+# A semaphore caps active calls so excess requests wait in-thread rather than
+# firing immediately and failing.  Scout and Maverick share one pool because
+# they compete for the same account-level quota.
+# Set BEDROCK_MAX_CONCURRENT env var to tune (default 8).
+_MAX_BEDROCK_CONCURRENT = int(os.environ.get("BEDROCK_MAX_CONCURRENT", "8"))
+_bedrock_semaphore      = threading.Semaphore(_MAX_BEDROCK_CONCURRENT)
+
+# ── Reusable boto3 clients (one per region) ───────────────────────────────────
+# Creating a new client per call re-reads credentials and re-establishes the
+# TCP connection pool on every request.  One client per region is reused instead.
+_bedrock_clients: dict = {}
+_bedrock_clients_lock  = threading.Lock()
+
+def _get_bedrock_client(region: str):
+    """Return (lazily created) reusable boto3 bedrock-runtime client."""
+    try:
+        import boto3 as _boto3
+    except ImportError:
+        raise HTTPException(status_code=500, detail="boto3 not installed")
+    with _bedrock_clients_lock:
+        if region not in _bedrock_clients:
+            _bedrock_clients[region] = _boto3.client("bedrock-runtime", region_name=region)
+        return _bedrock_clients[region]
+
+
 class LLMRequestIn(BaseModel):
     system:     str = ""
     prompt:     str
@@ -1342,58 +1372,56 @@ class LLMRequestIn(BaseModel):
 
 def _call_bedrock_llm(model_key: str, system: str, prompt: str,
                       max_tokens: int, temperature: float) -> dict:
-    try:
-        import boto3 as _boto3
-        import botocore.exceptions as _bce
-        import time as _time
-    except ImportError:
-        raise HTTPException(status_code=500, detail="boto3 not installed")
-
-    model_id = _LLM_MODELS.get(model_key, _LLM_MODELS["scout"])
     region   = os.environ.get("AWS_REGION", "us-east-1")
-    client   = _boto3.client("bedrock-runtime", region_name=region)
+    model_id = _LLM_MODELS.get(model_key, _LLM_MODELS["scout"])
+    client   = _get_bedrock_client(region)
 
-    messages = [{"role": "user", "content": [{"text": prompt}]}]
+    messages    = [{"role": "user", "content": [{"text": prompt}]}]
     system_list = [{"text": system}] if system else []
     kwargs: dict = {
-        "modelId":          model_id,
-        "messages":         messages,
-        "inferenceConfig":  {"maxTokens": max_tokens, "temperature": temperature},
+        "modelId":         model_id,
+        "messages":        messages,
+        "inferenceConfig": {"maxTokens": max_tokens, "temperature": temperature},
     }
     if system_list:
         kwargs["system"] = system_list
 
-    # Exponential backoff for Bedrock throttling (ThrottlingException / TooManyRequestsException)
-    last_exc: Exception | None = None
-    for attempt in range(4):
-        try:
-            response = client.converse(**kwargs)
-            content_blocks = response["output"]["message"]["content"]
-            if not content_blocks:
-                raise ValueError("Bedrock returned empty content block list")
-            text    = content_blocks[0]["text"]
-            usage   = response.get("usage", {})
-            return {
-                "text":          text,
-                "input_tokens":  usage.get("inputTokens",  0),
-                "output_tokens": usage.get("outputTokens", 0),
-            }
-        except Exception as exc:
-            last_exc = exc
-            exc_name = type(exc).__name__
-            is_throttle = (
-                "Throttling" in exc_name
-                or "TooManyRequests" in exc_name
-                or "throttling" in str(exc).lower()
-                # Treat empty-content responses as transient and retry
-                or "empty content" in str(exc).lower()
-            )
-            if is_throttle and attempt < 3:
-                wait = 2 ** attempt + 1   # 2s, 3s, 5s
-                log.warning("Bedrock throttled (%s), retrying in %.0fs (attempt %d/4)", model_key, wait, attempt + 1)
-                _time.sleep(wait)
-            else:
-                break
+    # Acquire pool slot — blocks until a slot is free rather than firing
+    # immediately and hitting the Bedrock concurrency limit.
+    with _bedrock_semaphore:
+        last_exc: Exception | None = None
+        for attempt in range(4):
+            try:
+                response       = client.converse(**kwargs)
+                content_blocks = response["output"]["message"]["content"]
+                if not content_blocks:
+                    raise ValueError("Bedrock returned empty content block list")
+                text  = content_blocks[0]["text"]
+                usage = response.get("usage", {})
+                return {
+                    "text":          text,
+                    "input_tokens":  usage.get("inputTokens",  0),
+                    "output_tokens": usage.get("outputTokens", 0),
+                }
+            except Exception as exc:
+                last_exc = exc
+                exc_name = type(exc).__name__
+                is_throttle = (
+                    "Throttling" in exc_name
+                    or "TooManyRequests" in exc_name
+                    or "throttling" in str(exc).lower()
+                    or "empty content" in str(exc).lower()
+                )
+                if is_throttle and attempt < 3:
+                    import random as _random
+                    wait = (2 ** attempt + 1) + _random.uniform(-0.5, 0.5)
+                    log.warning(
+                        "Bedrock throttled (%s), retrying in %.1fs (attempt %d/4)",
+                        model_key, wait, attempt + 1,
+                    )
+                    time.sleep(wait)
+                else:
+                    break
 
     log.error("Bedrock %s call failed: %s", model_key, last_exc)
     raise HTTPException(status_code=502, detail=f"Bedrock error: {last_exc}")

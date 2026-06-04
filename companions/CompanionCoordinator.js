@@ -186,7 +186,10 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
                 .replace('{{PENDING_INTERVENTION}}', pendingInterventionBlock);
 
             const actionResult = await processUserMessage(
-                userId, role, actionPrompt, circleId,
+                userId, role, actionPrompt,
+                (context.members || []).map(m => m.username),  // careCircleMembers must be array (unifiedAgent calls .join)
+                circleId,
+                null,
                 { ...enhancedContext, _action_selector_call: true }
             );
 

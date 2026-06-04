@@ -391,7 +391,7 @@
                     </div>
 
                     <!-- Per-reward-dimension line charts -->
-                    <div style="margin-bottom:16px;">
+                    <div id="reward-component-charts-section" style="margin-bottom:16px;">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Reward Components — Individual Dimensions</h4>
                         <p style="font-size:12px;color:var(--gray-500);margin:0 0 10px;">
                             Each chart shows one reward dimension's WMA across all experiments (same time axis as learning curves).
@@ -400,7 +400,7 @@
                         <div id="reward-component-charts"></div>
                     </div>
 
-                    <div style="margin-bottom:16px;">
+                    <div id="scenario-heatmap-section" style="margin-bottom:16px;">
                         <h4 style="margin:0 0 6px;font-size:13px;color:var(--gray-700);">Scenario Reward Breakdown (Avg Cumulative)</h4>
                         <!-- Arm colour key — legend disabled on chart because per-run series are too many -->
                         <div id="heatmap-legend" style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:6px;font-size:11px;color:var(--gray-600);"></div>
@@ -411,7 +411,7 @@
 
                     <!-- ── Scenario Analysis: Block A — Scenario Goal Rates ──────────── -->
                     <hr style="border:none;border-top:1px solid var(--gray-200);margin:16px 0;">
-                    <details open style="margin-bottom:16px;">
+                    <details id="scenario-goal-section" open style="margin-bottom:16px;">
                         <summary style="font-weight:600;font-size:13px;cursor:pointer;padding:6px 0;position:sticky;top:0;background:white;z-index:2;">Scenario Goal Rates</summary>
                         <!-- Scenario filter buttons -->
                         <div style="display:flex;align-items:center;gap:12px;margin:8px 0 6px;flex-wrap:wrap;">
@@ -446,7 +446,7 @@
 
                     <!-- ── Scenario Analysis: Block B — Scenario Reward Stats ────────── -->
                     <hr style="border:none;border-top:1px solid var(--gray-200);margin:16px 0;">
-                    <details open style="margin-bottom:16px;">
+                    <details id="scenario-reward-section" open style="margin-bottom:16px;">
                         <summary style="font-weight:600;font-size:13px;cursor:pointer;padding:6px 0;position:sticky;top:0;background:white;z-index:2;">Scenario Reward Stats</summary>
                         <p style="font-size:11px;color:var(--gray-500);margin:6px 0 8px;">
                             Average cumulative reward per scenario per experiment, sorted worst-first. Color intensity reflects reward magnitude.
@@ -467,14 +467,14 @@
                     </details>
 
                     <!-- Critical failures -->
-                    <div style="margin-bottom:16px;">
+                    <div id="crit-fail-section" style="margin-bottom:16px;">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Critical Failures — by Scenario</h4>
                         <div id="crit-fail-stats-row" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;"></div>
                         <div id="crit-fail-table" style="max-height:320px;overflow-y:auto;font-size:12px;"></div>
                     </div>
 
                     <!-- Metric line charts (replaced bars) -->
-                    <div style="margin-bottom:16px;">
+                    <div id="metric-bars-section" style="margin-bottom:16px;">
                         <h4 style="margin:0 0 4px;font-size:13px;color:var(--gray-700);">Per-Run Metric Comparison <small style="font-weight:400;color:var(--gray-500);">(overlapping bars per experiment per run)</small></h4>
                         <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;">
                             <div style="position:relative;height:180px;"><canvas id="metric-bar-reward"></canvas></div>
@@ -492,7 +492,7 @@
                     </div>
 
                     <!-- Action Usage Statistics -->
-                    <div style="margin-bottom:16px;border-top:1px solid var(--gray-200);padding-top:16px;">
+                    <div id="action-stats-section" style="margin-bottom:16px;border-top:1px solid var(--gray-200);padding-top:16px;">
                         <details open>
                             <summary style="font-weight:600;font-size:13px;cursor:pointer;padding:6px 0;">Action Usage Statistics</summary>
                             <div style="margin-top:8px;display:flex;gap:8px;align-items:center;margin-bottom:8px;">
@@ -505,7 +505,7 @@
                     </div>
 
                     <!-- Physio-reward correlation -->
-                    <div style="margin-bottom:16px;">
+                    <div id="physio-section" style="margin-bottom:16px;">
                         <h4 style="margin:0 0 4px;font-size:13px;color:var(--gray-700);">Physiology ↔ Reward Correlation</h4>
                         <p style="font-size:11px;color:var(--gray-500);margin:0 0 10px;">Each dot = one training episode. All 5,402 turns have HRV and stress data. No distinct persona IDs were recorded during training runs — persona-level breakdown pending.</p>
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
@@ -523,7 +523,7 @@
                     <div id="benchmarks-dashboard"></div>
 
                     <!-- Cost & LLM Calls Charts -->
-                    <div style="margin-bottom:20px;border-top:1px solid var(--gray-200);padding-top:16px;">
+                    <div id="cost-charts-section" style="margin-bottom:20px;border-top:1px solid var(--gray-200);padding-top:16px;">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Cost & LLM Usage</h4>
                         <p style="font-size:11px;color:var(--gray-500);margin:0 0 10px;">USD cost per episode and LLM API calls per episode across all experiments. CoT-MCTS experiments (Exp 1, 4) use 2 calls/turn (Maverick CoT + Scout generation). MPS-MCTS (Exp 2, 3) use 1 Scout call/turn.</p>
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">

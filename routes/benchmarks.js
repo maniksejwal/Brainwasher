@@ -173,21 +173,28 @@ router.get('/learning-curves', async (req, res) => {
 });
 
 // ── Merged experiment timeline (cross-run continuous sequence) ─────────────────
-router.get('/experiment-timeline', async (req, res) => {
+// Helper to serve timeline rows (slim or full) --------------------------------
+async function _serveTimeline(req, res, slim) {
     try {
         const { arm, window } = req.query;
         const rows = await getMergedExperimentTimeline({
             arm:        arm || undefined,
             windowSize: parseInt(window) || 20,
+            slim,
         });
         const armEpisodeCounts = rows._armEpisodeCounts || {};
-        // strip the non-array property before sending; use explicit field on object
         const cleanRows = Array.isArray(rows) ? rows : Array.from(rows);
         res.json({ rows: cleanRows, armEpisodeCounts });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
-});
+}
+
+// Slim timeline for line charts — WMA + run metadata only (~4× smaller payload)
+router.get('/experiment-timeline', (req, res) => _serveTimeline(req, res, true));
+
+// Full timeline for stats tables — includes tokens, scenario_id, latency, etc.
+router.get('/experiment-timeline/full', (req, res) => _serveTimeline(req, res, false));
 
 // ── Per-experiment metric aggregates (for bar charts) ─────────────────────────
 router.get('/experiment-metrics', async (req, res) => {
