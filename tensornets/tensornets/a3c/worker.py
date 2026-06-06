@@ -1188,7 +1188,12 @@ class A3CWorker:
         _start_change_stage: str     = state.deaddiction_phase
         _trust_acc: float            = 0.0    # accumulated trust_delta over episode
         _ended_crit_fail: bool       = False  # set True when 2-strike break fires
-        # Score every turn so every turn is a chance to advance goal coverage.
+        # Escalation tracking: used for the terminal escalation bonus/penalty.
+        # escalation_expected = scenario flags that a correct escalation should occur.
+        # _escalation_occurred = we saw at least one escalation_quality > 0 from scorer.
+        # _escalation_missed   = escalation was expected but scorer never gave quality > 0.
+        _escalation_expected: bool = bool(scenario.get("escalation_expected", False))
+        _escalation_occurred: bool = False
         # With only 10-15 turns per episode and a 0.75 info_coverage threshold
         # to achieve the goal, skipping odd turns cuts goal-coverage opportunities
         # nearly in half.  The extra Scout calls increase episode cost slightly
@@ -1723,6 +1728,14 @@ class A3CWorker:
             if _turns_to_goal is None and state.info_coverage >= 0.75:
                 _turns_to_goal = turn_idx
             _trust_acc += scorer_reward_dims.get("trust_delta", 0.0)
+            # Track escalation via scorer dimension
+            if not _escalation_occurred and score_result is not None:
+                _esc_q = dict(score_result.dimensions).get("escalation_quality_score", 0)
+                try:
+                    if int(_esc_q) > 0:
+                        _escalation_occurred = True
+                except (TypeError, ValueError):
+                    pass
 
             # ── Early termination check (Q4b) ────────────────────────────────
             should_stop, ep_penalty = scorer.should_terminate_early(
@@ -1818,6 +1831,29 @@ class A3CWorker:
                 cumulative_reward -= 2.0
                 log.debug("[%s] terminal -2.0 (late-stage low cov=%.2f, no trust)",
                           self.worker_id, _final_coverage)
+
+        # ── Terminal escalation signal ────────────────────────────────────────
+        # Separate from the goal/coverage signal above.  Rewards correct escalation
+        # (e.g. calling for emergency help when the patient is in crisis) and
+        # penalises missed escalation when the scenario required it.
+        #
+        # Only applied when the scenario is tagged escalation_expected=True, to
+        # avoid penalising scenarios where no escalation was needed.
+        #
+        #   +1.5  scenario required escalation AND agent escalated correctly
+        #   -1.0  scenario required escalation AND agent never escalated
+        #
+        # "Escalated correctly" = at least one turn had escalation_quality_score > 0
+        # from the scorer.  No partial credit: escalation is binary in clinical practice.
+        if _escalation_expected:
+            if _escalation_occurred:
+                cumulative_reward += 1.5
+                log.debug("[%s] terminal +1.5 (correct escalation on escalation scenario)",
+                          self.worker_id)
+            else:
+                cumulative_reward -= 1.0
+                log.debug("[%s] terminal -1.0 (missed escalation on escalation scenario)",
+                          self.worker_id)
 
         summary = self._flush_episode(episode_id, scenario, cumulative_reward)
 
@@ -2054,6 +2090,11 @@ class A3CWorker:
             "timestamp":         datetime.now(timezone.utc).isoformat(),
             "jsonl_path":        str(jsonl_path),
             "genuine_metrics":   genuine_metrics,
+            # session_summary_quality: placeholder for future post-session LLM judge.
+            # When implemented, this will call a Scout/Maverick pass over the full
+            # episode transcript to score the agent's overall session quality.
+            # Until then it defaults to None and is excluded from reward computation.
+            "session_summary_quality": None,
         }
 
         with jsonl_path.open("w", encoding="utf-8") as fh:
