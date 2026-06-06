@@ -1,4 +1,4 @@
-# System Architecture — Brainwasher 3 / Tensornets
+﻿# System Architecture — Brainwasher 3 / Tensornets
 
 > Last updated: 2026-05-28  
 > Covers: 4+1 Architectural Views, Data Flow Diagrams, Math Reference  
@@ -25,7 +25,7 @@
 
 The +1 view describes the primary actors and their key interactions with the system.
 
-`mermaid
+```mermaid
 graph TD
     Patient([Patient])
     Caregiver([Caregiver])
@@ -48,7 +48,7 @@ graph TD
 
     A3C -->|episode data| DB[(SQLite DB)]
     BenchmarkDashboard -->|read| DB
-`
+```
 
 **Primary use cases:**
 - UC1: Patient chats with companion (care session)
@@ -64,7 +64,7 @@ graph TD
 
 The logical view shows the major subsystems and their relationships.
 
-`mermaid
+```mermaid
 graph LR
     subgraph NodeJS[Node.js Backend]
         CC[CompanionCoordinator]
@@ -112,47 +112,88 @@ graph LR
     WORKER --> SCORER
     WORKER --> SP
     WORKER --> FastAPI
-`
+```
 
 ---
 ## 3. Process View
 
 The process view shows the runtime interaction flows.
 
+### 3.0 Two-coordinator architecture
+
+The Node.js backend is split into two distinct coordination layers. Understanding this split is essential for reading all sequence diagrams below.
+
+| Layer | File | Scope | Lifecycle |
+|---|---|---|---|
+| **Orchestrator** | `orchestrator.js` | Server-wide; mediates *between* companions | Single process instance, persistent |
+| **CompanionCoordinator** | `companions/CompanionCoordinator.js` | Within one companion; coordinates the companion's internal agents | One instance per `userId`, cached in `contextAwareCompanionRouter.js` |
+
+A **Companion** is a logical entity coupled 1-to-1 with a specific human user (patient, caregiver, clinician). Each companion has exactly one `CompanionCoordinator` instance that acts as its internal brain — running the clinical agent, empathy handler, physio bridge, MCTS planner, and response optimiser pipeline.
+
+The **Orchestrator** sits above the companion layer. Its responsibilities are:
+
+1. **Shared event bus** — `export const events = new EventEmitter()` used by `server.js`, all companions, and `contextAwareCompanionRouter.js` for `broadcast`, `escalate`, `clear_db`, `future_plan_executed`.
+2. **Cross-companion plan dispatch** — on `future_plan_executed` it inspects the plan type (question / follow_up / reminder / escalation) and routes the resulting action to the correct user(s) via `events.emit('broadcast', …)` or triggers `addEscalation`.
+3. **Entry-point re-exporter** — re-exports `handleLogin`, `handleCommand`, `handleMessage`, `routeMessage` so `server.js` has a single import point.
+4. **Implicit companion mediator** — `contextAwareCompanionRouter.js` imports `events` from the orchestrator, so cross-companion signals emitted by any `CompanionCoordinator` (e.g. `future_plan_executed`) are automatically picked up by the server-wide event loop.
+
+```mermaid
+graph TD
+    SRV[server.js] -->|imports events| ORC[orchestrator.js]
+    ORC -->|re-exports| RTR[contextAwareCompanionRouter.js]
+    RTR -->|instantiates one per userId| CC_A[CompanionCoordinator — Patient A]
+    RTR -->|instantiates one per userId| CC_B[CompanionCoordinator — Caregiver B]
+    RTR -->|instantiates one per userId| CC_C[CompanionCoordinator — Clinician C]
+    CC_A -->|emits future_plan_executed| ORC
+    CC_B -->|emits future_plan_executed| ORC
+    ORC -->|emits broadcast| SRV
+    ORC -->|emits escalate| SRV
+```
+
+---
+
 ### 3.1 Production conversation turn (sequence)
 
-`mermaid
+```mermaid
 sequenceDiagram
     participant User
-    participant Node as Node.js (CompanionCoordinator)
+    participant SRV as server.js
+    participant ORC as orchestrator.js (event bus)
+    participant RTR as contextAwareCompanionRouter
+    participant CC as CompanionCoordinator (per userId)
     participant FastAPI as FastAPI (tensornets)
     participant MPS as MPS/MCTS (Python)
     participant Scout as LLM Scout
     participant Maverick as LLM Maverick
     participant DB as SQLite
 
-    User->>Node: POST /api/message { userId, message }
-    Node->>Node: loadSessionState()
-    Node->>Node: peekInterventionQueue(userId, stress, turn)
-    Node->>FastAPI: POST /physio/history/append { hrv, eda, glucose }
+    User->>SRV: POST /api/message { userId, message }
+    SRV->>ORC: routeMessage(req, res, sse_clients)
+    ORC->>RTR: routeMessage dispatch
+    RTR->>CC: coordinateCompanions(userId, message)
+    CC->>CC: loadSessionState()
+    CC->>CC: peekInterventionQueue(userId, stress, turn)
+    CC->>FastAPI: POST /physio/history/append { hrv, eda, glucose }
     FastAPI->>MPS: update_state(physio_snapshot)
     MPS-->>FastAPI: updated_mps_vector
-    FastAPI-->>Node: { stress_index, stress_bucket }
-    Node->>FastAPI: POST /mcts/best-action { state, candidates }
+    FastAPI-->>CC: { stress_index, stress_bucket }
+    CC->>FastAPI: POST /mcts/best-action { state, candidates }
     FastAPI->>MPS: dominant_singular_vector()
     MPS-->>FastAPI: m_trunc [top-3 actions]
-    FastAPI-->>Node: { best_action, m_trunc, confidence }
-    Node->>Node: buildPrompt(action, m_trunc, physio, history)
-    Node->>Scout: POST /llm/scout { system, prompt }
-    Scout-->>Node: { text, tokens }
-    Node->>Node: applyRewardModifiers()
-    Node->>DB: INSERT htn_benchmark_turns
-    Node-->>User: { reply, action, stress }
-`
+    FastAPI-->>CC: { best_action, m_trunc, confidence }
+    CC->>CC: buildPrompt(action, m_trunc, physio, history)
+    CC->>Scout: POST /llm/scout { system, prompt }
+    Scout-->>CC: { text, tokens }
+    CC->>CC: applyRewardModifiers()
+    CC->>DB: INSERT htn_benchmark_turns
+    CC->>ORC: emit future_plan_executed (if futurePlanningAgent fires)
+    ORC->>SRV: emit broadcast { targetUsers, reply }
+    SRV-->>User: SSE { reply, action, stress }
+```
 
 ### 3.2 A3C training turn (sequence)
 
-`mermaid
+```mermaid
 sequenceDiagram
     participant Train as train.py
     participant Worker as Arm1Worker (htn_mcts)
@@ -181,11 +222,11 @@ sequenceDiagram
         Worker->>Worker: write episode_turn JSONL
     end
     Train->>Train: checkpoint(actor, critic, run_state)
-`
+```
 
 ### 3.3 Intervention queue flow
 
-`mermaid
+```mermaid
 sequenceDiagram
     participant CompA as Companion A (User A session)
     participant FastAPI
@@ -209,7 +250,7 @@ sequenceDiagram
     CompB->>CompB: inject into action selector prompt
     CompB->>CompB: action = surface_intervention
     CompB->>DB: UPDATE status = surfaced
-`
+```
 
 ---
 
@@ -217,7 +258,7 @@ sequenceDiagram
 
 The development view shows the module organisation and dependencies.
 
-`mermaid
+```mermaid
 graph TD
     subgraph NodeRoot[Node.js root]
         server_js[server.js]
@@ -290,7 +331,7 @@ graph TD
     state_py --> hysteresis_py
     state_py --> reactivity_py
     mcts_reward_py --> mps_py
-`
+```
 
 **Package boundaries:**
 
@@ -413,28 +454,39 @@ graph LR
 **Composite stress index** sigma:
 
 ```
-s_HRV    = clamp(1 - HRV_ms / 60,              0, 1)
-s_EDA    = clamp(EDA_uS / 20,                   0, 1)
-s_sleep  = clamp(sleep_deficit_h / 8,           0, 1)
-s_gluc   = clamp((glucose_mg_dL - 70) / 130,    0, 1)
+s_HRV     = clamp(1 − HRV_ms / HRV_CALM_THRESHOLD,           0, 1)   # HRV_CALM_THRESHOLD = 60 ms
+s_EDA     = clamp(EDA_uS / EDA_MAX,                           0, 1)   # EDA_MAX = 20 μS
+s_sleep   = clamp(sleep_deficit_h / 8,                        0, 1)
+s_gluc    = clamp((blood_glucose_mmol − 3.5) / 6.5,           0, 1)   # field: blood_glucose_mmol
+s_circ    = clamp(|circadian_phase_h − 14| / 14,              0, 1)   # deviation from 14:00 peak
 
-sigma = 0.40*s_HRV + 0.25*s_EDA + 0.20*s_sleep + 0.15*s_gluc
+sigma = 0.35·s_HRV + 0.20·s_EDA + 0.15·s_sleep + 0.10·s_gluc + 0.10·s_circ
+      + 0.05·s_location + (−0.03)·s_exercise + 0.02·s_caffeine
 ```
 
-**Stress buckets:** low (sigma < 0.35), moderate (< 0.60), high (< 0.80), critical (>= 0.80).
+**Stress buckets (ActionBandit):** low (σ < 0.35), moderate (0.35 ≤ σ < 0.65), high (σ ≥ 0.65).
+**Critical gate:** σ ≥ 0.85 → only grounding/safety/escalation actions permitted.
 
 ### 7.2 Hysteresis model
 
 For trigger t, fear weight w_t:
 
 ```
-w_t <- w_t + alpha*(sigma - w_t)   [if trigger active]
-w_t <- w_t - beta*w_t              [otherwise, decay]
+# Extinction (per exposure to non-reinforced cue):
+w_k(t+1) = w_k(t) · λ_extinct + Δw_k(t)       # Δw_k < 0 (inhibitory update, Rescorla-Wagner)
 
-delta_sigma = sum_t( w_t * I[trigger_t_active] ) * gamma_hyst
+# Spontaneous recovery (between sessions, gap = Δweeks):
+w_k ← max(W_FLOOR, w_k · (1 − α_rec · Δweeks))   # W_FLOOR = 0.08 (latent inhibition)
+
+# Reinstatement (cue re-exposure):
+w_k ← min(1.0, w_k + α_reinstate · (1 − w_k))
+
+# Γ modulation:
+scale = 1.0 + (w_k − 0.5) · 0.8               # w=1.0 → ×1.4, w=0.0 → ×0.6
+Γ_modulated = Γ · scale
 ```
 
-Hyperparameters: alpha=0.15, beta=0.02, gamma_hyst=0.30.
+Hyperparameters: λ_extinct (per-session decay), α_rec = 0.10 (recovery rate), W_FLOOR = 0.08 (latent inhibition floor), α_reinstate = 0.45. See `physio/hysteresis.py` for full parameter table.
 
 ### 7.3 Matrix Product State (MPS)
 
@@ -489,15 +541,15 @@ A_t = r_t + gamma*V(s_{t+1}) - V(s_t)      gamma = 0.95
 **Actor update:**
 
 ```
-b_{a_t, k_t} <- b_{a_t, k_t} + alpha_actor * A_t      alpha_actor = 0.01
+b_{a_t, k_t} <- b_{a_t, k_t} + ALPHA_LR * A_t         ALPHA_LR = 0.05
 ```
 
 **Critic** (linear value function, features phi(s)):
 
 ```
 V(s) = w^T * phi(s)
-w <- w + alpha_critic * (r_t + gamma*V(s_{t+1}) - V(s_t)) * phi(s_t)
-     alpha_critic = 0.001
+w <- w + ALPHA_LR * (r_t + gamma*V(s_{t+1}) - V(s_t)) * phi(s_t)
+     ALPHA_LR = 0.05   # single shared learning rate for actor and critic
 ```
 
 ### 7.6 Composite scalar reward
@@ -529,22 +581,33 @@ Scalar: `r_judge = sum_d(w_d * score_d / 2.0)`, normalised to [0,1].
 ### 7.8 ReactivityProfile gamma
 
 ```
-delta_stress(action, archetype) = base_delta(action) * gamma(archetype)
+delta *= reactivity_profile.gamma_modifier(current_stress)   # from ReactivityProfile.gamma_modifier()
 
-gamma = { standard:1.0, avoidant:1.3, anxious:1.5, resistant:0.7, compliant:0.8 }
+# Archetypes defined in tensornets/physio/reactivity.py (ReactivityProfile):
+# STOIC: threshold=0.60, gain=0.60  (low reactivity, high HRV baseline +8ms)
+# LABILE: threshold=0.30, gain=1.40  (rapidly fluctuating, high alpha_rise=20)
+# HYPERSENSITIVE: threshold=0.20, gain=1.80  (activated at low stress, HRV baseline −5ms)
+# RUMINANT: threshold=0.35, gain=1.20  (slow ruminant accumulator, β=0.60)
+# See 03_physiological_model.md §5 for full parameter table.
 ```
 
 ### 7.9 DrugRegimen PK/PD
 
-Single-compartment elimination:
-
 ```
-C(t) = C_0 * exp(-ke * t),   ke = ln(2) / half_life_h
+# One-compartment PK (metoprolol, benzodiazepine):
+C(t) = (dose · F / Vd) · e^{−ke·t}      ke = ln(2) / t½
+E(C) = Emax · Cⁿ / (EC50ⁿ + Cⁿ)         # E_max Hill equation (Holford & Sheiner, 1981)
 
-gamma_drug = 1 - efficacy * C(t)/C_0
+# Two-timescale SSRI model:
+# Phase 1 (weeks 1–2): serotonin activation → Γ↑ (early HRV suppression)
+# Phase 2 (weeks 4–8): receptor downregulation → Γ↓ (HRV restoration)
+# Each accumulates in a separate channel (see physio/pkpd.py)
+
+# Safety floor:
+gamma_drug >= 0.30   # no drug combination reduces Γ by more than 70%
 ```
 
-Applied multiplicatively to delta_stress in stress_after_response().
+Applied multiplicatively to delta_stress in `_stress_after_response()` (arms.py). See `03_physiological_model.md §6` and `physio/pkpd.py` for full drug parameter tables.
 
 ---
 
@@ -554,8 +617,7 @@ Applied multiplicatively to delta_stress in stress_after_response().
 |---|---|---|---|
 | MAX_TURNS | 50 | worker.py | Episode horizon |
 | CHECKPOINT_EVERY | 5 | train.py | Checkpoint frequency (episodes) |
-| alpha_actor | 0.01 | worker.py | Actor learning rate |
-| alpha_critic | 0.001 | worker.py | Critic learning rate |
+| ALPHA_LR | 0.05 | worker.py | Shared learning rate for actor log-bias and critic weight updates |
 | gamma | 0.95 | worker.py | Discount factor |
 | c (UCB) | 1.41 | mcts/base.py | MCTS exploration constant |
 | MCTS_SIMULATIONS | 50 | mcts/base.py | Tree expansions per call |
@@ -606,3 +668,23 @@ The `SyntheticParticipant` (Python A3C) and `SyntheticUser` (JS simulation) both
 | Memory scope | Within episode only (reset per episode) | Within session only |
 
 Personas do respond based on conversation — they are not random. Each turn the LLM receives the persona system prompt plus the last 4 exchanges plus the agent's current response, so replies are contextually grounded.
+
+---
+
+## 11. References
+
+| Reference | Section |
+|---|---|
+| Kaelbling, L.P., Littman, M.L. & Cassandra, A.R. (1998). Planning and acting in partially observable stochastic domains. *Artificial Intelligence*, 101, 99–134. | POMDP-H formulation (§4 POMDP-H, §7) |
+| Mnih, V. et al. (2016). Asynchronous methods for deep reinforcement learning. *ICML 2016*, arXiv:1602.01783. | A3C algorithm (§7.5) |
+| Silver, D. et al. (2017). Mastering the game of Go without human knowledge. *Nature*, 550, 354–359. | UCB1_modified with policy prior (§7.4); AlphaGo Zero architecture |
+| Auer, P., Cesa-Bianchi, N. & Fischer, P. (2002). Finite-time analysis of the multiarmed bandit problem. *Machine Learning*, 47, 235–256. | UCB1 exploration constant c = √2 (§7.4) |
+| Schollwöck, U. (2011). The density-matrix renormalization group in the age of matrix product states. *Annals of Physics*, 326, 96–192. | MPS formalism, bond dimension (§7.3) |
+| Vidal, G. (2003). Efficient classical simulation of slightly entangled quantum computations. *Physical Review Letters*, 91, 147902. | Tensor network representation of sequential states |
+| Bouton, M.E. (2004). Context and behavioral processes in extinction. *Learning & Memory*, 11, 485–494. | Hysteresis extinction/recovery model (§7.2) |
+| Rescorla, R.A. & Wagner, A.R. (1972). A theory of Pavlovian conditioning: Variations in the effectiveness of reinforcement and non-reinforcement. In Black & Prokasy (Eds.), *Classical Conditioning II*, Appleton-Century-Crofts, 64–99. | Fear weight update rule (§7.2) |
+| Schmidt, P. et al. (2018). Introducing WESAD, a multimodal dataset for wearable stress and affect detection. *ACM ICMI 2018*. | OU process calibration (θ=0.15, σ=3ms), stress signal validation |
+| Holford, N.H.G. & Sheiner, L.B. (1981). Understanding the dose-effect relationship: Clinical application of pharmacokinetic-pharmacodynamic models. *Clinical Pharmacokinetics*, 6, 429–453. | E_max Hill equation (§7.9) |
+| Thompson, W.R. (1933). On the likelihood that one unknown probability exceeds another in view of the evidence of two samples. *Biometrika*, 25, 285–294. | Thompson Sampling bandit warm-up |
+| Russo, D. et al. (2018). A tutorial on Thompson Sampling. *Foundations and Trends in Machine Learning*, 11(1), 1–96. | Thompson Sampling prior specification |
+| Safran, J.D. & Muran, J.C. (2000). *Negotiating the Therapeutic Alliance: A Relational Treatment Guide*. Guilford Press. | Alliance rupture-repair asymmetry (companion_hysteresis.py) |

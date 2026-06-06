@@ -123,10 +123,32 @@ Applied on top of the base scalar reward:
 
 | Modifier | Formula | Purpose |
 |---|---|---|
-| `pester_penalty` | `min(0.3, max(0, (redirect_streak - 1) × 0.10))` | Penalise repeating clinical pushes after patient redirect |
-| `rapport_bonus` | +0.07 if patient redirected AND companion engaged personally | Reward person-first responses |
-| `physio_modifier` | HRV trend + EDA spike + sleep deficit + glucose + circadian | Reward physiologically-appropriate actions |
-| `delivery_quality` | timing + grounding + circle relay + negotiation listen ratio + humor | Reward contextually well-delivered information |
+| `pester_penalty` | `min(0.3, max(0, (redirect_streak − 1) × 0.10))` | Penalise repeated clinical pushes after patient redirect |
+| `rapport_bonus` | `+0.07 if patient_redirected AND companion_engaged_personally` | Reward person-first responses |
+| `physio_modifier` | See below | Reward physiologically-appropriate action timing |
+| `delivery_quality` | See below | Reward contextually well-delivered information |
+
+**physio_modifier** — computed from the current `PhysiologicalState` snapshot at the time of response:
+
+\[
+\text{physio\_modifier} = w_{HRV} \cdot \Delta_{HRV} + w_{EDA} \cdot \mathbb{1}[EDA\_spike] + w_{sleep} \cdot \text{deficit\_penalty} + w_{gluc} \cdot \text{glucose\_penalty} + w_{circ} \cdot \text{circadian\_penalty}
+\]
+
+where each component rewards responses that are appropriate given the patient's physiological state (e.g., grounding actions when HRV is low are rewarded positively; psychoeducation when HRV is low is penalised). Weights are the same as the stress index weights (0.35, 0.20, 0.15, 0.10, 0.10).
+
+**delivery_quality** — computed from the action taxonomy and context:
+
+\[
+\text{delivery\_quality} = w_t \cdot \text{timing\_score} + w_g \cdot \text{grounding\_score} + w_r \cdot \text{relay\_score} + w_n \cdot \text{negotiation\_listen\_ratio} + w_h \cdot \text{humor\_appropriateness}
+\]
+
+- `timing_score`: +0.05 if MCTS recommended this action and it was delivered on the MCTS-recommended turn; −0.03 if delivered against MCTS guidance
+- `grounding_score`: +0.04 if action is a grounding/validation type and stress_index > 0.65
+- `relay_score`: +0.03 if cross-circle relay was used appropriately (escalation context)
+- `negotiation_listen_ratio`: ratio of patient words to companion words in the last 4 turns; reward approaches 0.03 as ratio approaches 2:1 (patient speaking more)
+- `humor_appropriateness`: +0.02 if `humor` action selected AND stress_index < 0.45 (appropriate); −0.02 if stress_index > 0.65 (inappropriate)
+
+Source: `tensornets/tensornets/a3c/worker.py`, `_compute_physio_modifier()` and `_compute_delivery_quality()`.
 
 Total: `r = scalar_reward(reward_dict) − pester_penalty + rapport_bonus + physio_modifier + delivery_quality`
 
@@ -195,6 +217,28 @@ A run can be resumed with `--resume runs/run_NNN` — the training loop reloads 
 
 Before A3C updates begin (episodes 0–4 per arm), actions are sampled via **Thompson Sampling** over the action bandit priors (`bandit_actor_prior.json`). This avoids the cold-start collapse where a uniform policy selects mediocre actions repeatedly in the first few turns, causing early 2-strike terminations that prevent any learning signal.
 
+### Prior distribution
+
+Each action `a` in each stress bucket `b` is initialised with a Beta distribution prior:
+
+\[
+\text{Prior}(a, b) = \text{Beta}(\alpha_0, \beta_0)
+\]
+
+where \( \alpha_0 = 1 + n_{a,b}^{+} \) and \( \beta_0 = 1 + n_{a,b}^{-} \), loaded from `bandit_actor_prior.json`. Cold-start uses \( \alpha_0 = \beta_0 = 1 \) (uniform prior = no preference). 
+
+At each turn, a sample \( \theta_{a,b} \sim \text{Beta}(\alpha_{a,b}, \beta_{a,b}) \) is drawn for each eligible action, and the action with the highest sample is selected:
+
+\[
+a^* = \arg\max_{a \in A_{eligible}(b)} \theta_{a,b}
+\]
+
+where \( A_{eligible}(b) \) is the set of actions not blocked by the current stress gate (see §3 for the blocking rules).
+
+After the A3C warm-up, the actor policy \( \pi(a|k) = \text{softmax}(b_{a,k}) \) (log-bias table, key \( k = \text{stress\_bucket} \times \text{therapeutic\_mode} \)) takes over. The bandit posterior is not discarded — it continues to be updated alongside the actor and serves as a regularisation anchor against catastrophic forgetting (Kirkpatrick et al., 2017).
+
+Source: `tensornets/tensornets/a3c/action_bandit.py`, `ActionBandit` class.
+
 ---
 
 ## 9. Run naming convention
@@ -209,3 +253,35 @@ Before A3C updates begin (episodes 0–4 per arm), actions are sampled via **Tho
 | run_012 | Failed (port 8765) | Same as run_010 — 200 episodes, 0 successful |
 | run_013 | **Complete** | First clean 200-episode run. All three experiments functional. See `05_results.md` |
 | run_014 | Pending | Will include V_int, ReactivityProfile, M_trunc, genuine_metrics |
+
+---
+
+## 10. Human-in-the-Loop (HITL) feedback integration
+
+The current A3C reward signal is fully automated (LLM-as-judge). HITL feedback is architecturally prepared but not yet wired end-to-end.
+
+### Current state
+
+| Component | Status | Location |
+|---|---|---|
+| `training/feedback/annotator.js` | **Built** — processes scored episodes | `training/feedback/annotator.js` |
+| `/api/training/episodes/{id}/score` endpoint | **Built** — accepts human score | `routes/training.js` |
+| HTN Judge offline batch | **Built** — Llama 405B batch judge | `training/judge.py` |
+| HITL → A3C weight update | **Missing** — connection not yet wired | Pending |
+
+### Planned HITL integration path
+
+When HITL feedback is wired:
+
+1. A clinician reviews flagged episodes (episodes where `discrepancy_flag=True` or `safety ≤ −1`)
+2. The clinician scores each turn via the annotation UI (`/api/training/episodes/{id}/score`)
+3. `annotator.js` stores the human score alongside the automated score in the DB
+4. A `trust_weighted_score` is computed: \( r_{trust} = (1 − w_{hitl}) \cdot r_{auto} + w_{hitl} \cdot r_{human} \), where \( w_{hitl} \) begins at 0.3 and increases as annotation volume grows
+5. The trust-weighted score replaces `continuous_score` in the A3C advantage computation for the flagged episode
+6. The actor log-biases and critic weights are retroactively updated via offline advantage re-computation
+
+This is architecturally equivalent to the DPO (Direct Preference Optimisation) reward signal used in RLHF pipelines, adapted for the log-bias actor representation.
+
+### The `DiscrepancyAudit` bridge
+
+`training/judge.py` exports `DiscrepancyAudit`, which runs all three judges (JS scorer, Maverick, 405B) on the same episode and computes cross-evaluator agreement. Episodes with low inter-judge agreement are flagged for HITL review. This is the mechanism by which the 405B offline judge identifies turns that the real-time Maverick judge may have misjudged under latency pressure.

@@ -123,7 +123,7 @@ Each action carries a `CALMING_WEIGHT` ∈ [0,1] which determines its expected s
                └─────────┬──────────┘
                          │  HTTP
                ┌─────────▼──────────┐
-               │  FastAPI / Python  │   tensornets, port 8766
+               │  FastAPI / Python  │   tensornets, port 8765
                │  MPS Engine        │   MCTS, V_int, Physio
                │  A3C Training      │   Bedrock LLM backend
                └─────────┬──────────┘

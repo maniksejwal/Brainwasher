@@ -1,7 +1,7 @@
 # tensornets — Package Reference
 
 > Python package: `tensornets/tensornets/`  
-> FastAPI microservice: `tensornets/server.py` (port 8766)  
+> FastAPI microservice: `tensornets/server.py` (port 8765)  
 > Entry point for training: `python -m tensornets.a3c.train`
 
 ---
@@ -15,7 +15,7 @@ tensornets/
     ├── core/
     │   ├── mps.py               MatrixProductState — the central state object
     │   ├── operators.py         build_H0, build_Gamma, build_H_eff, build_transition_operator
-    │   └── als.py               Alternating Least Squares optimiser (bond update)
+    │   └── als.py               Alternating Least Squares optimiser (bond update) [planned — not yet implemented; see note below]
     ├── physio/
     │   ├── state.py             PhysiologicalState — 8-signal snapshot → stress index
     │   ├── hysteresis.py        HystereticBaseline — extinction/recovery/reinstatement
@@ -50,7 +50,7 @@ tensornets/
 
 ## core/mps.py — MatrixProductState
 
-The central state object. Represents the patient's joint semantic–physiological state as a chain of tensors.
+The central state object. Represents the patient's joint semantic–physiological state as a chain of tensors (Vidal, 2003; Schollwöck, 2011).
 
 ```
 MatrixProductState
@@ -65,12 +65,14 @@ MatrixProductState
 | Method | Description |
 |---|---|
 | `identity_initialized(n_tokens, chi_semantic, chi_physio)` | Cold-start state — uniform entanglement |
-| `apply_transition(H_eff)` | Evolve state by one turn under H_eff |
+| `apply_transition(H_eff)` | Evolve state by one turn under H_eff (Moiseyev, 2011; see `09_MPS_core.md §3` for derivation) |
 | `partial_trace_physio()` | Marginalise over physio bond → semantic-only density matrix |
 | `energy(H0)` | ⟨ψ\|H0\|ψ⟩ — total system energy |
 | `physio_energy(Gamma)` | ⟨ψ\|Γ†Γ\|ψ⟩ — autonomic tension |
 
 **Design note (F3/F4):** The `project_constraint(token_logits, M_trunc)` method is defined but requires the `core/mps.py` SVD bond compression to be stable (E7 test passes — confirmed May 2026). M_trunc from MCTS is currently used to soft-steer the Scout LLM system prompt, not to directly modify logits (Bedrock API does not expose token logits).
+
+> **Note:** `core/als.py` is planned but not yet implemented. The ALS (Alternating Least Squares) optimiser will provide gradient-free MPS parameter updates. See `09_MPS_core.md §7`.
 
 ---
 
@@ -104,7 +106,7 @@ Models **extinction learning** — the core psychological insight that distingui
 A subject's fear/craving response to trigger `k` is governed by:
 
 ```
-w_k(t+1) = w_k(t) · λ_extinct + Δw_k                   # in-session extinction
+w_k(t+1) = w_k(t) · λ_extinct + Δw_k                   # in-session extinction (Rescorla & Wagner, 1972; Bouton, 2004)
 w_k ← max(W_FLOOR, w_k · (1 - α_rec · Δweeks))         # between-session spontaneous recovery
 w_k ← min(1.0, w_k + α_reinstate · (1 - w_k))           # on reinstatement cue
 ```
@@ -208,7 +210,7 @@ This is injected into `known_context` in `TurnState` before the companion genera
 
 The episode runner. One `A3CWorker` per arm per training session.
 
-**Actor**: Softmax over `ACTION_TAXONOMY` conditioned on `(stress_bucket, therapeutic_mode)`. Log-biases stored as plain Python dicts — no neural network engine required. Mode-conditioned compound keys `"{mode}_{bucket}"` allow mode-specific policies to develop while remaining backward-compatible with older checkpoints.
+**Actor**: Softmax over `ACTION_TAXONOMY` conditioned on `(stress_bucket, therapeutic_mode)`. Log-biases stored as plain Python dicts — no neural network engine required. A3C update rule follows (Mnih et al., 2016). Mode-conditioned compound keys `"{mode}_{bucket}"` allow mode-specific policies to develop while remaining backward-compatible with older checkpoints.
 
 **Critic**: Linear value function over a 7-feature vector: `[stress_index, turn_progress, history_len_norm, info_coverage, repetition, mode_idx, bias]`. Updated via TD(0) with GAMMA_DISCOUNT=0.95.
 
@@ -255,7 +257,7 @@ r = scalar_reward(reward_dict)
 
 ## server.py — FastAPI microservice
 
-Exposes the Python layer to Node.js over HTTP. Port 8766 (changed from 8765 in May 2026).
+Exposes the Python layer to Node.js over HTTP. Port 8765.
 
 **Key endpoints:**
 
@@ -275,3 +277,18 @@ Exposes the Python layer to Node.js over HTTP. Port 8766 (changed from 8765 in M
 | `/benchmark/turn` | POST | Append turn record |
 
 All endpoints retry with exponential backoff on Bedrock 429/503 responses.
+
+---
+
+## References
+
+| Reference | Section |
+|---|---|
+| Moiseyev, N. (2011). *Non-Hermitian Quantum Mechanics*. Cambridge University Press. | H_eff non-Hermitian operator (`apply_transition`) |
+| Vidal, G. (2003). Efficient classical simulation of slightly entangled quantum computations. *Physical Review Letters*, 91, 147902. | MPS tensor network representation (core/mps.py) |
+| Schollwöck, U. (2011). The density-matrix renormalization group in the age of matrix product states. *Annals of Physics*, 326, 96–192. | MPS formalism, bond dimension (core/mps.py) |
+| Rescorla, R.A. & Wagner, A.R. (1972). A theory of Pavlovian conditioning: Variations in the effectiveness of reinforcement and non-reinforcement. In Black & Prokasy (Eds.), *Classical Conditioning II*, Appleton-Century-Crofts, 64–99. | Fear weight update rule (physio/hysteresis.py) |
+| Bouton, M.E. (2004). Context and behavioral processes in extinction. *Learning & Memory*, 11, 485–494. | Hysteresis extinction/recovery model (physio/hysteresis.py) |
+| Mnih, V. et al. (2016). Asynchronous methods for deep reinforcement learning. *ICML 2016*, arXiv:1602.01783. | A3C actor-critic update (a3c/worker.py) |
+| Holford, N.H.G. & Sheiner, L.B. (1981). Understanding the dose-effect relationship: Clinical application of pharmacokinetic-pharmacodynamic models. *Clinical Pharmacokinetics*, 6, 429–453. | E_max Hill equation (physio/pkpd.py) |
+| Kleiger, R.E. et al. (2005). Heart rate variability: Measurement and clinical utility. *Annals of Noninvasive Electrocardiology*, 10(1), 88–101. | HRV signal weight and Metoprolol reference (physio/state.py, physio/pkpd.py) |

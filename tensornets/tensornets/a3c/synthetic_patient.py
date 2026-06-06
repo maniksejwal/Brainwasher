@@ -403,6 +403,20 @@ class SyntheticParticipant:
             for m in self.conversation_history[-4:]
         )
         stage_note = _STAGE_INSTRUCTIONS.get(self.change_stage, "")
+        # Apply within-session drift modifier once rapport has had time to build.
+        # Only for early-stage patients where drift is clinically meaningful.
+        # Trigger: turn ≥ 5 AND conversation context shows positive momentum OR
+        # no ctx but ≥ 5 turns elapsed (reasonable default).
+        _momentum_positive = (
+            ctx is not None
+            and getattr(ctx, "momentum", "neutral") in ("positive", "high")
+            and getattr(ctx, "emotional_tension", 5.0) < 3.5
+        ) or (ctx is None and turn_idx >= 7)
+        if _momentum_positive and turn_idx >= 5:
+            _drift = _STAGE_DRIFT_MODIFIER.get(self.change_stage, "")
+            if _drift:
+                stage_note = f"{stage_note}\n\nSESSION DRIFT (rapport earned): {_drift}"
+
         ctx_note   = ""
         if ctx:
             ctx_note = (
@@ -413,7 +427,7 @@ class SyntheticParticipant:
 
         system_prompt = (
             f"{self.persona_prompt}\n\n"
-            f"You are now in the '{self.change_stage}' stage of change. {stage_note}\n"
+            f"You are now in the '{self.change_stage}' stage of change.\n{stage_note}\n\n"
             f"Your CURRENT GOAL this turn: demonstrate or mention something related to '{self.current_goal}'.\n"
             f"Archetype: {self.archetype}. Let this shape HOW you say things (tone, resistance level).\n"
             f"{ctx_note}"
@@ -464,30 +478,107 @@ class SyntheticParticipant:
 
 _STAGE_INSTRUCTIONS: dict[str, str] = {
     "precontemplation": (
-        "You do NOT think you have a problem. Deflect clinical concerns with humour or minimisation. "
-        "If pressed, change the subject."
+        "You are in the PRECONTEMPLATION stage. You genuinely do NOT believe you have a problem "
+        "or that anything needs to change.\n"
+        "Behavioural signature:\n"
+        "  • Your default response to any health concern is to minimise or dismiss it "
+        "('I'm fine', 'everyone does that', 'it's not that big a deal').\n"
+        "  • You may use humour, sarcasm, or deflection to sidestep uncomfortable topics.\n"
+        "  • When the companion asks direct clinical questions, change the subject or give a "
+        "vague non-answer ('maybe', 'I haven't thought about it').\n"
+        "  • You feel slightly defensive if the companion pushes too hard — express mild "
+        "irritation or say you feel judged.\n"
+        "  • DO NOT volunteer clinical information unless the companion creates genuine rapport "
+        "first (approx. turns 4–6).\n"
+        "  • After 4+ turns of rapport-building (reflected in conversation tone), you may "
+        "briefly acknowledge one small concrete concern, then quickly reframe it as not serious."
     ),
     "contemplation": (
-        "You are beginning to wonder if something needs to change, but you are ambivalent. "
-        "Occasionally let something vulnerable slip, then pull back."
+        "You are in the CONTEMPLATION stage. You are ambivalent — part of you sees a problem, "
+        "part of you finds reasons to stay put.\n"
+        "Behavioural signature:\n"
+        "  • You acknowledge the concern exists but argue the other side: "
+        "'I know I should, but...' or 'it's complicated'.\n"
+        "  • You ask 'what if' questions and explore consequences without committing.\n"
+        "  • You may share a small genuine worry or past incident, then follow it with a "
+        "reason why it hasn't changed ('but I've been busy').\n"
+        "  • You respond positively to reflective listening — if the companion mirrors your "
+        "words back, lean in slightly and elaborate.\n"
+        "  • You resist direct advice; frame unsolicited advice as pressure.\n"
+        "  • Over the session, you may shift from 50/50 ambivalence toward 60/40 in favour "
+        "of change — but only if the companion demonstrates understanding, not lecturing."
     ),
     "preparation": (
-        "You are starting to accept that change is needed. You are cautiously open to information "
-        "and planning, but still have doubts."
+        "You are in the PREPARATION stage. You have decided change is needed and are "
+        "starting to plan, but feel uncertain about how.\n"
+        "Behavioural signature:\n"
+        "  • You actively share relevant context — triggers, barriers, past attempts.\n"
+        "  • You ask for concrete, personalised guidance ('what should I actually do?').\n"
+        "  • You express cautious optimism mixed with anxiety about failure.\n"
+        "  • You respond well to collaborative planning (offer ideas, not just instructions).\n"
+        "  • You may bring up a specific obstacle that feels insurmountable — this is an "
+        "opening for the companion to problem-solve with you.\n"
+        "  • You have low tolerance for generic advice; you want specifics for your situation."
     ),
     "action": (
-        "You are actively trying to change. You want specific, concrete guidance. "
-        "You may still experience setbacks and need support."
+        "You are in the ACTION stage. You are actively trying to change and want support.\n"
+        "Behavioural signature:\n"
+        "  • You report recent concrete steps ('I did X yesterday') and want acknowledgment.\n"
+        "  • You ask for feedback on whether your approach is correct.\n"
+        "  • You describe setbacks honestly and need encouragement, not judgment.\n"
+        "  • You want to understand WHY certain strategies work — you are curious and engaged.\n"
+        "  • You may express frustration if progress is slower than expected.\n"
+        "  • You respond well to specific praise tied to what you actually did, "
+        "not generic cheerleading."
     ),
     "maintenance": (
-        "You have made the change and are working to sustain it. "
-        "You may worry about relapse. Celebrate progress, flag triggers."
+        "You are in the MAINTENANCE stage. Change is established, but you are vigilant "
+        "about sustaining it.\n"
+        "Behavioural signature:\n"
+        "  • You talk about what's working, but also flag relapse triggers or high-risk situations.\n"
+        "  • You want the companion to help you consolidate gains and prepare for challenges.\n"
+        "  • You appreciate recognition of long-term effort — 'it hasn't been easy'.\n"
+        "  • You may express occasional fatigue with the sustained effort ("
+        "'sometimes I wonder if it's worth it') — this is normal, not a crisis.\n"
+        "  • You ask about what happens if you slip, and need a non-catastrophising response."
     ),
-    # Flooding therapy — not TTM, uses its own stage instruction
+    # ── Non-TTM therapeutic modes ──────────────────────────────────────────
     "flooding_exposure": (
-        "You are in a flooding session. You are highly anxious about the stimulus. "
-        "You will try to escape, change subject, or say you feel unwell. "
-        "Your anxiety should peak in 6–8 turns then naturally decay IF you stay with the stimulus."
+        "You are in a flooding/exposure session. You are highly anxious about the stimulus.\n"
+        "Behavioural signature:\n"
+        "  • You frequently try to escape the topic ('can we talk about something else?', "
+        "'I feel sick', 'I need a break').\n"
+        "  • Your anxiety language should peak in turns 4–8, then gradually soften IF the "
+        "companion holds the exposure without catastrophising.\n"
+        "  • You ask for reassurance frequently; the correct companion response is to "
+        "acknowledge anxiety without removing the stimulus.\n"
+        "  • If the companion lets you escape (changes topic), your next message should "
+        "reflect temporary relief — but you will be further from your goal."
+    ),
+}
+
+# ── Within-session TTM drift ───────────────────────────────────────────────────
+#
+# A patient doesn't jump TTM stages mid-session, but rapport earned in a session
+# can soften their stance. This modifier is appended to _STAGE_INSTRUCTIONS when
+# the conversation has enough trust indicators (turns ≥ 5, no critical failures).
+# It makes the patient marginally more open — NOT a full stage change.
+#
+# Applied in generate_message() based on self.turn_count + trust signal.
+_STAGE_DRIFT_MODIFIER: dict[str, str] = {
+    "precontemplation": (
+        "The companion has been consistent and non-judgmental. You are still in "
+        "precontemplation, but you are slightly less defensive. You may acknowledge "
+        "one worry briefly before retreating — a crack, not a door opening."
+    ),
+    "contemplation": (
+        "Rapport has built. You are leaning slightly toward change now. "
+        "You may make a tentative 'I've been thinking...' statement. "
+        "You still have reservations but are willing to explore them aloud."
+    ),
+    "preparation": (
+        "The companion's support is genuine. You feel more confident about your plan "
+        "and are ready to commit to a small first step within this session."
     ),
 }
 

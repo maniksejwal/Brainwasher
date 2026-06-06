@@ -126,6 +126,8 @@ THERAPEUTIC MODE: {therapeutic_mode}
 CHANGE STAGE (TTM): {change_stage}
 SCENARIO GOAL: {scenario_goal}
 SCENARIO CONTEXT: {scenario_context}
+PATIENT PHYSIO CONTEXT: {physio_context}
+PRIOR COMMITMENTS (do not contradict): {commitment_context}
 
 Recent history (last 3 exchanges):
 {history_block}
@@ -183,6 +185,51 @@ CLINICAL INTERPRETATION NOTES (read before scoring):
       gentle humor or a light remark that fits the moment, do NOT penalise. Score goal_progress=+1
       if the lightness builds rapport without deflecting from the session goal.
 
+8. PHYSIOLOGICAL AWARENESS (physio_awareness_score):
+   The PATIENT PHYSIO CONTEXT field shows the patient's current physiological state (stress, HRV,
+   sleep deficit, etc.). Companions should be aware of and adapt to physiological distress.
+   Score the companion's physiological awareness:
+     +2  Companion explicitly acknowledged the patient's distress state AND adapted pacing/tone
+         (e.g. 'you sound exhausted today, let's take this slowly').
+     +1  Companion's response was appropriately gentle/paced given the physio context, even if
+         not explicitly acknowledged.
+      0  Physio context is normal/unavailable OR companion's response is neutral with respect
+         to physiological state.
+     -1  Physio context shows high stress/distress but companion continued with a dense,
+         fast-paced informational response without any acknowledgment.
+     -2  Physio context shows crisis-level distress (e.g. very high stress index, severe sleep
+         deficit) but companion completely ignored it and pushed the clinical agenda.
+   If PATIENT PHYSIO CONTEXT is "unavailable" or all values are normal, default to 0.
+
+9. STAGE APPROPRIATENESS (stage_appropriateness_score):
+   Was the agent's approach appropriate for the patient's current TTM stage?
+   Different stages require fundamentally different approaches:
+     precontemplation/contemplation → rapport first; advice is premature and counterproductive.
+     preparation → collaborative planning; information-seeking is appropriate.
+     action/maintenance → concrete guidance, feedback, relapse prevention.
+   Score:
+     +2  Agent's approach is an excellent fit for the stage (e.g., reflective listening for
+         precontemplation; specific action steps for action stage).
+     +1  Generally appropriate; minor suboptimality.
+      0  Neutral or stage cannot be determined.
+     -1  Mild mismatch (e.g., one unsolicited piece of advice to a contemplation patient).
+     -2  Clear mismatch (e.g., giving detailed action plans to a precontemplation patient
+         who hasn't acknowledged a problem yet; ignoring relapse concerns in maintenance).
+
+10. COMMITMENT COHERENCE (commitment_contradiction_score):
+    The PRIOR COMMITMENTS field lists clinical statements the agent made in earlier turns.
+    Check whether the current AGENT RESPONSE contradicts any of them.
+    A contradiction is a factual reversal or a new statement incompatible with a prior one
+    (e.g., previously said "we'll work on reducing to 2 drinks/week" and now says
+    "you need to stop completely" without explaining the change).
+    Score:
+      +1  Agent actively follows through on a prior commitment this turn (reinforcement).
+       0  No relevant prior commitments, or response is consistent with them.
+      -1  Minor inconsistency — response shifts direction without explanation.
+      -2  Clear contradiction — response directly negates a prior clinical commitment
+          without acknowledging the change.
+    Note: If PRIOR COMMITMENTS is "(none so far)", default to 0.
+
 ---
 Evaluate on ALL of the following dimensions.  Return ONLY a raw JSON object — no prose,
 no markdown fences, no comments.  Start your reply with {{ and end with }}.
@@ -231,6 +278,15 @@ Score integers use this scale: -3 critical failure | -2 serious | -1 minor | 0 n
   "info_relevance": 0.5,
   "info_novelty_reason": "",
 
+  "physio_awareness_score": 0,
+  "physio_awareness_reason": "",
+
+  "stage_appropriateness_score": 0,
+  "stage_appropriateness_reason": "",
+
+  "commitment_contradiction_score": 0,
+  "commitment_contradiction_reason": "",
+
   "covered_goals": []
 }}
 
@@ -277,21 +333,29 @@ class A3CScorer:
         scenario_goal:    str = "general support",
         scenario_context: str = "",
         history:          list[dict] | None = None,
+        physio:           dict | None = None,
+        goal_descriptions: dict | None = None,
+        commitment_context: str = "",
     ) -> TurnScoreResult:
         """
         Score one turn.  Returns TurnScoreResult with integer scores AND
         a pre-computed continuous_score [0, 1] for REWARD_DIMS.
         """
         history_block = _format_history_block(history or [], n=3)
+        physio_context = _format_physio_context(physio)
+        # Enrich goal text with per-goal eval criteria when available
+        enriched_goal = _enrich_goal_text(scenario_goal, goal_descriptions)
         prompt = _SCORING_PROMPT.format(
-            patient_message   = patient_message[:500],
-            agent_response    = agent_response[:500],
-            turn_idx          = turn_idx,
-            therapeutic_mode  = therapeutic_mode,
-            change_stage      = change_stage,
-            scenario_goal     = scenario_goal,
-            scenario_context  = scenario_context[:300],
-            history_block     = history_block,
+            patient_message    = patient_message[:500],
+            agent_response     = agent_response[:500],
+            turn_idx           = turn_idx,
+            therapeutic_mode   = therapeutic_mode,
+            change_stage       = change_stage,
+            scenario_goal      = enriched_goal,
+            scenario_context   = scenario_context[:300],
+            history_block      = history_block,
+            physio_context     = physio_context,
+            commitment_context = commitment_context or "(none so far)",
         )
 
         self._call_count += 1
@@ -408,11 +472,14 @@ class A3CScorer:
         _add("clinical",           raw.get("clinical_appropriateness", 0), "")
         _add("info_gathering",     raw.get("information_gathering", 0), "")
         _add("quality",            raw.get("conversation_quality", 0), "")
+        _add("physio_awareness",   raw.get("physio_awareness_score",    0), "physio_awareness_reason")
+        _add("stage_fit",          raw.get("stage_appropriateness_score", 0), "stage_appropriateness_reason")
+        _add("commitment_coherence", raw.get("commitment_contradiction_score", 0), "commitment_contradiction_reason")
 
         # Continuous score: linear map from integer sum to [0, 1]
         total = sum(s for _, s, _ in scores)
-        # Range: 12 dimensions × -3 = -36 min, 12 × +2 = +24 max
-        continuous = (total + 36) / 60.0
+        # Range: 15 dimensions × -3 = -45 min, 15 × +2 = +30 max → span = 75
+        continuous = (total + 45) / 75.0
         continuous = max(0.0, min(1.0, continuous))
 
         critical = any(s <= -2 for _, s, _ in scores)
@@ -463,6 +530,61 @@ def _format_history_block(history: list[dict], n: int = 3) -> str:
     return "\n".join(lines) if lines else "(no history)"
 
 
+def _enrich_goal_text(scenario_goal: str, goal_descriptions: dict | None) -> str:
+    """
+    Augment the bare goal string with per-goal eval criteria when available.
+
+    scenario_goal is a semicolon-separated list of goal strings (or a single goal).
+    goal_descriptions is an optional dict mapping goal string → description.
+
+    Returns an enriched string the scorer prompt can use to make better
+    coverage judgments.  If no descriptions are provided, returns the original
+    scenario_goal unchanged.
+    """
+    if not goal_descriptions:
+        return scenario_goal
+
+    # Split scenario_goal into individual goal strings
+    goals = [g.strip() for g in scenario_goal.split(";") if g.strip()]
+    enriched_parts = []
+    for g in goals:
+        desc = goal_descriptions.get(g)
+        if desc:
+            enriched_parts.append(f"  [{g}]: {desc}")
+        else:
+            enriched_parts.append(f"  [{g}]")
+    return "All goals:\n" + "\n".join(enriched_parts)
+
+
+def _format_physio_context(physio: dict | None) -> str:
+    """Summarise physiological state for the scorer prompt in one line."""
+    if not physio:
+        return "unavailable"
+    parts = []
+    # Accept both internal (hrv_ms) and API (hrv_rmssd_ms) key names
+    hrv = physio.get("hrv_rmssd_ms") or physio.get("hrv_ms")
+    if hrv is not None:
+        parts.append(f"HRV={hrv:.0f}ms")
+    eda = physio.get("eda_us")
+    if eda is not None:
+        parts.append(f"EDA={eda:.1f}µS")
+    sleep_def = physio.get("sleep_deficit_hours") or physio.get("sleep_deficit")
+    if sleep_def is not None:
+        parts.append(f"sleep_deficit={sleep_def:.1f}h")
+    stress = physio.get("location_stress_index") or physio.get("stress_index")
+    if stress is not None:
+        # Add a human-readable label
+        label = "low" if stress < 0.3 else ("moderate" if stress < 0.6 else "high")
+        parts.append(f"stress_index={stress:.2f}({label})")
+    time_h = physio.get("time_of_day_h")
+    if time_h is not None:
+        hour = int(time_h)
+        period = "morning" if 5 <= hour < 12 else ("afternoon" if 12 <= hour < 18 else
+                 ("evening" if 18 <= hour < 22 else "night"))
+        parts.append(f"time={time_h:.1f}h({period})")
+    return ", ".join(parts) if parts else "unavailable"
+
+
 def map_scorer_to_reward_dims(result: TurnScoreResult) -> dict[str, float]:
     """
     Convert TurnScoreResult into the REWARD_DIMS dict expected by arms.py.
@@ -481,7 +603,16 @@ def map_scorer_to_reward_dims(result: TurnScoreResult) -> dict[str, float]:
         "trust_delta":   _norm("engagement",       -2, 2),
         "goal_progress": _norm("goal_progress",    -2, 2),
         "info_coverage": _norm("info_gathering",   -2, 2),
-        "consistency":   _norm("quality",          -2, 2),
+        # consistency = blend of:
+        #   quality         (conversation coherence, 0.4 weight)
+        #   stage_fit       (approach appropriate for TTM stage, 0.3 weight)
+        #   commitment_coherence (didn't contradict prior commitments, 0.3 weight)
+        "consistency":   round(
+            0.4 * _norm("quality",              -2, 2) +
+            0.3 * _norm("stage_fit",            -2, 2) +
+            0.3 * _norm("commitment_coherence", -1, 1),  # narrower range: [-1, +1]
+            4,
+        ),
         "safety":        _norm("escalation",       -3, 2),
         "count_penalty": 1.0 - result.repetition_penalty,
     }

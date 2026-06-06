@@ -1320,10 +1320,21 @@ class A3CWorker:
                     agent_response    = agent_resp,
                     turn_idx          = turn_idx,
                     therapeutic_mode  = state.therapeutic_mode,
-                    change_stage      = state.deaddiction_phase,
+                    # Use the arm's freshly-inferred phase if available (resp_dict may
+                    # have detected a stage transition this turn). Falls back to the
+                    # state value if the arm didn't return a new phase.
+                    change_stage      = resp_dict.get("deaddiction_phase", state.deaddiction_phase),
                     scenario_goal     = state.session_goal,
                     scenario_context  = scenario.get("context", ""),
                     history           = state.conversation_history,
+                    physio            = state.physio or None,
+                    goal_descriptions = scenario.get("goal_descriptions") or None,
+                    # Pass recent clinical commitments so the scorer can detect contradictions.
+                    commitment_context = (
+                        dialogue_state.consistency_hint("companion")
+                        if dialogue_state and dialogue_state.commitments
+                        else ""
+                    ),
                 )
             else:
                 # Carry the previous score result but apply a heuristic nudge:

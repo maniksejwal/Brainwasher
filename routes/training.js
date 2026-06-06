@@ -248,6 +248,7 @@ function _buildCanonicalScenarios() {
             relative_prompt:        ts.relative_prompt || null,
             doctor_prompt:          ts.doctor_prompt || null,
             required_elements:      ts.required_elements || _defaultGoals(phase),
+            goal_descriptions:      ts.goal_descriptions || null,
             users:                  ts.users || [{ role: 'patient' }],
             context:                ts.context || persona.description || ts.description || '',
         });
@@ -423,6 +424,7 @@ function _buildCanonicalScenarios() {
             caregiver_prompt:       instrCaregiver,
             doctor_prompt:          instrDoctor,
             required_elements:      sc.required_elements || _clinicalGoals(cat, hasDoctor, isEscalation),
+            goal_descriptions:      sc.goal_descriptions || null,
             users,
             context:                sc.description || '',
             escalation_expected:    isEscalation,

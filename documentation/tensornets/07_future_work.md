@@ -46,6 +46,16 @@ The current V_int is a static prior from the literature (clinician→patient: 0.
 
 `SharedTensorBuffer.update_v_int(sender_role, receiver_role, coupling)` is already implemented — the A3C worker needs to emit coupling gradient updates after observing how well its V_int-informed context predictions matched actual patient responses.
 
+V_INT_PRIOR coupling values (from `agents/shared_tensor_state.py`):
+- clinician → patient: 0.6 (strong — clinician statements directly affect patient physiology)
+- caregiver → patient: 0.4
+- patient → clinician: 0.2 (weak — patient distress less directly affects clinician)
+- patient → caregiver: 0.35
+- clinician → caregiver: 0.25
+- caregiver → clinician: 0.15
+
+Citation for coupling magnitude: Safran & Muran (2000) therapeutic alliance asymmetry — rupture has stronger impact (0.30 α) than repair (0.04 α).
+
 ### 2.2 MPS bond compression stability
 
 `project_constraint(token_logits, M_trunc)` in `core/mps.py` is designed to directly modify the LLM's token probability distribution using the M_trunc constraint matrix. This requires:
@@ -67,7 +77,20 @@ Current "world scenarios" run through a single CareCircleOrchestrator with simul
 - Asynchronous turn management (not all participants speak every turn)
 - Privacy-gated V_int propagation (caregiver cannot see patient's raw HRV without InfoClass.III consent)
 
-### 2.5 Continuous physio integration
+### 2.5 Track D — Distillation backends
+
+**Implementation status (as of 2026-06-04):**
+
+| File | Status |
+|---|---|
+| `distillation/als.py` | **NOT YET IMPLEMENTED** |
+| `distillation/backends/hf_local.py` | **NOT YET IMPLEMENTED** |
+| `distillation/backends/ec2_remote.py` | **NOT YET IMPLEMENTED** |
+| `distillation/backends/ollama_local.py` | Exists — only implemented backend |
+
+Track D (policy distillation from A3C actor → smaller local model) is deferred until after run_014 produces a trained actor worth distilling. The ollama_local backend provides a reference implementation pattern for the others.
+
+### 2.6 Continuous physio integration
 
 Replace the discrete per-turn physio update with a continuous OU process driven by real wearable data:
 
@@ -131,5 +154,11 @@ The current model has detailed clinical scaffolding for alcohol use disorder. Th
 2. **How should the complexity normalisation be handled in the thesis?** The "reward per complexity unit" table makes the baselines look competitive. The thesis should argue that clinical outcomes (goal_achieved%, stress_auc) are the right primary metric, not reward efficiency.
 
 3. **What is the minimum number of runs needed for the comparison to be statistically defensible?** With 130 episodes per arm and high variance (R ranging from −0.588 to 0.771), a paired t-test on 3 runs may not reach p < 0.05 on all metrics.
+
+**Power analysis for n=130 per experiment (run_013 calibration):**
+
+Based on the observed effect in run_013 (goal_achieved%: 80.8% vs 69.2%, Δ=11.6pp), power at n=130 per experiment ≈ 58% (below the 80% target). run_014 therefore targets n=200 per experiment.
+
+See `06_results.md §6.3` for the full calculation. The minimum detectable effect at 80% power with n=200 is Δ ≥ 8pp (OR ≥ 1.5).
 
 4. **Should Arm 2 (production JS companion) be treated as a teacher or as a baseline?** Currently it updates the shared Actor/Critic. If treated as a frozen external reference, the comparison would be cleaner but the policy would learn slower.

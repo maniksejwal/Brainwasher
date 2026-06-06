@@ -58,7 +58,7 @@ These are the design specifications that preceded implementation. They should be
 | Hysteresis model | Discrete per-turn extinction + weekly recovery | Tractable, measurable; continuous ODE deferred pending wearables | `03_physiological_model.md` |
 | Three-arm design | htn_mcts vs oldschool vs hysteresis_prompt | Isolates contribution of each layer independently | `04_training_system.md` |
 | LLM for goal_progress | Maverick judge, not keyword scan | Keyword scan is circular with MCTS reward function | `04_training_system.md` §4.1 |
-| Port 8766 | FastAPI on 8766 (not 8765) | Port 8765 conflicted with another service in May 2026 | `05_benchmarking.md` |
+| Port 8765 | FastAPI on 8765 | Confirmed in `tensornets/server.py` | `05_benchmarking.md` |
 | Genuine metrics | change_stage_delta, stress_auc, turns_to_goal | Independent of action-selection heuristics | `04_training_system.md` §4.3 |
 | No keyword scan in arms.py | Removed from `_synthetic_reward()` | Reduced circularity; composite now uses action-taxonomy signal only | `06_results.md` §3.3 |
 

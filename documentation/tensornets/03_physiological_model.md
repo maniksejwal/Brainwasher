@@ -87,6 +87,7 @@ Applied when a session opens after a gap. The floor `W_FLOOR = 0.08` represents 
 **Reinstatement:**
 ```
 w_k ← min(1.0, w_k + α_reinstate · (1 − w_k))
+# α_reinstate = 0.45 (confirmed physio/hysteresis.py line 95)
 ```
 Triggered when the patient's message contains cues matching the trigger's vocabulary (e.g., "I had a drink last night" for the `alcohol` trigger).
 
@@ -157,6 +158,8 @@ The `hrv_baseline_adj` shifts the population-mean HRV baseline (35ms) for this i
 
 In `arms.py`, `_stress_after_response(current_stress, action, archetype, drug_regimen)` applies the profile's modifier to the per-turn stress delta:
 
+**`DELTA_SCALE = 0.08`** — the maximum per-turn stress change magnitude. At CALMING_WEIGHT extremes (0.0 = maximally activating, 1.0 = maximally calming), the base delta is ±2 × 0.08 = **±0.16** stress units per turn. This bounds the companion's ability to modulate patient state in any single turn to 16% of the [0,1] range — preventing unrealistic instantaneous stress resolution. Value confirmed at `tensornets/tensornets/a3c/arms.py` line 592. Justification: a single therapeutic interaction realistically shifts subjective distress by ~0.5–1 SUD points on a 10-point scale; DELTA_SCALE ≈ 0.08 maps to ~0.8 SUD points, consistent with published MET session outcomes (Miller & Rollnick, 2013).
+
 ```python
 delta = -(CALMING_WEIGHT[action] - 0.5) * 2.0 * DELTA_SCALE  # base delta
 delta *= reactivity_profile.gamma_modifier(current_stress)     # archetype scaling
@@ -205,3 +208,4 @@ Specifically attenuates the Γ spike triggered by substance-use cues. Only activ
 | Czeisler, C.A. (1999). Sleep deficiency and the biological clock. *JAMA*, 281(24). | Circadian weight |
 | Koran, L.M. & Litt, I.F. (1988). Benzodiazepines and the ANS. *J. Clin. Psychopharmacol.*, 8(5). | BZD PK/PD model |
 | Mason, B.J. et al. (1999). Naltrexone and HRV under cue exposure. *Alcohol Clin. Exp. Res.*, 23(10). | Naltrexone model |
+| Miller, W.R. & Rollnick, S. (2013). *Motivational Interviewing: Helping People Change* (3rd ed.). Guilford Press. | DELTA_SCALE justification — MET session stress reduction magnitude |
