@@ -80,14 +80,175 @@ logging.basicConfig(
 
 _ARM_CLASSES = None   # lazy import to avoid circular deps at module load
 
-# Probability of using the prior session for longitudinal continuity in any
-# given episode.  Set below 1.0 so the training distribution is not dominated
-# by prior-session episodes: most episodes should start fresh, keeping the
-# agent robust to cold-start scenarios.  0.20 = 1 in 5 episodes carry forward.
-_PRIOR_SESSION_PROB = 0.20
 # URL constants are owned by node_client; read them from there for consistency.
 _TENSORNETS_URL = _nc.TENSORNETS_URL
 _NODE_URL       = _nc.NODE_URL
+
+
+# ── CurriculumScheduler ────────────────────────────────────────────────────────
+
+class CurriculumScheduler:
+    """
+    Manages episode configuration for all A3C training arms.
+
+    Responsibilities
+    ----------------
+    1. **Scenario selection** — weighted random draw from the shared scenario pool,
+       de-prioritising very short scenarios.
+    2. **Prior-session pool management** — maintains per-arm pools of past episode
+       summaries in two tiers:
+         - ``success_pool``   : episodes where goal_achieved=True
+         - ``recovery_pool``  : episodes where goal_achieved=False but
+                                info_coverage >= MIN_RECOVERY_COV (partial progress)
+       Episodes that are 2-strike critical failures (info_coverage < EXCLUDE_COV)
+       are excluded entirely — too noisy for chaining.
+    3. **Chaining rate schedule** — the probability of attaching a prior_session
+       starts low and rises as the arm accumulates episodes.  This prevents the
+       policy from over-fitting to prior-session formats before it can handle
+       cold-start sessions reliably.
+
+       Rate schedule (per arm):
+         ep 0–49    : 0%  (no chaining — build cold-start robustness first)
+         ep 50–199  : 15% (gentle introduction)
+         ep 200–399 : 30%
+         ep 400+    : 50% (long-run target)
+
+    4. **90/10 pool split** — when chaining, 90% of draws come from the success
+       pool, 10% from the recovery pool (teaches error-recovery).
+
+    Usage
+    -----
+    ::
+
+        sched = CurriculumScheduler(scenarios)
+        scenario, prior = sched.pick_episode("arm_name", ep_count=42)
+        sched.record_outcome("arm_name", episode_summary)
+
+    Notes
+    -----
+    - The scheduler is shared across all worker threads of an experiment.  It uses
+      a threading.Lock so pool mutations are safe.
+    - ``prior_sess`` in arm_states is replaced by calls to ``pick_episode`` and
+      ``record_outcome``.
+    """
+
+    # Episode thresholds for the chaining rate schedule
+    _RAMP: list[tuple[int, float]] = [
+        (  0,  0.00),   # 0–49 episodes: no chaining
+        ( 50,  0.15),   # 50–199: gentle
+        (200,  0.30),   # 200–399: growing
+        (400,  0.50),   # 400+: long-run target
+    ]
+
+    MIN_RECOVERY_COV   = 0.30   # minimum info_coverage to enter recovery pool
+    EXCLUDE_COV        = 0.15   # below this + goal_achieved=False → excluded
+    SUCCESS_POOL_FRAC  = 0.90   # 90% draws from success pool when chaining
+    MAX_POOL_SIZE      = 200    # cap each pool to avoid unbounded memory
+
+    def __init__(self, scenarios: list[dict]) -> None:
+        self._scenarios = scenarios
+        # Scenario weights: down-weight very short scenarios
+        self._sc_weights = [
+            1.0 if (sc.get("turns") or sc.get("max_turns") or 8) > 4 else 0.33
+            for sc in scenarios
+        ]
+        # Per-arm pools
+        self._success:  dict[str, list[dict]] = {}
+        self._recovery: dict[str, list[dict]] = {}
+        self._lock = threading.Lock()
+
+    # ── Public API ──────────────────────────────────────────────────────────
+
+    def pick_episode(
+        self,
+        arm_name: str,
+        ep_count: int,
+        rng: random.Random | None = None,
+    ) -> tuple[dict, dict | None]:
+        """
+        Return (scenario, prior_session) for the next episode.
+
+        prior_session is None when the chaining rate gate has not yet opened
+        or when no eligible sessions are in either pool.
+        """
+        rng = rng or random
+        scenario = rng.choices(self._scenarios, weights=self._sc_weights, k=1)[0]
+
+        chain_prob = self._chain_probability(ep_count)
+        if chain_prob <= 0.0 or rng.random() >= chain_prob:
+            return scenario, None
+
+        prior = self._draw_prior(arm_name, rng)
+        return scenario, prior
+
+    def record_outcome(self, arm_name: str, summary: dict) -> None:
+        """
+        File an episode summary into the appropriate per-arm pool.
+
+        Called after each episode completes successfully.
+        """
+        cov          = float(summary.get("info_coverage", 0.0))
+        goal_achieved = bool(summary.get("goal_achieved", False))
+        crit_fail     = bool(summary.get("critical_failure", False))
+
+        # Exclude 2-strike critical failures from all pools
+        if crit_fail or (not goal_achieved and cov < self.EXCLUDE_COV):
+            return
+
+        with self._lock:
+            if goal_achieved:
+                pool = self._success.setdefault(arm_name, [])
+                pool.append(summary)
+                if len(pool) > self.MAX_POOL_SIZE:
+                    # Evict oldest to keep pool bounded
+                    del pool[0]
+            elif cov >= self.MIN_RECOVERY_COV:
+                pool = self._recovery.setdefault(arm_name, [])
+                pool.append(summary)
+                if len(pool) > self.MAX_POOL_SIZE:
+                    del pool[0]
+
+    def pool_stats(self, arm_name: str) -> dict:
+        """Return pool sizes for logging."""
+        with self._lock:
+            return {
+                "success":  len(self._success.get(arm_name, [])),
+                "recovery": len(self._recovery.get(arm_name, [])),
+            }
+
+    # ── Internal ────────────────────────────────────────────────────────────
+
+    def _chain_probability(self, ep_count: int) -> float:
+        """Return the chaining probability for the given episode count."""
+        prob = 0.0
+        for threshold, rate in self._RAMP:
+            if ep_count >= threshold:
+                prob = rate
+        return prob
+
+    def _draw_prior(self, arm_name: str, rng: random.Random) -> dict | None:
+        """
+        Draw one prior session from the arm's pools.
+
+        90% success pool, 10% recovery pool.
+        Falls back to whichever pool is non-empty if one is empty.
+        Returns None if both pools are empty.
+        """
+        with self._lock:
+            success_pool  = list(self._success.get(arm_name, []))
+            recovery_pool = list(self._recovery.get(arm_name, []))
+
+        if not success_pool and not recovery_pool:
+            return None
+        if not success_pool:
+            return rng.choice(recovery_pool)
+        if not recovery_pool:
+            return rng.choice(success_pool)
+
+        # 90/10 split
+        if rng.random() < self.SUCCESS_POOL_FRAC:
+            return rng.choice(success_pool)
+        return rng.choice(recovery_pool)
 
 
 def _get_arm_classes():
@@ -338,7 +499,6 @@ def train(
             "state_path":       state_path,
             "start_ep":         start_ep,
             "db_run_id":        run_state.get("db_run_id"),
-            "prior_sess":       run_state.get("last_session_memory"),
             "ep_count":         run_state.get("ep_count", 0),
             "successful":       run_state.get("successful_eps", 0),
             "active_prompt":    active_prompt,
@@ -360,6 +520,9 @@ def train(
     except Exception as exc:
         log.error("Could not load scenarios: %s — aborting.", exc)
         sys.exit(1)
+
+    # ── CurriculumScheduler: shared scenario picker + prior-session pool ──
+    curriculum = CurriculumScheduler(scenarios)
 
     # Total loop iterations = episodes_per_arm × number of active arms
     # (round-robin means each arm gets episodes_per_arm turns)
@@ -476,13 +639,18 @@ def train(
                 s["ep_count"] += 1
             arm_ep = my_ep + 1   # 1-indexed for logging
 
-            # Weight scenarios by turn count — very short scenarios (≤4 turns)
-            # can only be sampled at 1/3 the rate of normal-length ones, preventing
-            # them from unfairly dragging down the WMA via low absolute reward.
-            _weights   = [1.0 if (sc.get("turns") or sc.get("max_turns") or 8) > 4 else 0.33
-                          for sc in scenarios]
-            scenario   = random.choices(scenarios, weights=_weights, k=1)[0]
-            use_prior = (s["prior_sess"] is not None) and (random.random() < _PRIOR_SESSION_PROB)
+            # ── CurriculumScheduler: scenario + prior-session selection ──────
+            # Replaces the old flat random draw + flat 20% prior probability.
+            # The scheduler maintains per-arm success/recovery pools and a
+            # progressive chaining rate that rises from 0% to 50% as episodes
+            # accumulate.
+            with s["ep_count_lock"]:
+                current_ep_count = s["ep_count"]  # read under lock for accuracy
+            scenario, use_prior_session = curriculum.pick_episode(
+                arm_name  = s["name"],
+                ep_count  = current_ep_count,
+            )
+            use_prior = use_prior_session is not None
             ep_uuid   = str(uuid.uuid4())
 
             db_episode_id = _db_create_episode(
@@ -496,7 +664,7 @@ def train(
             try:
                 summary = thread_worker.run_episode(
                     scenario      = scenario,
-                    prior_session = s["prior_sess"] if use_prior else None,
+                    prior_session = use_prior_session if use_prior else None,
                     patient_mode  = patient_mode,
                     episode_id    = ep_uuid,
                     run_id        = s.get("db_run_id"),
@@ -515,13 +683,17 @@ def train(
             consec_fail = 0
             with s["ep_count_lock"]:
                 s["successful"] += 1
-                s["prior_sess"]  = summary.get("session_memory")
+
+            # Register this episode's outcome with the curriculum so future
+            # episodes on this arm can chain from it appropriately.
+            curriculum.record_outcome(s["name"], summary)
+            pool_s = curriculum.pool_stats(s["name"])
 
             _db_finalise_episode(db_episode_id or summary.get("episode_id"), summary)
 
             log.info(
                 "arm=%-32s  w%d  ep=%04d/%d  scenario=%-35s  reward=%.3f  turns=%d  "
-                "| ep_counts=%s  total_new=%d/%d",
+                "| ep_counts=%s  total_new=%d/%d  chain=%s  pool=S%d/R%d",
                 s["name"], worker_idx, arm_ep, target,
                 scenario.get("scenario_id", "?")[:35],
                 summary.get("mean_reward", 0.0),
@@ -529,6 +701,9 @@ def train(
                 ",".join(str(a["ep_count"]) for a in arm_states),
                 sum(max(0, a["ep_count"] - a["start_ep"]) for a in arm_states),
                 episodes_per_arm * n_arms,
+                "Y" if use_prior else "N",
+                pool_s["success"],
+                pool_s["recovery"],
             )
 
             # Brief pause to avoid exhausting Bedrock per-minute token quota.
