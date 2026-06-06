@@ -823,7 +823,7 @@ def train(
                         "ep_count":               ep_now,
                         "successful_eps":         s["successful"],
                         "db_run_id":              s["db_run_id"],
-                        "last_session_memory":    s["prior_sess"],
+                        "last_session_memory":    None,
                         "active_prompt":          s["active_prompt"],
                         "last_improved_at":       s["last_improved_at"],
                     })
@@ -970,7 +970,7 @@ def train(
             "ep_count":               s["ep_count"],
             "successful_eps":         s["successful"],
             "db_run_id":              s["db_run_id"],
-            "last_session_memory":    s["prior_sess"],
+            "last_session_memory":    None,
             "active_prompt":          s["active_prompt"],
             "last_improved_at":       s["last_improved_at"],
         })
