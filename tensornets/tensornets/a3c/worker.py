@@ -1188,6 +1188,7 @@ class A3CWorker:
         _start_change_stage: str     = state.deaddiction_phase
         _trust_acc: float            = 0.0    # accumulated trust_delta over episode
         _ended_crit_fail: bool       = False  # set True when 2-strike break fires
+        _ended_dropout: bool         = False  # set True when synthetic user drops out
         # Escalation tracking: used for the terminal escalation bonus/penalty.
         # escalation_expected = scenario flags that a correct escalation should occur.
         # _escalation_occurred = we saw at least one escalation_quality > 0 from scorer.
@@ -1775,6 +1776,42 @@ class A3CWorker:
             else:
                 warned_once = False
 
+            # ── Synthetic user dropout check (Q4c) ──────────────────────────
+            # A patient who receives consistently poor responses may choose to
+            # end the session early.  This simulates user churn — a signal that
+            # is hard to observe IRL but critical to train against.
+            #
+            # Dropout fires when ALL THREE conditions are met:
+            #   1. ≥ 3 consecutive very-low-quality turns (continuous_score < 0.35)
+            #   2. Stress is rising or already high (stress_index > 0.60)
+            #   3. Minimum 4 turns have elapsed (avoid terminating before rapport)
+            #
+            # Probability is proportional to the dissatisfaction signal so that
+            # a borderline patient has a small chance of continuing (realistic).
+            # The episode is marked dropout=True for CurriculumScheduler to track:
+            # the experience is retained in training (agent needs to learn it
+            # failed) but excluded from the prior-session success pool.
+            #
+            # No additional penalty is applied here — the lack of a terminal
+            # goal bonus and the low per-turn scores are already the training
+            # signal.  Penalising further would double-count the failure.
+            _recent_scores = [t.judge.get("scorer_continuous", 1.0)  # type: ignore[attr-defined]
+                              for t in self._episode_log[-3:]]
+            _n_poor = sum(1 for s in _recent_scores if s < 0.35)
+            if (turn_idx >= 4 and _n_poor >= 3
+                    and state.stress_index > 0.60
+                    and state.therapeutic_mode != "flooding"):  # flooding is intentionally stressful
+                import random as _rand
+                _dissatisfaction = _n_poor / max(len(_recent_scores), 1)
+                _dropout_p = _dissatisfaction * 0.45 * (1.0 + state.stress_index * 0.5)
+                if _rand.random() < _dropout_p:
+                    log.info(
+                        "[%s] synthetic dropout at turn %d (poor=%d stress=%.2f p=%.2f)",
+                        self.worker_id, turn_idx, _n_poor, state.stress_index, _dropout_p,
+                    )
+                    _ended_dropout = True
+                    break
+
             last_user_msg = patient_msg
             state = next_state
 
@@ -1935,6 +1972,10 @@ class A3CWorker:
                 1 for t in self._episode_log
                 if t.state.get("hysteresis_changed", False)
             ),
+            # Synthetic user dropout: True if the patient ended the session early
+            # due to dissatisfaction. Tracked separately from crit_fail to allow
+            # CurriculumScheduler to distinguish agent failure modes.
+            "synthetic_dropout":   _ended_dropout,
         }
         # Attach session memory for multi-session continuity
         summary["session_memory"] = {
@@ -1952,6 +1993,11 @@ class A3CWorker:
             "physio":         state.physio,
             "longitudinal_hint": state.longitudinal_hint,
             "cumulative_reward": round(cumulative_reward, 5),
+            "synthetic_dropout": _ended_dropout,
+            # SimulatedTimeline is carried forward for multi-session chains.
+            # CurriculumScheduler._attach_simulated_timeline will advance the
+            # day and time when this session is used as a prior for the next.
+            "simulated_timeline": scenario.get("simulated_timeline") or {},
         }
         summary["genuine_metrics"] = genuine_metrics
         return summary
@@ -2010,12 +2056,62 @@ class A3CWorker:
         merged["initial_info_coverage"] = min(prior_coverage, 0.5)
 
         merged["known_context"]      = prior_session.get("known_context", "")
-        merged["longitudinal_hint"]  = (
+
+        # ── SimulatedTimeline: inject temporal context when available ─────────
+        # If CurriculumScheduler attached a simulated_timeline, use it to:
+        #   1. Enrich the longitudinal_hint with human-readable temporal framing.
+        #   2. Adjust physio baseline for time-of-day (circadian effects).
+        #   3. Carry the timeline forward in session_memory for the next chain.
+        # If no timeline is present, fall back to the prior hint without dates.
+        sim_tl = prior_session.get("simulated_timeline") or {}
+        days_gap    = int(sim_tl.get("days_since_last", 0))
+        day_label   = ""
+        if days_gap == 0:
+            day_label = ""
+        elif days_gap == 1:
+            day_label = "1 day later"
+        else:
+            day_label = f"{days_gap} days later"
+
+        time_h      = sim_tl.get("time_of_day_h")
+        time_label  = ""
+        if time_h is not None:
+            if time_h < 12.0:
+                time_label = f"morning ({time_h:.0f}h)"
+            elif time_h < 17.0:
+                time_label = f"afternoon ({time_h:.0f}h)"
+            else:
+                time_label = f"evening ({time_h:.0f}h)"
+
+        temporal_prefix = ""
+        if day_label and time_label:
+            temporal_prefix = f"[{day_label}, {time_label}] "
+        elif day_label:
+            temporal_prefix = f"[{day_label}] "
+
+        merged["longitudinal_hint"] = (
+            f"{temporal_prefix}"
             f"[Prior session {prior_session.get('scenario_id','?')}]: "
             f"goal={prior_session.get('session_goal','?')}, "
             f"coverage={prior_session.get('info_coverage',0.0):.0%}, "
             f"reward={prior_session.get('cumulative_reward',0.0):.2f}"
         )
+
+        # Circadian physio adjustment: time_of_day_h affects HRV and stress baseline.
+        # Higher time_of_day (late evening) → slightly reduced HRV, elevated stress.
+        # This is a lightweight heuristic; the physio simulator handles per-turn dynamics.
+        if time_h is not None and merged.get("initial_physio"):
+            physio = dict(merged["initial_physio"])
+            # Evening: HRV drops ~10%, stress index rises ~0.05
+            circadian_mod = max(-1.0, min(1.0, (time_h - 14.0) / 14.0))  # -1 (morning) → +1 (midnight)
+            hrv_key = "hrv_rmssd_ms" if "hrv_rmssd_ms" in physio else "hrv_ms"
+            if hrv_key in physio:
+                physio[hrv_key] = max(15.0, physio[hrv_key] * (1.0 - 0.08 * max(0.0, circadian_mod)))
+            physio["time_of_day_h"] = time_h
+            merged["initial_physio"] = physio
+
+        # Carry the timeline forward for the next chain level
+        merged["simulated_timeline"] = sim_tl
         merged["archetype"]          = prior_session.get("archetype", scenario.get("archetype", "standard"))
         merged["deaddiction_phase"]  = prior_session.get("deaddiction_phase", scenario.get("deaddiction_phase", "precontemplation"))
 

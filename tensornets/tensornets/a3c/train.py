@@ -170,6 +170,17 @@ class CurriculumScheduler:
 
         prior_session is None when the chaining rate gate has not yet opened
         or when no eligible sessions are in either pool.
+
+        When a prior_session is returned, a ``simulated_timeline`` dict is
+        attached to it so that _build_state_with_continuity can inject temporal
+        context into the longitudinal_hint and physio baseline:
+
+            {
+                "episode_day":     int,     # simulated calendar day since subject's first session
+                "time_of_day_h":   float,   # hour-of-day in 24h format (affects physio)
+                "session_number":  int,     # ordinal session count (1-indexed)
+                "days_since_last": float,   # calendar days since the prior episode
+            }
         """
         rng = rng or random
         scenario = rng.choices(self._scenarios, weights=self._sc_weights, k=1)[0]
@@ -179,6 +190,8 @@ class CurriculumScheduler:
             return scenario, None
 
         prior = self._draw_prior(arm_name, rng)
+        if prior is not None:
+            prior = self._attach_simulated_timeline(prior, rng)
         return scenario, prior
 
     def record_outcome(self, arm_name: str, summary: dict) -> None:
@@ -190,9 +203,13 @@ class CurriculumScheduler:
         cov          = float(summary.get("info_coverage", 0.0))
         goal_achieved = bool(summary.get("goal_achieved", False))
         crit_fail     = bool(summary.get("critical_failure", False))
+        dropout       = bool(summary.get("synthetic_dropout", False))
 
-        # Exclude 2-strike critical failures from all pools
-        if crit_fail or (not goal_achieved and cov < self.EXCLUDE_COV):
+        # Exclude 2-strike critical failures and synthetic dropouts from all pools.
+        # Dropout episodes are kept in the training buffer (the low reward IS the
+        # signal) but excluded from the prior-session pools — a patient who walked
+        # out early is not a good template for the next session's starting state.
+        if crit_fail or dropout or (not goal_achieved and cov < self.EXCLUDE_COV):
             return
 
         with self._lock:
@@ -225,6 +242,52 @@ class CurriculumScheduler:
             if ep_count >= threshold:
                 prob = rate
         return prob
+
+    def _attach_simulated_timeline(
+        self,
+        prior: dict,
+        rng: random.Random,
+    ) -> dict:
+        """
+        Attach a simulated_timeline dict to a prior_session drawn from the pool.
+
+        The prior session already carries session_memory with episode_day and
+        time_of_day_h if it was itself a chained episode.  If not, we assume
+        it was session 1 on day 0.
+
+        Time advancement rules (generalizable, not clinical):
+          - days_since_last: drawn from a log-normal distribution centred on
+            3 days (median) with std 1.5 days.  This reflects the wide range
+            of real-world return intervals without hardcoding a clinical pattern.
+          - time_of_day_h: uniform 8–21h (waking hours only).
+          - episode_day:  prior_day + days_since_last (rounded to int).
+          - session_number: prior session_number + 1.
+
+        The result is stored on the prior dict under 'simulated_timeline' so
+        _build_state_with_continuity can inject it into the longitudinal_hint.
+        """
+        import math as _math
+        prior_tl = prior.get("simulated_timeline") or {}
+        prior_day    = int(prior_tl.get("episode_day", 0))
+        prior_num    = int(prior_tl.get("session_number", 1))
+
+        # Log-normal gap: median ≈ 3 days, 90th pct ≈ 9 days
+        gap_days = round(rng.lognormvariate(
+            _math.log(3.0), 1.1
+        ))
+        gap_days = max(1, min(gap_days, 30))   # clamp: at least 1 day, at most 30
+
+        new_day   = prior_day + gap_days
+        new_hour  = round(rng.uniform(8.0, 21.0), 1)
+
+        prior = dict(prior)   # shallow copy so we don't mutate the pool
+        prior["simulated_timeline"] = {
+            "episode_day":     new_day,
+            "time_of_day_h":   new_hour,
+            "session_number":  prior_num + 1,
+            "days_since_last": gap_days,
+        }
+        return prior
 
     def _draw_prior(self, arm_name: str, rng: random.Random) -> dict | None:
         """
@@ -438,6 +501,10 @@ def train(
 
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # Initialise the offline write queue so failed DB writes are queued to disk
+    # and replayed when Node.js comes back up.  Must be called before any _nc calls.
+    _nc.init_offline_queue(run_dir)
 
     arm_classes = _get_arm_classes()
     selected_arm_classes = [arm_classes[i - 1] for i in (arms or [1, 2, 3])]

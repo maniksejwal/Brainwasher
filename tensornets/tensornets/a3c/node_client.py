@@ -44,6 +44,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -95,19 +96,165 @@ def http_post(url: str, payload: dict, timeout: float = 10.0) -> dict:
     raise ConnectionError(f"POST {url} failed: {last_exc}") from last_exc
 
 
+# ── Offline write queue ───────────────────────────────────────────────────────
+#
+# When the Node.js server is unavailable, DB writes would be silently dropped,
+# leaving orphaned run_ids, missing episode records, and lost turn data.
+# Instead, failed writes are appended to a local JSONL queue file.  A
+# background drain thread replays the queue whenever the server becomes
+# reachable again, using exponential backoff between retries.
+#
+# Queue semantics:
+#   - Each entry: {"url": str, "payload": dict, "ts": float, "attempts": int}
+#   - Queue file: <run_dir>/offline_queue.jsonl (set via init_offline_queue())
+#   - Drain is fire-and-forget; training never blocks on it.
+#   - Queue is capped at MAX_QUEUE_ENTRIES to prevent unbounded disk growth.
+#   - Entries that fail > MAX_DRAIN_ATTEMPTS times are dropped with a warning.
+
+_queue_lock        = threading.Lock()
+_queue_file:   Optional[Path] = None      # set by init_offline_queue()
+_drain_thread: Optional[threading.Thread] = None
+_drain_running = threading.Event()
+
+MAX_QUEUE_ENTRIES   = 2_000    # hard cap; oldest entries evicted beyond this
+MAX_DRAIN_ATTEMPTS  = 10       # entries exceeding this are permanently dropped
+_DRAIN_INITIAL_WAIT = 5.0      # seconds before first drain attempt
+_DRAIN_MAX_WAIT     = 120.0    # seconds cap for exponential backoff
+
+
+def init_offline_queue(run_dir: "str | Path") -> None:
+    """
+    Point the offline queue at <run_dir>/offline_queue.jsonl.
+
+    Must be called once per training run, before any DB writes.  Safe to call
+    multiple times (idempotent after the first call per process).
+    """
+    global _queue_file, _drain_thread
+    run_dir = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    with _queue_lock:
+        _queue_file = run_dir / "offline_queue.jsonl"
+    _ensure_drain_thread()
+    log.debug("Offline write queue initialised at %s", _queue_file)
+
+
+def _ensure_drain_thread() -> None:
+    global _drain_thread
+    if _drain_thread is not None and _drain_thread.is_alive():
+        return
+    _drain_running.set()
+    _drain_thread = threading.Thread(
+        target=_drain_loop,
+        name="node-client-drain",
+        daemon=True,  # dies with the training process
+    )
+    _drain_thread.start()
+
+
+def _enqueue(url: str, payload: dict) -> None:
+    """Append one failed write to the offline queue file."""
+    if _queue_file is None:
+        log.debug("Offline queue not initialised; write dropped for %s", url)
+        return
+    entry = json.dumps({"url": url, "payload": payload,
+                         "ts": time.time(), "attempts": 0})
+    with _queue_lock:
+        # Evict oldest entries if over cap
+        try:
+            lines = _queue_file.read_text(encoding="utf-8").splitlines() if _queue_file.exists() else []
+        except OSError:
+            lines = []
+        lines.append(entry)
+        if len(lines) > MAX_QUEUE_ENTRIES:
+            dropped = len(lines) - MAX_QUEUE_ENTRIES
+            log.warning("Offline queue capped; dropping %d oldest entries", dropped)
+            lines = lines[dropped:]
+        try:
+            _queue_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as e:
+            log.warning("Could not write offline queue: %s", e)
+
+
+def _drain_loop() -> None:
+    """Background thread: retry queued writes whenever Node.js is reachable."""
+    wait = _DRAIN_INITIAL_WAIT
+    while _drain_running.is_set():
+        time.sleep(wait)
+        if _queue_file is None or not _queue_file.exists():
+            wait = min(wait * 2, _DRAIN_MAX_WAIT)
+            continue
+
+        with _queue_lock:
+            try:
+                raw = _queue_file.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                raw = []
+
+        if not raw:
+            wait = min(wait * 1.5, _DRAIN_MAX_WAIT)
+            continue
+
+        remaining: list[str] = []
+        success_count = 0
+        for line in raw:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # corrupt entry, discard
+
+            attempts = entry.get("attempts", 0)
+            if attempts >= MAX_DRAIN_ATTEMPTS:
+                log.warning("Offline queue entry permanently dropped after %d attempts: %s",
+                            attempts, entry.get("url", "?"))
+                continue
+
+            try:
+                http_post(entry["url"], entry["payload"], timeout=8.0)
+                success_count += 1
+            except Exception:
+                entry["attempts"] = attempts + 1
+                remaining.append(json.dumps(entry))
+
+        if success_count:
+            log.info("Offline queue: replayed %d writes (%d still pending)",
+                     success_count, len(remaining))
+            wait = _DRAIN_INITIAL_WAIT   # success → reset backoff
+
+        with _queue_lock:
+            try:
+                if remaining:
+                    _queue_file.write_text("\n".join(remaining) + "\n", encoding="utf-8")
+                elif _queue_file.exists():
+                    _queue_file.write_text("", encoding="utf-8")
+            except OSError as e:
+                log.warning("Could not update offline queue file: %s", e)
+
+        if remaining:
+            wait = min(wait * 2, _DRAIN_MAX_WAIT)
+        else:
+            wait = _DRAIN_INITIAL_WAIT
+
+
 # ── Internal non-fatal wrapper ────────────────────────────────────────────────
 
 def _node_post(path: str, payload: dict, timeout: float = 5.0) -> dict:
     """
-    POST to a Node.js /api/benchmarks/* path.  Non-fatal: logs a warning and
-    returns {} on failure so training is never blocked by a DB outage.
+    POST to a Node.js /api/benchmarks/* path.
+
+    Non-fatal: on failure, enqueues the write to the offline queue and returns
+    {} so training is never blocked.  The drain thread will replay the write
+    when the server comes back up.
     """
     url = f"{NODE_URL}/api/benchmarks{path}"
     try:
         return http_post(url, payload, timeout=timeout)
     except Exception as exc:
-        log.warning("DB write skipped (%s arm=%s): %s",
+        log.warning("DB write queued offline (%s arm=%s): %s",
                     path, payload.get("arm", "?"), exc)
+        _enqueue(url, payload)
         return {}
 
 
