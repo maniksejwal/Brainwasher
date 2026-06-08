@@ -100,6 +100,8 @@ const JS_MODE_TO_PYTHON = {
     family_network:            'standard',
     // composite scenarios (multi-concern, used for advanced benchmarking)
     composite:                 'standard',
+    // predictive escalation scenarios
+    proactive_monitoring:      'standard',
 };
 
 /**

@@ -1510,7 +1510,8 @@ class ShadowActionIn(BaseModel):
     turn_idx: int  = 0
 
 
-@app.post("/session/a3c/action")def session_a3c_action(req: ShadowActionIn):
+@app.post("/session/a3c/action")
+def session_a3c_action(req: ShadowActionIn):
     """
     Shadow mode: evaluate the A3C actor for arm `req.arm` on the given state.
 
