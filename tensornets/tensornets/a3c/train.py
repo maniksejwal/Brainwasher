@@ -944,28 +944,30 @@ def train(
 
     def _rebalance_workers() -> None:
         """
-        Periodically rebalance worker throughput across experiments.
+        Aggressively rebalance worker throughput across experiments.
 
-        Tiers (checked every ~60 s):
-          gap > 150: throttle leader (CLEAR throttle_event) — all its workers
-                     block until gap drops below 100.
-          gap > 50:  spawn one extra worker for the lagger (add capacity).
-          gap ≤ 50:  ensure leader is unthrottled (SET throttle_event).
+        Tiers (checked every ~30 s):
+          gap > 500:  Hard throttle ALL leaders to 0 workers until gap < 300.
+                      Simultaneously spawn burst workers for lagging arms
+                      (up to MAX_WORKERS_PER_ARM total).
+          gap > 200:  Throttle leaders (pause their workers after current episode).
+                      Spawn extra workers for laggers proportional to gap.
+          gap > 50:   Spawn 1 extra worker for lagger; unthrottle leaders.
+          gap ≤ 50:   Everything balanced — unthrottle all arms.
 
-        Throttling works by clearing s["throttle_event"].  Each worker checks
-        this before claiming its next episode slot and blocks until set again.
-        This is cooperative (not preemptive) — the current in-flight episode
-        completes before the block takes effect.
-
-        Logs every decision so the training log shows exactly what the
-        rebalancer is doing and why.
+        Worker cap: no arm ever exceeds MAX_WORKERS_PER_ARM to avoid OOM.
+        The current in-flight episode in each throttled worker completes before
+        the block takes effect (cooperative pause).
         """
-        sleep_secs = 60.0   # check every minute
+        MAX_WORKERS_PER_ARM = 6   # hard cap per arm to avoid memory pressure
+        sleep_secs = 30.0         # check every 30 s (was 60) for faster response
+
+        def _live(s: dict) -> int:
+            return sum(1 for t in arm_thread_map[s["name"]] if t.is_alive())
 
         while not stop_event.wait(timeout=sleep_secs):
             counts = {s["name"]: s["ep_count"] for s in arm_states}
-            live   = {s["name"]: sum(1 for t in arm_thread_map[s["name"]] if t.is_alive())
-                      for s in arm_states}
+            live   = {s["name"]: _live(s) for s in arm_states}
 
             for arm_name, n_live in live.items():
                 if n_live == 0:
@@ -980,30 +982,73 @@ def train(
 
             leader_s = next(s for s in arm_states if s["name"] == leader_name)
             lagger_s = next(s for s in arm_states if s["name"] == lagger_name)
+            lagger_live = live[lagger_name]
+            leader_live = live[leader_name]
 
-            if gap > 150:
-                # Hard throttle: leader must stop and let laggers catch up
+            if gap > 500:
+                # ── Burst mode: extreme catch-up ─────────────────────────────
+                # Throttle ALL arms with more episodes than the lagger.
+                for s in arm_states:
+                    if counts[s["name"]] > counts[lagger_name] + 100:
+                        if s["throttle_event"].is_set():
+                            s["throttle_event"].clear()
+                            log.warning(
+                                "Rebalancer BURST: throttling %s (gap=%d vs lagger=%s=%d)",
+                                s["name"], counts[s["name"]] - counts[lagger_name],
+                                lagger_name, counts[lagger_name],
+                            )
+                # Spawn burst workers for ALL laggers below median
+                median_count = sorted(counts.values())[len(counts) // 2]
+                for s in arm_states:
+                    if counts[s["name"]] < median_count - 50:
+                        current_live = _live(s)
+                        # Spawn up to 3 extra workers in burst mode
+                        workers_to_add = min(3, MAX_WORKERS_PER_ARM - current_live)
+                        for _ in range(workers_to_add):
+                            log.warning(
+                                "Rebalancer BURST: spawning worker for lagger=%s "
+                                "(%d eps, gap=%d, live=%d→%d)",
+                                s["name"], counts[s["name"]],
+                                median_count - counts[s["name"]],
+                                current_live, current_live + 1,
+                            )
+                            _spawn_worker(s)
+                            current_live += 1
+
+            elif gap > 200:
+                # ── Moderate gap: throttle leader, add proportional workers ──
                 if leader_s["throttle_event"].is_set():
                     leader_s["throttle_event"].clear()
                     log.warning(
-                        "Rebalancer: THROTTLING leader=%s (gap=%d > 150)  "
-                        "leader=%d  lagger=%s=%d  — cleared throttle_event, "
-                        "workers will block after current episode",
+                        "Rebalancer: THROTTLING leader=%s (gap=%d > 200)  "
+                        "leader=%d  lagger=%s=%d",
                         leader_name, gap, counts[leader_name],
                         lagger_name, counts[lagger_name],
                     )
+                # Spawn proportional extra workers for lagger
+                workers_to_add = min(2, MAX_WORKERS_PER_ARM - lagger_live)
+                for _ in range(workers_to_add):
+                    log.info(
+                        "Rebalancer: gap=%d — spawning extra worker for lagger=%s (%d eps, live=%d)",
+                        gap, lagger_name, counts[lagger_name], lagger_live + 1,
+                    )
+                    _spawn_worker(lagger_s)
+                    lagger_live += 1
+
             elif gap > 50:
-                # Moderate gap: unthrottle leader if previously throttled, boost lagger
+                # ── Small gap: unthrottle, add 1 worker if needed ────────────
                 if not leader_s["throttle_event"].is_set():
                     leader_s["throttle_event"].set()
                     log.info("Rebalancer: gap reduced to %d — unthrottling %s", gap, leader_name)
-                log.info(
-                    "Rebalancer: gap=%d — spawning extra worker for lagger=%s (%d eps)",
-                    gap, lagger_name, counts[lagger_name],
-                )
-                _spawn_worker(lagger_s)
+                if lagger_live < MAX_WORKERS_PER_ARM:
+                    log.info(
+                        "Rebalancer: gap=%d — spawning extra worker for lagger=%s (%d eps)",
+                        gap, lagger_name, counts[lagger_name],
+                    )
+                    _spawn_worker(lagger_s)
+
             else:
-                # Balanced: ensure no arm is throttled
+                # ── Balanced: unthrottle all arms ─────────────────────────────
                 for s in arm_states:
                     if not s["throttle_event"].is_set():
                         s["throttle_event"].set()
@@ -1020,7 +1065,7 @@ def train(
         target=_rebalance_workers, name="rebalancer", daemon=True
     )
     rebalancer.start()
-    log.info("Rebalancer thread started (checks every ~%.0f s, threshold=50 eps)", max(60, checkpoint_every * 3 * 45 / 10))
+    log.info("Rebalancer thread started (checks every ~30 s — burst mode at gap>500, throttle at gap>200)")
 
     # Wait for all arms to finish (or stop_event from STOP_AT_CHECKPOINT / signal)
     for t in threads:

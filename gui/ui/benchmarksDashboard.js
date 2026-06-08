@@ -751,7 +751,9 @@ function _renderSimOverview() {
 
 // -- Reward Stats Table -------------------------------------------------------
 function _renderRewardStatsTable() {
-    _renderStatsTableInto('reward-stats-table', null);  // null = all episodes
+    // Always use last-100 window — full-history mean is invalid once training
+    // process or reward function changes mid-run.
+    _renderStatsTableInto('reward-stats-table', 100);
 }
 
 /**
@@ -1341,7 +1343,7 @@ function _renderScenarioRewardStats() {
             <th style="text-align:left;padding:5px 8px;">#</th>
             <th style="text-align:left;padding:5px 8px;">Scenario</th>
             ${armsWithData.map(a => `<th style="padding:5px 8px;color:${EXP_META[a].color};">${EXP_META[a].shortLabel}</th>`).join('')}
-            <th style="padding:5px 8px;">Mean Reward</th>
+            <th style="padding:5px 8px;">Mean Reward (last 100)</th>
             <th style="padding:5px 8px;color:var(--gray-500);">Total n</th>
           </tr>
         </thead>
@@ -1755,7 +1757,7 @@ function _renderMetricBars() {
     if (!rows.length) return;
 
     const metrics = [
-        { key: 'mean_reward',        label: 'Mean Cumul. Reward',    canvas: 'metric-bar-reward'  },
+        { key: 'mean_reward',        label: 'Mean Cumul. Reward (last 100 eps)', canvas: 'metric-bar-reward'  },
         { key: 'goal_rate',          label: 'Goal Rate',             canvas: 'metric-bar-goal'    },
         { key: 'mean_stress_auc',    label: 'Stress AUC (↑ better)', canvas: 'metric-bar-stress'  },
         { key: 'safety_failures',    label: 'Safety Failures',       canvas: 'metric-bar-safety'  },

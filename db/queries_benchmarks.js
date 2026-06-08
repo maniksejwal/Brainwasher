@@ -626,19 +626,27 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20, slim =
  */
 export async function getExperimentMetricSummary() {
     const db = await getDb();
-    // LEFT JOIN turns: new arms that have no turn rows yet (e.g. HPVOOT during early
-    // training) must still appear in the summary so the dashboard can count them as
-    // active experiments.  Turn-level aggregates (safety_failures, latency, per-reward
-    // component averages) will be NULL for those arms until turns are populated.
+    // Use only the most recent 100 completed episodes per arm×run combination.
+    // Full-history means is invalid once training process or reward function changes;
+    // last-100 gives a stable, comparable recent-performance window.
     return db.all(
-        `SELECT e.arm,
-                r.label as run_label, r.run_id,
-                COUNT(DISTINCT e.episode_id)  as total_episodes,
-                AVG(e.cumulative_reward)       as mean_reward,
-                MIN(e.cumulative_reward)       as min_reward,
-                MAX(e.cumulative_reward)       as max_reward,
-                AVG(e.goal_achieved)           as goal_rate,
-                AVG(e.stress_auc)              as mean_stress_auc,
+        `WITH ranked AS (
+            SELECT e.*,
+                   ROW_NUMBER() OVER (PARTITION BY e.arm ORDER BY e.completed_at DESC) AS recency_rank
+            FROM htn_benchmark_episodes e
+            WHERE e.turn_count > 0 AND e.completed_at IS NOT NULL
+         ),
+         recent AS (
+            SELECT * FROM ranked WHERE recency_rank <= 100
+         )
+         SELECT r2.arm,
+                r2.label as run_label, r2.run_id,
+                COUNT(DISTINCT e2.episode_id)  as total_episodes,
+                AVG(e2.cumulative_reward)       as mean_reward,
+                MIN(e2.cumulative_reward)       as min_reward,
+                MAX(e2.cumulative_reward)       as max_reward,
+                AVG(e2.goal_achieved)           as goal_rate,
+                AVG(e2.stress_auc)              as mean_stress_auc,
                 SUM(CASE WHEN t.judge_safety IS NOT NULL AND t.judge_safety < 0.5 THEN 1 ELSE 0 END) as safety_failures,
                 SUM(CASE WHEN t.discrepancy_flag = 1 THEN 1 ELSE 0 END) as discrepancy_turns,
                 AVG(t.latency_ms)              as mean_latency_ms,
@@ -647,12 +655,12 @@ export async function getExperimentMetricSummary() {
                 AVG(t.reward_trust)            as mean_trust_reward,
                 AVG(t.reward_info)             as mean_info_reward,
                 AVG(t.reward_consistency)      as mean_consistency_reward
-         FROM htn_benchmark_runs r
-         JOIN htn_benchmark_episodes e ON e.run_id = r.run_id AND e.turn_count > 0
-         LEFT JOIN htn_benchmark_turns t ON t.episode_id = e.episode_id
-         GROUP BY e.arm, r.run_id
-         HAVING COUNT(DISTINCT e.episode_id) > 0
-         ORDER BY e.arm, r.started_at`
+         FROM recent e2
+         JOIN htn_benchmark_runs r2 ON r2.run_id = e2.run_id
+         LEFT JOIN htn_benchmark_turns t ON t.episode_id = e2.episode_id
+         GROUP BY e2.arm, r2.run_id
+         HAVING COUNT(DISTINCT e2.episode_id) > 0
+         ORDER BY e2.arm`
     );
 }
 
@@ -671,15 +679,23 @@ export async function getExperimentMetricSummary() {
  */
 export async function getScenarioGoalRates() {
     const db = await getDb();
+    // Last 100 episodes per arm — consistent with getExperimentMetricSummary window.
     return db.all(
-        `SELECT e.arm, e.scenario_id,
+        `WITH ranked AS (
+            SELECT e.*,
+                   ROW_NUMBER() OVER (PARTITION BY e.arm ORDER BY e.completed_at DESC) AS recency_rank
+            FROM htn_benchmark_episodes e
+            WHERE e.scenario_id IS NOT NULL AND e.scenario_id != ''
+              AND e.completed_at IS NOT NULL
+         ),
+         recent AS (SELECT * FROM ranked WHERE recency_rank <= 100)
+         SELECT e.arm, e.scenario_id,
                 COUNT(*) as episode_count,
                 AVG(e.goal_achieved) as goal_rate,
                 AVG(e.cumulative_reward) as avg_reward,
                 MIN(e.cumulative_reward) as min_reward,
                 MAX(e.cumulative_reward) as max_reward
-         FROM htn_benchmark_episodes e
-         WHERE e.scenario_id IS NOT NULL AND e.scenario_id != ''
+         FROM recent e
          GROUP BY e.arm, e.scenario_id
          ORDER BY e.scenario_id, e.arm`
     );
@@ -742,13 +758,20 @@ export async function getPhysioRewardData() {
 export async function getCriticalFailureSummary() {
     const db = await getDb();
     return db.all(
-        `SELECT e.arm, e.scenario_id,
+        `WITH ranked AS (
+            SELECT e.*,
+                   ROW_NUMBER() OVER (PARTITION BY e.arm ORDER BY e.completed_at DESC) AS recency_rank
+            FROM htn_benchmark_episodes e
+            WHERE e.scenario_id IS NOT NULL AND e.scenario_id != ''
+              AND e.completed_at IS NOT NULL
+         ),
+         recent AS (SELECT * FROM ranked WHERE recency_rank <= 100)
+         SELECT e.arm, e.scenario_id,
                 COUNT(*) as total_episodes,
                 SUM(CASE WHEN e.goal_achieved = 0 THEN 1 ELSE 0 END) as failed_episodes,
                 AVG(CASE WHEN e.goal_achieved = 0 THEN e.cumulative_reward END) as fail_avg_reward,
                 AVG(CASE WHEN e.goal_achieved = 0 THEN e.stress_auc END) as fail_avg_stress
-         FROM htn_benchmark_episodes e
-         WHERE e.scenario_id IS NOT NULL AND e.scenario_id != ''
+         FROM recent e
          GROUP BY e.arm, e.scenario_id
          ORDER BY failed_episodes DESC`
     );

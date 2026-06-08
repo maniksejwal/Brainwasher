@@ -1156,9 +1156,15 @@ class A3CWorker:
         # ── V_int / SharedTensorBuffer — G3 social coupling ───────────────────────
         # One slot per participant. V_int propagates HRV deltas between agents
         # after each speaker turn so the next companion sees updated physio context.
-        # This is pure arithmetic — no LLM calls.
+        # circle_id is derived from the scenario's subject_id so alliances persist
+        # across chained episodes for the same synthetic patient.
         SharedTensorBuffer = _get_shared_tensor_buffer()
         vint_buf = None
+        # Use subject_id or scenario_id as stable circle identifier for
+        # cross-session alliance persistence.
+        _vint_circle_id = (
+            scenario.get("subject_id") or scenario.get("scenario_id") or "synthetic"
+        )
         if SharedTensorBuffer is not None and len(orchestrator.participants) > 1:
             agents = [
                 {"agent_id": p.role, "role": _normalise_role(p.role)}
@@ -1167,7 +1173,7 @@ class A3CWorker:
             # Add a "companion" slot — the companion's calm presence also propagates
             agents.append({"agent_id": "companion", "role": "companion"})
             try:
-                vint_buf = SharedTensorBuffer(agents)
+                vint_buf = SharedTensorBuffer(agents, circle_id=_vint_circle_id)
                 # Seed each slot with initial HRV from scenario physio
                 init_hrv = state.physio.get("hrv_ms", 35.0)
                 for a in agents:
@@ -2053,6 +2059,17 @@ class A3CWorker:
         sim_tl = scenario.get("simulated_timeline") or {}
         summary["session_number"] = int(sim_tl.get("session_number") or 1)
         summary["genuine_metrics"] = genuine_metrics
+
+        # ── V_int episode close: update alliances from episode reward, persist ──────
+        # Positive reward → alliance slightly strengthens; negative → weakens.
+        # This is the hysteretic V_int cross-session persistence step (§5 future_work).
+        if vint_buf is not None:
+            try:
+                norm_reward = float(cumulative_reward) / max(1.0, abs(float(cumulative_reward)) + 1e-6)
+                vint_buf.record_interaction_outcome("companion", norm_reward)
+                vint_buf.close_session()
+            except Exception:
+                pass
 
         # Index this episode into TensorRAG episode memory (non-blocking)
         try:
