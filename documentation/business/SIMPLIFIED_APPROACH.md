@@ -336,9 +336,5 @@ case '/legal': await handleLegalCommand(...); break;
 - ~4,000 lines
 - More maintenance
 
-**My vote**: **Option A** - Simpler is better!
-
----
-
-Want me to create the simplified version? I can consolidate everything into ~800 lines with maximum reuse.
+**Recommendation**: **Option A** - Simpler is better!
 

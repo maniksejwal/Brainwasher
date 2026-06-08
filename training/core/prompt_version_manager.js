@@ -19,6 +19,18 @@ export class PromptVersionManager {
                 filename: DB_FILE,
                 driver: sqlite3.Database
             });
+            await this.db.run(`
+                CREATE TABLE IF NOT EXISTS prompt_versions (
+                    version_id       TEXT PRIMARY KEY,
+                    prompt_type      TEXT NOT NULL,
+                    content          TEXT NOT NULL,
+                    metadata         TEXT,
+                    is_baseline      INTEGER DEFAULT 0,
+                    created_at       INTEGER,
+                    created_by       TEXT,
+                    parent_version_id TEXT
+                )
+            `);
         }
         return this.db;
     }

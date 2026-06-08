@@ -1,3 +1,11 @@
+> ⚠️ **DEPRECATED** — This document describes the early RL framework design using Gemini/GPT backends.
+>
+> **Superseded by:** `documentation/tensornets/04_training_system.md`
+>
+> **Primary staleness:** Gemini/GPT backend assumed; training pipeline restructured into training/rl/, training/simulation/, training/core/, training/analysis/; A3C framework (tensornets/) not yet designed at time of writing.
+
+---
+
 # Reinforcement Learning & Training Framework
 
 > **📚 Implementation Complete!** See [Training System Documentation](./training/) for the full implementation.

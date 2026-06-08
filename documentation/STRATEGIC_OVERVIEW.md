@@ -737,20 +737,7 @@ class SessionManager {
 
 ---
 
-## 📝 If You Decide to Add Business Negotiations
-
-I can provide:
-1. **Detailed architecture document** (like the training system docs)
-2. **Phase-by-phase implementation plan** (won't break medical)
-3. **Game theory algorithms** (Nash equilibrium, minimax)
-4. **Ephemeral session manager** (privacy-preserving)
-5. **Separate handler hierarchy** (zero cross-contamination)
-
-**Just say**: "Let's plan business negotiations" and I'll create the full spec.
-
----
-
-## 🎯 My Suggestion for Now
+## 🎯 Next Steps (Medical System)
 
 **Focus on excellence in medical domain first:**
 
@@ -762,11 +749,4 @@ I can provide:
 6. **Then** consider business expansion
 
 **Why**: Better to be excellent at one thing than mediocre at two.
-
----
-
-**What would you like to focus on?**
-- 🏥 Medical system refinement?
-- 💼 Business negotiations planning?
-- 🧪 Running first training cycle?
 

@@ -1,3 +1,9 @@
+> ⚠️ **WRONG PROJECT** — This document describes a Llama 4 integration for a different project (EMM SageMaker architecture at `d:\Projects\MMT\EMM`). It is NOT relevant to Brainwasher 3, which uses AWS Bedrock (not SageMaker) and was written before the Bedrock migration.
+>
+> **Do not use this document.** For Brainwasher 3 LLM infrastructure see `documentation/tensornets/02_tensornets_reference.md §1`.
+
+---
+
 # Llama 4 Integration Guide
 
 This guide explains how to use the Llama 4 SageMaker endpoint in your applications.

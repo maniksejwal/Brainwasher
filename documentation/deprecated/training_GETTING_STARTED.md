@@ -1,3 +1,9 @@
+> ⚠️ **STALE** — Written for the 2024 Gantt-phase training pipeline. File paths, CLI commands, and the underlying RL framework have changed substantially.
+>
+> **Current references:** `documentation/training/18_training_pipeline.md` (JS side), `documentation/tensornets/04_training_system.md` (Python A3C side).
+
+---
+
 # Getting Started with Training & RL System
 
 Quick guide to using the training infrastructure.

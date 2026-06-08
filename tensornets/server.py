@@ -136,7 +136,8 @@ class PhysioStateIn(BaseModel):
     sleep_deficit_hours:    float = 1.0
     circadian_entrainment:  float = 0.7
     respiratory_rate_bpm:   float = 15.0
-    is_simulated:           bool  = True
+    is_simulated:           bool  = True   # False when real wearable data is used
+    hrv_source:             str   = "simulated"   # "ble" | "simulated" — set by wearable bridge
     subject_id:             Optional[str] = None
 
 
@@ -1008,10 +1009,11 @@ def _get_session_manager():
 class SessionOpenIn(BaseModel):
     subject_id:          str
     therapeutic_mode:    str       = "standard"
-    deaddiction_phase:   str       = "behaviour_change_rapport"  # was 'rapport'; now accepts any behaviour-change label
+    deaddiction_phase:   str       = "behaviour_change_rapport"
     session_goal:        str       = ""
-    stacked_topic_ids:   list[str] = []   # JS future_plan IDs pending for this subject
+    stacked_topic_ids:   list[str] = []
     agents:              list[dict]= []   # Phase 4 SharedTensorBuffer: [{agent_id, role}, ...]
+    circle_id:           str       = ""  # care circle ID for hysteretic alliance persistence
 
 
 class SessionCloseIn(BaseModel):
@@ -1071,7 +1073,11 @@ def session_open(req: SessionOpenIn):
     if req.agents:
         try:
             from tensornets.agents.shared_tensor_state import open_shared_buffer
-            open_shared_buffer(session.session_id, req.agents)
+            open_shared_buffer(
+                session.session_id,
+                req.agents,
+                circle_id=req.circle_id or req.subject_id or None,
+            )
             buf_info = {"agents": [a['agent_id'] for a in req.agents]}
         except Exception as e:
             buf_info = {"error": str(e)}
@@ -1443,4 +1449,125 @@ def llm_maverick(req: LLMRequestIn):
     and offline HTN judge batch runs.
     """
     return _call_bedrock_llm("maverick", req.system, req.prompt, req.max_tokens, req.temperature)
+
+
+# ── RL Shadow Mode: A3C action endpoint ──────────────────────────────────────
+# Called by training/rl_shadow.js in shadow mode.
+# Takes a state dict, asks the trained A3C actor for an action, returns a
+# structured response without affecting production output.
+
+# ── Predictive Escalation endpoint ───────────────────────────────────────────
+# Called by Python worker.py at each turn to get the DRI and escalation tier.
+# Pure computation — does not call LLM.
+
+class PredictiveEscalationIn(BaseModel):
+    hrv_history:              list[float] = []
+    stress_score:             float       = 0.0
+    sleep_quality:            float       = 1.0
+    medication_adherence:     float       = 1.0
+    consecutive_stress_turns: int         = 0
+
+
+@app.post("/physio/predict-escalation")
+def physio_predict_escalation(req: PredictiveEscalationIn):
+    """
+    Compute Deterioration Risk Index (DRI) from physiological signals.
+
+    Returns:
+        dri        float  — composite risk score [0..1]
+        tier       str    — NO_ACTION | SOFT_CHECKIN | PROACTIVE_SUPPORT | CLINICAL_ALERT | IMMEDIATE_ESCALATION
+        reasons    list   — human-readable reasons for the tier
+        components dict   — per-signal contribution scores
+    """
+    try:
+        from tensornets.physio.predictive_escalation import compute_dri
+        result = compute_dri(
+            hrv_history              = req.hrv_history,
+            stress_score             = req.stress_score,
+            sleep_quality            = req.sleep_quality,
+            medication_adherence     = req.medication_adherence,
+            consecutive_stress_turns = req.consecutive_stress_turns,
+        )
+        return result
+    except ImportError:
+        # Fallback: simple threshold-based tier
+        current_hrv = req.hrv_history[-1] if req.hrv_history else 35.0
+        if req.stress_score > 0.85 or current_hrv < 15:
+            return {"dri": 0.90, "tier": "IMMEDIATE_ESCALATION", "reasons": ["stress>0.85 or hrv<15 (fallback)"], "components": {}}
+        if req.stress_score > 0.70 or current_hrv < 22:
+            return {"dri": 0.72, "tier": "CLINICAL_ALERT", "reasons": ["stress>0.70 or hrv<22 (fallback)"], "components": {}}
+        if req.stress_score > 0.55:
+            return {"dri": 0.52, "tier": "PROACTIVE_SUPPORT", "reasons": ["stress>0.55 (fallback)"], "components": {}}
+        return {"dri": 0.10, "tier": "NO_ACTION", "reasons": [], "components": {}}
+    except Exception as exc:
+        return {"dri": 0.0, "tier": "NO_ACTION", "reasons": [f"error: {exc}"], "components": {}}
+
+
+class ShadowActionIn(BaseModel):
+    arm:      str  = "inertial_mcts"
+    state:    dict = {}
+    physio:   dict = {}
+    turn_idx: int  = 0
+
+
+@app.post("/session/a3c/action")def session_a3c_action(req: ShadowActionIn):
+    """
+    Shadow mode: evaluate the A3C actor for arm `req.arm` on the given state.
+
+    Returns:
+        action_label    str   — action classification (ACKNOWLEDGE/INFORM/QUESTION/COMMIT/ESCALATE)
+        value_estimate  float — critic's state-value estimate
+        response_text   str   — (optional) short LLM-generated response draft (only if LLM available)
+        arm             str   — the arm that was evaluated
+
+    If the arm is not loaded (no active training), returns {available: false}.
+    This endpoint is non-blocking for production — errors return gracefully.
+    """
+    try:
+        # Lazy import: only the training arm registry is needed here
+        from tensornets.a3c.arms import _ARM_REGISTRY  # populated during training init
+
+        arm_entry = _ARM_REGISTRY.get(req.arm)
+        if arm_entry is None:
+            return {"available": False, "arm": req.arm, "reason": "arm not loaded"}
+
+        actor  = arm_entry.get("actor")
+        critic = arm_entry.get("critic")
+        if actor is None:
+            return {"available": False, "arm": req.arm, "reason": "actor not loaded"}
+
+        # Build a minimal TurnState from the incoming dict
+        from tensornets.a3c.worker import TurnState
+        try:
+            state = TurnState(**{k: req.state.get(k, v)
+                                 for k, v in TurnState.__dataclass_fields__.items()})
+        except Exception:
+            state = TurnState()  # fallback to defaults
+
+        import torch
+        with torch.no_grad():
+            state_tensor = actor.encode_state(state)
+            action_probs = actor(state_tensor)
+            action_idx   = int(action_probs.argmax(-1).item())
+            value_est    = float(critic(state_tensor).item())
+
+        # Map action index to label
+        action_labels = ["ACKNOWLEDGE", "INFORM", "QUESTION", "COMMIT", "ESCALATE"]
+        action_label  = action_labels[action_idx] if action_idx < len(action_labels) else "INFORM"
+
+        return {
+            "available":      True,
+            "arm":            req.arm,
+            "action_label":   action_label,
+            "action_idx":     action_idx,
+            "value_estimate": round(value_est, 4),
+            "response_text":  None,   # text generation skipped in shadow mode (latency)
+        }
+
+    except ImportError:
+        return {"available": False, "arm": req.arm, "reason": "ARM_REGISTRY not initialised (training not active)"}
+    except Exception as exc:
+        import traceback
+        return {"available": False, "arm": req.arm, "reason": str(exc),
+                "trace": traceback.format_exc(limit=5)}
 

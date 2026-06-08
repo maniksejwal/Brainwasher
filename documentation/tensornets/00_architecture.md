@@ -67,11 +67,16 @@ The logical view shows the major subsystems and their relationships.
 ```mermaid
 graph LR
     subgraph NodeJS[Node.js Backend]
-        CC[CompanionCoordinator]
+        ORC[orchestrator.js\ninter-companion engine]
+        RTR[contextAwareCompanionRouter\nper-userId dispatcher]
+        CC[CompanionCoordinator\nper-user intra-companion brain]
+        SC[SocialCircle\ncare circle graph]
         AS[ActionSelector]
         EH[EmpathyHandler]
         HH[HysteresisHandler]
         IQ[InterventionQueue]
+        PG[privacyGuard]
+        CONF[CompanionConfidentialComm]
         DB2[DB Layer]
     end
 
@@ -90,18 +95,24 @@ graph LR
         SP[SyntheticParticipant]
     end
 
-    subgraph A3CLoop[A3C Training]
-        WORKER[Arm1/2/3 Worker]
-        ACTOR[Actor]
-        CRITIC[Critic]
-        SCORER[A3CScorer]
+    subgraph A3CLoop[A3C Training — 8 experiments]
+        WORKER[Exp0-7 Workers\n(arms.py)]
+        ACTOR[Actor log-bias table]
+        CRITIC[Critic weight vector]
+        SCORER[A3CScorer\n(Maverick judge)]
     end
 
     CC --> AS
     CC --> EH
     CC --> HH
     CC --> IQ
+    CC --> PG
+    CC --> CONF
+    CC --> SC
     CC --> FastAPI
+    ORC --> RTR
+    RTR --> CC
+    SC --> DB2
 
     PHYSIO --> MPS2
     MCTS2 --> UCB

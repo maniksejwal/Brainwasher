@@ -8,29 +8,81 @@
 
 ## Terminology
 
-What the original design called "arms" are three **independent training experiments** (independent environments / conditions). Each trains separately on the same scenario distribution and is compared as an experimental condition in a controlled ablation study. The identifier `arm` is retained in DB columns and code for backwards-compatibility with run_008–run_013 data; user-facing text and documentation use **experiment**.
+What the original design called "arms" are **independent training experiments** (independent environments / conditions). Each trains separately on the same scenario distribution and is compared as an experimental condition in a controlled ablation study. The identifier `arm` is retained in DB columns and code for backwards-compatibility with run_008–run_013 data; user-facing text and documentation use **experiment**.
 
-| Code id | Experiment name | Role |
-|---|---|---|
-| `htn_mcts` | Experiment 1 | Treatment — full HTN + MCTS stack |
-| `oldschool` | Experiment 2 | Baseline — production JS companion |
-| `hysteresis_prompt` | Experiment 3 | Baseline — text-serialised physio, no MPS |
+As of run_018, the experiment suite has expanded from the original 3-arm design to **8 experiments** spanning a capability ladder from plain text-physio prompting to hierarchical progressive-widening VOOT tree search. The full taxonomy is defined in `tensornets/tensornets/a3c/arms.py`.
 
 ---
 
-## 1. Why a three-experiment comparison?
+## 1. Eight-experiment comparison (run_018+)
 
-The central research question is whether the MPS physiological state layer and the MCTS action selector genuinely improve therapeutic outcomes — or whether a well-prompted LLM achieves similar results with far less complexity.
+The central research question is whether the MPS physiological state layer and the MCTS action selector genuinely improve therapeutic outcomes, and at what capability and cost premium. The expanded set separates **four orthogonal variables**:
 
-The three-experiment design is a controlled ablation:
+| Variable | Off | On |
+|---|---|---|
+| Physio representation | None (oldschool) | Text summary (physio_llm) or MPS (physio_mps) |
+| Action planner | Actor log-bias table | LLM chain-of-thought (cot) or MPS-MCTS tree search (mps_mcts) |
+| Inertial dead-band | No | `HysteresisGate` 5-zone state machine (inertial_*) |
+| Tree search algorithm | `DialogMCTS` (80 iter) | `HierarchicalPWVOOTMCTS` (150 iter, `hpvoot`) |
 
-| Experiment | Name | What it uses | What it does NOT use |
-|---|---|---|---|
-| **Exp 1** | `htn_mcts` | MCTS + MPS + V_int + M_trunc + ReactivityProfile + DrugRegimen + Scout | Direct JS production path |
-| **Exp 2** | `oldschool` | The production Node.js CompanionCoordinator (full JS system) | A3C Actor/Critic, MPS |
-| **Exp 3** | `hysteresis_prompt` | Scout LLM with physio state serialised as text in the prompt | MCTS, MPS, V_int, ReactivityProfile |
+### Full experiment index
 
-All three experiments share the same Actor/Critic parameter updates (shared learning), run on the same scenario distribution, and are scored by the same LLM judge (Maverick). This isolates the *contribution of each layer* rather than comparing different systems.
+| Exp | Class | `arm_name` | Capability | LLM calls/turn |
+|---|---|---|---|---|
+| 0 | `PhysioLLMWorker` | `physio_llm` | Physio text in prompt, actor action selection | 1 (Scout) |
+| 1 | `PhysioLLMCoTMCTSWorker` | `physio_llm_cot_mcts` | Exp 0 + Maverick chain-of-thought action selection | 2 (Maverick CoT + Scout) |
+| 2 | `PhysioMPSMCTSWorker` | `physio_mps_mcts` | Full HTN: MPS + `DialogMCTS` + M_trunc constraint | 1 (Scout) + MCTS bridge |
+| 3 | `InertialPhysioMPSMCTSWorker` | `inertial_physio_mps_mcts` | Exp 2 + `HysteresisGate` 5-zone dead-band | 1 (Scout) + MCTS bridge |
+| 4 | `InertialPhysioLLMCoTMCTSWorker` | `inertial_physio_llm_cot_mcts` | Exp 1 + `HysteresisGate` | 2 (Maverick CoT + Scout) |
+| 5 | `OldschoolWorker` | `oldschool` | Production Node.js `CompanionCoordinator` via HTTP | 0 Python LLM calls (JS handles) |
+| 6 | `InertialHPVOOTPhysioMPSMCTSWorker` | `inertial_hpvoot_physio_mps_mcts` | Exp 3 + `HierarchicalPWVOOTMCTS` (150 iter) + Scout LLM prior | 2 (Scout prior + Scout generation) |
+| 7 | `InertialHPVOOTPhysioLLMCoTMCTSWorker` | `inertial_hpvoot_physio_llm_cot_mcts` | Exp 4 + `HierarchicalPWVOOTMCTS`; Maverick CoT ratings reused as PW prior | 2 (Maverick CoT + Scout) |
+
+**Capability order (ascending):** 5 < 0 < 1 < 4 < 2 < 3 < 6 ≈ 7
+
+All experiments share the same Actor/Critic parameter updates (shared learning), run on the same scenario distribution, and are scored by the same LLM judge (Maverick). This isolates the *contribution of each layer* rather than comparing different systems.
+
+### Per-experiment detail
+
+#### Exp 0 — `physio_llm` (text-physio baseline)
+
+The system prompt includes a natural-language physio summary block (stress level, HRV, EDA, sleep pressure, hysteresis trigger history). No MPS, no MCTS. The LLM must infer appropriate strategy purely from this text. Tests: "Does structured physio context in the prompt suffice?"
+
+```
+[PHYSIO] stress=0.62 (high) | HRV=22ms | EDA=8μS | sleep_deficit=2h
+         archetype=anxious | change_stage=contemplation
+         hysteretic trigger: alcohol (w=0.71, 32% extinguished)
+```
+
+#### Exp 1 — `physio_llm_cot_mcts` (LLM-as-planner baseline)
+
+Same physio prompt as Exp 0, but action selection is replaced by a **Maverick chain-of-thought call** that evaluates all 51 `ACTION_TAXONOMY` candidates and returns `CHOSEN_ACTION` + `CONFIDENCE` + `REASONING`. Scout then generates the companion response. Two LLM calls per turn. Cost and capability baseline for Exp 2: answers "Can an LLM reason its way to the same action quality as a structured planner?"
+
+#### Exp 2 — `physio_mps_mcts` (full HTN treatment, formerly `htn_mcts`)
+
+Full HTN stack: Actor selects candidate action → `POST /mcts/best-action` refines via `DialogMCTS` (80 iterations, depth 20) → `POST /physio/history/append` updates MPS state → Scout generation with M_trunc constraint injection. On MCTS bridge failure, degrades to Exp 0 behaviour for that turn (flagged in episode log).
+
+**M_trunc constraint injection (F3/F4):** The top 3 actions from the MCTS dominant singular vector are appended to the Scout system prompt as `[MCTS GUIDANCE]`. This soft-steers generation without requiring logit access to the Bedrock API.
+
+#### Exp 3 — `inertial_physio_mps_mcts` (most capable baseline-free experiment)
+
+Extends Exp 2 with a **`HysteresisGate` 5-zone dead-band state machine**. The gate prevents strategy flip-flopping by locking the stress bucket to a zone (CALM / MILD / MODERATE / ELEVATED / CRITICAL) until the stress index has persisted in the new zone for a minimum streak. Zone and streak are injected into the MCTS payload and the system prompt, so the MPS tree search is aware of sustained stress tiers rather than instantaneous readings.
+
+#### Exp 4 — `inertial_physio_llm_cot_mcts`
+
+Exp 1 + `HysteresisGate`. CoT-MCTS with inertial zone awareness. The zone context is injected into the Maverick CoT prompt: `"Physiological zone (inertial): ELEVATED (sustained for 4 turns, stable)."` Answers: "Does inertial context help the LLM planner more than the MPS-MCTS planner?"
+
+#### Exp 5 — `oldschool` (production JS companion)
+
+Posts each turn to `Node.js /api/benchmark/message` — the same endpoint used in production. The full `CompanionCoordinator` stack executes: action selector, FRAMES, empathy handler, hysteresis (JS version), etc. Zero Python LLM calls; reward is deferred and back-filled from `htn_benchmark_turns` after the episode. This experiment IS the production system — it is not a frozen baseline but an active teacher for the shared A3C policy.
+
+#### Exp 6 — `inertial_hpvoot_physio_mps_mcts` (HP+VOOT+PW treatment)
+
+Extends Exp 3 by upgrading `DialogMCTS` (80 iter) to **`HierarchicalPWVOOTMCTS`** (150 iter, depth 20, `mcts_mode=hpvoot`). An additional Scout call fetches a numeric prior score over all HP actions before tree search, seeding the progressive-widening expansion order with contextual relevance. Two LLM calls per turn total (Scout prior + Scout generation). Tests whether hierarchical action clustering + VOOT + PW adds measurable value over flat MCTS.
+
+#### Exp 7 — `inertial_hpvoot_physio_llm_cot_mcts` (HP+VOOT+PW + CoT)
+
+Extends Exp 4 with HP+VOOT+PW. The Maverick CoT response already includes per-action ratings (0–10); these are parsed and reused as the PW prior at **zero additional LLM cost**. Turn flow: (1) Maverick CoT rates all actions + selects `CHOSEN_ACTION`; (2) extracted ratings → `llm_prior_scores` for HP+VOOT+PW; (3) `POST /mcts/best-action mcts_mode=hpvoot`; (4) Scout generates using MCTS-final action. Total: 2 LLM calls/turn (same as Exp 4).
 
 ---
 
@@ -40,18 +92,18 @@ The training environment is a **Partially Observable Markov Decision Process wit
 
 - **State** s: the patient's full internal state (MPS + hysteretic baseline + reactivity + drug state) — *partially observed* by the companion
 - **Observation** o: conversation history + physiological snapshot + coverage fraction
-- **Action** a: one of 41 actions from ACTION_TAXONOMY
+- **Action** a: one of 51 actions from `ACTION_TAXONOMY`
 - **Reward** r: multi-dimensional vector from LLM judge + physio heuristics
 - **Transition** P(s'|s,a): governed by the physio model + synthetic patient LLM
-- **Horizon** T: up to MAX_TURNS = 50 per episode (scenario-specific max_turns may be lower)
+- **Horizon** T: up to `MAX_TURNS = 50` per episode (scenario-specific `max_turns` may be lower)
 
-The "H" in POMDP-H refers to the hysteretic component: the state transition is non-Markovian because the patient's fear weight carries memory across sessions.
+The "H" in POMDP-H refers to the hysteretic component: the state transition is non-Markovian because the patient's fear weight carries memory across sessions. Experiments 3 and 4 add a second layer of hysteresis via `HysteresisGate` — the **action-selection policy** itself is inertial, not just the state.
 
 ---
 
-## 3. The three experiments in detail
+## 3. The experiments in detail
 
-### Experiment 1 — htn_mcts (treatment)
+See **§1** above for the full per-experiment detail. This section documents the key reward and state differences between the experiment families.
 
 ```
 per-turn flow:
@@ -69,27 +121,46 @@ per-turn flow:
 8. A3C update: Actor log-bias adjustment + Critic TD(0)
 ```
 
-M_trunc injection (F3/F4): the top 3 actions from the MCTS dominant singular vector are appended to the Scout system prompt as `[MCTS GUIDANCE]`. This soft-steers generation without requiring logit access.
+### 3.1 Physio representation family (Exp 0, 1, 4, 7 — text-physio)
 
-### Experiment 2 — oldschool (production baseline)
 
-Posts each turn to the Node.js `/api/benchmark/message` endpoint — the same endpoint used in production. The full CompanionCoordinator stack executes: action selector, FRAMES, empathy handler, hysteresis (JS version), etc.
+The physio summary is serialised as a natural-language block (`_build_hysteresis_context()`). The function differentiates three `physio_source` modes:
 
-The A3C Actor/Critic observes the production system's action choices and reward, so the shared policy learns from the production system's decisions. This is intentional: Experiment 2 is not a frozen baseline — it is a teacher.
+- `"sensor"` — real wearable data; full numeric values shown
+- `"simulated"` — scenario-derived estimates; labelled "estimated from scenario"
+- `"none"` — no wearable; only conversation-inferred stress bucket shown
 
-Experiment 2 frequently hits the `billing_denial_mcts_demo` and `flooding_social_anxiety` scenarios with 2-strike failures, consistent with the production system not being optimised for those clinical edge cases.
+A stress discrepancy signal is computed: `Δ = physio_stress − conversation_stress`. Positive Δ (physio stressed, conversation calm) flags **possible masking**; negative Δ flags **possible outburst**.
 
-### Experiment 3 — hysteresis_prompt (text-physio baseline)
+### 3.2 MPS-MCTS family (Exp 2, 3, 6)
 
-The companion prompt includes a physio summary block:
+Uses the tensornets FastAPI bridge for two calls per turn:
+1. `POST /physio/history/append` — appends physio snapshot to MPS history
+2. `POST /mcts/best-action` — returns `best_action` + `M_trunc` matrix
 
-```
-[PHYSIO] stress=0.62 (high) | HRV=22ms | EDA=8μS | sleep_deficit=2h
-         archetype=anxious | change_stage=contemplation
-         hysteretic trigger: alcohol (w=0.71)
-```
+`mcts_mode` parameter controls tree search algorithm:
+- `"dialog"` (default) — `DialogMCTS`, 80 iterations, depth 20
+- `"hpvoot"` (Exp 6, 7) — `HierarchicalPWVOOTMCTS`, 150 iterations, depth 20; requires `llm_prior_scores` list
 
-No MPS computation. The LLM must infer appropriate strategy purely from this text. This experiment tests whether the MPS/MCTS layer adds value beyond giving the LLM more structured context.
+On MCTS bridge failure, Exp 2 degrades to text-physio (Exp 0) behaviour for that turn; `reward["safety"]` is clamped to ≤ 0.8 to flag the fallback.
+
+### 3.3 HysteresisGate (Exp 3, 4, 6, 7 — inertial experiments)
+
+`HysteresisGate` maintains a 5-zone state machine:
+
+| Zone | `stress_index` range | Name |
+|---|---|---|
+| 0 | [0.00, 0.20) | CALM |
+| 1 | [0.20, 0.40) | MILD |
+| 2 | [0.40, 0.60) | MODERATE |
+| 3 | [0.60, 0.80) | ELEVATED |
+| 4 | [0.80, 1.00] | CRITICAL |
+
+The gate locks the zone until the stress index has left it for a minimum streak count. `zone_changed` is `True` on the turn of a zone transition. The locked zone overrides `state.stress_bucket`, so both the MCTS planner and the Scout prompt see the sustained zone rather than the instantaneous reading.
+
+### 3.4 Oldschool (Exp 5 — production JS companion)
+
+Posts to `Node.js /api/benchmark/message`. The A3C Actor/Critic observes the production system's action choices and reward, so the **shared policy learns from the production system's decisions** — Exp 5 is a teacher, not a frozen baseline. Reward is deferred and back-filled from `htn_benchmark_turns` after the episode. `deferred_reward=True` in the episode JSONL flags turns where the reward placeholder has not yet been filled.
 
 ---
 
@@ -251,8 +322,31 @@ Source: `tensornets/tensornets/a3c/action_bandit.py`, `ActionBandit` class.
 | run_010 | Failed (port 8765) | 3 episodes only — 150 consecutive connection-refused errors |
 | run_011 | Partial | Scorer JSON parse errors, no episode files |
 | run_012 | Failed (port 8765) | Same as run_010 — 200 episodes, 0 successful |
-| run_013 | **Complete** | First clean 200-episode run. All three experiments functional. See `05_results.md` |
-| run_014 | Pending | Will include V_int, ReactivityProfile, M_trunc, genuine_metrics |
+| run_013 | **Complete** | First clean 200-episode run. Original 3-arm design. See `06_results.md` |
+| run_014–run_017 | Pending / exploratory | V_int, ReactivityProfile, M_trunc, genuine_metrics integration |
+| run_018 | **Active** | 8-experiment expanded design (`arms.py`). Episodes accumulating across all 8 arm directories |
+
+### run_018 arm directory structure
+
+```
+tensornets/runs/run_018/
+├── arm_physio_llm/                    ← Exp 0  (~221 episodes)
+├── arm_physio_llm_cot_mcts/           ← Exp 1  (~222 episodes, checkpoints at ep 60+)
+├── arm_physio_mps_mcts/               ← Exp 2  (~200 episodes, checkpoints at ep 50+)
+├── arm_inertial_physio_mps_mcts/      ← Exp 3  (~206 episodes)
+├── arm_inertial_physio_llm_cot_mcts/  ← Exp 4  (~203 episodes)
+├── arm_oldschool/                     ← Exp 5  (~151 episodes)
+├── arm_inertial_hpvoot_physio_mps_mcts/     ← Exp 6  (~207 episodes)
+└── arm_inertial_hpvoot_physio_llm_cot_mcts/ ← Exp 7  (~93 episodes)
+```
+
+Each arm directory contains:
+- `episodes/episode_<uuid>.jsonl` — one file per completed episode; each line is one `EpisodeTurn` record
+- `checkpoints/actor_<N>.json` — Actor log-bias dict at episode N: `{stress_bucket: {action_name: log_bias}}`; buckets are plain (`"low"`) or mode-compound (`"standard_low"`, `"flooding_moderate"`)
+- `checkpoints/critic_<N>.json` — `{"weights": [float × 7]}` for features `(stress_index, turn_progress, history_len_norm, info_coverage, repetition, mode_idx, bias)`
+- `checkpoints/run_state.json` — `{last_completed_episode, ep_count, successful_eps, db_run_id, last_session_memory, active_prompt, last_improved_at}`
+
+> **Note:** `tmp_arms.py` (project root, untracked) is a 16-line diagnostic script that imports all 8 arm classes and prints their names. It is not a training entry-point and contains no new logic — safe to ignore or delete.
 
 ---
 

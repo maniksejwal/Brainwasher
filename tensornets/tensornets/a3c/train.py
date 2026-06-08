@@ -68,6 +68,7 @@ from pathlib import Path
 from typing import Optional
 
 from tensornets.a3c import node_client as _nc
+from tensornets.a3c.hitl_applier import HITLApplier
 
 log = logging.getLogger("tensornets.a3c.train")
 logging.basicConfig(
@@ -577,6 +578,11 @@ def train(
         })
         arm_states[-1]["throttle_event"].set()  # start unthrottled
 
+        # Register actor/critic in the shadow mode registry so the FastAPI
+        # /session/a3c/action endpoint can evaluate them without loading files.
+        from tensornets.a3c.arms import _ARM_REGISTRY
+        _ARM_REGISTRY[arm_name] = {"actor": actor, "critic": critic}
+
     if scenario_url:
         os.environ.setdefault("TENSORNETS_URL", scenario_url)
     try:
@@ -590,6 +596,10 @@ def train(
 
     # ── CurriculumScheduler: shared scenario picker + prior-session pool ──
     curriculum = CurriculumScheduler(scenarios)
+
+    # ── HITL applier: polls human feedback, exposes reward corrections ─────
+    hitl = HITLApplier()
+    hitl.start()
 
     # Total loop iterations = episodes_per_arm × number of active arms
     # (round-robin means each arm gets episodes_per_arm turns)
@@ -750,6 +760,18 @@ def train(
             consec_fail = 0
             with s["ep_count_lock"]:
                 s["successful"] += 1
+
+            # ── HITL reward correction ────────────────────────────────────────
+            # If a human annotated this episode before the gradient batch was
+            # applied, blend the human signal into the cumulative reward.
+            # The correction is bounded by HITL_WEIGHT (±0.5) so it adjusts
+            # without overriding the LLM scorer signal entirely.
+            hitl_delta = hitl.get_correction(ep_uuid)
+            if hitl_delta != 0.0:
+                summary["cumulative_reward"] = round(
+                    summary.get("cumulative_reward", 0.0) + hitl_delta, 5
+                )
+                summary.setdefault("genuine_metrics", {})["hitl_delta"] = round(hitl_delta, 3)
 
             # Register this episode's outcome with the curriculum so future
             # episodes on this arm can chain from it appropriately.
@@ -982,6 +1004,8 @@ def train(
 
     for s in arm_states:
         _db_finalise_run(s["db_run_id"], s["ep_count"], s["successful"])
+
+    hitl.stop()
 
     _write_manifest(run_dir, {
         "timestamp_end":  time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

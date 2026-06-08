@@ -45,6 +45,10 @@ import os
 import time
 from typing import Any
 
+# ── ARM_REGISTRY: populated by train.py so shadow mode can find loaded actors ──
+# Maps arm_name → {"actor": <ActorNet>, "critic": <CriticNet>}
+_ARM_REGISTRY: dict[str, dict] = {}
+
 from tensornets.a3c.worker import (
     A3CWorker,
     REWARD_DIMS,

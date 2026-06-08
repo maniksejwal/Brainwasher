@@ -480,7 +480,7 @@ export async function getCanonicalTranscripts({ arm, scenarioType, scenarioId } 
  * @param {number}  [opts.windowSize=20] — rolling window size (episodes)
  * @returns {Promise<object[]>}
  */
-export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {}) {
+export async function getMergedExperimentTimeline({ arm, windowSize = 20, slim = false } = {}) {
     const db = await getDb();
     const where = arm ? `WHERE e.arm = ?` : '';
     const params = arm ? [arm] : [];
@@ -489,13 +489,20 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
     // Ghost rows (episode row created but run_episode() threw before _flush_episode)
     // have completed_at = NULL and turn_count = 0 — they must be excluded so that
     // arms with 100% failures don't show up on the timeline with null data.
+    //
+    // slim=true: omit heavy stats-only columns (tokens, scenario_id, etc.) to
+    // reduce JSON payload size for the chart fetch.  Stats tables use a separate
+    // full fetch (slim=false).
+    const statsColumns = slim
+        ? ''
+        : `, e.trust_delta_final, e.turns_to_goal, e.tokens_scout, e.tokens_maverick,
+             e.latency_ms_mean, e.scenario_id`;
     const rows = await db.all(
         `SELECT e.episode_id, e.arm,
                 r.label as run_label, r.run_id, r.started_at as run_started_at,
                 e.cumulative_reward, e.goal_achieved, e.stress_auc,
-                e.trust_delta_final, e.turns_to_goal, e.turn_count,
-                e.tokens_scout, e.tokens_maverick, e.latency_ms_mean,
-                e.scenario_id, e.started_at
+                e.turn_count, e.started_at
+                ${statsColumns}
          FROM htn_benchmark_episodes e
          JOIN htn_benchmark_runs r ON r.run_id = e.run_id
          ${where ? where + ' AND' : 'WHERE'} e.completed_at IS NOT NULL
@@ -562,24 +569,27 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20 } = {})
                 run_id:             ep.run_id,
                 run_restart:        isRestart,
                 hours_elapsed:      hoursElapsed,
-                cumulative_reward:  ep.cumulative_reward,
+                // ── Chart-only fields (always present) ───────────────────────
                 reward_per_turn:    ep.turn_count > 0 ? Math.round((ep.cumulative_reward ?? 0) / ep.turn_count * 1000) / 1000 : null,
-                turn_count:         ep.turn_count,
                 smoothed_reward:    Math.round(smoothed * 1000) / 1000,
                 stddev:             Math.round(Math.sqrt(variance) * 1000) / 1000,
-                stress_auc:         ep.stress_auc,
                 stress_auc_wma:     Math.round(stressWma * 1000) / 1000,
                 goal_achieved:      ep.goal_achieved,
                 goal_rate_wma:      goalWma     !== null ? Math.round(goalWma     * 1000) / 1000 : null,
                 crit_fail_rate_wma: critFailWma !== null ? Math.round(critFailWma * 1000) / 1000 : null,
-                trust_delta_final:  ep.trust_delta_final,
-                turns_to_goal:      ep.turns_to_goal,
-                turn_count:         ep.turn_count,
-                tokens_scout:       ep.tokens_scout,
-                tokens_maverick:    ep.tokens_maverick,
-                latency_ms_mean:    ep.latency_ms_mean,
-                scenario_id:        ep.scenario_id,
-                started_at:         ep.started_at,
+                // ── Stats-table fields (omitted when slim=true) ──────────────
+                ...(slim ? {} : {
+                    cumulative_reward:  ep.cumulative_reward,
+                    turn_count:         ep.turn_count,
+                    stress_auc:         ep.stress_auc,
+                    trust_delta_final:  ep.trust_delta_final,
+                    turns_to_goal:      ep.turns_to_goal,
+                    tokens_scout:       ep.tokens_scout,
+                    tokens_maverick:    ep.tokens_maverick,
+                    latency_ms_mean:    ep.latency_ms_mean,
+                    scenario_id:        ep.scenario_id,
+                    started_at:         ep.started_at,
+                }),
                 missing_arm_slot:   false,
             });
         }

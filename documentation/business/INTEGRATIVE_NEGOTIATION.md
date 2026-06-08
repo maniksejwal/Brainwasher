@@ -1,5 +1,7 @@
 # Integrative Negotiation - Information Discovery First
 
+> **Status**: Design document for the integrative negotiation subsystem. Implementation is pending (business negotiation track deferred). See `business/BUSINESS_SYSTEM_COMPLETE.md` for current status.
+
 **Key Insight**: Real negotiations are about discovering needs, justifications, and benefits - NOT just haggling over price.
 
 ---
@@ -346,7 +348,7 @@ Turn 5: "Here's a package that addresses your [justifier] with our [creative sol
 | **Outcome** | Optimal care | Optimal deal |
 | **Privacy** | Permanent records | Ephemeral (deleted) |
 
-But **same elicitation patterns**! 🎉
+But **same elicitation patterns**!
 
 ---
 
@@ -361,8 +363,4 @@ The code now supports:
 - ✅ Strategic questioning
 
 **Try it**: When you `/negotiate start`, the agent will ASK QUESTIONS FIRST, not lead with price!
-
----
-
-**Your insight was spot-on** - negotiation is information discovery, not just number crunching. The system now reflects that! 🎯
 

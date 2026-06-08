@@ -55,6 +55,22 @@ This document defines the data classification levels used within the multi-agent
 3. **Full**: Public and private information can be shared with explicit consent
 4. **Emergency**: Override for critical health situations only
 
+### Dual consent taxonomy — cross-reference
+
+The consent levels above are the **canonical user-facing taxonomy** enforced by `companions/handlers/privacyGuard.js` and documented in this policy.
+
+The tensornets Python layer (`tensornets/tensornets/agents/privacy_layer.py`) uses a **legacy internal naming** for the same concepts:
+
+| JS canonical name | Python legacy name | Meaning |
+|---|---|---|
+| `NONE` | `NONE` | No sharing permitted |
+| `LIMITED` | `LIMITED` | Aggregated/anonymised signals only |
+| `FULL` | `FULL` | Full sharing permitted |
+| `EMERGENCY` | (mapped to FULL at the Python API boundary) | Critical safety override |
+| — | `implied_consent: bool` | Auto-granted for system-generated concerns (scheduled_followup, clinical_directive) |
+
+When the Node.js layer sends a consent level to the FastAPI bridge, it must use the JS canonical name. The Python layer maps it to its internal enum at the API boundary. Do not use the Python legacy names in user-facing code, UI, or non-tensornets documentation.
+
 ### Consent Workflow
 
 1. **Implied Consent**: System checks if user has given implied consent for similar topics

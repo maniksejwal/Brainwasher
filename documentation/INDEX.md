@@ -71,7 +71,9 @@ The process view documents the runtime interaction flows: how an incoming patien
 The development view covers module organisation, package boundaries, naming conventions, and build/test tooling. The JavaScript codebase is structured around domain-scoped route handlers, a companion abstraction layer, and a shared `db/` query module. The Python codebase uses a `tensornets` namespace package with sub-packages for `a3c`, `mps`, `mcts`, and `physio`.
 
 - Primary reference: [`tensornets/00_architecture.md §4`](tensornets/00_architecture.md)
-- JavaScript training pipeline: `js/18_training_pipeline.md` *(pending)*
+- JavaScript training pipeline: [`js/18_training_pipeline.md`](js/18_training_pipeline.md)
+- JavaScript GUI: [`19_GUI.md`](19_GUI.md)
+- Care circle orchestration engine: [`js/20_care_circle_orchestration.md`](js/20_care_circle_orchestration.md)
 
 ### Physical View — How is the system deployed?
 

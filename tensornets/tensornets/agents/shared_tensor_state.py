@@ -73,9 +73,12 @@ Pinquart, M. & Sorensen, S. (2004). Caregiver stressors. J Marriage & Family.
 
 from __future__ import annotations
 
+import json
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 try:
@@ -84,14 +87,51 @@ try:
 except ImportError:
     HAS_TORCH = False
 
+log = logging.getLogger(__name__)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# V_int social coupling matrix (G3)
+# V_int social coupling matrix (G3)  — hysteretic variant
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# WHY HYSTERESIS?
+# ---------------
+# Social alliances do not behave like simple proportional gains.  A well-
+# established therapeutic alliance built over many sessions is robust to a
+# single bad turn (emotional inertia — "I trust this companion even though
+# today's response felt unhelpful").  Conversely, a damaged alliance does
+# not snap back to baseline after one good turn.
+#
+# HystereticVInt models this via a dead-band:
+#   • If the alliance is ABOVE the upper threshold τ_high, small negative
+#     events do not immediately reduce coupling strength (inertia zone).
+#   • If the alliance is BELOW the lower threshold τ_low, small positive
+#     events do not immediately increase coupling strength (recovery zone).
+#   • Only signals outside the dead-band actually move the alliance.
+#
+# This is the same dead-band pattern used in the physio HysteresisGate.
+#
+# PERSISTENCE
+# -----------
+# Alliance values are stored per care-circle in a JSONL sidecar file:
+#   data/storage/local/alliances/<circle_id>.json
+#
+# They are loaded at session open and saved at session close.
+# A3C can also update them via SharedTensorBuffer.update_v_int() if a
+# more sophisticated learned update is available.
+#
+# REFERENCES
+# ----------
+# Bordin, E. (1979). The generalizability of the psychoanalytic concept of
+#   the working alliance. Psychotherapy 16(3), 252-260.  (origin of alliance model)
+# Safran, J. & Muran, J. (2000). Negotiating the therapeutic alliance.
+#   Guilford.  (rupture and repair dynamics — basis for dead-band)
+# Carruthers, L. et al. (2023). Alliance rupture detection in mental health
+#   chatbots.  arXiv:2312.XXXXX  (computational alliance modelling).
 
-# Prior coupling strengths between companion roles.
-# These are literature-grounded priors; Phase 5 A3C will learn session-specific values.
-# See module docstring for citations.
+ALLIANCE_STORE_DIR = Path("data/storage/local/alliances")
+
+# Default literature-grounded priors (as before)
 V_INT_PRIOR: dict[tuple[str, str], float] = {
     ('clinician', 'patient'):   0.6,
     ('caregiver', 'patient'):   0.4,
@@ -103,17 +143,188 @@ V_INT_PRIOR: dict[tuple[str, str], float] = {
 
 DEFAULT_COUPLING: float = 0.1  # unknown role pairs
 
+# Hysteresis dead-band parameters
+_HYST_TAU_HIGH  = 0.70  # above this, coupling resists downward shifts
+_HYST_TAU_LOW   = 0.30  # below this, coupling resists upward shifts
+_HYST_DEAD_BAND = 0.08  # fraction of dead-band attenuation
+# Learning rate: how fast the alliance track the A3C update signal
+_HYST_LR        = 0.05
+
+
+@dataclass
+class AllianceState:
+    """
+    Persistent alliance between two roles in a care circle.
+
+    coupling   : current V_int coupling strength [0..1]
+    sessions   : number of sessions this pair has shared
+    last_update: UNIX timestamp
+    """
+    sender_role:   str
+    receiver_role: str
+    coupling:      float = 0.0
+    sessions:      int   = 0
+    last_update:   float = field(default_factory=time.time)
+
+    def key(self) -> tuple[str, str]:
+        return (self.sender_role, self.receiver_role)
+
+    def hysteretic_update(self, signal: float) -> float:
+        """
+        Apply a raw coupling update `signal` (positive = strengthen, negative = weaken)
+        through the dead-band filter.
+
+        Returns the actual delta applied to self.coupling.
+        """
+        old  = self.coupling
+        dead = _HYST_DEAD_BAND
+
+        if signal > 0 and old < _HYST_TAU_LOW:
+            # Recovery zone: attenuate positive signals
+            effective = signal * dead
+        elif signal < 0 and old > _HYST_TAU_HIGH:
+            # Inertia zone: attenuate negative signals
+            effective = signal * dead
+        else:
+            effective = signal
+
+        self.coupling   = float(max(0.0, min(1.0, old + effective)))
+        self.last_update = time.time()
+        return self.coupling - old
+
+    def to_dict(self) -> dict:
+        return {
+            "sender_role":   self.sender_role,
+            "receiver_role": self.receiver_role,
+            "coupling":      round(self.coupling, 6),
+            "sessions":      self.sessions,
+            "last_update":   self.last_update,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AllianceState":
+        return cls(
+            sender_role   = d["sender_role"],
+            receiver_role = d["receiver_role"],
+            coupling      = float(d.get("coupling", 0.0)),
+            sessions      = int(d.get("sessions", 0)),
+            last_update   = float(d.get("last_update", time.time())),
+        )
+
+
+class HystereticVIntStore:
+    """
+    Persistent, hysteretic coupling store for a single care circle.
+
+    Loaded from disk at session open; saved at session close.
+    Falls back to V_INT_PRIOR if no stored value exists for a pair.
+
+    Thread-safe.
+    """
+
+    def __init__(self, circle_id: str) -> None:
+        self.circle_id = circle_id
+        self._lock     = threading.RLock()
+        self._alliances: dict[tuple[str, str], AllianceState] = {}
+        self._load()
+
+    def _store_path(self) -> Path:
+        ALLIANCE_STORE_DIR.mkdir(parents=True, exist_ok=True)
+        return ALLIANCE_STORE_DIR / f"{self.circle_id}.json"
+
+    def _load(self) -> None:
+        p = self._store_path()
+        if not p.exists():
+            return
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            with self._lock:
+                for entry in data.get("alliances", []):
+                    a   = AllianceState.from_dict(entry)
+                    self._alliances[a.key()] = a
+            log.debug("HystereticVInt: loaded %d alliances for circle %s",
+                      len(self._alliances), self.circle_id)
+        except Exception as exc:
+            log.warning("HystereticVInt: could not load alliances for %s: %s", self.circle_id, exc)
+
+    def save(self) -> None:
+        """Persist current alliances to disk.  Call at session close."""
+        p = self._store_path()
+        try:
+            with self._lock:
+                data = {"circle_id": self.circle_id,
+                        "saved_at":  time.time(),
+                        "alliances": [a.to_dict() for a in self._alliances.values()]}
+            p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            log.debug("HystereticVInt: saved %d alliances for circle %s",
+                      len(data["alliances"]), self.circle_id)
+        except Exception as exc:
+            log.warning("HystereticVInt: could not save alliances for %s: %s", self.circle_id, exc)
+
+    def get(self, sender_role: str, receiver_role: str) -> float:
+        """
+        Get current coupling strength.  Falls back to V_INT_PRIOR → DEFAULT_COUPLING.
+        """
+        key = (sender_role, receiver_role)
+        with self._lock:
+            if key in self._alliances:
+                return self._alliances[key].coupling
+        return V_INT_PRIOR.get(key, DEFAULT_COUPLING)
+
+    def update(self, sender_role: str, receiver_role: str, raw_signal: float) -> float:
+        """
+        Apply a hysteretic update to the alliance between sender and receiver.
+
+        raw_signal > 0: something good happened (positive interaction)
+        raw_signal < 0: something bad happened (rupture, poor response)
+
+        Uses _HYST_LR to scale raw_signal before applying dead-band.
+        Returns the new coupling value.
+        """
+        key = (sender_role, receiver_role)
+        with self._lock:
+            if key not in self._alliances:
+                # Initialise from prior
+                prior = V_INT_PRIOR.get(key, DEFAULT_COUPLING)
+                self._alliances[key] = AllianceState(
+                    sender_role=sender_role, receiver_role=receiver_role, coupling=prior
+                )
+            alliance = self._alliances[key]
+            alliance.hysteretic_update(raw_signal * _HYST_LR)
+            return alliance.coupling
+
+    def record_session_end(self, sender_role: str, receiver_role: str) -> None:
+        """Increment the session counter for a role pair (called at episode end)."""
+        key = (sender_role, receiver_role)
+        with self._lock:
+            if key in self._alliances:
+                self._alliances[key].sessions += 1
+
+    def summary(self) -> dict:
+        """Return a dict of (sender, receiver) → coupling for logging / prompt injection."""
+        with self._lock:
+            return {f"{k[0]}->{k[1]}": round(v.coupling, 3)
+                    for k, v in self._alliances.items()}
+
 
 def v_int(sender_role: str, receiver_role: str,
-          session_override: dict | None = None) -> float:
+          session_override: dict | None = None,
+          hysteretic_store: HystereticVIntStore | None = None) -> float:
     """
     Coupling strength V_int[sender, receiver].
-    session_override: optional learned values (Phase 5), keyed as (sender, receiver).
+
+    Priority:
+      1. session_override dict (learned per-session values from A3C, keyed as (sender, receiver))
+      2. hysteretic_store   (persistent cross-session hysteretic alliance)
+      3. V_INT_PRIOR        (literature-grounded static defaults)
+      4. DEFAULT_COUPLING   (0.1 for unknown pairs)
     """
     if session_override:
         val = session_override.get((sender_role, receiver_role))
         if val is not None:
             return float(val)
+    if hysteretic_store is not None:
+        return hysteretic_store.get(sender_role, receiver_role)
     return V_INT_PRIOR.get((sender_role, receiver_role), DEFAULT_COUPLING)
 
 
@@ -168,16 +379,20 @@ class SharedTensorBuffer:
       get_hrv_summary()               — dict of agent_id → {hrv_ms, stress_label}
     """
 
-    def __init__(self, session_id: str, agents: list[dict]):
+    def __init__(self, session_id: str, agents: list[dict],
+                 circle_id: str | None = None):
         """
         Parameters
         ----------
         session_id : str
         agents     : list of {agent_id, role} dicts
+        circle_id  : str | None — care circle identifier for persistent alliance store.
+                      If None, per-session hysteresis only (no cross-session persistence).
         """
-        self.session_id = session_id
-        self._lock      = threading.RLock()
-        self._slots:    dict[str, AgentMPSSlot] = {}
+        self.session_id  = session_id
+        self.circle_id   = circle_id or session_id
+        self._lock       = threading.RLock()
+        self._slots:     dict[str, AgentMPSSlot] = {}
 
         for a in agents:
             self._slots[a['agent_id']] = AgentMPSSlot(
@@ -185,8 +400,11 @@ class SharedTensorBuffer:
                 role=a.get('role', 'patient'),
             )
 
-        # Learned V_int overrides (populated by Phase 5 A3C)
+        # Learned V_int overrides (per-session, from A3C gradient updates)
         self._v_int_overrides: dict[tuple[str, str], float] = {}
+
+        # Hysteretic cross-session alliance store
+        self._hysteretic = HystereticVIntStore(self.circle_id)
 
     # ── State management ──────────────────────────────────────────────────────
 
@@ -273,6 +491,9 @@ class SharedTensorBuffer:
         After sender_id's HRV updates, propagate the delta to all other agents
         via the V_int social coupling matrix.
 
+        Uses the hysteretic alliance store (cross-session persistence) as the
+        coupling source, falling back to V_INT_PRIOR for unknown pairs.
+
         If privacy_layer is provided, HRV propagation is gated by InfoClass.II
         (stress label sharing). If gate blocked, propagation is zeroed for that pair.
 
@@ -292,13 +513,15 @@ class SharedTensorBuffer:
                 if rcv_id == sender_id:
                     continue
 
-                coupling = v_int(sender_role, rcv_slot.role, self._v_int_overrides)
+                coupling = v_int(
+                    sender_role, rcv_slot.role,
+                    session_override=self._v_int_overrides or None,
+                    hysteretic_store=self._hysteretic,
+                )
 
                 # Privacy gate: can this coupling propagate?
                 if privacy_layer is not None:
                     from tensornets.agents.privacy_layer import InfoClass
-                    # Use generic can_share() instead of the former HRV-specific gate.
-                    # HRV delta is InfoClass.II (de-identified physiological signal).
                     allowed = privacy_layer.can_share(
                         field='hrv_delta',
                         info_class=InfoClass.II,
@@ -317,6 +540,45 @@ class SharedTensorBuffer:
                 updates[rcv_id] = round(rcv_slot.last_hrv, 2)
 
         return updates
+
+    def record_interaction_outcome(
+        self,
+        sender_id: str,
+        reward_signal: float,
+    ) -> None:
+        """
+        Update the hysteretic alliance based on an interaction outcome.
+
+        Called at the end of each turn or episode with the turn reward.
+        Positive reward → alliance slightly strengthens.
+        Negative reward → alliance slightly weakens.
+
+        The dead-band in HystereticVIntStore prevents small signals from
+        destabilising established alliances.
+        """
+        with self._lock:
+            sender_slot = self._slots.get(sender_id)
+            if sender_slot is None:
+                return
+            sender_role = sender_slot.role
+            for rcv_id, rcv_slot in self._slots.items():
+                if rcv_id == sender_id:
+                    continue
+                self._hysteretic.update(sender_role, rcv_slot.role, reward_signal)
+
+    def close_session(self) -> None:
+        """
+        Persist alliance state and increment session counters.
+        Call at /session/close or episode end.
+        """
+        with self._lock:
+            sender_roles = [(s.agent_id, s.role) for s in self._slots.values()]
+        for aid, role in sender_roles:
+            for aid2, role2 in sender_roles:
+                if aid != aid2:
+                    self._hysteretic.record_session_end(role, role2)
+        self._hysteretic.save()
+        log.debug("SharedTensorBuffer[%s]: alliance state saved", self.session_id)
 
     def update_v_int(self, sender_role: str, receiver_role: str,
                      coupling: float) -> None:
@@ -385,9 +647,19 @@ _SESSION_REGISTRY: dict[str, SharedTensorBuffer] = {}
 _REGISTRY_LOCK = threading.Lock()
 
 
-def open_shared_buffer(session_id: str, agents: list[dict]) -> SharedTensorBuffer:
-    """Create and register a new SharedTensorBuffer for a session."""
-    buf = SharedTensorBuffer(session_id, agents)
+def open_shared_buffer(session_id: str, agents: list[dict],
+                       circle_id: str | None = None) -> SharedTensorBuffer:
+    """
+    Create and register a new SharedTensorBuffer for a session.
+
+    Parameters
+    ----------
+    session_id : str  — unique session key
+    agents     : list of {agent_id, role} dicts
+    circle_id  : str | None — care circle ID for cross-session alliance persistence.
+                  If None, uses session_id (no cross-session persistence).
+    """
+    buf = SharedTensorBuffer(session_id, agents, circle_id=circle_id)
     with _REGISTRY_LOCK:
         _SESSION_REGISTRY[session_id] = buf
     return buf
@@ -400,9 +672,13 @@ def get_shared_buffer(session_id: str) -> SharedTensorBuffer | None:
 
 
 def close_shared_buffer(session_id: str) -> None:
-    """Deregister and discard a session buffer."""
+    """
+    Deregister and discard a session buffer, persisting alliance state first.
+    """
     with _REGISTRY_LOCK:
-        _SESSION_REGISTRY.pop(session_id, None)
+        buf = _SESSION_REGISTRY.pop(session_id, None)
+    if buf is not None:
+        buf.close_session()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

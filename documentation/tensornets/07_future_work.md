@@ -162,3 +162,67 @@ Based on the observed effect in run_013 (goal_achieved%: 80.8% vs 69.2%, Δ=11.6
 See `06_results.md §6.3` for the full calculation. The minimum detectable effect at 80% power with n=200 is Δ ≥ 8pp (OR ≥ 1.5).
 
 4. **Should Arm 2 (production JS companion) be treated as a teacher or as a baseline?** Currently it updates the shared Actor/Critic. If treated as a frozen external reference, the comparison would be cleaner but the policy would learn slower.
+
+---
+
+## 6. Business goals and product vision
+
+The Brainwasher 3 framework targets three commercial tiers:
+
+### 6.1 Clinical / healthcare tier
+
+| Goal | Status | Horizon |
+|---|---|---|
+| Validated AI companion for deaddiction support (alcohol, nicotine, opioids) | 🟡 Training in progress | 12–18 months post-PhD |
+| GDPR/HIPAA-compliant deployment with InfoClass.III consent UI | 🔴 Design only | 18 months |
+| Clinician dashboard: session review, HITL feedback, escalation audit trail | 🟡 Backend ready (HITL done) | 6 months |
+| Wearable-integrated HRV personalisation (Galaxy Watch / Polar H10) | 🟡 BLE bridge implemented | 3–6 months |
+| IRB-approved clinical pilot with real patients | 🔴 Requires ethics approval | 24 months |
+| Peer-reviewed publication: A3C vs rule-based companion (n≥200/arm) | 🟡 Data collection | 12 months |
+
+### 6.2 B2B / enterprise tier
+
+The business companion (professional circles) uses the same HTN framework applied to workplace scenarios:
+
+| Goal | Status | Horizon |
+|---|---|---|
+| Negotiation/decision support: companion assists in professional circles (see GUI_BUSINESS_INTEGRATION.md) | 🟡 GUI designed | 6 months |
+| Engagement coaching: companion tracks and improves employee wellbeing metrics (stress, burnout indicators) | 🔴 Not started | 12 months |
+| Meeting intelligence: post-meeting transcript analysis → commitment tracking, unresolved tension flagging | 🔴 Concept | 18 months |
+| Manager coaching: companion trains managers on psychological safety and de-escalation | 🔴 Concept | 18 months |
+| HR analytics: aggregate (de-identified) stress AUC and alliance metrics across teams | 🔴 Concept | 18 months |
+| API licensing: white-label HTN companion for EHR vendors (Epic, Cerner integration) | 🔴 Concept | 24 months |
+
+### 6.3 Consumer tier
+
+| Goal | Status | Horizon |
+|---|---|---|
+| Mobile companion app (Android/iOS) with Galaxy Watch BLE integration | 🟡 BLE bridge implemented | 6 months |
+| Subscription model: personal wellbeing companion (£9.99/month) | 🔴 Pricing TBD | 12 months |
+| Family care circle: coordinate multiple caregivers for elderly parent | 🟡 Care circle implemented | 6 months |
+| Grief companion: bereavement support companion with hysteretic alliance | 🔴 New persona needed | 12 months |
+| Multi-language support (Spanish, Mandarin, Hindi) | 🔴 NLP adaptation needed | 24 months |
+
+### 6.4 Key business metrics to track
+
+| Metric | Definition | Target |
+|---|---|---|
+| Session retention rate | % of users completing ≥5 sessions | > 60% |
+| Alliance persistence | Mean V_int(patient→companion) across 10 sessions | > 0.55 |
+| Crisis prevention rate | % of CLINICAL_ALERT tiers that do NOT escalate to IMMEDIATE within 3 sessions (proactive success) | > 70% |
+| HITL annotation velocity | Human annotations per day (quality signal) | > 50/day at scale |
+| Shadow divergence rate | % of A3C responses with DRI < 0.6 vs rule-based | < 30% (convergence target) |
+| Goal achievement rate | % of training episodes achieving session goal | > 70% (run_023 target) |
+| Clinician adoption | % of escalations acknowledged by clinician within 24h in pilot | > 80% |
+
+### 6.5 Competitive landscape and differentiation
+
+| Competitor | Approach | Brainwasher 3 differentiation |
+|---|---|---|
+| Woebot | Rule-based CBT chatbot | HTN learns per-user; physiological grounding; multi-agent |
+| Wysa | CBT + LLM | A3C learns optimal response strategy; V_int social coupling |
+| Replika | Engagement-optimised LLM | Clinical safety gates; HysteresisGate prevents sycophancy |
+| Limbic | Clinical screening | Full companion (not just screening); MCTS planning |
+| Koa Health | Standalone app | Care circle model: patient + caregiver + clinician in one loop |
+| General LLMs (GPT-4, Claude) | General-purpose | Physiological personalisation; RL training; alliance persistence |
+

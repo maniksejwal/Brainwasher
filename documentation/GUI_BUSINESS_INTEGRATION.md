@@ -1,8 +1,10 @@
 # Business GUI Integration - Professional Circles & Documents
 
+> **Status**: GUI integration design for professional circles and reciprocal roles. See `documentation/js/19_GUI.md` for the current GUI architecture.
+
 ## 🎯 **Dynamic Assignment & Reciprocal Roles**
 
-**Answer to your question:** Yes! Dynamic assignment is exactly related to reciprocation of roles - the same concept we already have in care circles.
+Dynamic assignment is directly related to reciprocation of roles - the same concept used in care circles.
 
 ### **Care Circles Reciprocal Pattern (Existing)**
 ```

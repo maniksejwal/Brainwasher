@@ -115,27 +115,31 @@ class ConversationAnnotator {
     async saveAnnotation(entry, annotation, annotatorId = 'reviewer') {
         const db = await getDb();
         
-        // Create feedback table if it doesn't exist
+        // Create feedback table if it doesn't exist (minimal schema; full schema
+        // is managed by the Node.js benchmarks route on first call)
         await db.run(`
             CREATE TABLE IF NOT EXISTS feedback (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                conversation_id TEXT,
-                message_id INTEGER,
-                user_id TEXT,
-                circle_id TEXT,
-                score INTEGER,
-                comment TEXT,
-                timestamp INTEGER,
-                annotator_id TEXT
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id    TEXT,
+                episode_id         TEXT,
+                arm                TEXT,
+                turn_idx           INTEGER,
+                score              INTEGER NOT NULL,
+                comment            TEXT    DEFAULT '',
+                timestamp          INTEGER NOT NULL DEFAULT (unixepoch('now') * 1000),
+                annotator_id       TEXT    DEFAULT 'reviewer',
+                applied_to_a3c     INTEGER NOT NULL DEFAULT 0,
+                applied_at         INTEGER
             )
         `);
         
         await db.run(
-            `INSERT INTO feedback (conversation_id, user_id, score, comment, timestamp, annotator_id)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO feedback (conversation_id, episode_id, arm, score, comment, timestamp, annotator_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
             [
                 entry.conversation_id,
-                entry.user_id,
+                entry.episode_id  || null,
+                entry.arm         || null,
                 annotation.score,
                 annotation.comment || '',
                 annotation.timestamp,

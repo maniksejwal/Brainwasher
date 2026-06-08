@@ -1,3 +1,9 @@
+> ⚠️ **DEPRECATED** — This is §5 of a planning document whose §1–§4 no longer exist. It uses Gemini/GPT as the analysis LLM and describes a "small RL orchestrator model" that was replaced by the tensornets A3C actor/MCTS system.
+>
+> **Superseded by:** `documentation/tensornets/04_training_system.md`
+
+---
+
 Project Documentation: Advanced Reinforcement Learning & Simulation Plan
 
 This document details the comprehensive strategy for training and improving the multi-agent system. It incorporates simulation, a robust Human-in-the-Loop (HITL) feedback mechanism, and a plan for tracking model and prompt evolution.
