@@ -97,25 +97,30 @@ class CurriculumScheduler:
     1. **Scenario selection** — weighted random draw from the shared scenario pool,
        de-prioritising very short scenarios.
     2. **Prior-session pool management** — maintains per-arm pools of past episode
-       summaries in two tiers:
-         - ``success_pool``   : episodes where goal_achieved=True
+       summaries in three tiers:
+         - ``success_pool``   : episodes where goal_achieved=True (70% draw weight)
          - ``recovery_pool``  : episodes where goal_achieved=False but
-                                info_coverage >= MIN_RECOVERY_COV (partial progress)
-       Episodes that are 2-strike critical failures (info_coverage < EXCLUDE_COV)
-       are excluded entirely — too noisy for chaining.
+                                info_coverage >= MIN_RECOVERY_COV (29% draw weight)
+         - ``dormant_pool``   : dropout / crit_fail episodes ( 1% draw weight).
+                                Real patients do re-engage after crisis or dropout —
+                                this pool models that rare but important event.
+       Episodes with cov < EXCLUDE_COV, no goal, no dropout, no crit_fail are
+       discarded entirely — they carry no useful prior-session signal.
     3. **Chaining rate schedule** — the probability of attaching a prior_session
        starts low and rises as the arm accumulates episodes.  This prevents the
        policy from over-fitting to prior-session formats before it can handle
        cold-start sessions reliably.
 
        Rate schedule (per arm):
-         ep 0–49    : 0%  (no chaining — build cold-start robustness first)
-         ep 50–199  : 15% (gentle introduction)
-         ep 200–399 : 30%
-         ep 400+    : 50% (long-run target)
+         ep 0–10    : 0%  (no chaining — build cold-start robustness first)
+         ep 11–50   : 15% (gentle introduction)
+         ep 51–100  : 30%
+         ep 101+    : 50% (long-run target)
 
-    4. **90/10 pool split** — when chaining, 90% of draws come from the success
-       pool, 10% from the recovery pool (teaches error-recovery).
+    4. **70/29/1 pool split** — 70% success, 29% recovery, 1% dormant.
+    5. **Long-chain bias** — within each pool, draws are weighted by
+       LONG_CHAIN_BIAS^(session_number−1) so deeper longitudinal chains are
+       preferred.  This encourages the policy to practise multi-session skills.
 
     Usage
     -----
@@ -134,17 +139,24 @@ class CurriculumScheduler:
     """
 
     # Episode thresholds for the chaining rate schedule
+    # Starts low so the policy builds cold-start robustness before seeing
+    # longitudinal context.  Ramps faster in the early phase because a few
+    # multi-session examples are highly informative; slows as the policy
+    # saturates on chain diversity.
     _RAMP: list[tuple[int, float]] = [
-        (  0,  0.00),   # 0–49 episodes: no chaining
-        ( 50,  0.15),   # 50–199: gentle
-        (200,  0.30),   # 200–399: growing
-        (400,  0.50),   # 400+: long-run target
+        (  0,  0.00),   #   0–10 episodes: no chaining at all
+        ( 11,  0.15),   #  11–50: gentle introduction
+        ( 51,  0.30),   #  51–100: growing
+        (101,  0.50),   # 101+: long-run target (50% — half of episodes are chained)
     ]
 
     MIN_RECOVERY_COV   = 0.30   # minimum info_coverage to enter recovery pool
-    EXCLUDE_COV        = 0.15   # below this + goal_achieved=False → excluded
-    SUCCESS_POOL_FRAC  = 0.90   # 90% draws from success pool when chaining
+    EXCLUDE_COV        = 0.15   # below this + goal_achieved=False → dormant pool
+    SUCCESS_POOL_FRAC  = 0.70   # 70%: draw from success pool
+    RECOVERY_POOL_FRAC = 0.29   # 29%: draw from recovery pool
+    # DORMANT_POOL_FRAC = 0.01  # 1%: dropout / crit_fail — rare but real returns
     MAX_POOL_SIZE      = 200    # cap each pool to avoid unbounded memory
+    LONG_CHAIN_BIAS    = 2.0    # exponential weight multiplier per additional session
 
     def __init__(self, scenarios: list[dict]) -> None:
         self._scenarios = scenarios
@@ -153,9 +165,10 @@ class CurriculumScheduler:
             1.0 if (sc.get("turns") or sc.get("max_turns") or 8) > 4 else 0.33
             for sc in scenarios
         ]
-        # Per-arm pools
-        self._success:  dict[str, list[dict]] = {}
-        self._recovery: dict[str, list[dict]] = {}
+        # Per-arm pools — three tiers
+        self._success:  dict[str, list[dict]] = {}   # goal_achieved=True
+        self._recovery: dict[str, list[dict]] = {}   # partial progress (info_coverage ≥ MIN)
+        self._dormant:  dict[str, list[dict]] = {}   # dropout / crit_fail — rare re-engagement
         self._lock = threading.Lock()
 
     # ── Public API ──────────────────────────────────────────────────────────
@@ -199,32 +212,45 @@ class CurriculumScheduler:
         """
         File an episode summary into the appropriate per-arm pool.
 
-        Called after each episode completes successfully.
+        Three-tier routing:
+          success  (70% draw weight)  — goal_achieved=True
+          recovery (29% draw weight)  — partial progress, info_coverage ≥ MIN_RECOVERY_COV
+          dormant  ( 1% draw weight)  — dropout or crit_fail; represents patients who
+                                        may re-engage later.  Kept for realism but drawn
+                                        very rarely so they don't distort training.
+
+        Summaries that are total failures (not goal, cov < EXCLUDE_COV, not dropout/crit)
+        are silently discarded — they carry no useful prior-session signal.
         """
-        cov          = float(summary.get("info_coverage", 0.0))
+        cov           = float(summary.get("info_coverage", 0.0))
         goal_achieved = bool(summary.get("goal_achieved", False))
         crit_fail     = bool(summary.get("critical_failure", False))
         dropout       = bool(summary.get("synthetic_dropout", False))
 
-        # Exclude 2-strike critical failures and synthetic dropouts from all pools.
-        # Dropout episodes are kept in the training buffer (the low reward IS the
-        # signal) but excluded from the prior-session pools — a patient who walked
-        # out early is not a good template for the next session's starting state.
-        if crit_fail or dropout or (not goal_achieved and cov < self.EXCLUDE_COV):
-            return
+        # Capture current session_number so chain depth is trackable
+        sim_tl = (summary.get("session_memory") or {}).get("simulated_timeline") or {}
+        summary = dict(summary)  # shallow copy — do not mutate caller's dict
+        summary["session_number"] = int(sim_tl.get("session_number") or 1)
 
         with self._lock:
             if goal_achieved:
                 pool = self._success.setdefault(arm_name, [])
                 pool.append(summary)
                 if len(pool) > self.MAX_POOL_SIZE:
-                    # Evict oldest to keep pool bounded
+                    del pool[0]
+            elif crit_fail or dropout:
+                # Dormant pool: patient dropped out or had a crisis.
+                # Real returning patients exist — represent this at 1% draw rate.
+                pool = self._dormant.setdefault(arm_name, [])
+                pool.append(summary)
+                if len(pool) > self.MAX_POOL_SIZE:
                     del pool[0]
             elif cov >= self.MIN_RECOVERY_COV:
                 pool = self._recovery.setdefault(arm_name, [])
                 pool.append(summary)
                 if len(pool) > self.MAX_POOL_SIZE:
                     del pool[0]
+            # else: total failure (cov < EXCLUDE_COV, no goal, no dropout) → discard
 
     def pool_stats(self, arm_name: str) -> dict:
         """Return pool sizes for logging."""
@@ -232,6 +258,7 @@ class CurriculumScheduler:
             return {
                 "success":  len(self._success.get(arm_name, [])),
                 "recovery": len(self._recovery.get(arm_name, [])),
+                "dormant":  len(self._dormant.get(arm_name, [])),
             }
 
     # ── Internal ────────────────────────────────────────────────────────────
@@ -292,27 +319,52 @@ class CurriculumScheduler:
 
     def _draw_prior(self, arm_name: str, rng: random.Random) -> dict | None:
         """
-        Draw one prior session from the arm's pools.
+        Draw one prior session from the arm's pools using the 70/29/1 split.
 
-        90% success pool, 10% recovery pool.
-        Falls back to whichever pool is non-empty if one is empty.
-        Returns None if both pools are empty.
+        Pool draw probabilities:
+          70% success   — completed goal sessions
+          29% recovery  — partial-progress sessions (teaches error recovery)
+           1% dormant   — dropout / crit_fail (teaches re-engagement handling)
+
+        Within each pool, a long-chain bias is applied: sessions with a higher
+        session_number (deeper in a longitudinal chain) are drawn with exponentially
+        higher probability (LONG_CHAIN_BIAS ^ session_number).  This encourages
+        the policy to practice multi-session longitudinal skills, not just
+        session-1 re-starts.
+
+        Falls back gracefully if a pool is empty.
+        Returns None if all pools are empty.
         """
         with self._lock:
-            success_pool  = list(self._success.get(arm_name, []))
-            recovery_pool = list(self._recovery.get(arm_name, []))
+            s_pool = list(self._success.get(arm_name, []))
+            r_pool = list(self._recovery.get(arm_name, []))
+            d_pool = list(self._dormant.get(arm_name, []))
 
-        if not success_pool and not recovery_pool:
+        if not s_pool and not r_pool and not d_pool:
             return None
-        if not success_pool:
-            return rng.choice(recovery_pool)
-        if not recovery_pool:
-            return rng.choice(success_pool)
 
-        # 90/10 split
-        if rng.random() < self.SUCCESS_POOL_FRAC:
-            return rng.choice(success_pool)
-        return rng.choice(recovery_pool)
+        # Determine which pool to sample from
+        available = [(s_pool, 0.70), (r_pool, 0.29), (d_pool, 0.01)]
+        # Filter out empty pools and re-normalise weights
+        available = [(p, w) for p, w in available if p]
+        total_w = sum(w for _, w in available)
+        # Weighted random pool selection
+        roll = rng.random() * total_w
+        cumulative = 0.0
+        chosen_pool = available[-1][0]  # fallback
+        for pool, w in available:
+            cumulative += w
+            if roll < cumulative:
+                chosen_pool = pool
+                break
+
+        # Long-chain bias: weight each candidate by LONG_CHAIN_BIAS^session_number
+        # so deeper chains are preferred.  session_number=1 → weight 1, =2 → 2, =3 → 4, etc.
+        weights = [
+            self.LONG_CHAIN_BIAS ** max(0, int(ep.get("session_number", 1)) - 1)
+            for ep in chosen_pool
+        ]
+        return rng.choices(chosen_pool, weights=weights, k=1)[0]
 
 
 def _get_arm_classes():
@@ -782,7 +834,7 @@ def train(
 
             log.info(
                 "arm=%-32s  w%d  ep=%04d/%d  scenario=%-35s  reward=%.3f  turns=%d  "
-                "| ep_counts=%s  total_new=%d/%d  chain=%s  pool=S%d/R%d",
+                "| ep_counts=%s  total_new=%d/%d  chain=%s  pool=S%d/R%d/D%d",
                 s["name"], worker_idx, arm_ep, target,
                 scenario.get("scenario_id", "?")[:35],
                 summary.get("mean_reward", 0.0),
@@ -793,6 +845,7 @@ def train(
                 "Y" if use_prior else "N",
                 pool_s["success"],
                 pool_s["recovery"],
+                pool_s["dormant"],
             )
 
             # Brief pause to avoid exhausting Bedrock per-minute token quota.

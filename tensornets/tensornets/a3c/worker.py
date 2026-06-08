@@ -2048,6 +2048,10 @@ class A3CWorker:
             # day and time when this session is used as a prior for the next.
             "simulated_timeline": scenario.get("simulated_timeline") or {},
         }
+        # Propagate session_number to top-level summary for CurriculumScheduler
+        # chain-length tracking and dashboard visibility.
+        sim_tl = scenario.get("simulated_timeline") or {}
+        summary["session_number"] = int(sim_tl.get("session_number") or 1)
         summary["genuine_metrics"] = genuine_metrics
 
         # Index this episode into TensorRAG episode memory (non-blocking)
