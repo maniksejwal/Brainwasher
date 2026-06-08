@@ -128,7 +128,7 @@ SCENARIO GOAL: {scenario_goal}
 SCENARIO CONTEXT: {scenario_context}
 PATIENT PHYSIO CONTEXT: {physio_context}
 PRIOR COMMITMENTS (do not contradict): {commitment_context}
-
+{rag_context_block}
 Recent history (last 3 exchanges):
 {history_block}
 
@@ -390,6 +390,7 @@ class A3CScorer:
         physio:           dict | None = None,
         goal_descriptions: dict | None = None,
         commitment_context: str = "",
+        rag_context:       str = "",
     ) -> TurnScoreResult:
         """
         Score one turn.  Returns TurnScoreResult with integer scores AND
@@ -399,6 +400,10 @@ class A3CScorer:
         physio_context = _format_physio_context(physio)
         # Enrich goal text with per-goal eval criteria when available
         enriched_goal = _enrich_goal_text(scenario_goal, goal_descriptions)
+        rag_block = (
+            f"\nCLINICAL KNOWLEDGE (TensorRAG — relevant to current physiological state):\n{rag_context}\n"
+            if rag_context else ""
+        )
         prompt = _SCORING_PROMPT.format(
             patient_message    = patient_message[:500],
             agent_response     = agent_response[:500],
@@ -410,6 +415,7 @@ class A3CScorer:
             history_block      = history_block,
             physio_context     = physio_context,
             commitment_context = commitment_context or "(none so far)",
+            rag_context_block  = rag_block,
         )
 
         self._call_count += 1

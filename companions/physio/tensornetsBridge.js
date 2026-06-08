@@ -697,3 +697,121 @@ export async function getLongitudinalHint(subjectId) {
         return '';
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TensorRAG  — physio-conditioned retrieval
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Query TensorRAG for relevant context given the current conversation turn
+ * and physiological state.
+ *
+ * Returns an array of retrieved chunks (clinical knowledge or episode memory)
+ * that are relevant both semantically AND physiologically.
+ *
+ * @param {Object} opts
+ * @param {string}   opts.text               - Current conversation text / query
+ * @param {number}   [opts.hrv_rmssd_ms=35]  - Patient HRV in ms
+ * @param {number}   [opts.stress_index=0.3] - 0–1 stress score
+ * @param {number}   [opts.sleep_quality=1]  - 0–1 sleep quality
+ * @param {number}   [opts.therapeutic_stage=0] - 0–1 stage-of-change index
+ * @param {number}   [opts.k=5]              - Number of results
+ * @param {string[]} [opts.sources]          - ['clinical_kb', 'episode_memory']
+ * @param {string}   [opts.arm_filter]       - Filter episode memory to A3C arm
+ *
+ * @returns {Promise<Array<{chunk_id, text, source, score, metadata}>>}
+ *   Array of retrieved chunks, or [] on error / Python offline.
+ */
+export async function queryTensorRAG({
+    text,
+    hrv_rmssd_ms      = 35.0,
+    stress_index      = 0.3,
+    sleep_quality     = 1.0,
+    therapeutic_stage = 0.0,
+    k                 = 5,
+    sources           = null,
+    arm_filter        = null,
+} = {}) {
+    try {
+        const body = {
+            text,
+            hrv_rmssd_ms,
+            stress_index,
+            sleep_quality,
+            therapeutic_stage,
+            k,
+            format: 'chunks',
+        };
+        if (sources)     body.sources    = sources;
+        if (arm_filter)  body.arm_filter = arm_filter;
+
+        const res = await _call('/rag/query', body);
+        return res?.results ?? [];
+    } catch {
+        return [];
+    }
+}
+
+/**
+ * Retrieve TensorRAG context as a formatted string ready for prompt injection.
+ *
+ * @param {Object} opts  — same as queryTensorRAG
+ * @param {number} [opts.max_chars=2000] - Max characters in the context block
+ *
+ * @returns {Promise<string>}  Formatted context block, or '' on error.
+ *
+ * Usage in companion prompt builder:
+ *
+ *   const ragContext = await queryTensorRAGContext({ text: latestTurn, hrv_rmssd_ms, stress_index });
+ *   if (ragContext) {
+ *     systemPrompt += '\n\n' + ragContext;
+ *   }
+ */
+export async function queryTensorRAGContext({
+    text,
+    hrv_rmssd_ms      = 35.0,
+    stress_index      = 0.3,
+    sleep_quality     = 1.0,
+    therapeutic_stage = 0.0,
+    k                 = 5,
+    sources           = null,
+    arm_filter        = null,
+    max_chars         = 2000,
+} = {}) {
+    try {
+        const body = {
+            text,
+            hrv_rmssd_ms,
+            stress_index,
+            sleep_quality,
+            therapeutic_stage,
+            k,
+            format: 'context_string',
+        };
+        if (sources)    body.sources    = sources;
+        if (arm_filter) body.arm_filter = arm_filter;
+        if (max_chars)  body.max_chars  = max_chars;
+
+        const res = await _call('/rag/query', body);
+        return res?.context_string ?? '';
+    } catch {
+        return '';
+    }
+}
+
+/**
+ * Get TensorRAG index stats (sizes of clinical KB and episode memory).
+ *
+ * @returns {Promise<{clinical_kb: {total}, episode_memory: {total}, ready: boolean}>}
+ */
+export async function getTensorRAGStats() {
+    try {
+        const base = BRIDGE_URL;
+        const resp = await fetch(`${base}/rag/stats`);
+        if (!resp.ok) return null;
+        return await resp.json();
+    } catch {
+        return null;
+    }
+}
+

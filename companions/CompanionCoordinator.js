@@ -9,7 +9,7 @@ import { processCompanionHandlers } from './handlers/index.js';
 import { aggregateResponses, resolveConflicts } from './utils/responseAggregator.js';
 import { getDb } from '../db/connection.js';
 import { processUserMessage, performContextEnrichment } from '../agents/unifiedAgent.js';
-import { getLongitudinalHint } from './physio/tensornetsBridge.js';
+import { getLongitudinalHint, queryTensorRAGContext } from './physio/tensornetsBridge.js';
 import { retrieveRelevantFacts } from '../db/queries_facts.js';
 
 /**
@@ -100,6 +100,22 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
                 }
             }
 
+            // TensorRAG: retrieve physio-conditioned clinical context for the current turn.
+            // Runs in parallel with fact retrieval above; result injected into the prompt.
+            const physio = context.physioState || {};
+            const ragContext = await queryTensorRAGContext({
+                text:              message,
+                hrv_rmssd_ms:      physio.hrv_rmssd_ms   ?? physio.hrv_ms      ?? 35.0,
+                stress_index:      physio.stress_index    ?? 0.3,
+                sleep_quality:     physio.sleep_quality   ?? 1.0,
+                therapeutic_stage: physio.stage_index     ?? 0.0,
+                k:                 4,
+                sources:           ['clinical_kb', 'episode_memory'],
+            }).catch(() => '');
+            if (ragContext) {
+                enhancedContext.tensorRAGContext = ragContext;
+            }
+
             const empathyLevel = enhancedContext.empathyHandler?.level || 'MEDIUM';
             const stressState   = context.physioState;
             const stressLevel   = stressState
@@ -182,6 +198,10 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
                 .replace('{{LONGITUDINAL_HINT}}',
                     enhancedContext.longitudinalHint
                         ? `\nSession history: ${enhancedContext.longitudinalHint}`
+                        : '')
+                .replace('{{TENSOR_RAG_CONTEXT}}',
+                    enhancedContext.tensorRAGContext
+                        ? `\n\n${enhancedContext.tensorRAGContext}`
                         : '')
                 .replace('{{PENDING_INTERVENTION}}', pendingInterventionBlock);
 

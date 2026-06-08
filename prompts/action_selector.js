@@ -62,6 +62,7 @@ You SELECT the best action type for this conversational turn.
 **CONVERSATION HISTORY (last 4 turns):**
 {{CONVERSATION_HISTORY}}
 {{KNOWN_CONTEXT}}
+{{TENSOR_RAG_CONTEXT}}
 
 ---
 

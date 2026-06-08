@@ -40,6 +40,31 @@ from tensornets.a3c.action_bandit import ACTION_TAXONOMY, STRESS_BUCKETS
 from tensornets.a3c.scorer import A3CScorer, TurnScoreResult, map_scorer_to_reward_dims
 from tensornets.a3c import node_client as _nc
 
+# TensorRAG — lazy singleton; only initialised when first turn requires scoring
+_TENSOR_RAG = None
+_TENSOR_RAG_LOCK = __import__("threading").Lock()
+
+
+def _get_worker_rag():
+    """Return the shared TensorRAG instance, initialising it on first call."""
+    global _TENSOR_RAG
+    if _TENSOR_RAG is None:
+        with _TENSOR_RAG_LOCK:
+            if _TENSOR_RAG is None:
+                try:
+                    import os
+                    from tensornets.tensor_rag.rag import TensorRAG
+                    db_path = os.environ.get("DB_PATH", "data/dbs/care_circle_dev.db")
+                    _TENSOR_RAG = TensorRAG(db_path=db_path, data_dir="data/rag")
+                    _TENSOR_RAG.init()
+                except Exception as exc:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "TensorRAG init failed in worker: %s — continuing without RAG", exc
+                    )
+                    _TENSOR_RAG = None  # will retry next call
+    return _TENSOR_RAG
+
 
 def _log_turn_to_db(
     episode_id: str,
@@ -1321,6 +1346,29 @@ class A3CWorker:
             # ── A3CScorer: LLM call on even turns, heuristic carry on odd ───
             use_llm_scorer = (turn_idx % _SCORE_EVERY_N == 0)
             if use_llm_scorer:
+                # TensorRAG: retrieve physio-conditioned context for this turn's scoring.
+                # Adds clinical knowledge relevant to the patient's current state so the
+                # LLM scorer has access to guidelines rather than reasoning from scratch.
+                _rag_context = ""
+                try:
+                    _rag = _get_worker_rag()
+                    if _rag is not None:
+                        _physio = state.physio or {}
+                        _rag_context = _rag.query_context(
+                            text        = f"{patient_msg} {agent_resp}",
+                            physio_dict = {
+                                "hrv_ms":            float(_physio.get("hrv_rmssd_ms", 35.0) or 35.0),
+                                "stress_index":      float(_physio.get("stress_index",  0.3)  or 0.3),
+                                "sleep_quality":     float(_physio.get("sleep_quality", 1.0)  or 1.0),
+                                "therapeutic_stage": float(_physio.get("stage_index",   0.0)  or 0.0),
+                            },
+                            k       = 3,
+                            sources = ["clinical_kb"],   # only KB in scorer (episode memory in companion)
+                            max_chars = 800,
+                        )
+                except Exception:
+                    _rag_context = ""
+
                 score_result = scorer.score_turn(
                     patient_message   = patient_msg,
                     agent_response    = agent_resp,
@@ -1341,6 +1389,7 @@ class A3CWorker:
                         if dialogue_state and dialogue_state.commitments
                         else ""
                     ),
+                    rag_context       = _rag_context,
                 )
             else:
                 # Carry the previous score result but apply a heuristic nudge:
@@ -2000,6 +2049,15 @@ class A3CWorker:
             "simulated_timeline": scenario.get("simulated_timeline") or {},
         }
         summary["genuine_metrics"] = genuine_metrics
+
+        # Index this episode into TensorRAG episode memory (non-blocking)
+        try:
+            _rag = _get_worker_rag()
+            if _rag is not None:
+                _rag.add_episode(summary)
+        except Exception:
+            pass
+
         return summary
 
     def _build_state_with_continuity(

@@ -1572,3 +1572,134 @@ def session_a3c_action(req: ShadowActionIn):
         return {"available": False, "arm": req.arm, "reason": str(exc),
                 "trace": traceback.format_exc(limit=5)}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TensorRAG  (/rag/*)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Singleton — initialised lazily on first request so training startup is not
+# blocked.  A3C worker calls _get_rag() directly to add episodes.
+_TENSOR_RAG = None
+_RAG_LOCK   = __import__("threading").Lock()
+
+
+def _get_rag():
+    global _TENSOR_RAG
+    if _TENSOR_RAG is None:
+        with _RAG_LOCK:
+            if _TENSOR_RAG is None:
+                import os
+                from tensornets.tensor_rag.rag import TensorRAG
+                db_path = os.environ.get("DB_PATH", "data/dbs/care_circle_dev.db")
+                _TENSOR_RAG = TensorRAG(db_path=db_path, data_dir="data/rag")
+                _TENSOR_RAG.init()
+    return _TENSOR_RAG
+
+
+class RAGQueryIn(BaseModel):
+    text:               str
+    hrv_rmssd_ms:       float                = 35.0
+    stress_index:       float                = 0.3
+    sleep_quality:      float                = 1.0
+    therapeutic_stage:  float                = 0.0
+    k:                  int                  = 5
+    sources:            Optional[list[str]]  = None   # ["clinical_kb", "episode_memory"]
+    arm_filter:         Optional[str]        = None
+    format:             str                  = "chunks"   # "chunks" | "context_string"
+
+
+@app.post("/rag/query")
+def rag_query(req: RAGQueryIn):
+    """
+    TensorRAG retrieval endpoint.
+
+    Accepts a text query and optional physiological state.  Returns
+    relevant chunks from the clinical knowledge base and episode memory,
+    ranked by composite (text, physio) similarity.
+
+    Args:
+        text               : query / current conversation turn text
+        hrv_rmssd_ms       : current patient HRV in ms
+        stress_index       : 0–1 stress score
+        sleep_quality      : 0–1 sleep quality
+        therapeutic_stage  : 0–1 normalised stage-of-change index
+        k                  : number of results
+        sources            : list of sources to query (default: all)
+        arm_filter         : restrict episode_memory to a specific A3C arm
+        format             : "chunks" → list of chunk objects
+                             "context_string" → formatted text block for prompt injection
+
+    Returns:
+        { results: list | context_string: str, stats: dict }
+    """
+    try:
+        rag = _get_rag()
+
+        physio_dict = {
+            "hrv_ms":            req.hrv_rmssd_ms,
+            "stress_index":      req.stress_index,
+            "sleep_quality":     req.sleep_quality,
+            "therapeutic_stage": req.therapeutic_stage,
+        }
+
+        if req.format == "context_string":
+            ctx = rag.query_context(
+                text        = req.text,
+                physio_dict = physio_dict,
+                k           = req.k,
+                sources     = req.sources,
+                arm_filter  = req.arm_filter,
+            )
+            return {"context_string": ctx, "stats": rag.stats()}
+
+        results = rag.query(
+            text        = req.text,
+            physio_dict = physio_dict,
+            k           = req.k,
+            sources     = req.sources,
+            arm_filter  = req.arm_filter,
+        )
+
+        chunks = [
+            {
+                "chunk_id":     r.chunk.chunk_id,
+                "text":         r.chunk.text,
+                "source":       r.chunk.metadata.get("source"),
+                "score":        round(r.score, 4),
+                "text_score":   round(r.text_score, 4),
+                "physio_score": round(r.physio_score, 4),
+                "metadata":     r.chunk.metadata,
+            }
+            for r in results
+        ]
+        return {"results": chunks, "count": len(chunks), "stats": rag.stats()}
+
+    except Exception as exc:
+        import traceback
+        return {"error": str(exc), "trace": traceback.format_exc(limit=6)}
+
+
+@app.post("/rag/add-episode")
+def rag_add_episode(summary: dict):
+    """
+    Index a completed episode summary into TensorRAG episode memory.
+    Called by the A3C worker (or training loop) after each episode.
+
+    Body: episode summary dict from worker.run_episode().
+    """
+    try:
+        _get_rag().add_episode(summary)
+        return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/rag/stats")
+def rag_stats():
+    """Return TensorRAG index sizes and embedding backend info."""
+    try:
+        return _get_rag().stats()
+    except Exception as exc:
+        return {"error": str(exc)}
+
+

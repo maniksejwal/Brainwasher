@@ -839,6 +839,81 @@ class MatrixProductState:
 
     # ── Utilities ──────────────────────────────────────────────────────────────
 
+    def bond_fingerprint(self) -> torch.Tensor:
+        """
+        Compute a compact physiological fingerprint vector from the MPS bond matrices.
+
+        Used by TensorRAG to characterise the current physiological state in a
+        retrieval-friendly form without exposing raw HRV values.
+
+        The fingerprint is the concatenation of:
+          1. The mean diagonal of the physio transfer matrix (energy distribution)
+          2. The top-2 singular values of the final physio bond block (dominant modes)
+          3. The scalar physio energy (sum of physio block Frobenius norms per core)
+
+        Total dimension: chi_physio + 2 + 1 = chi_physio + 3 (e.g. 7 for chi_physio=4).
+
+        This vector is approximately scale-invariant and captures:
+          - Overall physiological "tension" (energy)
+          - Dominant oscillation modes (SVD)
+          - Distributional spread across the physio subspace (diagonal mean)
+
+        Returns
+        -------
+        Tensor[chi_physio + 3]
+            Real-valued fingerprint, normalised to unit L2 norm.
+        """
+        chi_s = self.chi_semantic
+        chi_p = self.chi_physio
+
+        # Accumulate transfer matrix restricted to the physio bond block
+        T = torch.eye(chi_p, dtype=torch.float32)
+        energy_acc = 0.0
+
+        for core in self.cores:
+            A = core.data   # [χ_l, d, χ_r]
+            chi_l = core.chi_left
+            chi_r = core.chi_right
+
+            # Extract physio block: rows [chi_s:], columns [chi_s:]
+            p_l = max(0, chi_l - chi_s)
+            p_r = max(0, chi_r - chi_s)
+            if p_l == 0 or p_r == 0:
+                continue
+
+            A_phys = A[chi_s:chi_s + p_l, :, chi_s:chi_s + p_r].float()
+            # Transfer matrix update: T_{i,j} = Σ_{k,s} A*_{i,s,k} A_{j,s,k}
+            A_flat = A_phys.reshape(p_l, -1)
+            contribution = A_flat @ A_flat.T
+            # Resize T if needed
+            if T.shape[0] != p_l:
+                T = torch.eye(p_l, dtype=torch.float32)
+            T = T @ contribution
+            energy_acc += float(contribution.diag().sum().abs().item())
+
+        # Feature 1: diagonal of physio transfer matrix (chi_p values)
+        if T.shape[0] < chi_p:
+            T_padded = torch.zeros(chi_p, chi_p)
+            T_padded[:T.shape[0], :T.shape[0]] = T
+            T = T_padded
+        diag_feat = T.diag()[:chi_p]
+
+        # Feature 2: top-2 singular values of T
+        try:
+            sv = torch.linalg.svdvals(T)
+            sv2 = sv[:2] if len(sv) >= 2 else torch.cat([sv, torch.zeros(2 - len(sv))])
+        except Exception:
+            sv2 = torch.zeros(2)
+
+        # Feature 3: scalar energy
+        energy_feat = torch.tensor([energy_acc], dtype=torch.float32)
+
+        fingerprint = torch.cat([diag_feat, sv2.float(), energy_feat])
+
+        # Normalise to unit L2 (makes cosine similarity valid)
+        norm = fingerprint.norm().clamp(min=1e-8)
+        return (fingerprint / norm).detach()
+
     def __len__(self) -> int:
         return len(self.cores)
 
