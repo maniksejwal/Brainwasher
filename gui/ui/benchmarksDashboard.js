@@ -205,7 +205,7 @@ async function _fetchSimStats() {
 async function _fetchScenarioGoals() {
     try {
         const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/scenario-goal-rates`).then(r=>r.json());
-        // Merge legacy arm rows into canonical arms
+        // Merge legacy arm rows into canonical arms — preserve all numeric fields
         const merged = {};
         for (const r of (rows || []).map(_canonicalizeArm)) {
             const key = `${r.arm}|${r.scenario_id}`;
@@ -213,7 +213,14 @@ async function _fetchScenarioGoals() {
             else {
                 const a = merged[key], b = r;
                 const totalN = (a.episode_count || 0) + (b.episode_count || 0);
-                a.goal_rate = totalN ? ((a.goal_rate || 0) * (a.episode_count || 0) + (b.goal_rate || 0) * (b.episode_count || 0)) / totalN : 0;
+                const wA = (a.episode_count || 0) / Math.max(1, totalN);
+                const wB = (b.episode_count || 0) / Math.max(1, totalN);
+                a.goal_rate  = wA * (a.goal_rate  || 0) + wB * (b.goal_rate  || 0);
+                a.avg_reward = wA * (a.avg_reward  ?? 0) + wB * (b.avg_reward  ?? 0);
+                if (a.min_reward != null || b.min_reward != null)
+                    a.min_reward = Math.min(a.min_reward ?? Infinity, b.min_reward ?? Infinity);
+                if (a.max_reward != null || b.max_reward != null)
+                    a.max_reward = Math.max(a.max_reward ?? -Infinity, b.max_reward ?? -Infinity);
                 a.episode_count = totalN;
             }
         }
@@ -1833,8 +1840,13 @@ function _renderMetricBars() {
 // -- Cost & LLM Calls Charts ---------------------------------------------------
 function _renderCostCharts() {
     if (typeof Chart === 'undefined') return;
-    // timelineData is an array of episode rows (same source as learning curves)
-    const rows = _state.timelineData;
+    // Cost charts need the full timeline (slim lacks cost_usd_total / llm_calls_total).
+    // If full data isn't loaded yet, fetch it then re-render.
+    if (!_state.statsTimelineData) {
+        _fetchTimelineForStats().then(() => _renderCostCharts()).catch(() => {});
+        return;
+    }
+    const rows = _state.statsTimelineData;
     if (!rows?.length) return;
 
     // Cost per episode line chart

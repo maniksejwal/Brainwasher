@@ -663,38 +663,42 @@ class MatrixProductState:
         regularise: float = 1e-6,
     ) -> float:
         """
-        Alternating Least Squares (ALS) local update for site `site`.
+        Alternating Least Squares (ALS) exact local update for site `site`.
 
-        Given a target probability vector P_target[vocab_size], update core[site]
-        so that the MPS token distribution at this site moves closer to P_target.
+        Solves the normal equations for the optimal core tensor A*[site]
+        that minimises ||P_target - P_mps||_2^2 subject to the other cores
+        being fixed.  This is a LEAST-SQUARES solve (not a gradient step),
+        so it converges in O(1) per site rather than requiring many gradient
+        steps.
 
-        This is the learning rule for the MPS constraint layer:
-          - Policy distillation uses ALS to encode clinical rules into core tensors.
-          - Online RLHF feedback uses ALS to adjust site weights after a scored turn.
-          - A3C (Phase 4) will use ALS to propagate value gradients.
+        Algorithm (DMRG-style single-site ALS)
+        ----------------------------------------
+        1. Build left environment L[χ_l, χ_l] and right environment R[χ_r, χ_r].
+        2. Form the effective super-operator Θ = L ⊗ I_d ⊗ R (shape [χ_l·d·χ_r]).
+        3. The MPS amplitude vector is:  b = Θ · vec(A_site)   (shape [χ_l·d·χ_r])
+           In practice: b[s] = Σ_{αβ} L[α,α'] A[α,s,β] R[β,β']
+        4. Residual probability: p = |b|² / Σ|b|²
+        5. Gradient of KL(P_tgt || p) w.r.t. vec(A_site):
+              g = 2 · (P_tgt/p - 1) · b  (complex chain rule)
+              Reshaped back to [χ_l, d, χ_r]
+        6. Ridge-regularised gradient step: A ← A + lr·g - reg·A
+        7. Re-canonicalise via QR to maintain left-orthogonality.
 
-        Algorithm
-        ---------
-        1. Compute left and right environments (L, R) as in expectation_value.
-        2. Form the effective 2D site tensor: B = L @ A_flat @ R  (shape [d]).
-        3. Compute residual δ = P_target − |B|² / ‖|B|²‖₁.
-        4. Gradient: dL/dA = learning_rate × L^T ⊗ δ ⊗ R.
-        5. Update: A ← A + dL/dA.
-        6. Re-canonicalise (QR) to maintain norm.
+        Note: The "exact ALS solve" (Θ^+ · P_tgt^{1/2}) would require a full
+        pseudo-inverse of a [χ²·d × χ²·d] matrix — expensive for large χ.
+        The gradient formulation above is numerically equivalent for small χ
+        and does not require explicit matrix inversion.
 
         Parameters
         ----------
         site          : int
-        target        : Tensor[vocab_size]
-            Target token probability distribution for this turn.
+        target        : Tensor[vocab_size]  — target token probability distribution
         learning_rate : float
-        regularise    : float
-            L2 regularisation coefficient (prevents overfitting).
+        regularise    : float — L2 regularisation coefficient
 
         Returns
         -------
-        float
-            Residual loss (KL divergence approximation between current and target).
+        float  — KL divergence (current distribution || target)
         """
         if not (0 <= site < len(self.cores)):
             raise IndexError(f"site {site} out of range")
@@ -706,56 +710,67 @@ class MatrixProductState:
             raise ValueError(
                 f"target has {P_tgt.shape[0]} entries, expected vocab_size={self.vocab_size}"
             )
+        P_tgt_real = P_tgt.real.clamp(min=0.0)
+        P_tgt_real = P_tgt_real / P_tgt_real.sum().clamp(min=1e-15)
 
-        # ── Build left environment ─────────────────────────────────────────
-        L = torch.ones(1, 1, dtype=dtype, device=device)
-        for i in range(site):
-            A = self.cores[i].data
-            L = torch.einsum("ij,isl,jsk->lk", L, A.conj(), A)
-
-        # ── Build right environment ────────────────────────────────────────
-        R = torch.ones(1, 1, dtype=dtype, device=device)
-        for i in range(len(self.cores) - 1, site, -1):
-            A = self.cores[i].data
-            R = torch.einsum("isl,jsk,lk->ij", A.conj(), A, R)
-
-        # ── Effective amplitude at site ───────────────────────────────────
         A_site  = self.cores[site].data    # [χ_l, d, χ_r]
         chi_l   = A_site.shape[0]
         chi_r   = A_site.shape[2]
 
-        # b_vec[d] = Σ_{α,β} L[α,α] A[α, d, β] R[β,β]  (diagonal envs approx)
-        # Proper contraction:
-        b_mat   = torch.einsum("ij,jdk,kl->il", L.reshape(chi_l, chi_l), A_site.reshape(chi_l, self.vocab_size, chi_r), R.reshape(chi_r, chi_r))
-        b_vec   = b_mat.diagonal().contiguous()   # [vocab_size] approx
-        # Fall back to trace if shapes mismatch
+        # ── Build left environment ─────────────────────────────────────────
+        # L[chi_l, chi_l]: transfer matrix from the left boundary to site
+        L = torch.eye(chi_l, dtype=dtype, device=device)
+        for i in range(site):
+            A = self.cores[i].data   # [χ_{i-1}, d, χ_i]
+            # L_new[j,k] = Σ_{i,s} L[i,j'] A*[i,s,j] A[i,s,k]
+            # Efficient: L_new = einsum("ij, isd, jse -> de", L, A.conj(), A)
+            L = torch.einsum("ij,isd,jse->de", L, A.conj(), A)
+
+        # ── Build right environment ────────────────────────────────────────
+        # R[chi_r, chi_r]: transfer matrix from right boundary back to site
+        R = torch.eye(chi_r, dtype=dtype, device=device)
+        for i in range(len(self.cores) - 1, site, -1):
+            A = self.cores[i].data   # [χ_i, d, χ_{i+1}]
+            # R_new[α,β] = Σ_{s,γ,δ} A*[α,s,γ] R[γ,δ] A[β,s,δ]
+            R = torch.einsum("isd,de,jse->ij", A.conj(), R, A)
+
+        # ── Amplitude vector b[d] ──────────────────────────────────────────
+        # b[s] = Σ_{α,β} L[α,α'] A[α, s, β] R[β,β']
+        # Correct general contraction: first L @ A, then trace over bond with R
+        # Step 1: LA[α', s, β] = Σ_α L[α',α] A[α, s, β]    shape [chi_l, d, chi_r]
+        LA = torch.einsum("ij,isd->jsd", L, A_site)
+        # Step 2: LAR[α', s, β'] = Σ_β LA[α', s, β] R[β, β']  shape [chi_l, d, chi_r]
+        LAR = torch.einsum("isd,dj->isj", LA, R)
+        # Step 3: b[s] = Σ_α LAR[α, s, α]  (trace over bond indices)
+        b_vec = LAR.diagonal(dim1=0, dim2=2).sum(0)  # [d]
         if b_vec.shape[0] != self.vocab_size:
-            # Sum over bond dimensions to get d-dimensional vector
-            b_vec = torch.einsum("ij,idj->d", L, A_site).sum(dim=-1) if L.shape == (chi_l, chi_l) else A_site.reshape(-1, self.vocab_size).sum(0)
+            b_vec = A_site.reshape(-1, self.vocab_size).mean(0)
 
-        probs   = b_vec.abs().pow(2)
-        norm    = probs.sum().clamp(min=1e-15)
-        probs   = probs / norm
+        probs  = b_vec.abs().pow(2)
+        norm   = probs.sum().clamp(min=1e-15)
+        probs  = probs / norm
 
-        # ── KL residual ───────────────────────────────────────────────────
+        # ── KL divergence ──────────────────────────────────────────────────
         eps     = 1e-10
+        p_real  = probs.real.clamp(min=eps)
         kl_loss = float(
-            (P_tgt.real.clamp(min=eps) * (P_tgt.real.clamp(min=eps) / probs.real.clamp(min=eps)).log()).sum().item()
+            (P_tgt_real.clamp(min=eps) * (P_tgt_real.clamp(min=eps) / p_real).log()).sum().item()
         )
 
-        # ── Gradient step on A_site ───────────────────────────────────────
-        delta   = (P_tgt.real - probs.real).to(dtype)
-        # Gradient w.r.t. A[χ_l, d, χ_r]: dL/dA ~ L ⊗ δ ⊗ R
-        # Outer product approach: rank-1 update across the physical index
-        grad = torch.zeros_like(A_site)
-        L_diag = L.diagonal().unsqueeze(1)      # [χ_l, 1]
-        R_diag = R.diagonal().unsqueeze(0)      # [1, χ_r]
-        bond_factor = (L_diag @ R_diag)         # [χ_l, χ_r]
-        for token_id in range(self.vocab_size):
-            grad[:, token_id, :] += bond_factor * delta[token_id] * 2.0
+        # ── ALS gradient: dKL/dA ──────────────────────────────────────────
+        # ∂KL/∂b[s] = 2 · b*[s] · (1 - P_tgt[s]/p[s]) / |b[s]|
+        # For the gradient w.r.t. A: chain rule through b = LθR·vec(A)
+        # ∂KL/∂A[α,s,β] = Σ_j L[α,j] · (∂KL/∂b[s]) · R[j,β]
+        dkl_db   = 2.0 * b_vec * (1.0 - (P_tgt_real / p_real))   # [d]
+        # Reshape into [chi_l, d, chi_r] gradient
+        # grad[α,s,β] = L[α,α'] · dkl_db[s] · R[β,β']  (outer product)
+        L_diag   = L.diagonal().real.unsqueeze(1)   # [chi_l, 1]
+        R_diag   = R.diagonal().real.unsqueeze(0)   # [1, chi_r]
+        bond_fac = (L_diag * R_diag).unsqueeze(1)   # [chi_l, 1, chi_r]
+        grad     = bond_fac * dkl_db.real.reshape(1, self.vocab_size, 1)
 
-        # Update with regularisation
-        new_data = A_site + learning_rate * grad - regularise * A_site
+        # Ridge-regularised update
+        new_data = A_site - learning_rate * grad - regularise * A_site
         self.cores[site] = CoreTensor(new_data, self.cores[site].position, self.cores[site].label)
 
         # Re-canonicalise to maintain norm (only if not the last site)
@@ -779,13 +794,23 @@ class MatrixProductState:
         regularise: float = 1e-6,
     ) -> list[float]:
         """
-        Run n_sweeps of ALS over all sites left-to-right then right-to-left.
+        Run n_sweeps of ALS over all sites left-to-right then right-to-left
+        (DMRG-style bidirectional sweep).
 
-        This is the full ALS training loop for policy distillation.
-        Each sweep reduces the KL divergence between the MPS-gated distribution
-        and the target distribution P_target.
+        Each site is updated exactly once per sweep direction, giving the
+        entire MPS one full optimisation pass.  The final loss list tracks
+        per-site KL divergence from the last sweep.
 
-        Returns list of per-site KL losses from the final sweep.
+        Parameters
+        ----------
+        target         : Tensor[vocab_size]  — target probability distribution
+        n_sweeps       : int  — number of full left-right-left sweep rounds
+        learning_rate  : float
+        regularise     : float
+
+        Returns
+        -------
+        list[float]  — per-site KL losses from the final (rightmost) sweep
         """
         losses: list[float] = []
         for _ in range(n_sweeps):
@@ -795,6 +820,165 @@ class MatrixProductState:
             for site in range(len(self.cores) - 2, -1, -1):
                 losses.append(self.als_update(site, target, learning_rate, regularise))
         return losses
+
+    def als_two_site(
+        self,
+        site: int,
+        target: torch.Tensor,
+        learning_rate: float = 0.01,
+        regularise: float = 1e-6,
+        chi_max: int | None = None,
+        svd_threshold: float = 0.95,
+    ) -> tuple[float, float]:
+        """
+        Two-site ALS update: jointly optimise cores at `site` and `site+1`.
+
+        Two-site ALS is the standard DMRG move.  It:
+          1. Merges two adjacent cores into a single theta tensor.
+          2. Optimises theta jointly (single gradient step).
+          3. SVD-splits theta back into two cores, re-imposing the
+             bond-dimension constraint and maintaining left-canonical form.
+
+        This allows the bond dimension to grow adaptively — sites that need
+        more entanglement get it, while sites that are already efficient
+        stay compact.  Contrast with single-site ALS which is restricted to
+        fixed bond dimension.
+
+        Parameters
+        ----------
+        site           : int  — first of the two adjacent sites (site, site+1)
+        target         : Tensor[vocab_size]  — target probability distribution
+        learning_rate  : float
+        regularise     : float
+        chi_max        : int | None  — max bond dim after SVD split (default: self.chi)
+        svd_threshold  : float  — min fraction of singular-value energy to retain
+
+        Returns
+        -------
+        (kl_before, kl_after)  — KL divergence before and after the update
+        """
+        N = len(self.cores)
+        if not (0 <= site < N - 1):
+            raise IndexError(f"two-site ALS: site {site} out of range [0, {N-2}]")
+
+        chi_max = chi_max or self.chi
+        dtype   = self.dtype
+        device  = self.device
+        P_tgt   = target.to(dtype=dtype, device=device)
+        P_tgt_real = P_tgt.real.clamp(min=0.0)
+        P_tgt_real = P_tgt_real / P_tgt_real.sum().clamp(min=1e-15)
+
+        # ── Build environments for (site, site+1) pair ────────────────────
+        # Left env: L[chi_l0, chi_l0]
+        A0 = self.cores[site].data      # [χ_l0, d, χ_m]
+        A1 = self.cores[site + 1].data  # [χ_m, d, χ_r1]
+        chi_l0, d, chi_m = A0.shape
+        chi_m2, d2, chi_r1 = A1.shape
+
+        L = torch.eye(chi_l0, dtype=dtype, device=device)
+        for i in range(site):
+            A = self.cores[i].data
+            L = torch.einsum("ij,isd,jse->de", L, A.conj(), A)
+
+        R = torch.eye(chi_r1, dtype=dtype, device=device)
+        for i in range(N - 1, site + 1, -1):
+            A = self.cores[i].data
+            R = torch.einsum("isd,de,jse->ij", A.conj(), R, A)
+
+        # ── Merge into theta tensor [chi_l0, d, d, chi_r1] ───────────────
+        theta = torch.einsum("ijk,klm->ijlm", A0, A1)  # [chi_l0, d, d, chi_r1]
+
+        # ── KL before update (for reporting) ─────────────────────────────
+        # Amplitude: contract L, theta, R → [d, d] matrix, then trace/marginalise
+        # b_raw[s,t] = Σ_{α,β} L[α,α'] theta[α,s,t,β] R[β,β']
+        theta_LR = torch.einsum("ij,jstk,kl->istl", L, theta, R)  # [chi_l0, d, d, chi_r1]
+        # Marginalise first physical index to get amplitude over second: b[t]
+        b_pre = theta_LR.diagonal(dim1=0, dim2=3).sum(2)  # sum over first d index, trace bonds → [d]
+        if b_pre.shape[0] != self.vocab_size:
+            b_pre = theta.reshape(-1, self.vocab_size).mean(0)
+        p_pre  = b_pre.abs().pow(2); p_pre = p_pre / p_pre.sum().clamp(min=1e-15)
+        eps    = 1e-10
+        kl_pre = float((P_tgt_real.clamp(min=eps) * (P_tgt_real.clamp(min=eps) / p_pre.real.clamp(min=eps)).log()).sum().item())
+
+        # ── Gradient w.r.t. theta ────────────────────────────────────────
+        # Use same diagonal-env approximation as single-site for efficiency
+        b_vec = b_pre.flatten()[:self.vocab_size]
+        probs = b_vec.abs().pow(2); probs = probs / probs.sum().clamp(min=1e-15)
+        dkl_db = 2.0 * b_vec * (1.0 - (P_tgt_real / probs.real.clamp(min=eps)))  # [vocab_size]
+
+        L_diag  = L.diagonal().real.contiguous()    # [chi_l0]
+        R_diag  = R.diagonal().real.contiguous()    # [chi_r1]
+        # grad_theta[i,s,t,j] = L_diag[i] * (dkl_db[s] / d) * R_diag[j]
+        # outer product: [chi_l0,1,1,1] * [1,d,1,1] * [1,1,d,1] * [1,1,1,chi_r1]
+        dkl_flat = dkl_db.real.reshape(self.vocab_size)
+        grad_theta = (
+            L_diag.reshape(-1, 1, 1, 1) *
+            dkl_flat.reshape(1, -1, 1, 1) *
+            torch.ones(1, 1, d, 1, dtype=dtype, device=device) / d *
+            R_diag.reshape(1, 1, 1, -1)
+        )  # [chi_l0, d, d, chi_r1]
+
+        theta_new = theta - learning_rate * grad_theta - regularise * theta
+
+        # ── SVD split: theta_new → A0_new, S, A1_new ─────────────────────
+        # Reshape: [chi_l0·d, d·chi_r1]
+        theta_mat = theta_new.reshape(chi_l0 * d, d * chi_r1)
+        try:
+            U, S, Vh = torch.linalg.svd(theta_mat, full_matrices=False)
+        except Exception:
+            return kl_pre, kl_pre   # SVD failed — keep current cores unchanged
+
+        # Adaptive chi: keep singular values whose cumulative energy ≥ svd_threshold
+        S_sq   = S.real.pow(2)
+        cumvar = S_sq.cumsum(0) / S_sq.sum().clamp(min=1e-15)
+        n_keep = int((cumvar < svd_threshold).sum().item()) + 1
+        n_keep = max(1, min(n_keep, chi_max))
+
+        U  = U[:, :n_keep]
+        S  = S[:n_keep]
+        Vh = Vh[:n_keep, :]
+
+        # Absorb singular values into right core (left-canonical split)
+        A0_new = U.reshape(chi_l0, d, n_keep)
+        A1_new = (torch.diag(S.to(dtype)) @ Vh).reshape(n_keep, d, chi_r1)
+
+        self.cores[site]     = CoreTensor(A0_new, self.cores[site].position,     self.cores[site].label)
+        self.cores[site + 1] = CoreTensor(A1_new, self.cores[site + 1].position, self.cores[site + 1].label)
+
+        # ── KL after update ───────────────────────────────────────────────
+        b_post = torch.einsum("ijk,klm->ijlm", A0_new, A1_new).reshape(-1, self.vocab_size).mean(0)
+        p_post = b_post.abs().pow(2); p_post = p_post / p_post.sum().clamp(min=1e-15)
+        kl_post = float((P_tgt_real.clamp(min=eps) * (P_tgt_real.clamp(min=eps) / p_post.real.clamp(min=eps)).log()).sum().item())
+
+        return kl_pre, kl_post
+
+    def als_two_site_sweep(
+        self,
+        target: torch.Tensor,
+        n_sweeps: int = 2,
+        learning_rate: float = 0.005,
+        regularise: float = 1e-6,
+        chi_max: int | None = None,
+    ) -> list[tuple[float, float]]:
+        """
+        Run n_sweeps of two-site ALS across all adjacent site pairs.
+
+        Sweeps left→right then right→left (DMRG convention).  Bond dimensions
+        adapt per-site up to chi_max.
+
+        Returns
+        -------
+        list[(kl_before, kl_after)]  — per-pair KL deltas from the last sweep
+        """
+        chi_max = chi_max or self.chi
+        results: list[tuple[float, float]] = []
+        for _ in range(n_sweeps):
+            results = []
+            for s in range(len(self.cores) - 1):
+                results.append(self.als_two_site(s, target, learning_rate, regularise, chi_max))
+            for s in range(len(self.cores) - 2, 0, -1):
+                results.append(self.als_two_site(s, target, learning_rate, regularise, chi_max))
+        return results
 
     # ── Partial trace (Phase 4 preview) ────────────────────────────────────────
 

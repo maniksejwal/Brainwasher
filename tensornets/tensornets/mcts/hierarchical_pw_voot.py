@@ -148,7 +148,16 @@ PW_C:      float = 2.0    # expansion coefficient: n_admitted < C_pw * n^alpha
 
 # ── VOOT exploration constants ────────────────────────────────────────────────
 VOOT_C_EXPLORE: float = 1.414   # standard UCB exploration
-VOOT_C_VAR:     float = 0.5     # variance bonus weight
+VOOT_C_VAR:     float = 0.8     # variance bonus weight — higher = more variance exploration
+
+# ── Warm-start persistence ────────────────────────────────────────────────────
+# After each episode, cluster Q statistics are decayed and carried into the
+# next search() call (warm start).  This eliminates cold-start inconsistency
+# where the first ~30 iterations of every episode are wasted re-learning
+# cluster priors that were already established in previous episodes.
+WARM_START_DECAY:      float = 0.75   # discount prior Q_mean each episode
+WARM_START_MIN_VISITS: int   = 3      # minimum synthetic visits after decay
+                                       # (ensures non-infinite VOOT UCB)
 
 
 # ── Cluster state ─────────────────────────────────────────────────────────────
@@ -224,8 +233,34 @@ class _ClusterState:
         self.total_reward += reward
         self._reward_sq   += reward ** 2
 
+    def warm_snapshot(self) -> dict:
+        """Return a compact snapshot of statistics for warm-starting the next episode."""
+        return {
+            "q_mean":          self.q_mean,
+            "visits":          self.visits,
+            "_reward_sq":      self._reward_sq,
+            "admitted":        list(self.admitted),
+            "_action_visits":  dict(self._action_visits),
+            "_action_rewards": dict(self._action_rewards),
+        }
+
+    def apply_warm_snapshot(self, snap: dict, decay: float) -> None:
+        """
+        Restore decayed statistics from a previous-episode snapshot.
+        Decay factor shrinks Q-values toward zero while keeping visit counts
+        high enough to avoid infinite VOOT UCB scores on the first iteration.
+        """
+        self.visits       = max(WARM_START_MIN_VISITS, int(snap["visits"] * decay))
+        self.total_reward = snap["q_mean"] * self.visits * decay   # preserve Q_mean direction
+        self._reward_sq   = snap["_reward_sq"] * decay ** 2
+        # Restore admitted actions list (re-populate PW expansion state)
+        for a in snap.get("admitted", []):
+            if a not in self.admitted and a in self.all_actions:
+                self.admitted.append(a)
+                self._action_visits[a]  = max(1, int(snap["_action_visits"].get(a, 0) * decay))
+                self._action_rewards[a] = snap["_action_rewards"].get(a, 0.0) * decay
+
     def best_action(self) -> str:
-        """Exploitation: pick admitted action with highest mean reward."""
         if not self.admitted:
             raise RuntimeError(
                 f"_ClusterState.best_action: cluster '{self.name}' has no admitted "
@@ -283,6 +318,9 @@ class HierarchicalPWVOOTMCTS(BaseMCTS):
         self._llm_prior_fn = llm_prior_fn
         self._clusters: dict[str, _ClusterState] = {}
         self._n_total: int = 0   # total visits across all clusters
+        # Warm-start snapshots: persisted across search() calls within a run
+        self._warm_snapshots: dict[str, dict] = {}
+        self._episode_count:  int             = 0   # episodes processed so far
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -303,9 +341,16 @@ class HierarchicalPWVOOTMCTS(BaseMCTS):
         self._n_total = 0
         self._clusters = self._init_clusters(initial_state)
 
-        # ── 2. Admit the first action in every cluster (at least 1 always) ─
-        for cs in self._clusters.values():
-            cs.maybe_admit_next()
+        # ── 2. Apply warm-start snapshots from previous episodes (if any) ────
+        if self._warm_snapshots:
+            for name, snap in self._warm_snapshots.items():
+                if name in self._clusters:
+                    self._clusters[name].apply_warm_snapshot(snap, WARM_START_DECAY)
+                    self._n_total += self._clusters[name].visits
+        else:
+            # Cold start: admit the first action in every cluster
+            for cs in self._clusters.values():
+                cs.maybe_admit_next()
 
         # ── 3. Main loop ────────────────────────────────────────────────────
         for _ in range(self.iterations):
@@ -343,6 +388,10 @@ class HierarchicalPWVOOTMCTS(BaseMCTS):
                 root.children.append(child)
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
+
+        # ── 5. Save warm-start snapshots for next episode ────────────────────
+        self._warm_snapshots = {name: cs.warm_snapshot() for name, cs in self._clusters.items()}
+        self._episode_count += 1
         self._last_tree_stats = {
             "iterations":    self.iterations,
             "depth":         self.max_depth,
@@ -350,6 +399,8 @@ class HierarchicalPWVOOTMCTS(BaseMCTS):
             "n_children":    len(root.children),
             "n_admitted":    sum(len(cs.admitted) for cs in self._clusters.values()),
             "elapsed_ms":    round(elapsed_ms, 1),
+            "episode_count": self._episode_count,
+            "warm_start":    self._episode_count > 1,
             "clusters":      {
                 name: {
                     "visits":    cs.visits,
