@@ -110,6 +110,8 @@ export async function finaliseBenchmarkEpisode(episode_id, metrics = {}) {
         turn_count, n_turns,
         // Cost and LLM metrics (new 6-exp columns)
         cost_usd_total, llm_calls_total, hysteresis_zone_changes,
+        // L5: curriculum pool tag ('success'|'recovery'|'dormant'|'initial')
+        curriculum_pool,
     } = metrics;
     const resolvedTurnCount = turn_count ?? n_turns ?? 0;
     await d.run(
@@ -117,13 +119,15 @@ export async function finaliseBenchmarkEpisode(episode_id, metrics = {}) {
          SET completed_at=?, turn_count=?, cumulative_reward=?, stress_auc=?,
              goal_achieved=?, turns_to_goal=?, trust_delta_final=?,
              tokens_scout=?, tokens_maverick=?, latency_ms_mean=?,
-             cost_usd_total=?, llm_calls_total=?, hysteresis_zone_changes=?, summary=?
+             cost_usd_total=?, llm_calls_total=?, hysteresis_zone_changes=?, summary=?,
+             curriculum_pool=?
          WHERE episode_id=?`,
         [Date.now(), resolvedTurnCount, cumulative_reward ?? null, stress_auc ?? null,
          goal_achieved ? 1 : 0, turns_to_goal ?? null, trust_delta_final ?? null,
          tokens_scout ?? 0, tokens_maverick ?? 0, latency_ms_mean ?? null,
          cost_usd_total ?? null, llm_calls_total ?? 0, hysteresis_zone_changes ?? 0,
-         summary ? JSON.stringify(summary) : null, episode_id]
+         summary ? JSON.stringify(summary) : null,
+         curriculum_pool ?? null, episode_id]
     );
     // Update parent run episode count
     await d.run(
@@ -797,9 +801,33 @@ export async function getCriticalFailureSummary() {
 }
 
 /**
- * Get a side-by-side comparison of all three arms for the same canonical scenario.
- * Returns null if fewer than 2 arms have a transcript for this scenario.
+ * L5: Stratified goal rate — break down goal_achieved% by curriculum_pool for each arm.
+ * Uses only the most recent 100 completed episodes per arm (same baseline as other metrics).
+ *
+ * Returns [{arm, curriculum_pool, total_episodes, goal_achieved_count, goal_rate}]
  */
+export async function getStratifiedGoalRates() {
+    const db = await getDb();
+    return db.all(
+        `WITH ranked AS (
+            SELECT e.*,
+                   ROW_NUMBER() OVER (PARTITION BY e.arm ORDER BY e.completed_at DESC) AS rn
+            FROM htn_benchmark_episodes e
+            WHERE e.completed_at IS NOT NULL
+         ),
+         recent AS (SELECT * FROM ranked WHERE rn <= 100)
+         SELECT arm,
+                COALESCE(curriculum_pool, 'unknown') AS curriculum_pool,
+                COUNT(*)                              AS total_episodes,
+                SUM(goal_achieved)                    AS goal_achieved_count,
+                ROUND(AVG(goal_achieved) * 100.0, 1)  AS goal_rate
+         FROM recent
+         GROUP BY arm, COALESCE(curriculum_pool, 'unknown')
+         ORDER BY arm, curriculum_pool`
+    );
+}
+
+
 export async function getArmComparisonForScenario(scenarioId, runId = null) {
     const db = await getDb();
     const rows = await db.all(

@@ -138,6 +138,7 @@ async function _refresh() {
             _fetchScenarioGoals(),
             _fetchPhysio(),
             _fetchCritFail(),
+            _fetchStratifiedGoalRates(),
             _fetchRewardComponents(),
             _fetchCheckpoints(),
             _fetchActionStats(),
@@ -245,6 +246,12 @@ async function _fetchCritFail() {
         _state.critFailData = Object.values(merged);
     } catch { _state.critFailData = null; }
 }
+async function _fetchStratifiedGoalRates() {
+    try {
+        const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/stratified-goal-rates`).then(r=>r.json());
+        _state.stratifiedGoalRates = (rows || []).map(_canonicalizeArm);
+    } catch { _state.stratifiedGoalRates = null; }
+}
 async function _fetchRewardComponents() {
     try {
         const { rows } = await fetch(`${config.ORCHESTRATOR_URL}/api/benchmarks/reward-components?window=${_state.wmaWindow}`).then(r => r.json());
@@ -326,9 +333,6 @@ function _renderAll() {
     _renderStressAucChart();
 
     // ── Below the fold — defer until scrolled into view ────────────────────────
-    // Each call registers an IntersectionObserver on the wrapper div; the render
-    // fn fires the first time that div becomes visible.  On subsequent refreshes
-    // _resetLazy() clears the registry so these are re-observed with fresh data.
     _lazyRender('reward-stats-section',       _renderCumulativeRewardDist);
     _lazyRender('reward-component-charts-section', _renderRewardComponentCharts);
     _lazyRender('metric-bars-section',        _renderMetricBars);
@@ -338,6 +342,7 @@ function _renderAll() {
     _lazyRender('scenario-reward-section',    _renderScenarioRewardStats);
     _lazyRender('sensor-comparison-section',  _renderSensorComparison);
     _lazyRender('crit-fail-section',          () => { _renderCritFailStats(); _renderCritFailTable(); });
+    _lazyRender('stratified-goal-section',    _renderStratifiedGoalRates);
     _lazyRender('physio-section',             _renderPhysioScatter);
     _lazyRender('action-stats-section',       _renderActionStatsTable);
 }
@@ -1911,6 +1916,67 @@ function _renderCostCharts() {
             });
         }
     }
+}
+
+// -- Stratified Goal Rates (L5) -----------------------------------------------
+function _renderStratifiedGoalRates() {
+    const el = document.getElementById('stratified-goal-section');
+    if (!el) return;
+    const rows = _state.stratifiedGoalRates;
+    if (!rows?.length) {
+        el.innerHTML = '<p class="muted" style="padding:8px;">No stratified goal rate data yet (curriculum_pool column not populated).</p>';
+        return;
+    }
+
+    const POOLS   = ['success', 'recovery', 'dormant', 'initial', 'unknown'];
+    const COLOURS = { success: '#22c55e', recovery: '#f59e0b', dormant: '#ef4444', initial: '#60a5fa', unknown: '#94a3b8' };
+    const arms    = [...new Set(rows.map(r => r.arm))].sort();
+
+    // One grouped-bar chart: arms on X, one bar-segment per pool
+    const datasets = POOLS.map(pool => ({
+        label:           pool.charAt(0).toUpperCase() + pool.slice(1),
+        data:            arms.map(arm => {
+            const r = rows.find(x => x.arm === arm && x.curriculum_pool === pool);
+            return r ? r.goal_rate : null;
+        }),
+        backgroundColor: COLOURS[pool],
+        borderWidth:     1,
+        borderRadius:    3,
+        skipNull:        true,
+    })).filter(ds => ds.data.some(v => v != null));
+
+    el.innerHTML = `
+        <h3 style="margin:0 0 10px;font-size:13px;color:var(--text-muted)">
+            Goal Rate by Curriculum Pool (last 100 eps per arm)
+        </h3>
+        <canvas id="stratified-goal-chart" height="220"></canvas>
+        <p style="font-size:11px;color:var(--text-muted);margin-top:6px">
+            Stratified by which curriculum pool the episode landed in.
+            Downward total trend can reflect harder pool surfacing (difficulty drift),
+            not necessarily a worse policy.
+        </p>`;
+
+    const ctx = el.querySelector('#stratified-goal-chart');
+    _destroyChart(ctx);
+    new Chart(ctx, {
+        type: 'bar',
+        data: { labels: arms.map(_shortArmName), datasets },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? '-'}%`,
+                    },
+                },
+            },
+            scales: {
+                x: { stacked: false, ticks: { font: { size: 10 } } },
+                y: { min: 0, max: 100, title: { display: true, text: 'Goal Rate (%)' }, ticks: { font: { size: 10 } } },
+            },
+        },
+    });
 }
 
 // -- Physio Scatter -----------------------------------------------------------

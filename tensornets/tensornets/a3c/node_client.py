@@ -479,6 +479,7 @@ def send_benchmark_message(
     session_id: str,
     arm: str,
     timeout: float = 30.0,
+    skip_privacy_guard: bool = False,
 ) -> dict:
     """
     Forward a message to the Node.js companion and return its response.
@@ -487,13 +488,17 @@ def send_benchmark_message(
     companion logic to the production Node.js system.
 
     Maps to POST /api/benchmark/message (note: singular 'benchmark', not plural).
+
+    skip_privacy_guard: when True, instructs Node.js to omit privacyGuard from
+    the CompanionCoordinator handler list (used for Exp 5a safety-ablation arm).
     """
     url = f"{NODE_URL}/api/benchmark/message"
     return http_post(url, {
-        "message":   message,
-        "circleId":  circle_id,
-        "userId":    user_id,
-        "sessionId": session_id,
-        "benchmark": True,
-        "arm":       arm,
+        "message":          message,
+        "circleId":         circle_id,
+        "userId":           user_id,
+        "sessionId":        session_id,
+        "benchmark":        True,
+        "arm":              arm,
+        "skipPrivacyGuard": skip_privacy_guard,
     }, timeout=timeout)

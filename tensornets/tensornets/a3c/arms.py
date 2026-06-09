@@ -1416,6 +1416,10 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
         Returns list[float] in same order as ``actions``.
         Raises RuntimeError on empty response.
 
+        L2 fix: includes last 2 patient turns and session goal in the prompt so
+        Scout can discriminate between actions based on conversational context, not
+        just stress/zone (which produced near-uniform 0.5 scores before this fix).
+
         Extraction strategy (robust to truncated responses):
         1. Try to parse the full JSON object if one can be found.
         2. Fall back to scanning individual "key": value lines so partial
@@ -1423,11 +1427,25 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
         3. Default score = 0.5 for any action not found in the response.
         """
         import json as _json, re as _re
+
+        # Build a brief conversation excerpt (last 2 patient turns) for context.
+        # This is the critical L2 fix — without it, Scout has no text to reason about
+        # and returns near-uniform scores regardless of action type.
+        recent_turns = [
+            m for m in state.conversation_history[-6:]
+            if m.get("role") == "user"
+        ][-2:]
+        excerpt = "\n".join(
+            f"Patient: {m['content'][:200]}" for m in recent_turns
+        ) or "(no turns yet)"
+
         action_list = "\n".join(f"  - {a}" for a in actions)
         prompt = (
             f"Patient state: stress={state.stress_index:.2f}, "
             f"zone={zone_name} (streak={zone_streak}), mode={mode}.\n\n"
-            f"Rate each action 0.0 (wrong) to 1.0 (ideal) for this exact moment.\n"
+            f"Session goal: {state.session_goal or 'general support'}\n\n"
+            f"Recent conversation:\n{excerpt}\n\n"
+            f"Rate each action 0.0 (wrong for this exact moment) to 1.0 (ideal).\n"
             f"Actions:\n{action_list}"
         )
         # max_tokens large enough for all actions (avg ~8 chars/key, ~5 chars/val, ~30 actions)
@@ -1796,3 +1814,80 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
         if self._gate:
             result["hysteresis_gate"] = self._gate.to_dict()
         return result
+
+
+# ── Safety-ablation variants (Exp 3a, 6a, 5a) ────────────────────────────────
+# These subclasses disable a single safety constraint while inheriting all other
+# behaviour from their parent arm.  They measure each gate's independent
+# contribution to outcome metrics.
+
+class InertialPhysioMPSMCTSNoGateWorker(InertialPhysioMPSMCTSWorker):
+    """
+    Exp 3a: InertialPhysioMPSMCTS without the critical-failure termination gate.
+
+    Identical to Exp 3 except the 2-strike rule does NOT end the episode early.
+    The comparison between Exp 3 and Exp 3a isolates the gate's contribution:
+    is Exp 3's goal rate driven by the learned policy or by cutting off bad episodes?
+    """
+    ARM = "inertial_physio_mps_mcts_no_gate"
+    DISABLE_CRITICAL_FAILURE_GATE = True
+
+
+class InertialHPVOOTPhysioMPSMCTSNoGateWorker(InertialHPVOOTPhysioMPSMCTSWorker):
+    """
+    Exp 6a: HPVOOT+PW without the critical-failure episode-termination gate.
+
+    Identical to Exp 6 except the 2-strike rule does NOT end the episode early.
+    Measures whether HPVOOT's goal rate improvement over flat MCTS is policy-driven
+    or gate-driven.
+    """
+    ARM = "inertial_hpvoot_physio_mps_mcts_no_gate"
+    DISABLE_CRITICAL_FAILURE_GATE = True
+
+
+class OldschoolNoPrivacyWorker(OldschoolWorker):
+    """
+    Exp 5a: Oldschool JS companion without privacyGuard filtering.
+
+    Identical to Exp 5 except the privacyGuard handler is omitted from
+    CompanionCoordinator for every turn.  Measures the clinical privacy-engagement
+    trade-off: does privacy filtering reduce rapport or hurt goal achievement?
+    """
+    ARM = "oldschool_no_privacy"
+
+    def generate_response(self, state, action, scenario, conversation_correction=0.0):
+        import time as _time
+        t_start = _time.perf_counter()
+        user_msg = _last_user_message(state)
+
+        try:
+            resp = _node_benchmark_message(
+                message            = user_msg,
+                circle_id          = scenario.get("circle_id", "benchmark_circle"),
+                user_id            = state.subject_id,
+                session_id         = state.session_id,
+                arm                = self.ARM,
+                timeout            = 90.0,
+                skip_privacy_guard = True,
+            )
+            response_text = resp.get("response", resp.get("message", "")).strip()
+            if not response_text:
+                raise ValueError("Empty response from JS companion (no_privacy arm)")
+        except Exception as exc:
+            raise RuntimeError(f"Arm5a: JS companion call failed: {exc}") from exc
+
+        latency_ms = (_time.perf_counter() - t_start) * 1000.0
+        next_stress = _stress_after_response(
+            state.stress_index, action, state.archetype, state.drug_regimen,
+            conversation_correction=conversation_correction,
+        )
+        reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
+        return {
+            "response":    response_text,
+            "reward":      reward,
+            "judge":       {},
+            "next_stress": next_stress,
+            "latency_ms":  latency_ms,
+            "llm_calls":   1,
+        }
+

@@ -379,17 +379,25 @@ def _get_arm_classes():
             OldschoolWorker,
             InertialHPVOOTPhysioMPSMCTSWorker,
             InertialHPVOOTPhysioLLMCoTMCTSWorker,
+            # Safety-ablation arms (Exp 3a, 6a, 5a)
+            InertialPhysioMPSMCTSNoGateWorker,
+            InertialHPVOOTPhysioMPSMCTSNoGateWorker,
+            OldschoolNoPrivacyWorker,
         )
-        # Ordered by experiment number: 0-7
+        # Ordered: 0-7 are the main experiments; 3a/6a/5a are ablation variants
         _ARM_CLASSES = [
-            PhysioLLMWorker,                       # Exp 0: physio_llm
-            PhysioLLMCoTMCTSWorker,                # Exp 1: physio_llm_cot_mcts
-            PhysioMPSMCTSWorker,                   # Exp 2: physio_mps_mcts
-            InertialPhysioMPSMCTSWorker,           # Exp 3: inertial_physio_mps_mcts
-            InertialPhysioLLMCoTMCTSWorker,        # Exp 4: inertial_physio_llm_cot_mcts
-            OldschoolWorker,                       # Exp 5: oldschool
-            InertialHPVOOTPhysioMPSMCTSWorker,     # Exp 6: inertial_hpvoot_physio_mps_mcts
-            InertialHPVOOTPhysioLLMCoTMCTSWorker,  # Exp 7: inertial_hpvoot_physio_llm_cot_mcts
+            PhysioLLMWorker,                          # Exp 0: physio_llm
+            PhysioLLMCoTMCTSWorker,                   # Exp 1: physio_llm_cot_mcts
+            PhysioMPSMCTSWorker,                      # Exp 2: physio_mps_mcts
+            InertialPhysioMPSMCTSWorker,              # Exp 3: inertial_physio_mps_mcts
+            InertialPhysioLLMCoTMCTSWorker,           # Exp 4: inertial_physio_llm_cot_mcts
+            OldschoolWorker,                          # Exp 5: oldschool
+            InertialHPVOOTPhysioMPSMCTSWorker,        # Exp 6: inertial_hpvoot_physio_mps_mcts
+            InertialHPVOOTPhysioLLMCoTMCTSWorker,     # Exp 7: inertial_hpvoot_physio_llm_cot_mcts
+            # Safety-ablation arms — share initial weights with parent arm
+            InertialPhysioMPSMCTSNoGateWorker,        # Exp 3a: same as Exp 3, no crit gate
+            InertialHPVOOTPhysioMPSMCTSNoGateWorker,  # Exp 6a: same as Exp 6, no crit gate
+            OldschoolNoPrivacyWorker,                 # Exp 5a: same as Exp 5, no privacy guard
         ]
     return _ARM_CLASSES
 
@@ -829,6 +837,22 @@ def train(
             # episodes on this arm can chain from it appropriately.
             curriculum.record_outcome(s["name"], summary)
             pool_s = curriculum.pool_stats(s["name"])
+
+            # L5: tag the episode with which curriculum pool it landed in.
+            # Mirrors the routing logic in CurriculumScheduler.record_outcome().
+            _goal = bool(summary.get("goal_achieved", False))
+            _crit = bool(summary.get("critical_failure", False))
+            _drop = bool(summary.get("synthetic_dropout", False))
+            _cov  = float(summary.get("info_coverage", 0.0))
+            MIN_REC = 0.35   # mirrors CurriculumScheduler.MIN_RECOVERY_COV
+            if _goal:
+                summary["curriculum_pool"] = "success"
+            elif _crit or _drop:
+                summary["curriculum_pool"] = "dormant"
+            elif _cov >= MIN_REC:
+                summary["curriculum_pool"] = "recovery"
+            else:
+                summary["curriculum_pool"] = "initial"
 
             _db_finalise_episode(db_episode_id or summary.get("episode_id"), summary)
 

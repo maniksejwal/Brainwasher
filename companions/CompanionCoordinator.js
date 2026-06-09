@@ -391,7 +391,11 @@ export function getRelevantHandlers(role, message, context) {
     const components = [];
     
     // Core handlers (always included)
-    components.push('inputUnderstanding', 'historyAnalyzer', 'empathyHandler', 'privacyGuard', 'stateTracker');
+    components.push('inputUnderstanding', 'historyAnalyzer', 'empathyHandler', 'stateTracker');
+    // privacyGuard: included unless the caller explicitly disables it (Exp 5a ablation)
+    if (!context?.skipPrivacyGuard) {
+        components.push('privacyGuard');
+    }
     
     // Role-specific agents
     if (role === 'patient') {

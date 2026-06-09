@@ -191,7 +191,7 @@ router.get('/training/scenarios', (req, res) => {
 // Returns: { response, agent_action, session_id, latency_ms }
 
 router.post('/benchmark/message', async (req, res) => {
-    const { message, sessionId, arm } = req.body;
+    const { message, sessionId, arm, skipPrivacyGuard } = req.body;
     if (!message) {
         return res.status(400).json({ error: 'Missing message' });
     }
@@ -203,7 +203,8 @@ router.post('/benchmark/message', async (req, res) => {
 
     const t0 = Date.now();
     try {
-        const analysis = await handleMessage(_benchmarkUserId, _benchmarkCircleId, message);
+        const opts = skipPrivacyGuard ? { skipPrivacyGuard: true } : {};
+        const analysis = await handleMessage(_benchmarkUserId, _benchmarkCircleId, message, opts);
         const response = analysis?.reply || analysis?.agent_response || analysis?.response || '';
         if (!response) {
             console.error('[/api/benchmark/message] Empty response. analysis:', JSON.stringify(analysis)?.slice(0, 200));

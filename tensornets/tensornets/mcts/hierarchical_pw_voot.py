@@ -105,9 +105,9 @@ ACTION_CLUSTERS: dict[str, list[str]] = {
     "structure": [
         "summarise",
         "oars_summary",
-        "summarise_session",
-        "change_topic",
-        "introduce_new_angle",
+        "summarise_session",       # L1: was missing from all clusters
+        "change_topic",            # L1: was missing from all clusters
+        "introduce_new_angle",     # L1: was missing from all clusters
         "companion_handoff",
         "share_circle_insight",
         "clarify_goal",
@@ -147,17 +147,25 @@ PW_ALPHA:  float = 0.5    # expansion rate: admit new action when n^alpha change
 PW_C:      float = 2.0    # expansion coefficient: n_admitted < C_pw * n^alpha
 
 # ── VOOT exploration constants ────────────────────────────────────────────────
+# L3 fix: VOOT_C_VAR reduced from 0.8 to 0.4.
+# At n=25 visits with σ²≈0.10, old value added +0.16 to every cluster score —
+# comparable to the Q_mean gap between good/bad clusters, drowning the signal.
+# 0.4 still provides variance-aware exploration without overriding zone affinity.
 VOOT_C_EXPLORE: float = 1.414   # standard UCB exploration
-VOOT_C_VAR:     float = 0.8     # variance bonus weight — higher = more variance exploration
+VOOT_C_VAR:     float = 0.4     # variance bonus weight (reduced from 0.8, L3 fix)
 
 # ── Warm-start persistence ────────────────────────────────────────────────────
 # After each episode, cluster Q statistics are decayed and carried into the
 # next search() call (warm start).  This eliminates cold-start inconsistency
 # where the first ~30 iterations of every episode are wasted re-learning
 # cluster priors that were already established in previous episodes.
-WARM_START_DECAY:      float = 0.75   # discount prior Q_mean each episode
-WARM_START_MIN_VISITS: int   = 3      # minimum synthetic visits after decay
-                                       # (ensures non-infinite VOOT UCB)
+#
+# L4 fix: two-tier decay — aggressive early (explores all clusters), conservative
+# late (preserves converged statistics).  Threshold = 500 arm episodes.
+WARM_START_DECAY_EARLY: float = 0.75   # ep < 500: explore cluster space
+WARM_START_DECAY_LATE:  float = 0.90   # ep ≥ 500: preserve converged statistics
+WARM_START_EPISODE_THRESHOLD: int = 500
+WARM_START_MIN_VISITS: int   = 3       # minimum synthetic visits after decay
 
 
 # ── Cluster state ─────────────────────────────────────────────────────────────
@@ -342,10 +350,16 @@ class HierarchicalPWVOOTMCTS(BaseMCTS):
         self._clusters = self._init_clusters(initial_state)
 
         # ── 2. Apply warm-start snapshots from previous episodes (if any) ────
+        # L4 fix: adaptive decay — preserve converged statistics after 500 episodes.
+        _decay = (
+            WARM_START_DECAY_LATE
+            if self._episode_count >= WARM_START_EPISODE_THRESHOLD
+            else WARM_START_DECAY_EARLY
+        )
         if self._warm_snapshots:
             for name, snap in self._warm_snapshots.items():
                 if name in self._clusters:
-                    self._clusters[name].apply_warm_snapshot(snap, WARM_START_DECAY)
+                    self._clusters[name].apply_warm_snapshot(snap, _decay)
                     self._n_total += self._clusters[name].visits
         else:
             # Cold start: admit the first action in every cluster

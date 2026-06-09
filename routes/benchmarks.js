@@ -34,6 +34,7 @@ import {
     getScenarioGoalRates,
     getPhysioRewardData,
     getCriticalFailureSummary,
+    getStratifiedGoalRates,
     listEpisodesForViewer,
     getEpisodeConversation,
     getRewardComponentTimeline,
@@ -244,6 +245,16 @@ router.get('/physio-reward', async (req, res) => {
 router.get('/critical-failures', async (req, res) => {
     try {
         const rows = await getCriticalFailureSummary();
+        res.json({ rows });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// L5: stratified goal rate by curriculum pool ─────────────────────────────────
+router.get('/stratified-goal-rates', async (req, res) => {
+    try {
+        const rows = await getStratifiedGoalRates();
         res.json({ rows });
     } catch (e) {
         res.status(500).json({ error: e.message });

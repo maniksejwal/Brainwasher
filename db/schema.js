@@ -410,6 +410,7 @@ export async function migrateDatabase(db) {
             cost_usd_total:          'REAL',
             llm_calls_total:         'INTEGER',
             hysteresis_zone_changes: 'INTEGER',
+            curriculum_pool:         'TEXT',   // L5: 'success'|'recovery'|'dormant'|'initial'
         };
         for (const [col, colType] of Object.entries(benchEpCols)) {
             try {

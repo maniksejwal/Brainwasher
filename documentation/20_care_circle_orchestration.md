@@ -128,7 +128,52 @@ This is the JS-side implementation of what `tensornets/agents/shared_tensor_stat
 
 ## 5. Confidential Inter-Companion Communication
 
-`companions/confidential/CompanionConfidentialComm.js` implements the **confidential channel** between companions — information that is shared between AI agents but never shown directly to any human user.
+### 5.0 One companion per user — the fundamental model
+
+**Each user has a dedicated companion.** A companion is the logical AI
+agent permanently bound to a `(userId)`. Its full state — facts,
+conversation history, physiological model, consent decisions, pending
+interventions — is keyed to that user in the database and persists
+across sessions and reconnections.
+
+The companion **adapts its active role** from the circle it is currently
+serving (`circle_members.role` for the current `circleId`). Within a
+care circle, there are therefore as many companions as there are members:
+
+```
+Care Circle 001
+  Alice   → Alice's companion   (role = patient)
+  Bob     → Bob's companion     (role = caregiver)
+  Dr Chen → Dr Chen's companion (role = doctor)
+```
+
+Each companion is a distinct agent. They do not share state, but they
+**communicate** with each other.
+
+### 5.1 Two communication axes
+
+Companion communication operates on two orthogonal axes:
+
+| Axis | Who talks to whom | Channel | Status |
+|------|------------------|---------|--------|
+| **Same circle, different users** | Alice's companion ↔ Bob's companion (within Circle 001) | `companion_confidential_messages` (`cross_user` level) · `companion_intel_sharing` · `interventions` queue · `orchestrator.js` events | ✅ Implemented |
+| **Same user, different circles** | Alice's companion in Circle 001 ↔ Alice's companion in Circle 002 | `companion_confidential_messages` (`companion_network` level) | ⚠ D9 — schema exists, application logic not implemented |
+
+The first axis is **intra-circle, inter-user** communication — how
+Alice's companion and Bob's companion coordinate within Circle 001.
+This is the primary inter-companion channel and is fully implemented.
+
+The second axis is **cross-circle, intra-user** communication — how
+Alice's companion in her patient circle can hint to her companion in
+her caregiver circle that she is currently unwell. This is not yet
+implemented (see `DISCREPANCIES.md §D9`).
+
+### 5.2 Intra-circle companion communication
+
+`companions/confidential/CompanionConfidentialComm.js` implements the
+**confidential channel** between companions within a circle — information
+that is shared between AI agents but never shown directly to any human
+user.
 
 This channel is used for:
 - Passing clinical concern flags from one companion to another (e.g., patient companion flags medication non-adherence → caregiver companion adds a gentle follow-up prompt)
@@ -138,7 +183,7 @@ This channel is used for:
 The confidential channel is:
 - **Not stored in the main `messages` table** — uses a separate DB path
 - **Not accessible via the user-facing SSE stream**
-- **Subject to the same consent gates as all other information** (via `privacyGuard.js`)
+- **Subject to the same consent gates as all other information** (via `privacyGuard.js` + `consentManager.js`)
 
 ---
 

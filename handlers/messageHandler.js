@@ -23,7 +23,7 @@ import { privacyGuard } from '../security/privacy_guard.js';
 // Lazy initialization of topic shift handler
 let topicShiftHandler = null;
 
-export async function handleMessage(userId, circleId, message) {
+export async function handleMessage(userId, circleId, message, opts = {}) {
     // Lazy initialize topic shift handler to avoid circular dependency
     if (!topicShiftHandler) {
         topicShiftHandler = initializeTopicShiftHandler(events);
@@ -72,7 +72,7 @@ export async function handleMessage(userId, circleId, message) {
     // This will use Companion system or unified agent based on config
     let analysis;
     try {
-        analysis = await performAiAnalysis(userId, memberInfo.role, message, circleId);
+        analysis = await performAiAnalysis(userId, memberInfo.role, message, circleId, opts);
     } catch (error) {
         const errorReply = formatAnalysisErrorMessage(error);
         await broadcastErrorReply(userId, circleId, errorReply);

@@ -218,3 +218,93 @@ The following pre-registered rejection criteria apply to the confirmatory run. A
 - discrepancy_flag rate > 30% (reward circularity contamination)
 
 These criteria are established here (§ 7 of the results document) prior to run_014 completion to prevent post-hoc threshold selection.
+
+---
+
+## 8. run_018 — 8-arm benchmark (2026-06-01 → 2026-06-02)
+
+> Run: `tensornets/runs/run_018`  
+> Manifest: `tensornets/runs/run_018/run_manifest.json`  
+> Duration: ~32 hours (2026-06-01T15:30Z → 2026-06-02T23:18Z)  
+> Target: 4,000 episodes total (500 per arm), `patient_mode: llm`  
+> Status: **completed** (`"completed": true` in manifest)  
+> Arms: 8 (the full capability ladder — Exp 0–7 from `tensornets/tensornets/a3c/arms.py`)
+
+### 8.1 Important caveat
+
+run_018 is the **first run exercising the full 8-experiment capability ladder** as defined in `arms.py`. However, several aspects must be kept in mind when interpreting the numbers below:
+
+1. **`successful_eps`** in `run_state.json` counts episodes where the training worker completed without crashing, not episodes where the clinical goal was achieved. Per-episode `goal_progress` scores (from the Maverick LLM judge) require a JSONL scan and are pending analysis.
+2. **Episode counts exceed 500** for some arms because the run continued past the target, rolling over into additional episodes. This is expected behaviour — the A3C workers do not hard-stop at 500.
+3. **Exp 7 (`inertial_hpvoot_physio_llm_cot_mcts`)** shows a substantially lower success rate and a latest checkpoint only at step 100 (vs 500+ for most other arms). This is flagged as an anomaly requiring investigation (§ 8.4).
+
+### 8.2 Per-arm status table
+
+| Exp | Arm | Episodes run | Successful eps | Success rate | Latest checkpoint |
+|-----|-----|-------------|----------------|--------------|-------------------|
+| 0 | `arm_physio_llm` | 561 | 214 | **38.1%** | actor_561 |
+| 1 | `arm_physio_llm_cot_mcts` | 500 | 193 | **38.6%** | actor_500 |
+| 2 | `arm_physio_mps_mcts` | 541 | 191 | **35.3%** | actor_541 |
+| 3 | `arm_inertial_physio_mps_mcts` | 551 | 203 | **36.8%** | actor_551 |
+| 4 | `arm_inertial_physio_llm_cot_mcts` | 551 | 200 | **36.3%** | actor_551 |
+| 5 | `arm_oldschool` (baseline) | 541 | 149 | **27.5%** | actor_541 |
+| 6 | `arm_inertial_hpvoot_physio_mps_mcts` | 551 | 205 | **37.2%** | actor_551 |
+| 7 | `arm_inertial_hpvoot_physio_llm_cot_mcts` | 531 | 87 | **16.4%** ⚠️ | actor_100 |
+
+*Success rate = `successful_eps / ep_count` from `run_state.json`. This is a completion metric, not the clinical goal_progress metric. Confirmed goal_achieved% analysis pending JSONL scan.*
+
+### 8.3 Initial interpretation
+
+**RQ1 — Does the physio layer help?** All physio arms (Exp 0–4, 6) show a success rate of 35–39%, compared to 27.5% for `oldschool`. This is a consistent ~10 percentage point gap across all six physio-armed experiments, which is directionally consistent with the run_013 finding (11.6 pp goal_achieved% gap) and provides early evidence supporting H₁ for RQ1.
+
+**RQ2 — Does inertial modelling add value?** Comparing non-inertial vs inertial pairs:
+
+| Pair | Non-inertial | Inertial | Δ |
+|------|-------------|----------|---|
+| MPS+MCTS (Exp 2 vs 3) | 35.3% | 36.8% | +1.5 pp |
+| LLM+CoT+MCTS (Exp 1 vs 4) | 38.6% | 36.3% | −2.3 pp |
+| HPVOOT+MPS (no non-inertial equiv.) | — | 37.2% | — |
+
+Inertial modelling shows no clear monotonic benefit at this stage. The difference is within noise given only completion-rate data; goal_progress analysis is needed for a substantive conclusion.
+
+**RQ3 — Does HPVOOT add value?** Comparing HPVOOT vs non-HPVOOT inertial arms:
+
+| Pair | Non-HPVOOT | HPVOOT | Δ |
+|------|-----------|--------|---|
+| Inertial + MPS+MCTS (Exp 3 vs 6) | 36.8% | 37.2% | +0.4 pp |
+| Inertial + LLM+CoT+MCTS (Exp 4 vs 7) | 36.3% | 16.4% ⚠️ | −19.9 pp |
+
+The HPVOOT + MPS arm (Exp 6) is marginally better than its non-HPVOOT counterpart. However, the HPVOOT + LLM + CoT + MCTS arm (Exp 7) has anomalously low performance — see § 8.4.
+
+### 8.4 Exp 7 anomaly — `arm_inertial_hpvoot_physio_llm_cot_mcts`
+
+Exp 7 is the most computationally complex arm: inertial MPS + HPVOOT planning + LLM-based CoT chain + MCTS. Its observed success rate (16.4%, latest checkpoint at step 100 vs 500+ for all other arms) is significantly lower than any other arm, including the `oldschool` baseline.
+
+**Possible explanations:**
+
+1. **Checkpoint divergence**: The arm's actor has only reached step 100 while all other arms reached 500–561. This may indicate a training instability (policy collapse) rather than a capability limitation. The remaining 431 steps of checkpoints may never have been saved due to a gradient explosion or NaN loss.
+2. **HPVOOT + LLM interaction**: HPVOOT generates a hierarchical plan that is then serialised into the LLM chain-of-thought prompt. If the HPVOOT output is ill-formed or inconsistently structured, the LLM scorer (Maverick) may penalise the responses heavily, causing reward collapse.
+3. **Latency-driven failures**: This arm has the highest per-turn inference latency (MCTS + HPVOOT + LLM CoT). If the Python server times out, the arm worker may record these as failed episodes (counted in `ep_count` but not `successful_eps`), artificially inflating the denominator.
+
+**Action required**: Inspect `arm_inertial_hpvoot_physio_llm_cot_mcts/checkpoints/run_state.json` and a sample of episode JSONL files to identify the failure mode. This is tracked in `documentation/DISCREPANCIES.md`.
+
+### 8.5 Comparison with run_013
+
+| Metric | run_013 (3 arms, ~130 eps/arm) | run_018 (8 arms, ~500 eps/arm) |
+|--------|-------------------------------|-------------------------------|
+| Episodes per arm | 130 | 500–561 |
+| Arms | 3 (htn_mcts, oldschool, hysteresis_prompt) | 8 (full capability ladder) |
+| Patient model | Synthetic scripted | LLM-generated |
+| Full stack active | No (V_int, ReactivityProfile, M_trunc missing) | Yes |
+| Physio arms vs oldschool gap | +11.6 pp (goal_achieved%) | ~+10 pp (completion rate, preliminary) |
+| Most complex arm anomaly | N/A | Exp 7 ⚠️ (possible instability) |
+
+The run_018 baseline gap is consistent with run_013, providing cross-run replication of the physio-layer benefit. The absolute numbers are not directly comparable (goal_achieved% vs completion rate), but the direction is the same.
+
+### 8.6 Pending analysis
+
+- [ ] **JSONL scan** for `reward.goal_progress` scores across all 8 arms (mirrors the run_013 analysis in § 2–3 above). Required before run_018 results can be used as confirmatory evidence.
+- [ ] **Exp 7 root-cause analysis**: Read episode JSONL files from `arm_inertial_hpvoot_physio_llm_cot_mcts/episodes/` to determine whether failures are scoring-driven (Maverick penalising HPVOOT output) or stability-driven (checkpoint divergence).
+- [ ] **Per-scenario breakdown**: Identify which scenario types drive the most improvement (baseline vs physio arms) to inform the RQ3/RQ4 clinical relevance arguments.
+- [ ] **Genuine metrics extraction** (`change_stage_delta`, `stress_auc`, `turns_to_goal`) from run_018 episode files — these were first added in run_014 and should be present in run_018 JSONL headers.
+

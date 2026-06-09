@@ -997,6 +997,20 @@ class A3CWorker:
 
     ARM: str = "base"   # overridden by subclasses
 
+    # ── Experimental safety-veto flags ───────────────────────────────────────
+    # These are class-level so that a subclass can disable a single safety
+    # mechanism while inheriting all other behaviour unchanged.  Setting them
+    # to True produces the "a" variant arms used to measure each gate's
+    # contribution to the outcome metrics (Exp 3a, 6a, 5a).
+    #
+    # DISABLE_CRITICAL_FAILURE_GATE:
+    #   When True, the 2-strike critical-failure episode-termination rule is
+    #   suppressed.  The episode runs to the configured max turns even when
+    #   the patient would normally have triggered the safety cutoff.
+    #   Used in Exp 3a / 6a to measure how much of Exp 3/6's goal rate comes
+    #   from the gate versus the learned policy.
+    DISABLE_CRITICAL_FAILURE_GATE: bool = False
+
     def __init__(
         self,
         actor: Actor,
@@ -1877,6 +1891,9 @@ class A3CWorker:
 
             if score_result.critical_failure:
                 # 2-strike rule: two *consecutive* critical failures → end episode.
+                # Can be disabled at the class level (DISABLE_CRITICAL_FAILURE_GATE=True)
+                # in safety-ablation experiments (Exp 3a / 6a) to measure the gate's
+                # independent contribution to goal rate.
                 #
                 # Grace period for turns 0–2: during rapport-building, denial and
                 # generic_response scoring ≤ -2 is expected.  Only urgency ≤ -2
@@ -1887,7 +1904,7 @@ class A3CWorker:
                 )
                 counts_as_strike = is_safety_critical or (turn_idx >= 3)
 
-                if counts_as_strike and warned_once:
+                if not self.DISABLE_CRITICAL_FAILURE_GATE and counts_as_strike and warned_once:
                     # 2-strike: end episode after second consecutive qualifying strike
                     log.info(
                         "[%s] 2-strike critical failure at turn %d", self.worker_id, turn_idx

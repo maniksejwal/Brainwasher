@@ -96,7 +96,7 @@ async function resolveEntitiesAndEnrichContext(userId, message, analysis, circle
 /**
  * Perform analysis using Companion system
  */
-export async function performCompanionAnalysis(userId, role, message, circleId) {
+export async function performCompanionAnalysis(userId, role, message, circleId, opts = {}) {
     console.log(`[AIAnalysisHandler] Using Companion system...`);
     events.emit('analysis_progress', {
         userId,
@@ -149,7 +149,9 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
             hasCriticalContent: /emergency|urgent|critical|severe/i.test(message),
             circleId,
             behavioralModels,
-            userAge: userProfile?.age || currentState?.age || null // Prioritize profile age
+            userAge: userProfile?.age || currentState?.age || null, // Prioritize profile age
+            // Safety-ablation flags (Exp 5a): propagated from the benchmark call opts
+            skipPrivacyGuard: opts.skipPrivacyGuard === true,
         };
 
         // Coordinate companions
@@ -362,7 +364,7 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
     }
 }
 
-export async function performAiAnalysis(userId, role, message, circleId) {
+export async function performAiAnalysis(userId, role, message, circleId, opts = {}) {
     // Check if we should use Companion system or unified agent
     const configModule = await import('../../config.js');
     const cfg = configModule.default;
@@ -376,7 +378,7 @@ export async function performAiAnalysis(userId, role, message, circleId) {
 
     if (useCompanion) {
         try {
-            return await performCompanionAnalysis(userId, role, message, circleId);
+            return await performCompanionAnalysis(userId, role, message, circleId, opts);
         } catch (error) {
             console.warn('[AIAnalysisHandler] Companion system failed, falling back to unified agent:', error?.message || error);
         }
