@@ -119,7 +119,7 @@ _drain_running = threading.Event()
 MAX_QUEUE_ENTRIES   = 2_000    # hard cap; oldest entries evicted beyond this
 MAX_DRAIN_ATTEMPTS  = 10       # entries exceeding this are permanently dropped
 _DRAIN_INITIAL_WAIT = 5.0      # seconds before first drain attempt
-_DRAIN_MAX_WAIT     = 120.0    # seconds cap for exponential backoff
+_DRAIN_MAX_WAIT     = 30.0     # seconds cap for exponential backoff (reduced from 120)
 
 
 def init_offline_queue(run_dir: "str | Path") -> None:
@@ -181,6 +181,16 @@ def _drain_loop() -> None:
     while _drain_running.is_set():
         time.sleep(wait)
         if _queue_file is None or not _queue_file.exists():
+            wait = min(wait * 2, _DRAIN_MAX_WAIT)
+            continue
+
+        # Quick connectivity probe before reading the full queue.
+        # Avoids spending time loading and iterating entries when the server
+        # is definitely down (saves CPU and avoids spurious attempt increments).
+        try:
+            http_post("/api/benchmarks/ping", {}, timeout=3.0)
+            wait = _DRAIN_INITIAL_WAIT   # server is back — reset backoff
+        except Exception:
             wait = min(wait * 2, _DRAIN_MAX_WAIT)
             continue
 

@@ -45,6 +45,9 @@ import {
 
 const router = Router();
 
+// ── Health probe — used by Python offline queue drain to check server availability ──
+router.all('/ping', (req, res) => res.json({ ok: true, ts: Date.now() }));
+
 // ─── Write endpoints (called from Python via tensornets/server.py) ────────────
 
 router.post('/run', async (req, res) => {

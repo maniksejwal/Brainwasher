@@ -344,3 +344,95 @@ export async function invalidateFact(factId) {
     const db = await getDb();
     await db.run(`UPDATE facts_v2 SET is_current = 0, valid_until = ? WHERE fact_id = ?`, [Date.now(), factId]);
 }
+
+/**
+ * Record a fact conflict event to the fact_conflicts table.
+ *
+ * Call this AFTER addFact() has archived the existing row and inserted the new one.
+ * Preserves the full conflict history — who said what, in which message, and when.
+ *
+ * @param {object} params
+ * @param {string}   params.circleId
+ * @param {string}   params.factKey
+ * @param {string}   params.reporterUserId      - User who reported the new (conflicting) value
+ * @param {string}   params.claimedValue        - The new value being asserted
+ * @param {string}   [params.existingValue]     - The value that was displaced
+ * @param {string}   [params.existingReporterId]- User who previously reported the fact
+ * @param {number}   [params.factIdNew]         - facts_v2.fact_id of the incoming fact
+ * @param {number}   [params.factIdExisting]    - facts_v2.fact_id of the displaced fact
+ * @param {string}   [params.sourceMessageId]   - ID of the message that triggered this fact
+ * @param {string}   [params.sourceMessageText] - Verbatim message text (for audit)
+ * @param {string}   [params.existingMessageId] - ID of message that established the existing fact
+ * @param {string}   [params.existingMessageText] - Verbatim text that established the old fact
+ * @returns {Promise<number>} Inserted conflict row ID
+ */
+export async function recordFactConflict({
+    circleId,
+    factKey,
+    reporterUserId,
+    claimedValue,
+    existingValue          = null,
+    existingReporterId     = null,
+    factIdNew              = null,
+    factIdExisting         = null,
+    sourceMessageId        = null,
+    sourceMessageText      = null,
+    existingMessageId      = null,
+    existingMessageText    = null,
+} = {}) {
+    const db = await getDb();
+    const result = await db.run(
+        `INSERT INTO fact_conflicts (
+            circle_id, fact_key,
+            fact_id_new, fact_id_existing,
+            reporter_user_id, existing_reporter_id,
+            claimed_value, existing_value,
+            source_message_id, source_message_text,
+            existing_message_id, existing_message_text,
+            conflict_detected_at, resolved
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+        [
+            circleId, factKey,
+            factIdNew, factIdExisting,
+            reporterUserId, existingReporterId,
+            String(claimedValue), existingValue != null ? String(existingValue) : null,
+            sourceMessageId, sourceMessageText,
+            existingMessageId, existingMessageText,
+            Date.now(),
+        ]
+    );
+    return result.lastID;
+}
+
+/**
+ * Get all unresolved (open) fact conflicts for a circle.
+ *
+ * @param {string} circleId
+ * @param {string} [factKey]  - Optional: filter to a specific fact key
+ * @returns {Promise<Array>}
+ */
+export async function getFactConflicts(circleId, factKey = null) {
+    const db = await getDb();
+    const params = [circleId];
+    let sql = `SELECT * FROM fact_conflicts WHERE circle_id = ? AND resolved = 0`;
+    if (factKey) { sql += ` AND fact_key = ?`; params.push(factKey); }
+    sql += ` ORDER BY conflict_detected_at DESC`;
+    return db.all(sql, params);
+}
+
+/**
+ * Mark a fact conflict as resolved.
+ *
+ * @param {number} conflictId
+ * @param {string} resolvedBy       - user_id of the resolver
+ * @param {string} [resolutionNotes]
+ */
+export async function resolveFactConflict(conflictId, resolvedBy, resolutionNotes = null) {
+    const db = await getDb();
+    await db.run(
+        `UPDATE fact_conflicts
+         SET resolved = 1, resolved_at = ?, resolved_by = ?, resolution_notes = ?
+         WHERE id = ?`,
+        [Date.now(), resolvedBy, resolutionNotes, conflictId]
+    );
+}

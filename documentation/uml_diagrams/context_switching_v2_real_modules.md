@@ -1,4 +1,33 @@
-# Context Switching
+# Context Switching — v2 (real module names)
+
+> **Supersedes:** `context_switching_v1_original.md`  
+> **Original source:** Chat-output design sketch using role-abstraction / design-intent names.  
+> **This version:** Rewritten to reflect actual codebase module paths verified against `handlers/commandHandler.js`, `handlers/contextAwareCompanionRouter.js`, `handlers/domainRouter.js`, `companions/CompanionCoordinator.js`, `companions/handlers/stateTracker.js`, `companions/physio/tensornetsBridge.js`, and `companions/agents/patientOptimizer.js`.
+
+## How v2 differs from v1
+
+| Dimension | v1 (original) | v2 (this file) |
+|-----------|--------------|----------------|
+| Participant names | Fictional: `CurrentAgent`, `CommandHandler`, `StateManager`, `NewAgent` | Real module paths: `server.js`, `commandHandler.js`, `contextAwareCompanionRouter.js`, `domainRouter.js`, `CompanionCoordinator.js`, `stateTracker.js`, `tensornetsBridge.js`, `patientOptimizer.js`, `unifiedAgent.js` |
+| Access validation | `StateManager` queries database for permissions | `commandHandler.js` performs a direct SQLite `SELECT circle_members` query as a membership gate check before any routing |
+| Domain isolation | Not modelled | `handlers/domainRouter.js` explicitly shown: maps `circleId` to `medical` or `business` domain before handing back to the router |
+| Agent identity logic | 3-step: (1) update context, (2) determine identity (PersonalAgent vs CareAgent), (3) assign role | Single `coordinateCompanions(req, { reinitialise: true })` call — identity is determined by the `role` field passed in the request |
+| Physio session reset | Not modelled | `tensornetsBridge.js` calls FastAPI `POST /session_reset` to discard the prior circle's physiological state and start a new session |
+| Circle context load | Not modelled | SQLite fetch of `circle_context` (members, goals, recent events, active interventions) after re-initialisation |
+| First response | Not modelled | `patientOptimizer` generates a greeting tailored to the new role and circle context |
+| Error path | Returns "Cannot access circle" | Returns structured `{ error: "ACCESS_DENIED", circleId }` SSE event |
+
+## How v1 and v2 align
+
+Both versions model the same **conceptual context switch**: the user requests a role/circle change, the system validates access, updates state, and confirms success. The abstract components in v1 map to real modules in v2:
+
+| v1 concept | v2 module |
+|------------|-----------|
+| `CurrentAgent` | `handlers/contextAwareCompanionRouter.js` + `CompanionCoordinator.js` |
+| `CommandHandler` | `handlers/commandHandler.js` |
+| `StateManager` | `companions/handlers/stateTracker.js` |
+| `NewAgent` | `CompanionCoordinator.js` re-initialised with `reinitialise: true` |
+| `Database` | `SQLite care_circle_dev.db` |
 
 ## Sequence Diagram
 
@@ -107,4 +136,4 @@ sequenceDiagram
 
 ---
 
-> **Note:** This diagram uses real module file names from the codebase. Earlier versions of this diagram used fictional participant names (ActionExecutor, FactReportingHandler, CriticalEventsHandler, ConsentManager, SharingHandler) — those have been removed.
+> **Note:** This diagram uses real module file names from the codebase. Earlier versions used role-abstraction / design-intent names (ActionExecutor, FactReportingHandler, CriticalEventsHandler, ConsentManager, SharingHandler). Those names correctly represent the conceptual architecture — the v1 names like `PersonalAgent`, `CareAgent`, `Doctor`, `Caregiver` map to `role` values in the `care_circle_members` table, not to separate module files.

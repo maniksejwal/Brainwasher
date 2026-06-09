@@ -289,6 +289,39 @@ export async function migrateDatabase(db) {
             await db.run('ALTER TABLE care_circle_members ADD COLUMN last_read_timestamp INTEGER DEFAULT 0');
         }
 
+        // Fact Conflicts Table — per-conflict-event history (D3 fix).
+        // facts_v2 has a boolean conflict_flag that gets overwritten on each update;
+        // this table preserves the full conflict event log including the messages
+        // that triggered each conflict, enabling resolution tracking and audit.
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS fact_conflicts (
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                circle_id             TEXT    NOT NULL,
+                fact_key              TEXT    NOT NULL,
+                fact_id_new           INTEGER,              -- facts_v2.fact_id of the incoming (conflicting) fact
+                fact_id_existing      INTEGER,              -- facts_v2.fact_id of the fact that was displaced
+                reporter_user_id      TEXT    NOT NULL,     -- user who reported the new (conflicting) value
+                existing_reporter_id  TEXT,                 -- user who reported the previous value
+                claimed_value         TEXT    NOT NULL,     -- new value being claimed
+                existing_value        TEXT,                 -- value it conflicts with
+                source_message_id     TEXT,                 -- messages.message_id that triggered this fact (if available)
+                source_message_text   TEXT,                 -- verbatim message text for audit trail
+                existing_message_id   TEXT,                 -- messages.message_id that established the existing value
+                existing_message_text TEXT,                 -- verbatim text that established the existing fact
+                conflict_detected_at  INTEGER NOT NULL,
+                resolved              INTEGER DEFAULT 0,    -- 0=open, 1=resolved
+                resolution_notes      TEXT,
+                resolved_at           INTEGER,
+                resolved_by           TEXT,                 -- user_id who resolved the conflict
+                FOREIGN KEY (circle_id) REFERENCES care_circles(circle_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fact_conflicts_circle_key
+                ON fact_conflicts(circle_id, fact_key);
+            CREATE INDEX IF NOT EXISTS idx_fact_conflicts_open
+                ON fact_conflicts(circle_id, resolved, conflict_detected_at DESC);
+        `);
+        console.log('[Schema] fact_conflicts table ready');
+
         // Direct Messages Table
         await db.exec(`
             CREATE TABLE IF NOT EXISTS direct_messages (

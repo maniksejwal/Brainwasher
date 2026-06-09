@@ -1,4 +1,33 @@
-# Consent Management
+# Consent Management — v2 (real module names)
+
+> **Supersedes:** `consent_management_v1_original.md`  
+> **Original source:** Chat-output design sketch using role-abstraction / design-intent names.  
+> **This version:** Rewritten to reflect actual codebase module paths verified against `companions/handlers/privacyGuard.js`, `companions/CompanionCoordinator.js`, `db/queries_interventions.js`, `companions/agents/patientOptimizer.js`, and `agents/unifiedAgent.js`.
+
+## How v2 differs from v1
+
+| Dimension | v1 (original) | v2 (this file) |
+|-----------|--------------|----------------|
+| Participant names | Role abstractions / design-intent names: `PersonalAgent A`, `Orchestrator`, `SharingHandler`, `ConsentManager`, `StateManager`, `CareAgent B`. PersonalAgent/CareAgent correctly represent role-specific agents. `ConsentManager` represents a planned module (see `DISCREPANCIES.md §D2`). | Real module paths: `server.js`, `contextAwareCompanionRouter.js`, `CompanionCoordinator.js`, `privacyGuard.js`, `state_manager.js`, `db/queries_interventions.js`, `patientOptimizer.js`, `unifiedAgent.js` |
+| Consent taxonomy | "Implied / Explicit / No Consent" — maps directly to the DB `consent_level` field and `getImpliedConsent()`. These are valid and important distinctions. | NONE / LIMITED / FULL / EMERGENCY — this is the `privacyLevel` output from the LLM classifier, **a different concept** from `consent_level`. See `DISCREPANCIES.md §D7` for the full taxonomy reconciliation. Both taxonomies should appear in the documentation. |
+| Classification mechanism | `ConsentManager` queries a consent table | `privacyGuard.js` performs LLM-based classification of the share request content |
+| Emergency path | Not modelled | Emergency override path explicitly shown — bypasses normal consent checks, logs `consent_emergency/EMERGENCY` |
+| Consent question generation | `CareAgent B` asks `User B` for consent | `patientOptimizer` + `unifiedAgent` + Scout LLM generate the consent question to send back to the requesting user |
+| Audit trail | Not modelled | All consent decisions (pending, granted, emergency) are logged to `db/queries_interventions.js` |
+| Second-party consent request | `User B` provides consent response in same sequence | Pending consent stored in `state_manager.js`; second-party response handled asynchronously (not in same sequence) |
+
+## How v1 and v2 align
+
+Both versions model the same **conceptual consent gate**: a sharing request is evaluated, either approved immediately (if consent already exists) or deferred pending explicit consent from the target party. The abstract components in v1 map to real modules in v2:
+
+| v1 concept | v2 module |
+|------------|-----------|
+| `PersonalAgent A` | `handlers/contextAwareCompanionRouter.js` + `CompanionCoordinator.js` |
+| `Orchestrator` | `CompanionCoordinator.js` |
+| `SharingHandler` | `CompanionCoordinator.js` (orchestrates the full consent flow) |
+| `ConsentManager` | `companions/handlers/privacyGuard.js` |
+| `StateManager` | `state_manager.js` (pending action queue) |
+| `Database` | `SQLite care_circle_dev.db` via `db/queries_interventions.js` |
 
 ## Sequence Diagram
 
@@ -137,4 +166,4 @@ User sharing request
 
 ---
 
-> **Note:** This diagram uses real module file names from the codebase. Earlier versions of this diagram used fictional participant names (ActionExecutor, FactReportingHandler, CriticalEventsHandler, ConsentManager, SharingHandler) — those have been removed.
+> **Note:** This diagram uses real module file names from the codebase. Earlier versions used role-abstraction / design-intent names (ActionExecutor, FactReportingHandler, CriticalEventsHandler, ConsentManager, SharingHandler). Those names correctly represent the conceptual architecture — the v1 names like `PersonalAgent`, `CareAgent`, `Doctor`, `Caregiver` map to `role` values in the `care_circle_members` table, not to separate module files.

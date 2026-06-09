@@ -1,4 +1,34 @@
-# Escalation Flow
+# Escalation Flow — v2 (real module names)
+
+> **Supersedes:** `escalation_flow_v1_original.md`  
+> **Original source:** Chat-output design sketch using role-abstraction / design-intent names.  
+> **This version:** Rewritten to reflect actual codebase module paths verified against `companions/CompanionCoordinator.js`, `companions/agents/escalationManager.js`, `orchestrator.js`, `server.js`, `companions/physio/tensornetsBridge.js`, and `db/queries_interventions.js`.
+
+## How v2 differs from v1
+
+| Dimension | v1 (original) | v2 (this file) |
+|-----------|--------------|----------------|
+| Participant names | Role abstractions / design-intent names: `PersonalAgent`, `Orchestrator`, `CriticalEventsHandler`, `Doctor`, `Family`, `Caregivers`, `Dashboard`. Doctor/Caregiver/Family are real `role` values in `circle_members`; PersonalAgent/CriticalEventsHandler are conceptual names for real module functions. | Real module file paths: `companions/CompanionCoordinator.js`, `escalationManager.js`, `tensornetsBridge.js`, `orchestrator.js`, `server.js`, `db/queries_interventions.js` |
+| Escalation trigger | User manually reports a critical event | MCTS returns `action: "escalate"` (Path A) or `orchestrator.js` receives `future_plan_executed` event (Path B) |
+| Criticality source | Analyst/designer judgment ("HIGH/MEDIUM/LOW Criticality" section) | Numeric threshold: `stress_index > 0.90` → HIGH, `0.85 < stress_index ≤ 0.90` → MEDIUM |
+| Notification channel | Generic "send urgent notification" | `server.js` SSE broadcast to connected Doctor and Caregiver clients |
+| Intervention queue | Not modelled | MEDIUM escalations write a `pending` row to `db/queries_interventions.js` before SSE broadcast |
+| Concurrency | `par` block in v1 shows parallel notifications | `par` block in v2 shows two independent escalation *paths* (MCTS vs future-plan) that can fire simultaneously |
+| Python layer | Absent | `FastAPI tensornets/server.py :8765` explicitly shown as the source of MCTS action + stress_index |
+| Family notification | Explicitly modelled | Not present — **gap identified (DISCREPANCIES.md §D1)**: the SSE broadcast currently targets `payload.userId` only; Caregiver/Family are not reliably reached. `getCircleMembers()` should be called on escalation to fan out to all circle members. |
+| Manual / user-initiated escalation | User-triggered: `User->>Agent: Report critical health event` | **Not modelled in v2 — gap (DISCREPANCIES.md §D5)**: user-initiated escalation exists via `clinicalAgent.js` → `escalationManager.js` (HIGH/MEDIUM criticality from message content). This is Path C, absent from the v2 diagram. |
+
+## How v1 and v2 align
+
+Both versions model the same **conceptual flow**: a critical health signal triggers parallel notification of the care circle. The abstract components in v1 map to real modules in v2:
+
+| v1 concept | v2 module |
+|------------|-----------|
+| `PersonalAgent` | `companions/CompanionCoordinator.js` |
+| `Orchestrator` | `orchestrator.js` (event bus) + `server.js` (SSE broadcaster) |
+| `CriticalEventsHandler` | `companions/agents/escalationManager.js` |
+| `Database` | `SQLite care_circle_dev.db` via `db/queries_interventions.js` |
+| `Dashboard` | Client-side SSE consumer (not a server-side module) |
 
 ## Sequence Diagram
 
@@ -113,4 +143,4 @@ Criticality gate:
 
 ---
 
-> **Note:** This diagram uses real module file names from the codebase. Earlier versions of this diagram used fictional participant names (ActionExecutor, FactReportingHandler, CriticalEventsHandler, ConsentManager, SharingHandler) — those have been removed.
+> **Note:** This diagram uses real module file names from the codebase. Earlier versions used role-abstraction / design-intent names (ActionExecutor, FactReportingHandler, CriticalEventsHandler, ConsentManager, SharingHandler). Those names correctly represent the conceptual architecture — the v1 names like `PersonalAgent`, `CareAgent`, `Doctor`, `Caregiver` map to `role` values in the `care_circle_members` table, not to separate module files.

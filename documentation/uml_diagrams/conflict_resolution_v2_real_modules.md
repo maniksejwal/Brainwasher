@@ -1,4 +1,33 @@
-# Conflict Resolution
+# Conflict Resolution — v2 (real module names)
+
+> **Supersedes:** `conflict_resolution_v1_original.md`  
+> **Original source:** Chat-output design sketch using role-abstraction / design-intent names.  
+> **This version:** Rewritten to reflect actual codebase module paths verified against `companions/CompanionCoordinator.js`, `companions/handlers/historyAnalyzer.js`, `companions/handlers/privacyGuard.js`, `db/queries_facts.js`, `companions/confidential/CompanionConfidentialComm.js`, `companions/agents/patientOptimizer.js`, and `agents/unifiedAgent.js`.
+
+## How v2 differs from v1
+
+| Dimension | v1 (original) | v2 (this file) |
+|-----------|--------------|----------------|
+| Participant names | Role abstractions / design-intent names: `PersonalAgent A`, `Orchestrator`, `FactReportingHandler`, `ConflictHandler`, `CareAgent B`. These correctly represent the conceptual architecture; the implementation uses `CompanionCoordinator.js` with role-based sub-agent selection rather than separate files. | Real module paths: `server.js`, `contextAwareCompanionRouter.js`, `CompanionCoordinator.js`, `historyAnalyzer.js`, `privacyGuard.js`, `db/queries_facts.js`, `CompanionConfidentialComm.js`, `patientOptimizer.js`, `unifiedAgent.js` |
+| Conflict trigger | User A explicitly "reports a fact"; conflict detected from prior report by User B | User sends any natural-language message; `historyAnalyzer.js` extracts a structured fact claim with a confidence score |
+| Privacy gate | Not modelled | `privacyGuard.js` classifies the fact before it is stored or compared — SENSITIVE facts are blocked immediately |
+| Fact storage | `FactHandler` stores fact; `ConflictHandler` queries separately | Single `db/queries_facts.js` handles both retrieval of contradicting facts and upsert with `conflictFlag` metadata |
+| Cross-companion notification | `ConflictHandler` sends a mediated question to `CareAgent B`, which asks `User B` — **multi-party truth resolution approach, should be retained** | `companions/confidential/CompanionConfidentialComm.js` notifies the peer companion (e.g. doctor companion) directly — no user-facing question to User B in the same turn |
+| Conflict response | Mediated clarifying question text generated (neutral language, no attribution) — sent to the **second party** (User B) to cross-check the conflicting fact. **This approach is valid and should not be discarded.** | `patientOptimizer` → `unifiedAgent` → Scout LLM generates a conflict-acknowledging response for the **originating user**. Both approaches are complementary: (1) acknowledge to originating user immediately (v2), AND (2) queue a mediated cross-check for the second party's next session via the intervention queue (v1 approach, partially implemented). |
+| Conflict persistence | "Update fact with resolution" after User B responds | `conflictFlag = true` persisted on the fact row immediately; resolution asynchronous. **Gap (DISCREPANCIES.md §D3):** `conflictFlag` is per-fact-key not per-conflict-event; multiple conflicts on same fact overwrite. A `fact_conflicts` history table is planned. |
+
+## How v1 and v2 align
+
+Both versions model the same **conceptual conflict detection loop**: a newly reported fact is checked against prior records, a conflict is detected, and a resolution process is initiated. The abstract components in v1 map to real modules in v2:
+
+| v1 concept | v2 module |
+|------------|-----------|
+| `PersonalAgent A` | `handlers/contextAwareCompanionRouter.js` + `CompanionCoordinator.js` |
+| `Orchestrator` | `CompanionCoordinator.js` |
+| `FactReportingHandler` | `companions/handlers/historyAnalyzer.js` |
+| `ConflictHandler` | `CompanionCoordinator.js` (conflict detection logic) + `db/queries_facts.js` |
+| `CareAgent B` | `companions/confidential/CompanionConfidentialComm.js` (peer companion notification channel) |
+| `Database` | `SQLite care_circle_dev.db` via `db/queries_facts.js` |
 
 ## Sequence Diagram
 
@@ -122,4 +151,4 @@ User message
 
 ---
 
-> **Note:** This diagram uses real module file names from the codebase. Earlier versions of this diagram used fictional participant names (ActionExecutor, FactReportingHandler, CriticalEventsHandler, ConsentManager, SharingHandler) — those have been removed.
+> **Note:** This diagram uses real module file names from the codebase. Earlier versions used role-abstraction / design-intent names (ActionExecutor, FactReportingHandler, CriticalEventsHandler, ConsentManager, SharingHandler). Those names correctly represent the conceptual architecture — the v1 names like `PersonalAgent`, `CareAgent`, `Doctor`, `Caregiver` map to `role` values in the `care_circle_members` table, not to separate module files.

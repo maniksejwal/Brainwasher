@@ -76,9 +76,9 @@ app.get('/events/:userId', (req, res) => {
 events.on('broadcast', (payload) => {
     try {
         const preview = payload.reply || payload.message || '';
-        console.log(`[Server] Broadcasting to ${Array.isArray(payload.targetUsers) ? payload.targetUsers.join(', ') : '<none>'} | from=${payload.from || 'unknown'} | preview="${preview ? String(preview).slice(0, 60) : ''}"`);
+        console.log(`[Server] Delivering to ${Array.isArray(payload.targetUsers) ? payload.targetUsers.join(', ') : '<none>'} | from=${payload.from || 'unknown'} | preview="${preview ? String(preview).slice(0, 60) : ''}"`);
     } catch (err) {
-        console.warn('[Server] Failed to log broadcast payload:', err?.message || err);
+        console.warn('[Server] Failed to log delivery payload:', err?.message || err);
     }
     broadcast(payload.targetUsers, { type: 'message', ...payload });
 });
@@ -103,20 +103,30 @@ events.on('context_switch', (payload) => {
 });
 
 events.on('escalate', (payload) => {
-    // Broadcast to all connected clients? Original logic was Object.keys(clients).forEach...
-    // We should use broadcastToAll from sse.js? Or broadcast to everyone.
-    // Ideally we should import broadcastToAll.
-    // I'll assume broadcast handles it if I pass all keys? No.
-    // I'll dynamically import broadcastToAll? Or just add it to imports.
-    // Wait, I didn't import broadcastToAll at the top.
-    import('./lib/sse.js').then(({ broadcast, broadcastToAll }) => {
-        if (payload.userId) {
-            broadcast([payload.userId], { type: 'escalation', ...payload });
-        } else {
-            // Fallback for backward compatibility
-            console.warn('[Server] Escalation event missing userId, using broadcastToAll fallback.');
-            broadcastToAll({ type: 'escalation', ...payload });
+    // Share the escalation alert to all connected care circle members.
+    // Unlike regular message routing (which targets a single user), escalations
+    // must reach every member of the circle — doctors, caregivers, family.
+    // D1 (DISCREPANCIES.md): original code only sent to payload.userId.
+    import('./lib/sse.js').then(async ({ broadcast }) => {
+        let targetUserIds = [];
+        if (payload.circleId) {
+            try {
+                const { getCircleMembers } = await import('./db/index.js');
+                const members = await getCircleMembers(payload.circleId);
+                targetUserIds = members.map(m => m.user_id).filter(Boolean);
+            } catch {
+                // Fall back to triggering user if circle lookup fails
+            }
         }
+        if (!targetUserIds.length && payload.userId) {
+            targetUserIds = [payload.userId];
+        }
+        if (targetUserIds.length) {
+            broadcast(targetUserIds, { type: 'escalation', ...payload });
+        } else {
+            console.warn('[Server] Escalation event: no target users found for circleId=%s userId=%s', payload.circleId, payload.userId);
+        }
+    });
     });
 });
 

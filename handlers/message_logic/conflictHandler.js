@@ -5,7 +5,7 @@
 
 import chalk from 'chalk';
 import { getMemberInfo, findUserById, addEscalation } from '../../db/index.js';
-import { addFact, getCurrentFact } from '../../db/queries_facts.js';
+import { addFact, getCurrentFact, recordFactConflict } from '../../db/queries_facts.js';
 import { generateMediatedClarification } from '../../agents/index.js'; // Ensure this is exported/updated
 import { events } from '../../orchestrator.js'; // Or wherever addEscalation/events come from
 import { getAgentName } from '../utils/agentIdentity.js';
@@ -70,11 +70,10 @@ export async function handleFactProcessing(userId, circleId, analysis) {
         // Check for conflicts with CURRENT fact
         const currentFact = await getCurrentFact(circleId, key);
 
-        // Add the new fact (this will archive the old one)
-        await addFact(circleId, key, factValue, metadata);
+        // Add the new fact (this archives the old one)
+        const newFactId = await addFact(circleId, key, factValue, metadata);
 
-        // Conflict Detection Logic
-        // Conflict if: there WAS a current fact AND it was reported by someone else AND value is different
+        // Conflict Detection: there WAS a current fact, different reporter, different value
         if (currentFact && currentFact.reported_by !== userId && String(currentFact.value) !== String(factValue)) {
             console.log(chalk.yellow.bold(`[ConflictHandler] CONFLICT DETECTED in circle ${circleId} on '${key}'`));
 
@@ -82,16 +81,33 @@ export async function handleFactProcessing(userId, circleId, analysis) {
             await addEscalation(circleId, 'CONFLICT', conflictDetails);
             events.emit('escalate', { circleId });
 
+            // Record the conflict event in fact_conflicts with message reference for full audit trail.
+            // analysis.messageId and analysis.messageText are populated by the calling handler
+            // when it has access to the originating message (e.g. aiAnalysisHandler.js).
+            await recordFactConflict({
+                circleId,
+                factKey:              key,
+                reporterUserId:       userId,
+                claimedValue:         factValue,
+                existingValue:        currentFact.value,
+                existingReporterId:   currentFact.reported_by,
+                factIdNew:            newFactId,
+                factIdExisting:       currentFact.fact_id,
+                sourceMessageId:      analysis.messageId   || null,
+                sourceMessageText:    analysis.messageText || null,
+                existingMessageId:    currentFact.provenance || null,
+                existingMessageText:  null,   // not stored on the fact row itself
+            }).catch(err => console.error('[ConflictHandler] recordFactConflict failed:', err.message));
+
             // Initiate mediated clarification with the previous reporter
             try {
                 const otherMember = await getMemberInfo(currentFact.reported_by, circleId);
                 if (otherMember) {
                     const otherUser = await findUserById(otherMember.user_id);
-                    // Generate clarification message
-                    // Note: generateMediatedClarification might need updating to handle context better
                     const clarificationQuestion = await generateMediatedClarification(otherUser.username, key, factValue, currentFact.value);
 
                     const agentName = await getAgentName(otherMember.user_id, circleId);
+                    // Share the clarification question to the other member's companion
                     events.emit('broadcast', {
                         targetUsers: [otherMember.user_id],
                         message: clarificationQuestion,
