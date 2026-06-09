@@ -11,69 +11,42 @@
 
 ---
 
-## D1 — Escalation broadcast does not reach all care circle members
+## D1 — Escalation `server.js` handler was misunderstood as a notification gap
 
 | Field | Value |
 |-------|-------|
-| Severity | **HIGH** — clinical safety concern |
-| Status | 🔴 Not addressed |
-| Files | `server.js` lines 105–120, `orchestrator.js` |
+| Severity | **RESOLVED** — original analysis was incorrect |
+| Status | 🟢 Closed — see note below |
+| Files | `server.js`, `handlers/message_logic/sharing/escalationTiers.js` |
 | Discovered | 2026-06-08 code audit |
+| Corrected | 2026-06-09 |
 
-### Description
+### Correction
 
-When `orchestrator.js` emits an `escalate` event, `server.js` handles
-it as follows:
+The original D1 entry claimed escalation notifications did not reach care circle members
+other than the triggering user. This was based on reading `server.js` in isolation.
 
-```js
-// server.js lines 112–119
-import('./lib/sse.js').then(({ broadcast, broadcastToAll }) => {
-    if (payload.userId) {
-        broadcast([payload.userId], { type: 'escalation', ...payload });
-    } else {
-        // Fallback for backward compatibility
-        console.warn('[Server] Escalation event missing userId, using broadcastToAll fallback.');
-        broadcastToAll({ type: 'escalation', ...payload });
-    }
-});
-```
+**Escalations are not broadcasts — they are directed sharing actions.** The actual
+member notifications are already sent by `escalationTiers.js` *before* the `escalate`
+event fires:
 
-This broadcasts the escalation event only to `payload.userId` — the
-single user whose action triggered the escalation. Doctors, caregivers,
-and family members are **not notified** unless they happen to be the
-triggering user. The `broadcastToAll` fallback fires only when `userId`
-is missing, which is the exception, not the rule.
+- **Tier 2**: `handleTier2Caregiver()` — delivers alert to caregivers only (`role='caregiver'`)
+- **Tier 3**: `handleTier3Anonymous()` — anonymous consultation, patient identity withheld
+- **Tier 4**: `handleTier4Consultation()` — full context, doctor-targeted
 
-By contrast, `orchestrator.js` already calls `getCircleMembers(circleId)`
-(imported at line 4, used in the `future_plan_executed` handler at line 26)
-for broadcasting future plan messages. The pattern exists but is not
-applied to escalation.
+The `escalate` event in `server.js` is a **secondary SSE confirmation push** back to
+the triggering user only. Blasting all circle members here would:
+1. Duplicate notifications already sent by the tier handlers
+2. Break Tier 3 anonymity by re-sending patient-linked payload to all members
 
-### Expected behaviour
+### Current state (correct behaviour)
 
-On escalation, all connected SSE clients who are members of the care
-circle (Doctor, Caregiver, Family) should receive the escalation event.
-The implementation should be:
+`server.js` sends the `escalate` SSE only to `payload.userId` (the triggering user),
+and strips `...payload` when `anonymous: true` to protect Tier 3 identity.
 
-```js
-// Proposed fix in server.js escalate handler
-events.on('escalate', async (payload) => {
-    const { broadcast } = await import('./lib/sse.js');
-    const { getCircleMembers } = await import('./db/index.js');
-    const members = await getCircleMembers(payload.circleId).catch(() => []);
-    const targetUserIds = members.map(m => m.user_id);
-    broadcast(targetUserIds, { type: 'escalation', ...payload });
-});
-```
-
-### Impact on documentation
-
-- `documentation/uml_diagrams/escalation_flow_v2_real_modules.md`
-  should note this gap in the diagram's "Known Gaps" section.
-- `documentation/uml_diagrams/env_01_physical_deployment.md` already
-  notes this gap.
-- `documentation/uml_diagrams/env_02_agent_user_topology.md` already
-  notes this gap.
+The real gap (if any) is whether `escalationTiers.js` tier routing uses
+`consentManager.evaluateConsent()` before sharing clinical content with caregivers
+— this is a future hardening item, not a current bug.
 
 ---
 

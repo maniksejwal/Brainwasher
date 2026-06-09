@@ -103,29 +103,24 @@ events.on('context_switch', (payload) => {
 });
 
 events.on('escalate', (payload) => {
-    // Share the escalation alert to all connected care circle members.
-    // Unlike regular message routing (which targets a single user), escalations
-    // must reach every member of the circle — doctors, caregivers, family.
-    // D1 (DISCREPANCIES.md): original code only sent to payload.userId.
-    import('./lib/sse.js').then(async ({ broadcast }) => {
-        let targetUserIds = [];
-        if (payload.circleId) {
-            try {
-                const { getCircleMembers } = await import('./db/index.js');
-                const members = await getCircleMembers(payload.circleId);
-                targetUserIds = members.map(m => m.user_id).filter(Boolean);
-            } catch {
-                // Fall back to triggering user if circle lookup fails
-            }
-        }
-        if (!targetUserIds.length && payload.userId) {
-            targetUserIds = [payload.userId];
-        }
-        if (targetUserIds.length) {
-            broadcast(targetUserIds, { type: 'escalation', ...payload });
-        } else {
-            console.warn('[Server] Escalation event: no target users found for circleId=%s userId=%s', payload.circleId, payload.userId);
-        }
+    // The escalate event is a post-hoc signal — the actual directed notifications
+    // (to caregivers, doctors, etc.) have already been sent by escalationTiers.js
+    // before this event fires. This handler only delivers a secondary SSE push
+    // to the triggering user (confirmation) and respects anonymity flags.
+    //
+    // Escalations are NOT broadcasts — they are directed sharing actions:
+    //   Tier 2 → caregivers only           (handled by escalationTiers.handleTier2Caregiver)
+    //   Tier 3 → anonymous, no identity    (handled by escalationTiers.handleTier3Anonymous)
+    //   Tier 4 → doctor with full context  (handled by escalationTiers.handleTier4Consultation)
+    //
+    // Anonymous escalations (payload.anonymous = true) must NOT carry patient
+    // details in the SSE push — identity is explicitly withheld at Tier 3.
+    import('./lib/sse.js').then(({ broadcast }) => {
+        if (!payload.userId) return;   // no triggering user — nothing to confirm
+        const safePayload = payload.anonymous
+            ? { type: 'escalation', circleId: payload.circleId, anonymous: true }
+            : { type: 'escalation', ...payload };
+        broadcast([payload.userId], safePayload);
     });
     });
 });
