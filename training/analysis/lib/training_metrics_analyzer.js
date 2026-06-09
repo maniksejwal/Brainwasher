@@ -44,6 +44,7 @@ export class TrainingMetricsAnalyzer {
             flags: [],
             personas: [],
             scenarios: [],
+            episodes: [],
             meta: { lastUpdatedSim: null, lastUpdatedProd: null }
         };
     }
@@ -232,6 +233,22 @@ export class TrainingMetricsAnalyzer {
             await prodDb.close();
         } catch (err) {
             console.warn("Could not read Production DB:", err.message);
+        }
+
+        // 3. DEV DB — htn_benchmark_episodes for experiment comparison tab
+        try {
+            const devDb = await open({ filename: DEV_DB_FILE, driver: sqlite3.Database });
+            this.dbStats.episodes = await devDb.all(
+                `SELECT e.arm, e.goal_achieved, e.stress_auc, e.cumulative_reward,
+                        e.turn_count, e.curriculum_pool, r.prompt_variant
+                 FROM htn_benchmark_episodes e
+                 JOIN htn_benchmark_runs r ON r.run_id = e.run_id
+                 WHERE e.completed_at IS NOT NULL AND e.turn_count > 0`
+            );
+            await devDb.close();
+        } catch (err) {
+            console.warn("Could not read Dev DB (benchmark episodes):", err.message);
+            this.dbStats.episodes = [];
         }
 
         return this.dbStats;

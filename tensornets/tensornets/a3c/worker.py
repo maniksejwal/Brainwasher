@@ -997,6 +997,12 @@ class A3CWorker:
 
     ARM: str = "base"   # overridden by subclasses
 
+    # PROMPT_VARIANT: "baseline" for the 16 original experiments;
+    # "dpo" for the 8 prompt-improved variants (Exp 0p–7p).
+    # Written to every episode summary so the dashboard can group experiments
+    # by treatment group without parsing the arm name.
+    PROMPT_VARIANT: str = "baseline"
+
     # ── Experimental safety-veto flags ───────────────────────────────────────
     # These are class-level so that a subclass can disable a single safety
     # mechanism while inheriting all other behaviour unchanged.  Setting them
@@ -2343,6 +2349,7 @@ class A3CWorker:
         summary = {
             "episode_id":        episode_id,
             "arm":               self.ARM,
+            "prompt_variant":    self.PROMPT_VARIANT,
             "worker_id":         self.worker_id,
             "scenario_id":       scenario.get("scenario_id", "unknown"),
             "subject_id":        scenario.get("subject_id", "synthetic"),

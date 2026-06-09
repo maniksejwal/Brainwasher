@@ -643,6 +643,7 @@ export async function addHTNBenchmarkTables(db) {
             arm             TEXT NOT NULL,   -- 'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
             label           TEXT,            -- human-readable label
             scenario_set    TEXT NOT NULL,   -- e.g. 'canonical_10' | 'deaddiction' | 'flooding'
+            prompt_variant  TEXT DEFAULT 'baseline',  -- 'baseline' | 'dpo' (32-exp design)
             config          TEXT,            -- JSON: model IDs, hyperparams, random seed
             started_at      INTEGER NOT NULL,
             completed_at    INTEGER,
@@ -761,6 +762,14 @@ export async function addHTNBenchmarkTables(db) {
         CREATE INDEX IF NOT EXISTS idx_transcripts_scenario ON htn_transcripts(scenario_id, arm);
         CREATE INDEX IF NOT EXISTS idx_transcripts_canonical ON htn_transcripts(is_canonical);
     `);
+
+    // Backfill: add prompt_variant column to htn_benchmark_runs if it was created
+    // before this schema version (existing DBs won't have it from CREATE TABLE).
+    try {
+        await db.exec(
+            `ALTER TABLE htn_benchmark_runs ADD COLUMN prompt_variant TEXT DEFAULT 'baseline'`
+        );
+    } catch (_) { /* column already exists — safe to ignore */ }
 
     // Mark the baseline cutoff: end of Saturday 2026-05-23 (day before yesterday).
     // All feedback/simulation data created BEFORE this timestamp is considered the

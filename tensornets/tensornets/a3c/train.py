@@ -409,21 +409,42 @@ def _get_arm_classes():
             InertialPhysioMPSMCTSNoGateWorker,
             InertialHPVOOTPhysioMPSMCTSNoGateWorker,
             OldschoolNoPrivacyWorker,
+            # DPO/RLAIF prompt-improved variants (Exp 0p–7p, indices 12–19)
+            # Each is a context-rich prompt variant of its baseline counterpart.
+            # Exp 5 (oldschool) has no Python prompt, so it has no DPO variant.
+            PhysioLLMDPOWorker,                          # Exp 0p: physio_llm_dpo
+            PhysioLLMCoTMCTSDPOWorker,                   # Exp 1p: physio_llm_cot_mcts_dpo
+            PhysioMPSMCTSDPOWorker,                      # Exp 2p: physio_mps_mcts_dpo
+            InertialPhysioMPSMCTSDPOWorker,              # Exp 3p: inertial_physio_mps_mcts_dpo
+            InertialPhysioLLMCoTMCTSDPOWorker,           # Exp 4p: inertial_physio_llm_cot_mcts_dpo
+            InertialHPVOOTPhysioMPSMCTSDPOWorker,        # Exp 6p: inertial_hpvoot_physio_mps_mcts_dpo
+            InertialHPVOOTPhysioLLMCoTMCTSDPOWorker,     # Exp 7p: inertial_hpvoot_physio_llm_cot_mcts_dpo
         )
-        # Ordered: 0-7 are the main experiments; 3a/6a/5a are ablation variants
+        # Indices:
+        #   1–8:   main experiments (Exp 0–7)
+        #   9–11:  safety-ablation arms (Exp 3a, 6a, 5a)
+        #   12–18: DPO/RLAIF prompt-improved variants (Exp 0p–4p, 6p, 7p; no 5p)
         _ARM_CLASSES = [
-            PhysioLLMWorker,                          # Exp 0: physio_llm
-            PhysioLLMCoTMCTSWorker,                   # Exp 1: physio_llm_cot_mcts
-            PhysioMPSMCTSWorker,                      # Exp 2: physio_mps_mcts
-            InertialPhysioMPSMCTSWorker,              # Exp 3: inertial_physio_mps_mcts
-            InertialPhysioLLMCoTMCTSWorker,           # Exp 4: inertial_physio_llm_cot_mcts
-            OldschoolWorker,                          # Exp 5: oldschool
-            InertialHPVOOTPhysioMPSMCTSWorker,        # Exp 6: inertial_hpvoot_physio_mps_mcts
-            InertialHPVOOTPhysioLLMCoTMCTSWorker,     # Exp 7: inertial_hpvoot_physio_llm_cot_mcts
+            PhysioLLMWorker,                             # Exp 0 (idx 1): physio_llm
+            PhysioLLMCoTMCTSWorker,                      # Exp 1 (idx 2): physio_llm_cot_mcts
+            PhysioMPSMCTSWorker,                         # Exp 2 (idx 3): physio_mps_mcts
+            InertialPhysioMPSMCTSWorker,                 # Exp 3 (idx 4): inertial_physio_mps_mcts
+            InertialPhysioLLMCoTMCTSWorker,              # Exp 4 (idx 5): inertial_physio_llm_cot_mcts
+            OldschoolWorker,                             # Exp 5 (idx 6): oldschool
+            InertialHPVOOTPhysioMPSMCTSWorker,           # Exp 6 (idx 7): inertial_hpvoot_physio_mps_mcts
+            InertialHPVOOTPhysioLLMCoTMCTSWorker,        # Exp 7 (idx 8): inertial_hpvoot_physio_llm_cot_mcts
             # Safety-ablation arms — share initial weights with parent arm
-            InertialPhysioMPSMCTSNoGateWorker,        # Exp 3a: same as Exp 3, no crit gate
-            InertialHPVOOTPhysioMPSMCTSNoGateWorker,  # Exp 6a: same as Exp 6, no crit gate
-            OldschoolNoPrivacyWorker,                 # Exp 5a: same as Exp 5, no privacy guard
+            InertialPhysioMPSMCTSNoGateWorker,           # Exp 3a (idx 9):  same as Exp 3, no crit gate
+            InertialHPVOOTPhysioMPSMCTSNoGateWorker,     # Exp 6a (idx 10): same as Exp 6, no crit gate
+            OldschoolNoPrivacyWorker,                    # Exp 5a (idx 11): same as Exp 5, no privacy guard
+            # DPO/RLAIF prompt-improved variants — cold-start weights (fair comparison)
+            PhysioLLMDPOWorker,                          # Exp 0p (idx 12): physio_llm_dpo
+            PhysioLLMCoTMCTSDPOWorker,                   # Exp 1p (idx 13): physio_llm_cot_mcts_dpo
+            PhysioMPSMCTSDPOWorker,                      # Exp 2p (idx 14): physio_mps_mcts_dpo
+            InertialPhysioMPSMCTSDPOWorker,              # Exp 3p (idx 15): inertial_physio_mps_mcts_dpo
+            InertialPhysioLLMCoTMCTSDPOWorker,           # Exp 4p (idx 16): inertial_physio_llm_cot_mcts_dpo
+            InertialHPVOOTPhysioMPSMCTSDPOWorker,        # Exp 6p (idx 17): inertial_hpvoot_physio_mps_mcts_dpo
+            InertialHPVOOTPhysioLLMCoTMCTSDPOWorker,     # Exp 7p (idx 18): inertial_hpvoot_physio_llm_cot_mcts_dpo
         ]
     return _ARM_CLASSES
 
@@ -434,9 +455,9 @@ def _get_arm_classes():
 # keep call-sites in the training loop unchanged while delegating to _nc.
 
 def _db_create_run(run_dir: str, arm: str, total_episodes: int,
-                   patient_mode: str) -> Optional[str]:
+                   patient_mode: str, prompt_variant: str = "baseline") -> Optional[str]:
     """Create one benchmark run record per arm. Delegates to node_client.create_run."""
-    return _nc.create_run(run_dir, arm, total_episodes, patient_mode)
+    return _nc.create_run(run_dir, arm, total_episodes, patient_mode, prompt_variant)
 
 
 def _db_create_episode(run_id: Optional[str], arm: str, scenario_id: str,
@@ -643,6 +664,7 @@ def train(
 
         arm_states.append({
             "name":             arm_name,
+            "prompt_variant":   getattr(ArmCls, "PROMPT_VARIANT", "baseline"),
             "ArmCls":           ArmCls,          # needed to spawn extra workers
             "worker":           worker,
             "actor":            actor,
@@ -717,6 +739,7 @@ def train(
         if not s["db_run_id"]:
             s["db_run_id"] = _db_create_run(
                 str(s["arm_dir"]), s["name"], total_episodes, patient_mode,
+                prompt_variant=s.get("prompt_variant", "baseline"),
             )
             if s["db_run_id"]:
                 log.info("Arm %s: DB run record: %s", s["name"], s["db_run_id"])

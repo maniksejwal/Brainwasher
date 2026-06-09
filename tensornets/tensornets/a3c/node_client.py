@@ -275,6 +275,7 @@ def create_run(
     arm: str,
     total_episodes: int,
     patient_mode: str,
+    prompt_variant: str = "baseline",
 ) -> Optional[str]:
     """
     Create one benchmark run record per arm at training start.
@@ -288,6 +289,7 @@ def create_run(
         "arm":          arm,
         "label":        f"{Path(run_dir).name} / {arm}",
         "scenario_set": "a3c_training",
+        "prompt_variant": prompt_variant,
         "config": {
             "run_dir":        Path(run_dir).name,
             "total_episodes": total_episodes,
@@ -396,6 +398,7 @@ def finalise_episode(
             "cost_usd_episode":       summary.get("total_cost_usd", 0.0),
             "llm_calls_episode":      summary.get("total_llm_calls", 0),
             "tokens_episode":         summary.get("total_tokens", 0),
+            "prompt_variant":         summary.get("prompt_variant", "baseline"),
         },
     })
 

@@ -15,6 +15,22 @@ const FAILURE_DEFINITIONS = {
     'failure_missing_escalation': 'Critical failure: Agent missed a clear escalation trigger.'
 };
 
+// ── 32-experiment design: ordered arm list ────────────────────────────────────
+// arm_name → { expLabel, displayName, isAblation, baselineArm (for DPO pairing) }
+const EXP_REGISTRY = [
+    { arm: 'physio_llm',                            exp: '0',  label: 'PhysioLLM',                     ablation: false, dpoArm: 'physio_llm_dpo' },
+    { arm: 'physio_llm_cot_mcts',                   exp: '1',  label: 'PhysioLLM CoT-MCTS',             ablation: false, dpoArm: 'physio_llm_cot_mcts_dpo' },
+    { arm: 'physio_mps_mcts',                       exp: '2',  label: 'PhysioMPS-MCTS',                 ablation: false, dpoArm: 'physio_mps_mcts_dpo' },
+    { arm: 'inertial_physio_mps_mcts',              exp: '3',  label: 'Inertial PhysioMPS-MCTS',        ablation: false, dpoArm: 'inertial_physio_mps_mcts_dpo' },
+    { arm: 'inertial_physio_llm_cot_mcts',          exp: '4',  label: 'Inertial PhysioLLM CoT',         ablation: false, dpoArm: 'inertial_physio_llm_cot_mcts_dpo' },
+    { arm: 'oldschool',                             exp: '5',  label: 'Oldschool (JS baseline)',         ablation: false, dpoArm: null },
+    { arm: 'inertial_hpvoot_physio_mps_mcts',       exp: '6',  label: 'Inertial HPVOOT MPS',            ablation: false, dpoArm: 'inertial_hpvoot_physio_mps_mcts_dpo' },
+    { arm: 'inertial_hpvoot_physio_llm_cot_mcts',   exp: '7',  label: 'Inertial HPVOOT CoT',            ablation: false, dpoArm: 'inertial_hpvoot_physio_llm_cot_mcts_dpo' },
+    { arm: 'inertial_physio_mps_mcts_no_gate',      exp: '3a', label: 'Inertial PhysioMPS (no gate)',   ablation: true,  dpoArm: null },
+    { arm: 'inertial_hpvoot_physio_mps_mcts_no_gate', exp: '6a', label: 'Inertial HPVOOT (no gate)',   ablation: true,  dpoArm: null },
+    { arm: 'oldschool_no_privacy',                  exp: '5a', label: 'Oldschool (no privacy)',         ablation: true,  dpoArm: null },
+];
+
 function groupFlags(flags) {
     const groups = {};
 
@@ -143,6 +159,10 @@ export class ReportRenderer {
         const scenarioGroups = this._groupScenarios(logStats, timeSeries);
         const scenarioHtml = this._renderScenarioHtml(scenarioGroups, timeSeries);
 
+        // ── 32-experiment comparison (baseline vs DPO) ────────────────────────
+        const { expComparisonRows, ablationRowsHtml, totalExpCount } =
+            this._renderExpComparison(dbStats);
+
         // Timestamps
         const lastUpdatedSimStr = dbStats.meta.lastUpdatedSim ? new Date(dbStats.meta.lastUpdatedSim).toLocaleString() : 'Never';
         const lastUpdatedProdStr = dbStats.meta.lastUpdatedProd ? new Date(dbStats.meta.lastUpdatedProd).toLocaleString() : 'Never';
@@ -186,6 +206,9 @@ export class ReportRenderer {
             .replace('{{FAILURE_CATEGORY_ROWS}}', failureRows)
             .replace('{{SYSTEM_ERROR_ROWS}}', errorRows)
             .replace('{{SCENARIO_HTML}}', scenarioHtml)
+            .replace('{{EXP_COMPARISON_ROWS}}', expComparisonRows)
+            .replace('{{ABLATION_ROWS_HTML}}', ablationRowsHtml)
+            .replace('{{TOTAL_EXPERIMENT_COUNT}}', totalExpCount)
             .replace('"__TIME_SERIES_DATA__"', JSON.stringify(timeSeriesData.timeSeries))
             .replace('"__AI_TIME_SERIES__"', JSON.stringify(timeSeriesData.aiTimeSeries))
             .replace('"__HUMAN_TIME_SERIES__"', JSON.stringify(timeSeriesData.humanTimeSeries))
@@ -281,5 +304,137 @@ export class ReportRenderer {
                 </div>
             `;
         }).join('');
+    }
+
+    // ── 32-experiment comparison table ────────────────────────────────────────
+    // Reads arm-level metrics from the DB stats and renders a side-by-side table
+    // showing each baseline arm paired with its DPO counterpart, with Δ columns.
+    _renderExpComparison(dbStats) {
+        // Build a quick lookup: arm_name → aggregate episode metrics from detailedFeedback
+        // We use htn_benchmark_episodes if present in dbStats; otherwise fall back to feedback.
+        // The episodes table is keyed by run_id → arm.  We aggregate across all runs.
+        const armStats = {};   // arm_name → { episodes, goalCount, stressAucSum, rewardSum }
+
+        (dbStats.episodes || []).forEach(ep => {
+            const arm = ep.arm;
+            if (!arm) return;
+            if (!armStats[arm]) armStats[arm] = { episodes: 0, goalCount: 0, stressAucSum: 0, rewardSum: 0 };
+            armStats[arm].episodes++;
+            if (ep.goal_achieved) armStats[arm].goalCount++;
+            armStats[arm].stressAucSum  += (ep.stress_auc || 0);
+            armStats[arm].rewardSum     += (ep.cumulative_reward || ep.mean_reward || 0);
+        });
+
+        const fmtPct  = v => v !== null ? `${(v * 100).toFixed(1)}%` : '—';
+        const fmtNum  = v => v !== null ? v.toFixed(3) : '—';
+        const delta   = (a, b) => (a !== null && b !== null) ? a - b : null;
+        const fmtDelta = (d, pct) => {
+            if (d === null) return '<span style="color:#bdc3c7">—</span>';
+            const sign = d > 0 ? '+' : '';
+            const val  = pct ? `${sign}${(d * 100).toFixed(1)}pp` : `${sign}${d.toFixed(3)}`;
+            const col  = d > 0.005 ? '#27ae60' : d < -0.005 ? '#e74c3c' : '#7f8c8d';
+            return `<span style="color:${col}; font-weight:600;">${val}</span>`;
+        };
+
+        const getMetrics = arm => {
+            const s = armStats[arm];
+            if (!s || s.episodes === 0) return null;
+            return {
+                episodes:   s.episodes,
+                goalRate:   s.goalCount / s.episodes,
+                stressAuc:  s.stressAucSum / s.episodes,
+                reward:     s.rewardSum / s.episodes,
+            };
+        };
+
+        let expRows = '';
+        let ablationRows = '';
+        let totalCount = 0;
+
+        EXP_REGISTRY.forEach(({ arm, exp, label, ablation, dpoArm }) => {
+            const base = getMetrics(arm);
+            const dpo  = dpoArm ? getMetrics(dpoArm) : null;
+
+            if (ablation) {
+                const episodes = base ? base.episodes : '—';
+                const goalPct  = base ? fmtPct(base.goalRate) : '—';
+                ablationRows += `
+                    <tr style="background:#fdfefe;">
+                        <td style="padding:8px; font-size:0.85em; color:#7f8c8d;">${exp}</td>
+                        <td style="padding:8px; font-family:monospace; font-size:0.8em;">${arm}</td>
+                        <td style="padding:8px;">${label}</td>
+                        <td style="padding:8px;">${episodes}</td>
+                        <td style="padding:8px;">${goalPct}</td>
+                    </tr>`;
+                return;
+            }
+
+            // baseline row
+            const bEp   = base ? base.episodes : 0;
+            const bGoal = base ? base.goalRate : null;
+            const bAuc  = base ? base.stressAuc : null;
+            const bRew  = base ? base.reward : null;
+
+            expRows += `
+                <tr data-variant="baseline" style="background:#ebf5fb;">
+                    <td style="padding:8px 6px; font-weight:600;">${exp}</td>
+                    <td style="padding:8px 6px; font-family:monospace; font-size:0.8em;">${arm}</td>
+                    <td style="padding:4px 8px;">
+                        <span style="background:#3498db; color:#fff; border-radius:4px; padding:2px 7px; font-size:0.75em; font-weight:600;">baseline</span>
+                    </td>
+                    <td style="padding:8px 6px;">${bEp || '—'}</td>
+                    <td style="padding:8px 6px;">${fmtPct(bGoal)}</td>
+                    <td style="padding:8px 6px; color:#bdc3c7;">—</td>
+                    <td style="padding:8px 6px;">${fmtNum(bAuc)}</td>
+                    <td style="padding:8px 6px; color:#bdc3c7;">—</td>
+                    <td style="padding:8px 6px;">${fmtNum(bRew)}</td>
+                    <td style="padding:8px 6px; color:#bdc3c7;">—</td>
+                </tr>`;
+            totalCount++;
+
+            if (dpoArm) {
+                const dEp   = dpo ? dpo.episodes : 0;
+                const dGoal = dpo ? dpo.goalRate : null;
+                const dAuc  = dpo ? dpo.stressAuc : null;
+                const dRew  = dpo ? dpo.reward : null;
+
+                expRows += `
+                    <tr data-variant="dpo" style="background:#eafaf1; border-bottom:2px solid #d5dbdb;">
+                        <td style="padding:8px 6px; color:#7f8c8d;">${exp}p</td>
+                        <td style="padding:8px 6px; font-family:monospace; font-size:0.8em;">${dpoArm}</td>
+                        <td style="padding:4px 8px;">
+                            <span style="background:#27ae60; color:#fff; border-radius:4px; padding:2px 7px; font-size:0.75em; font-weight:600;">DPO</span>
+                        </td>
+                        <td style="padding:8px 6px;">${dEp || '—'}</td>
+                        <td style="padding:8px 6px;">${fmtPct(dGoal)}</td>
+                        <td style="padding:8px 6px;">${fmtDelta(delta(dGoal, bGoal), true)}</td>
+                        <td style="padding:8px 6px;">${fmtNum(dAuc)}</td>
+                        <td style="padding:8px 6px;">${fmtDelta(delta(dAuc, bAuc), false)}</td>
+                        <td style="padding:8px 6px;">${fmtNum(dRew)}</td>
+                        <td style="padding:8px 6px;">${fmtDelta(delta(dRew, bRew), false)}</td>
+                    </tr>`;
+                totalCount++;
+            }
+        });
+
+        const ablationRowsHtml = ablationRows ? `
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#ecf0f1; text-align:left;">
+                        <th style="padding:10px 8px;">Exp</th>
+                        <th style="padding:10px 8px;">ARM</th>
+                        <th style="padding:10px 8px;">Label</th>
+                        <th style="padding:10px 8px;">Episodes</th>
+                        <th style="padding:10px 8px;">Goal %</th>
+                    </tr>
+                </thead>
+                <tbody>${ablationRows}</tbody>
+            </table>` : '<p style="color:#95a5a6; font-style:italic;">No ablation arm data yet.</p>';
+
+        return {
+            expComparisonRows: expRows,
+            ablationRowsHtml,
+            totalExpCount: totalCount,
+        };
     }
 }

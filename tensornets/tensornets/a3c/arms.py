@@ -1891,3 +1891,302 @@ class OldschoolNoPrivacyWorker(OldschoolWorker):
             "llm_calls":   1,
         }
 
+
+# ── DPO/RLAIF prompt-improved variants (Exp 0p–7p) ───────────────────────────
+# These are the "prompt improvement" treatment group in the 32-experiment design.
+# Each is a thin subclass of its baseline counterpart; the only difference is:
+#   1. ARM suffix "_dpo" so runs land in separate DB rows and checkpoint dirs.
+#   2. PROMPT_VARIANT = "dpo" tag written into every episode summary, enabling
+#      the dashboard to group baseline vs. improved experiments side-by-side.
+#   3. A richer context-aware default system prompt: in addition to stress/zone,
+#      the prompt now carries factual patient state (medication adherence, session
+#      number, flagged topics, longitudinal goal status) so Scout can reason from
+#      patient facts rather than only from instantaneous stress scalars.
+#   4. Weight sharing: each DPO arm starts from Actor.cold_start() (same as its
+#      baseline counterpart), giving a clean controlled comparison.  The prompt
+#      difference is the sole independent variable.
+#
+# Prompt design rationale (context richness)
+# ------------------------------------------
+# The baseline prompts give Scout two signals: current action + stress index.
+# The improved prompts add five additional fact categories:
+#   F1  session_number / days_since_last  — longitudinal position
+#   F2  medication_adherence              — adherence state from physio/summary
+#   F3  flagged_topics                    — topics the patient has avoided/raised
+#   F4  goal_status                       — progress toward the session goal
+#   F5  last_patient_sentiment            — brief affect label from recent turns
+# These are facts that a human clinician uses implicitly; providing them in the
+# prompt tests whether LLM-in-the-loop companions benefit from explicit context.
+#
+# All five facts are drawn from fields already present in PatientState /
+# session_memory / conversation_history — no new data collection is required.
+# Missing fields gracefully degrade to "(unknown)" so the prompt always renders.
+
+_DPO_SYSTEM_PROMPT = (
+    "You are a clinical companion assistant.\n"
+    "Recommended action: {action}.\n"
+    "Patient stress: {stress_index:.2f} (zone: {stress_bucket}).\n"
+    "{hysteresis_ctx}"
+    "Session #{session_number} · {days_since_last} days since last session · "
+    "Goal: {session_goal}.\n"
+    "Goal status: {goal_status}. Medication adherence: {med_adherence}.\n"
+    "Flagged topics: {flagged_topics}.\n"
+    "Patient recent sentiment: {last_sentiment}.\n"
+    "Respond in 2-3 sentences. Be empathetic and specific to the patient's current state."
+)
+
+_DPO_PRIOR_SYSTEM = (
+    "You are a clinical scoring assistant. "
+    "Score each action 0.0 (wrong for this moment) to 1.0 (ideal). "
+    "Consider: patient facts, session context, prior topics, and current stress zone. "
+    "Return ONLY a JSON object mapping action name to float. No markdown."
+)
+
+
+def _build_dpo_prompt_vars(state) -> dict:
+    """
+    Extract the rich context variables required by _DPO_SYSTEM_PROMPT from state.
+
+    All fields degrade gracefully to a readable fallback when the data is absent
+    so the prompt never contains raw Python None values.
+    """
+    mem: dict = state.session_memory or {}
+    tl:  dict = mem.get("simulated_timeline") or {}
+    physio: dict = state.physio or {}
+
+    session_number   = int(tl.get("session_number", 1))
+    days_since_last  = tl.get("days_since_last")
+    days_str         = f"{days_since_last:.0f}" if days_since_last is not None else "first"
+
+    session_goal     = (state.session_goal or "general support")[:80]
+
+    # Goal status: use goal_progress from last turn summary if available
+    gp = float(physio.get("goal_progress", 0.0))
+    if gp >= 0.7:
+        goal_status = "on track"
+    elif gp >= 0.35:
+        goal_status = "partial progress"
+    else:
+        goal_status = "not yet started"
+
+    # Medication adherence: stored in physio channel or session_memory
+    adh = physio.get("med_adherence") or mem.get("med_adherence")
+    if adh is None:
+        med_adherence = "unknown"
+    elif isinstance(adh, float):
+        med_adherence = f"{adh:.0%}"
+    else:
+        med_adherence = str(adh)[:30]
+
+    # Flagged topics: list of topic strings stored by the worker
+    flagged = mem.get("flagged_topics") or []
+    flagged_topics = ", ".join(str(t) for t in flagged[:4]) or "none flagged"
+
+    # Last patient sentiment: derive from the most recent user turn text
+    recent_user_msgs = [
+        m for m in state.conversation_history[-6:]
+        if m.get("role") == "user"
+    ]
+    last_msg = (recent_user_msgs[-1].get("content", "") if recent_user_msgs else "")[:120]
+    # Simple heuristic sentiment label — enough for prompt context
+    neg_words = {"pain", "hurt", "tired", "scared", "worried", "worse", "bad", "afraid",
+                 "anxious", "can't", "cannot", "difficult", "struggling", "hard"}
+    pos_words = {"better", "good", "happy", "okay", "fine", "great", "improving",
+                 "hopeful", "confident", "easier", "progress"}
+    lower = last_msg.lower()
+    neg_hits = sum(1 for w in neg_words if w in lower)
+    pos_hits = sum(1 for w in pos_words if w in lower)
+    if neg_hits > pos_hits:
+        last_sentiment = "distressed / negative"
+    elif pos_hits > neg_hits:
+        last_sentiment = "positive / hopeful"
+    else:
+        last_sentiment = "neutral"
+
+    return {
+        "session_number":  session_number,
+        "days_since_last": days_str,
+        "session_goal":    session_goal,
+        "goal_status":     goal_status,
+        "med_adherence":   med_adherence,
+        "flagged_topics":  flagged_topics,
+        "last_sentiment":  last_sentiment,
+    }
+
+
+class PhysioLLMDPOWorker(PhysioLLMWorker):
+    """
+    Exp 0p: PhysioLLM with DPO/RLAIF-improved context-rich prompt.
+
+    Identical to Exp 0 except the system prompt carries five additional patient
+    fact categories (F1–F5) beyond stress index.  Isolates the contribution of
+    prompt richness over the baseline Exp 0 two-signal prompt.
+    """
+    ARM            = "physio_llm_dpo"
+    PROMPT_VARIANT = "dpo"
+    _DEFAULT_SYSTEM_PROMPT = _DPO_SYSTEM_PROMPT
+
+    def _build_system_prompt(self, state, action, **kw) -> str:
+        base = super()._build_system_prompt(state, action, **kw)
+        # Patch in the DPO context vars if the base class used _DEFAULT_SYSTEM_PROMPT
+        try:
+            extra = _build_dpo_prompt_vars(state)
+            return self._DEFAULT_SYSTEM_PROMPT.format(
+                action           = action,
+                stress_index     = state.stress_index,
+                stress_bucket    = state.stress_bucket or "unknown",
+                hysteresis_ctx   = kw.get("hysteresis_ctx", ""),
+                session_number   = extra["session_number"],
+                days_since_last  = extra["days_since_last"],
+                session_goal     = extra["session_goal"],
+                goal_status      = extra["goal_status"],
+                med_adherence    = extra["med_adherence"],
+                flagged_topics   = extra["flagged_topics"],
+                last_sentiment   = extra["last_sentiment"],
+            )
+        except Exception:
+            return base
+
+
+class PhysioLLMCoTMCTSDPOWorker(PhysioLLMCoTMCTSWorker):
+    """
+    Exp 1p: PhysioLLM CoT-MCTS with DPO/RLAIF-improved context-rich prompt.
+
+    Identical to Exp 1 except Scout's generation prompt and Maverick's CoT prompt
+    carry the five additional patient fact categories.
+    """
+    ARM            = "physio_llm_cot_mcts_dpo"
+    PROMPT_VARIANT = "dpo"
+    _DEFAULT_SYSTEM_PROMPT = _DPO_SYSTEM_PROMPT
+
+
+class PhysioMPSMCTSDPOWorker(PhysioMPSMCTSWorker):
+    """
+    Exp 2p: PhysioMPS-MCTS with DPO/RLAIF-improved context-rich prompt.
+
+    Identical to Exp 2 except the system prompt passed to Scout carries the five
+    additional patient fact categories.  MCTS tree search is unchanged.
+    """
+    ARM            = "physio_mps_mcts_dpo"
+    PROMPT_VARIANT = "dpo"
+    _DEFAULT_SYSTEM_PROMPT = _DPO_SYSTEM_PROMPT
+
+
+class InertialPhysioMPSMCTSDPOWorker(InertialPhysioMPSMCTSWorker):
+    """
+    Exp 3p: Inertial PhysioMPS-MCTS with DPO/RLAIF-improved context-rich prompt.
+
+    Identical to Exp 3 except the system prompt carries the five additional patient
+    fact categories.  HysteresisGate and MCTS are unchanged.
+    """
+    ARM            = "inertial_physio_mps_mcts_dpo"
+    PROMPT_VARIANT = "dpo"
+    _DEFAULT_SYSTEM_PROMPT = _DPO_SYSTEM_PROMPT
+
+
+class InertialPhysioLLMCoTMCTSDPOWorker(InertialPhysioLLMCoTMCTSWorker):
+    """
+    Exp 4p: Inertial PhysioLLM CoT-MCTS with DPO/RLAIF-improved context-rich prompt.
+
+    Identical to Exp 4 except the system prompt carries the five additional patient
+    fact categories.  HysteresisGate and CoT-MCTS are unchanged.
+    """
+    ARM            = "inertial_physio_llm_cot_mcts_dpo"
+    PROMPT_VARIANT = "dpo"
+    _DEFAULT_SYSTEM_PROMPT = _DPO_SYSTEM_PROMPT
+
+
+class InertialHPVOOTPhysioMPSMCTSDPOWorker(InertialHPVOOTPhysioMPSMCTSWorker):
+    """
+    Exp 6p: Inertial HPVOOT MPS-MCTS with DPO/RLAIF-improved context-rich prompt.
+
+    Identical to Exp 6 except both the Scout prior prompt and the generation
+    prompt carry the five additional patient fact categories.
+
+    The _PRIOR_SYSTEM is also upgraded to the richer _DPO_PRIOR_SYSTEM so the
+    Scout prior scores are based on full patient context, not just stress/zone.
+    """
+    ARM            = "inertial_hpvoot_physio_mps_mcts_dpo"
+    PROMPT_VARIANT = "dpo"
+    _DEFAULT_SYSTEM_PROMPT = _DPO_SYSTEM_PROMPT
+    _PRIOR_SYSTEM          = _DPO_PRIOR_SYSTEM
+
+    def _fetch_prior_scores(self, state, zone_name, zone_streak, mode, actions):
+        """
+        DPO variant: injects all five patient fact categories into the prior
+        scoring prompt, on top of the L2 fix (last 2 turns + session goal).
+
+        This tests whether richer prior scoring improves HPVOOT action ranking
+        compared to the baseline Exp 6 prior prompt.
+        """
+        import json as _json, re as _re
+
+        recent_turns = [
+            m for m in state.conversation_history[-6:]
+            if m.get("role") == "user"
+        ][-2:]
+        excerpt = "\n".join(
+            f"Patient: {m['content'][:200]}" for m in recent_turns
+        ) or "(no turns yet)"
+
+        extra = _build_dpo_prompt_vars(state)
+        action_list = "\n".join(f"  - {a}" for a in actions)
+        prompt = (
+            f"Patient state: stress={state.stress_index:.2f}, "
+            f"zone={zone_name} (streak={zone_streak}), mode={mode}.\n\n"
+            f"Session #{extra['session_number']} · {extra['days_since_last']} days since last · "
+            f"Goal: {extra['session_goal']}.\n"
+            f"Goal status: {extra['goal_status']}. "
+            f"Med adherence: {extra['med_adherence']}.\n"
+            f"Flagged topics: {extra['flagged_topics']}.\n"
+            f"Patient recent sentiment: {extra['last_sentiment']}.\n\n"
+            f"Recent conversation:\n{excerpt}\n\n"
+            f"Rate each action 0.0 (wrong for this exact moment) to 1.0 (ideal).\n"
+            f"Actions:\n{action_list}"
+        )
+        resp = _http_post(
+            f"{_TENSORNETS_URL}/llm/scout",
+            {"system": self._PRIOR_SYSTEM, "prompt": prompt,
+             "max_tokens": 800, "arm": self.ARM},
+            timeout=25.0,
+        )
+        text = (resp.get("text") or "").strip()
+        if not text:
+            raise RuntimeError(
+                "InertialHPVOOTPhysioMPSMCTSDPOWorker._fetch_prior_scores: "
+                "Scout returned empty response."
+            )
+
+        score_map = {}
+        m = _re.search(r'\{([^{}]*)\}', text, _re.DOTALL)
+        if m:
+            try:
+                score_map = _json.loads('{' + m.group(1) + '}')
+            except _json.JSONDecodeError:
+                pass
+        if not score_map:
+            for line in text.splitlines():
+                kv = _re.match(
+                    r'["\s]*([a-zA-Z_][a-zA-Z0-9_\s]*?)["\s]*:\s*([\d.]+)',
+                    line.strip(),
+                )
+                if kv:
+                    score_map[kv.group(1).strip()] = float(kv.group(2))
+
+        self._prior_tokens = {
+            "in":  resp.get("usage", {}).get("input_tokens",  0),
+            "out": resp.get("usage", {}).get("output_tokens", 0),
+        }
+        return [float(score_map.get(a, 0.5)) for a in actions]
+
+
+class InertialHPVOOTPhysioLLMCoTMCTSDPOWorker(InertialHPVOOTPhysioLLMCoTMCTSWorker):
+    """
+    Exp 7p: Inertial HPVOOT CoT-MCTS with DPO/RLAIF-improved context-rich prompt.
+
+    Identical to Exp 7 except the system prompt and the Maverick CoT prompt carry
+    the five additional patient fact categories.
+    """
+    ARM            = "inertial_hpvoot_physio_llm_cot_mcts_dpo"
+    PROMPT_VARIANT = "dpo"
+    _DEFAULT_SYSTEM_PROMPT = _DPO_SYSTEM_PROMPT

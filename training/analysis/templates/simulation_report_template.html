@@ -14,6 +14,7 @@
     <div class="sidebar">
         <div class="sidebar-header">Statistics</div>
         <div class="nav-item active" onclick="switchTab('dashboard')">📊 Dashboard</div>
+        <div class="nav-item" onclick="switchTab('experiments')">🔬 Experiments</div>
         <div class="nav-item" onclick="switchTab('trends')">📈 Trends & Charts</div>
         <div class="nav-item" onclick="switchTab('scenarios')">🧪 Scenario Analysis</div>
     </div>
@@ -96,6 +97,56 @@
             </table>
         </div>
 
+        <!-- EXPERIMENTS TAB — 32-experiment baseline vs. DPO comparison -->
+        <div id="experiments" class="tab-content">
+            <h1>Experiment Comparison (32 Experiments)</h1>
+            <p style="font-size:0.9em; color:#7f8c8d; margin-bottom:16px;">
+                Side-by-side view of each architecture arm under two prompt conditions:
+                <strong>Baseline</strong> (stress + zone only) vs.
+                <strong>DPO / Prompt-Improved</strong> (+ session facts: adherence, goal status, flagged topics, sentiment).
+                Ablation arms (3a, 6a, 5a) and the Oldschool arm are listed separately below.
+            </p>
+
+            <!-- variant filter buttons -->
+            <div style="margin-bottom:16px; display:flex; gap:8px; flex-wrap:wrap;">
+                <button onclick="filterExps('all')"
+                    style="padding:6px 14px; border-radius:6px; border:1px solid #bdc3c7; background:#ecf0f1; cursor:pointer; font-size:0.85em;">
+                    All ({{TOTAL_EXPERIMENT_COUNT}})
+                </button>
+                <button onclick="filterExps('baseline')"
+                    style="padding:6px 14px; border-radius:6px; border:1px solid #3498db; background:#ebf5fb; cursor:pointer; font-size:0.85em; color:#2980b9;">
+                    Baseline only
+                </button>
+                <button onclick="filterExps('dpo')"
+                    style="padding:6px 14px; border-radius:6px; border:1px solid #27ae60; background:#eafaf1; cursor:pointer; font-size:0.85em; color:#1e8449;">
+                    DPO only
+                </button>
+            </div>
+
+            <table id="expComparisonTable" style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#ecf0f1; text-align:left;">
+                        <th style="padding:10px 8px;">Exp</th>
+                        <th style="padding:10px 8px;">ARM</th>
+                        <th style="padding:10px 8px;">Variant</th>
+                        <th style="padding:10px 8px;">Episodes</th>
+                        <th style="padding:10px 8px;">Goal %</th>
+                        <th style="padding:10px 8px;">Δ Goal %</th>
+                        <th style="padding:10px 8px;">Stress AUC</th>
+                        <th style="padding:10px 8px;">Δ Stress</th>
+                        <th style="padding:10px 8px;">Mean Reward</th>
+                        <th style="padding:10px 8px;">Δ Reward</th>
+                    </tr>
+                </thead>
+                <tbody>{{EXP_COMPARISON_ROWS}}</tbody>
+            </table>
+
+            <h2 style="margin-top:32px;">🔩 Ablation Arms (3a / 6a / 5a)</h2>
+            <p style="font-size:0.85em; color:#7f8c8d;">These arms measure the independent contribution of each safety
+                gate. They do not have DPO variants.</p>
+            {{ABLATION_ROWS_HTML}}
+        </div>
+
         <!-- TRENDS TAB -->
         <div id="trends" class="tab-content">
             <h1>Performance Trends</h1>
@@ -149,7 +200,19 @@
     </div>
 
     <script>
-        { { SCRIPTS } }
+        {{SCRIPTS}}
+
+        // ── Experiment comparison tab filtering ───────────────────────────────
+        function filterExps(variant) {
+            const rows = document.querySelectorAll('#expComparisonTable tbody tr[data-variant]');
+            rows.forEach(row => {
+                if (variant === 'all' || row.dataset.variant === variant) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
     </script>
 </body>
 

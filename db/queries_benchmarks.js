@@ -21,21 +21,22 @@ async function _db() { return getDb(); }
 /**
  * Create a new benchmark run record.
  * @param {object} opts
- * @param {string} opts.arm           'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
- * @param {string} opts.label         Human-readable label
- * @param {string} opts.scenario_set  e.g. 'canonical_10'
- * @param {object} opts.config        Hyperparams, model IDs, random seed
+ * @param {string} opts.arm             'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
+ * @param {string} opts.label           Human-readable label
+ * @param {string} opts.scenario_set    e.g. 'canonical_10'
+ * @param {string} [opts.prompt_variant] 'baseline' | 'dpo' (32-exp design, default 'baseline')
+ * @param {object} opts.config          Hyperparams, model IDs, random seed
  * @returns {string} run_id
  */
-export async function createBenchmarkRun({ arm, label, scenario_set, config = {} }) {
+export async function createBenchmarkRun({ arm, label, scenario_set, prompt_variant = 'baseline', config = {} }) {
     const d = await _db();
     await addHTNBenchmarkTables(d);
     const run_id = randomUUID();
     await d.run(
         `INSERT INTO htn_benchmark_runs
-         (run_id, arm, label, scenario_set, config, started_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [run_id, arm, label || null, scenario_set, JSON.stringify(config), Date.now()]
+         (run_id, arm, label, scenario_set, prompt_variant, config, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [run_id, arm, label || null, scenario_set, prompt_variant, JSON.stringify(config), Date.now()]
     );
     return run_id;
 }
