@@ -496,7 +496,8 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20, slim =
     const statsColumns = slim
         ? ''
         : `, e.trust_delta_final, e.turns_to_goal, e.tokens_scout, e.tokens_maverick,
-             e.latency_ms_mean, e.scenario_id`;
+             e.latency_ms_mean, e.scenario_id,
+             e.cost_usd_total, e.llm_calls_total`;
     const rows = await db.all(
         `SELECT e.episode_id, e.arm,
                 r.label as run_label, r.run_id, r.started_at as run_started_at,
@@ -589,6 +590,24 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20, slim =
                     latency_ms_mean:    ep.latency_ms_mean,
                     scenario_id:        ep.scenario_id,
                     started_at:         ep.started_at,
+                    // Cost: use stored value if present; otherwise derive from token counts.
+                    // Pricing: Scout ~$0.17/1M in, ~$0.17/1M out; Maverick ~$0.40/1M.
+                    // These are approximate Bedrock on-demand rates — good enough for
+                    // relative cost comparison between arms.
+                    cost_usd_total: ep.cost_usd_total != null
+                        ? ep.cost_usd_total
+                        : (() => {
+                            const scoutTokens    = (ep.tokens_scout    || 0);
+                            const maverickTokens = (ep.tokens_maverick || 0);
+                            // Scout: $0.17 / 1M tokens (combined in+out estimate)
+                            // Maverick: $0.40 / 1M tokens
+                            return Math.round((scoutTokens * 0.17 / 1e6 + maverickTokens * 0.40 / 1e6) * 1e6) / 1e6;
+                        })(),
+                    // LLM calls: use stored value if present; otherwise estimate from
+                    // whether tokens_maverick > 0 (CoT arms make 2 calls/turn, MPS 1).
+                    llm_calls_total: ep.llm_calls_total != null
+                        ? ep.llm_calls_total
+                        : (ep.tokens_maverick > 0 ? 2 : 1) * (ep.turn_count || 1),
                 }),
                 missing_arm_slot:   false,
             });
