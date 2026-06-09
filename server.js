@@ -122,7 +122,6 @@ events.on('escalate', (payload) => {
             : { type: 'escalation', ...payload };
         broadcast([payload.userId], safePayload);
     });
-    });
 });
 
 events.on('analysis_progress', (payload) => {

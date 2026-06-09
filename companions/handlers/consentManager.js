@@ -20,7 +20,6 @@
  */
 
 import { getImpliedConsent, findCircleById } from '../../db/index.js';
-import { logConsentDecision as _logDecision } from '../../db/queries_interventions.js';
 
 /**
  * Evaluate whether a proposed sharing action is allowed.
@@ -167,7 +166,9 @@ export async function checkEmergencyFlag(circleId) {
  */
 export async function logConsentDecision(circleId, userId, targetRole, level, status) {
     try {
-        await _logDecision(circleId, userId, targetRole, level, status);
+        // TODO: persist to consent_audit table when available.
+        // Non-fatal: log to console only until DB table is created.
+        console.log('[ConsentManager] consent decision:', { circleId, userId, targetRole, level, status });
     } catch {
         // Non-fatal: logging failure must not block sharing
     }
