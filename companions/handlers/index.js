@@ -22,6 +22,7 @@
  *   privacyGuard        — privacy classification (SPECIALIST, independent LLM, not unified)
  *   patientOptimizer    — patient-facing response optimisation
  *   doctorOptimizer     — clinician-facing summary and escalation content
+ *   caregiverOptimizer  — caregiver burden, respite, and secondary-stress screening
  *
  * HTN agents (Python / tensornets layer — bridged via tensornetsBridge.js):
  *   physioState         — HRV/physiological state estimation (companions/physio/state.js)
@@ -56,6 +57,7 @@ import { processClinicalAnalysis } from '../agents/clinicalAgent.js';
 import { processEscalation } from '../agents/escalationManager.js';
 import { processPatientOptimization } from '../agents/patientOptimizer.js';
 import { processDoctorOptimization } from '../agents/doctorOptimizer.js';
+import { processCaregiverOptimization } from '../agents/caregiverOptimizer.js';
 // futurePlanningAgent is called directly from CompanionCoordinator — not via HANDLER_MAP
 
 const HANDLER_MAP = {
@@ -69,8 +71,9 @@ const HANDLER_MAP = {
     clinicalAgent:      processClinicalAnalysis,     // SPECIALIST: medical criticality (own LLM)
     privacyGuard:       processPrivacyDecision,      // SPECIALIST: privacy level (own LLM, independent)
     escalationManager:  processEscalation,           // escalation routing (reads clinicalAgent)
-    patientOptimizer:   processPatientOptimization,  // patient-facing response optimisation
-    doctorOptimizer:    processDoctorOptimization,   // clinician-facing summary
+    patientOptimizer:    processPatientOptimization,   // patient-facing response optimisation
+    doctorOptimizer:     processDoctorOptimization,    // clinician-facing summary
+    caregiverOptimizer:  processCaregiverOptimization, // caregiver burden + respite screening
 };
 
 

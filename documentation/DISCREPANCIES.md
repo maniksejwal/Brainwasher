@@ -59,30 +59,35 @@ The real gap (if any) is whether `escalationTiers.js` tier routing uses
 | Files | `companions/handlers/privacyGuard.js`, `companions/handlers/consentManager.js` |
 | Discovered | 2026-06-08 code audit |
 
-### Description
+### Resolution (2026-06-09)
 
-`privacyGuard.js` currently performs two logically distinct tasks:
+`companions/handlers/consentManager.js` has been implemented (175 lines).
+`privacyGuard.js` is now a pure LLM classifier (148 lines). The split
+matches the intended design exactly:
 
-1. **Privacy classification** (stateless): Given a message and circle
-   context, classify the content as PUBLIC / PRIVATE / SENSITIVE.
-   Output: `privacyLevel`.
+- `privacyGuard.js` → stateless LLM call → PUBLIC / PRIVATE / SENSITIVE
+- `consentManager.js` → DB-backed gate → `evaluateConsent()`,
+  `buildFallbackSuggestion()`, `checkEmergencyFlag()`, `logConsentDecision()`
 
-2. **Consent management** (stateful, DB-dependent): Given the
-   classification result and a proposed sharing target, check whether
-   consent has been granted (via `consent_level` DB field or
-   `getImpliedConsent()`), and determine whether explicit consent is
+Three consent tiers implemented in `consentManager.js`:
+1. Emergency override (`checkEmergencyFlag()` → bypass all gates)
+2. Implied consent (`getImpliedConsent()` → allow)
+3. Explicit consent (`circle_members.consent_level` → none / limited / full)
+
+### Original description (for reference)
+
+`privacyGuard.js` originally performed two logically distinct tasks:
+
+1. **Privacy classification** (stateless): classify message content
+   as PUBLIC / PRIVATE / SENSITIVE. Output: `privacyLevel`.
+
+2. **Consent management** (stateful, DB-dependent): check whether
+   consent has been granted and determine whether explicit consent is
    required. Output: `sharingSuggestion.requiresConsent`.
 
-These two concerns are implemented in a single 225-line file with a
-private `_consentGate()` function (lines 189–225). This means:
-
-- Privacy classification cannot be tested without a DB (because
-  `_consentGate()` always calls `getCircleMembers()` + `getImpliedConsent()`)
-- Consent checks cannot be triggered by other parts of the system
-  (e.g. the escalation path) without going through the privacy classifier
-- The consent taxonomy (NONE/LIMITED/FULL/EMERGENCY from the privacyGuard
-  LLM output) is different from the consent taxonomy stored in the DB
-  (`consent_level` = 'none' | 'full'). This mismatch is undocumented.
+These were implemented in a single file. The `_consentGate()` coupling
+meant privacy classification could not be tested without a DB, and
+consent checks could not be triggered without going through the classifier.
 
 ### Intended design (user intent)
 
@@ -400,3 +405,174 @@ This maps cleanly to the v1 taxonomy:
 - v1 "Explicit Consent Required" → `consent_level = none` + `requiresExplicit = true`
 - v1 "No Consent" → `privacyLevel = SENSITIVE` (blocked before consent check)
 - v1 "Emergency" → `checkEmergencyFlag()` = true (bypass)
+
+---
+
+## D8 — No caregiverOptimizer — caregivers have no specialist response agent
+
+| Field | Value |
+|-------|-------|
+| Severity | **MEDIUM** — clinical quality gap |
+| Status | 🟢 Resolved — `caregiverOptimizer.js` implemented |
+| Files | `companions/agents/caregiverOptimizer.js` (new), `prompts/companion_caregiver_optimizer.js` (new), `companions/utils/promptLoader.js`, `companions/handlers/index.js`, `companions/CompanionCoordinator.js:397–403` |
+| Discovered | 2026-06-09 code audit |
+
+### Description
+
+`getRelevantHandlers(role, ...)` in `CompanionCoordinator.js` activates
+a specialist response-generation agent for `role=patient`
+(`patientOptimizer.js`) and `role=doctor` (`doctorOptimizer.js`), but
+contains no branch for `role=caregiver`:
+
+```js
+if (role === 'patient') {
+    components.push('patientOptimizer');
+} else if (role === 'doctor') {
+    components.push('doctorOptimizer');
+}
+// No caregiver branch
+```
+
+A caregiver's message therefore passes through the five core handlers
+and is then answered by `unifiedAgent.js` with a generic prompt that
+only knows `{{SPEAKER_ROLE}}=caregiver`. There is no specialist agent
+optimising for caregiver-specific concerns.
+
+### Clinical significance
+
+Caregivers face distinct stressors not addressed by the generic prompt:
+- **Caregiver burden** — physical and emotional exhaustion from sustained
+  caregiving, often under-reported
+- **Secondary traumatic stress** — vicarious trauma from proximity to a
+  patient's suffering (common in family caregivers)
+- **Respite needs** — a caregiver who is burnt out but continues
+  caregiving is itself a patient safety risk for the person they care for
+- **Role conflict** — a caregiver who is also a healthcare professional
+  may suppress their own stress responses due to professional identity
+
+The `patientOptimizer.js` and `doctorOptimizer.js` exist as distinct
+files with role-specific prompts (via `promptLoader.js`). A
+`caregiverOptimizer.js` following the same pattern is the fix.
+
+### Recommended fix
+
+1. Create `companions/agents/caregiverOptimizer.js` (mirrors
+   `patientOptimizer.js` structure, with a caregiver-specific prompt).
+2. Create `prompts/companion_caregiver_optimizer.js` with caregiver-
+   specific system prompt content (burden screening, respite detection,
+   validation of caregiving effort).
+3. Add to `companions/utils/promptLoader.js`.
+4. Add to `HANDLER_MAP` in `companions/handlers/index.js`.
+5. Add `caregiver` branch to `getRelevantHandlers()` in
+   `CompanionCoordinator.js`.
+
+### Impact
+
+- `documentation/uml_diagrams/env_02_agent_user_topology.md` — updated;
+  the gap is now annotated in the role mapping table.
+- `documentation/js/20_care_circle_orchestration.md` — should note
+  this gap in §5 (role-specific agent layer).
+
+### Resolution
+
+`caregiverOptimizer.js` created under `companions/agents/`, mirroring the
+`patientOptimizer` / `doctorOptimizer` pattern.  Key additions:
+
+- **`prompts/companion_caregiver_optimizer.js`** — caregiver-specific system
+  prompt: validate-first tone, burden screening, respite probing, secondary
+  traumatic stress and role-conflict awareness.  Template variables:
+  `BURDEN_SIGNAL`, `CLINICAL_ASSESSMENT`, `CRITICALITY`,
+  `REPETITION_DETECTED/GUIDANCE/TOPIC_SHIFT_GUIDANCE`, `CONVERSATION_HISTORY`.
+- **`detectBurdenSignal()`** — lightweight keyword scanner (no extra LLM call)
+  that flags HIGH / MODERATE / LOW burden in the prompt before the API call.
+- **`companions/utils/promptLoader.js`** — `caregiver_optimizer` case added.
+- **`companions/handlers/index.js`** — `caregiverOptimizer` entry added to
+  `HANDLER_MAP`; header comment updated.
+- **`companions/CompanionCoordinator.js`** — `else if (role === 'caregiver')`
+  branch added to `getRelevantHandlers()`.
+
+
+
+## D9 — No cross-role longitudinal awareness for multi-role users
+
+| Field | Value |
+|-------|-------|
+| Severity | **LOW** — clinical quality enhancement |
+| Status | 🟡 Documented — infrastructure exists, usage not implemented |
+| Files | `companions/CompanionCoordinator.js`, `db/schema.js` (`companion_confidential_messages`, `companion_intel_sharing`) |
+| Discovered | 2026-06-09 architectural review |
+
+### Description
+
+A single human user can hold multiple roles across care circles — for
+example, a GP who is also managing a parent's care and who is themselves
+unwell. The companion pipeline is fully isolated per `(userId, circleId)`
+pair. When a user switches context with `/switch [circleId]`, the
+companion in the new circle has no awareness of the user's state in other
+circles.
+
+This is **correct and intentional for privacy**: raw facts must not leak
+between circles without consent. However, it creates a clinical quality
+gap:
+
+| Scenario | Gap |
+|---------|-----|
+| Clinician who is also a patient | Companion in the clinical circle does not know the user is currently unwell and may be suppressing symptoms due to professional identity |
+| Patient who is also a caregiver | Companion in the patient circle does not know the user is also bearing caregiver burden, which may affect treatment adherence |
+| Caregiver who is burnt out | Companion in the caregiver circle does not know the user is also unwell in their own circle |
+
+### Existing infrastructure
+
+The `companion_confidential_messages` table already has a
+`companion_network` confidentiality level:
+
+```
+companion_only      — only the originating companion's LLM context
+companion_network   — all companions for the same user across all circles  ← relevant
+cross_user          — companions of other users
+```
+
+A `companion_network` message sent by the patient-role companion when
+a session begins (e.g. `{ type: "wellness_hint", unwell: true }`) would
+give the caregiver-role or doctor-role companion a signal without
+exposing any raw facts. The DB schema supports this; the application
+logic to produce and consume such hints does not exist.
+
+### Proposed implementation
+
+1. At start of each session, the outgoing companion for `circleId` emits
+   a `companion_network` confidential message:
+   ```json
+   {
+     "type": "cross_role_hint",
+     "sender_circle_id": "<circleId>",
+     "sender_role": "patient",
+     "wellness_flag": "active_patient",
+     "detail": null
+   }
+   ```
+   `detail` is intentionally null — no raw facts, only role/status flag.
+
+2. When a user switches to a different circle, `CompanionCoordinator`
+   queries `companion_confidential_messages` for `companion_network`
+   messages from other circles of the same user. These are injected as
+   a `crossRoleContext` block in the `additionalContext` passed to
+   `unifiedAgent.processUserMessage()`.
+
+3. The system prompt template gains a `{{CROSS_ROLE_CONTEXT}}` variable.
+   The prompt instructs the LLM: "This user also holds the following
+   roles in other care contexts: [list]. Be aware of potential role
+   conflict or compounded burden."
+
+4. The feature is opt-in and gated by a user-level preference
+   (`allow_cross_role_hints` — not yet in schema).
+
+### Impact
+
+- `documentation/uml_diagrams/env_02_agent_user_topology.md` — updated;
+  gap documented in the multi-role section.
+- `documentation/js/20_care_circle_orchestration.md` — should add a
+  §6 on multi-role user handling.
+- `documentation/vision_goals.md` — candidate future research item
+  (cross-role longitudinal modelling).
+

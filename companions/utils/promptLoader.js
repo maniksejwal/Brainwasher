@@ -8,6 +8,7 @@ import { PROMPT_COMPANION_EMPATHY } from '../../prompts/companion_empathy.js';
 import { PROMPT_COMPANION_CLINICAL } from '../../prompts/companion_clinical.js';
 import { PROMPT_COMPANION_PATIENT_OPTIMIZER } from '../../prompts/companion_patient_optimizer.js';
 import { PROMPT_COMPANION_DOCTOR_OPTIMIZER } from '../../prompts/companion_doctor_optimizer.js';
+import { PROMPT_COMPANION_CAREGIVER_OPTIMIZER } from '../../prompts/companion_caregiver_optimizer.js';
 import { PROMPT_COMPANION_FUTURE_PLANNING } from '../../prompts/companion_future_planning.js';
 import { PROMPT_COMPANION_STATE_TRACKER } from '../../prompts/companion_state_tracker.js';
 import { PROMPT_COMPANION_PRIVACY_GUARD } from '../../prompts/companion_privacy_guard.js';
@@ -48,6 +49,9 @@ export function loadPrompt(promptName, variables = {}) {
             break;
         case 'doctor_optimizer':
             prompt = PROMPT_COMPANION_DOCTOR_OPTIMIZER;
+            break;
+        case 'caregiver_optimizer':
+            prompt = PROMPT_COMPANION_CAREGIVER_OPTIMIZER;
             break;
         case 'future_planning':
             prompt = PROMPT_COMPANION_FUTURE_PLANNING;

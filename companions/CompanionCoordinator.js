@@ -398,6 +398,8 @@ export function getRelevantHandlers(role, message, context) {
         components.push('patientOptimizer');
     } else if (role === 'doctor') {
         components.push('doctorOptimizer');
+    } else if (role === 'caregiver') {
+        components.push('caregiverOptimizer');
     }
     
     // Context-dependent agents
