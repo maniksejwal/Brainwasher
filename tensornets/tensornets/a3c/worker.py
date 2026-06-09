@@ -432,6 +432,23 @@ class TurnState:
     session_id:   str = ""
     subject_id:   str = ""
 
+    # ── Heuristics imported from the JS production stack ─────────────────────
+    # These mirror what CompanionCoordinator makes available in context:
+    #
+    # future_plans_summary: natural-language digest of the most recent future_plans
+    #   rows for this subject_id.  Populated by the episode runner via a Node.js
+    #   /api/future-plans/{subjectId} call.  Lets the Python arms maintain cross-session
+    #   intent the same way the JS system does.  Empty string if unavailable.
+    #
+    # recent_n_gram_overlap: float [0,1] — cosine similarity between the current
+    #   turn's assistant response and the mean of the last 3 assistant turns.
+    #   Computed inline in Python (no LLM call) to mirror JS historyAnalyzer.
+    #   > 0.55 → mark repetition_detected = True on the next turn.
+    #   Stored separately so the reward function can use the raw score, not just
+    #   the binary flag.
+    future_plans_summary:   str   = ""    # cross-session intent from future_plans table
+    recent_n_gram_overlap:  float = 0.0   # JS-historyAnalyzer proxy
+
     @staticmethod
     def bucket_from_stress(stress_index: float) -> str:
         """Map stress_index [0,1] to the bandit bucket keys used by ActionBandit."""
@@ -460,6 +477,8 @@ class TurnState:
             "longitudinalHint":     self.longitudinal_hint,
             "activityContext":      self.activity_context,
             "physioState":          self.physio,
+            "futurePlans":          self.future_plans_summary,
+            "recentRepetitionScore": self.recent_n_gram_overlap,
         }
 
     @classmethod
@@ -544,7 +563,43 @@ class TurnState:
             physio_source=physio_source,
             session_id=scenario.get("session_id", str(uuid.uuid4())),
             subject_id=scenario.get("subject_id", "synthetic"),
+            future_plans_summary=scenario.get("future_plans_summary", ""),
         )
+
+
+def _ngram_overlap(text_a: str, text_b: str, n: int = 3) -> float:
+    """
+    Jaccard similarity of character n-grams between two strings.
+    Used as a lightweight repetition proxy (mirrors JS historyAnalyzer token overlap).
+    Returns 0.0 for empty inputs.
+    """
+    if not text_a or not text_b:
+        return 0.0
+    def ngrams(s: str) -> set:
+        s = s.lower()
+        return {s[i:i+n] for i in range(len(s) - n + 1)}
+    a, b = ngrams(text_a), ngrams(text_b)
+    union = a | b
+    return len(a & b) / len(union) if union else 0.0
+
+
+def _compute_repetition(history: list[dict], new_response: str, window: int = 3) -> tuple[bool, float]:
+    """
+    Detect repetition by comparing new_response against the last `window`
+    assistant turns in conversation_history using character n-gram Jaccard.
+
+    Returns (repetition_detected: bool, overlap_score: float).
+    Threshold mirrors JS historyAnalyzer: flag if mean overlap > 0.55.
+    """
+    assistant_turns = [
+        m["content"] for m in history
+        if m.get("role") == "assistant" and m.get("content")
+    ][-window:]
+    if not assistant_turns or not new_response:
+        return False, 0.0
+    scores = [_ngram_overlap(new_response, t) for t in assistant_turns]
+    mean_overlap = sum(scores) / len(scores)
+    return mean_overlap > 0.55, round(mean_overlap, 4)
 
 
 # ── J2: Actor ─────────────────────────────────────────────────────────────────
@@ -1013,7 +1068,20 @@ class A3CWorker:
         new_action      = response_dict.get("action_taken", prev_state.last_action)
         new_frames      = response_dict.get("frames_component", prev_state.frames_component)
         new_info_cov    = response_dict.get("info_coverage", prev_state.info_coverage)
+        _overlap_score  = 0.0   # initialised here; overwritten by _compute_repetition below
         new_repetition  = response_dict.get("repetition_detected", False)
+        # ── Python-side repetition detection (mirrors JS historyAnalyzer) ────
+        # Compute n-gram overlap between the new response and recent assistant
+        # turns.  Override the arm's placeholder False value with a real signal.
+        _new_response_text = response_dict.get("response", "")
+        _rep_computed, _overlap = _compute_repetition(
+            list(prev_state.conversation_history), _new_response_text
+        )
+        # Use computed value if the arm returned the default placeholder (False).
+        # Arms that genuinely detect repetition can still override via response_dict.
+        if not new_repetition and _rep_computed:
+            new_repetition = True
+        _overlap_score = _overlap
         new_phase       = response_dict.get("deaddiction_phase", prev_state.deaddiction_phase)
         new_mode        = response_dict.get("therapeutic_mode", prev_state.therapeutic_mode)
 
@@ -1055,6 +1123,8 @@ class A3CWorker:
             conversation_stress=new_conv_stress,
             session_id=prev_state.session_id,
             subject_id=prev_state.subject_id,
+            future_plans_summary=prev_state.future_plans_summary,
+            recent_n_gram_overlap=_overlap_score,
         )
 
     # ── Episode runner ───────────────────────────────────────────────────────
