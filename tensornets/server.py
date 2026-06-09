@@ -1341,15 +1341,85 @@ _LLM_MODELS = {
     "maverick": "us.meta.llama4-maverick-17b-instruct-v1:0",
 }
 
-# ── Concurrency pool ──────────────────────────────────────────────────────────
+# ── Concurrency pool with arm-priority fairness ───────────────────────────────
 # With 8 arms × 2 workers = up to ~20 simultaneous in-flight Bedrock calls,
 # the per-account concurrency limit gets hit and returns 502 throttling errors.
 # A semaphore caps active calls so excess requests wait in-thread rather than
 # firing immediately and failing.  Scout and Maverick share one pool because
 # they compete for the same account-level quota.
 # Set BEDROCK_MAX_CONCURRENT env var to tune (default 8).
+#
+# Priority extension: the rebalancer periodically POST-s arm priority rankings to
+# /llm/arm-priorities.  The _PrioritySemaphore uses these to let lagger workers
+# acquire a slot sooner than leader workers when multiple requests are queued.
+# Implementation: each `acquire()` call specifies a priority int (0 = highest);
+# internally a priority-ordered queue of waiting Events replaces the raw Semaphore
+# so lower-priority (leader) waiters yield to higher-priority (lagger) waiters.
 _MAX_BEDROCK_CONCURRENT = int(os.environ.get("BEDROCK_MAX_CONCURRENT", "8"))
-_bedrock_semaphore      = threading.Semaphore(_MAX_BEDROCK_CONCURRENT)
+
+
+class _PrioritySemaphore:
+    """
+    A counting semaphore whose acquire() accepts a priority argument.
+    Lower priority number = higher priority (acquired first when slots free up).
+    Thread-safe.  Drop-in for threading.Semaphore except the context-manager
+    __enter__ takes a `priority` kwarg.
+    """
+
+    def __init__(self, value: int) -> None:
+        self._value    = value
+        self._lock     = threading.Lock()
+        self._waiting: list[tuple[int, int, threading.Event]] = []
+        self._counter  = 0   # tie-break monotone
+
+    def acquire(self, priority: int = 999) -> None:
+        with self._lock:
+            if self._value > 0:
+                self._value -= 1
+                return
+            event = threading.Event()
+            self._counter += 1
+            import heapq as _heapq
+            _heapq.heappush(self._waiting, (priority, self._counter, event))
+        event.wait()
+
+    def release(self) -> None:
+        import heapq as _heapq
+        with self._lock:
+            if self._waiting:
+                _, _, event = _heapq.heappop(self._waiting)
+                event.set()
+            else:
+                self._value += 1
+
+    class _AcquireContext:
+        def __init__(self, sem: "_PrioritySemaphore", priority: int) -> None:
+            self._sem = sem
+            self._p   = priority
+        def __enter__(self):
+            self._sem.acquire(self._p)
+            return self
+        def __exit__(self, *_):
+            self._sem.release()
+
+    def __call__(self, priority: int = 999):
+        return self._AcquireContext(self, priority)
+
+
+_bedrock_semaphore = _PrioritySemaphore(_MAX_BEDROCK_CONCURRENT)
+
+# Arm priority map: {arm_name: priority_int}  populated by /llm/arm-priorities.
+# Lower int = lagger = higher priority.  Protected by a simple lock.
+_arm_priorities: dict[str, int] = {}
+_arm_priorities_lock             = threading.Lock()
+
+
+def _arm_priority(arm_name: str | None) -> int:
+    """Return the priority for an arm (lower = more urgent). Default 999 = no priority set."""
+    if not arm_name:
+        return 999
+    with _arm_priorities_lock:
+        return _arm_priorities.get(arm_name, 999)
 
 # ── Reusable boto3 clients (one per region) ───────────────────────────────────
 # Creating a new client per call re-reads credentials and re-establishes the
@@ -1374,10 +1444,12 @@ class LLMRequestIn(BaseModel):
     prompt:     str
     max_tokens: int = 512
     temperature: float = 0.7
+    arm:        str = ""   # optional arm name for priority-semaphore scheduling
 
 
 def _call_bedrock_llm(model_key: str, system: str, prompt: str,
-                      max_tokens: int, temperature: float) -> dict:
+                      max_tokens: int, temperature: float,
+                      arm: str = "") -> dict:
     region   = os.environ.get("AWS_REGION", "us-east-1")
     model_id = _LLM_MODELS.get(model_key, _LLM_MODELS["scout"])
     client   = _get_bedrock_client(region)
@@ -1392,9 +1464,9 @@ def _call_bedrock_llm(model_key: str, system: str, prompt: str,
     if system_list:
         kwargs["system"] = system_list
 
-    # Acquire pool slot — blocks until a slot is free rather than firing
-    # immediately and hitting the Bedrock concurrency limit.
-    with _bedrock_semaphore:
+    # Acquire pool slot with arm priority so laggers get in before leaders.
+    # Lower priority int = higher scheduling priority = lagger arms go first.
+    with _bedrock_semaphore(priority=_arm_priority(arm)):
         last_exc: Exception | None = None
         for attempt in range(4):
             try:
@@ -1439,7 +1511,7 @@ def llm_scout(req: LLMRequestIn):
     Llama 4 Scout passthrough — used by A3C arms (response generation),
     A3CScorer (inline reward), and SyntheticPatient (patient turn generation).
     """
-    return _call_bedrock_llm("scout", req.system, req.prompt, req.max_tokens, req.temperature)
+    return _call_bedrock_llm("scout", req.system, req.prompt, req.max_tokens, req.temperature, arm=req.arm)
 
 
 @app.post("/llm/maverick")
@@ -1448,7 +1520,24 @@ def llm_maverick(req: LLMRequestIn):
     Llama 4 Maverick passthrough — used by A3C Critic value estimation
     and offline HTN judge batch runs.
     """
-    return _call_bedrock_llm("maverick", req.system, req.prompt, req.max_tokens, req.temperature)
+    return _call_bedrock_llm("maverick", req.system, req.prompt, req.max_tokens, req.temperature, arm=req.arm)
+
+
+class ArmPrioritiesIn(BaseModel):
+    priorities: dict  # {arm_name: priority_int}  0 = highest (lagger)
+
+
+@app.post("/llm/arm-priorities")
+def set_arm_priorities(body: ArmPrioritiesIn):
+    """
+    Called by the rebalancer every 20 s to update arm priority rankings.
+    Lagger arms (lowest episode count) get priority 0 and acquire Bedrock
+    slots ahead of leader arms at higher priority numbers.
+    """
+    with _arm_priorities_lock:
+        _arm_priorities.clear()
+        _arm_priorities.update(body.priorities)
+    return {"ok": True, "priorities": body.priorities}
 
 
 # ── RL Shadow Mode: A3C action endpoint ──────────────────────────────────────

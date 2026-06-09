@@ -86,6 +86,32 @@ _TENSORNETS_URL = _nc.TENSORNETS_URL
 _NODE_URL       = _nc.NODE_URL
 
 
+def _register_arm_priorities(priority_map: dict[str, int]) -> None:
+    """
+    POST arm priority rankings to the tensornets server's priority-semaphore endpoint.
+
+    priority_map: {arm_name: rank}  where rank 0 = highest priority (worst lagger).
+    The server uses this to let lagger arms acquire the Bedrock semaphore ahead of
+    leader arms when multiple requests are queued.  Non-fatal if the server is not
+    yet upgraded to support this endpoint.
+    """
+    import urllib.request as _req, json as _json
+    try:
+        data = _json.dumps({"priorities": priority_map}).encode()
+        r = _req.urlopen(
+            _req.Request(
+                f"{_TENSORNETS_URL}/llm/arm-priorities",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            ),
+            timeout=2.0,
+        )
+        r.read()
+    except Exception:
+        pass   # non-fatal; priority is best-effort
+
+
 # ── CurriculumScheduler ────────────────────────────────────────────────────────
 
 class CurriculumScheduler:
@@ -634,9 +660,15 @@ def train(
             # ep_count_lock: protects shared ep_count across N workers of this experiment
             "ep_count_lock":    threading.Lock(),
             # throttle_event: SET = run freely, CLEAR = pause (rebalancer controls this)
-            "throttle_event":   threading.Event(),
+            # NOTE: rebalancer no longer uses CLEAR (hard pause); it uses inter_episode_sleep.
+            # This event is kept for backward compat but stays SET.
+            "throttle_event":     threading.Event(),
+            # inter_episode_sleep: seconds this arm waits after each episode ends before
+            # starting the next.  Rebalancer adjusts this to pace leaders without stopping them.
+            # 0.0 = run at full speed.  Leaders get up to _PACE_MAX_SLEEP seconds.
+            "inter_episode_sleep": 0.0,
         })
-        arm_states[-1]["throttle_event"].set()  # start unthrottled
+        arm_states[-1]["throttle_event"].set()  # always set (not used for hard pause any more)
 
         # Register actor/critic in the shadow mode registry so the FastAPI
         # /session/a3c/action endpoint can evaluate them without loading files.
@@ -754,13 +786,19 @@ def train(
         target = s["start_ep"] + episodes_per_arm
 
         while not stop_event.is_set():
-            # ── Throttle: rebalancer pauses leader arms by setting this event ─────
-            # wait() with a timeout so we don't block the stop_event check.
-            if not s["throttle_event"].is_set():
-                log.info("Worker %s/%d throttled by rebalancer — waiting", s["name"], worker_idx)
-                while not s["throttle_event"].wait(timeout=5.0):
-                    if stop_event.is_set():
-                        return
+            # ── Pace control: rebalancer sets inter_episode_sleep for leader arms ──
+            # This replaces the hard-pause throttle_event with a gentle sleep that
+            # keeps leaders moving (so they don't fall completely idle) while giving
+            # laggers priority for new episodes.
+            pace = s.get("inter_episode_sleep", 0.0)
+            if pace > 0.0:
+                log.debug(
+                    "Worker %s/%d paced — sleeping %.1fs before next episode",
+                    s["name"], worker_idx, pace,
+                )
+                # Use stop_event.wait so we exit cleanly if training is halted mid-sleep
+                if stop_event.wait(timeout=pace):
+                    return
 
             # ── Claim the next episode slot atomically ────────────────────────
             # Check global cap first, then per-arm target.
@@ -968,23 +1006,30 @@ def train(
 
     def _rebalance_workers() -> None:
         """
-        Aggressively rebalance worker throughput across experiments.
+        Pace-based rebalancer — never stops leaders, just slows them down.
 
-        Tiers (checked every ~30 s):
-          gap > 500:  Hard throttle ALL leaders to 0 workers until gap < 300.
-                      Simultaneously spawn burst workers for lagging arms
-                      (up to MAX_WORKERS_PER_ARM total).
-          gap > 200:  Throttle leaders (pause their workers after current episode).
-                      Spawn extra workers for laggers proportional to gap.
-          gap > 50:   Spawn 1 extra worker for lagger; unthrottle leaders.
-          gap ≤ 50:   Everything balanced — unthrottle all arms.
+        Every `sleep_secs` seconds:
+          1. Rank all arms by episode count.
+          2. Compute each arm's gap vs. the bottom arm.
+          3. Leaders (top third by count) get an inter_episode_sleep proportional
+             to their surplus:
+               sleep = min(_PACE_MAX_SLEEP, gap / _PACE_GAP_PER_SECOND)
+             This keeps them running (workers stay alive) but paces throughput
+             so laggers can use the available Bedrock quota.
+          4. Bottom third (laggers) get inter_episode_sleep = 0 (full speed) and
+             extra workers up to MAX_WORKERS_PER_ARM.  2nd and 3rd from bottom
+             also get extra workers (down to 2nd-to-bottom tier).
+          5. Middle third runs at natural speed (sleep = 0, no extra workers).
 
-        Worker cap: no arm ever exceeds MAX_WORKERS_PER_ARM to avoid OOM.
-        The current in-flight episode in each throttled worker completes before
-        the block takes effect (cooperative pause).
+        Priority semaphore (in server.py): lagger arms register a lower priority
+        value which lets them acquire the Bedrock semaphore sooner.  See
+        _register_arm_priority() for the contract.
         """
-        MAX_WORKERS_PER_ARM = 6   # hard cap per arm to avoid memory pressure
-        sleep_secs = 30.0         # check every 30 s (was 60) for faster response
+        _PACE_MAX_SLEEP      = 45.0   # max inter-episode sleep for the most-ahead leader
+        _PACE_GAP_PER_SECOND = 20.0   # each 20-episode gap adds 1 second of sleep
+        MAX_WORKERS_PER_ARM  = 6
+        MIN_WORKERS_THROTTLED = 1     # leaders always keep at least 1 worker alive
+        sleep_secs           = 20.0   # check every 20 s
 
         def _live(s: dict) -> int:
             return sum(1 for t in arm_thread_map[s["name"]] if t.is_alive())
@@ -993,6 +1038,7 @@ def train(
             counts = {s["name"]: s["ep_count"] for s in arm_states}
             live   = {s["name"]: _live(s) for s in arm_states}
 
+            # Alert on dead arms
             for arm_name, n_live in live.items():
                 if n_live == 0:
                     log.error("Rebalancer: arm=%s has 0 live workers — all died!", arm_name)
@@ -1000,89 +1046,79 @@ def train(
             if len(counts) < 2:
                 continue
 
-            lagger_name = min(counts, key=counts.get)
-            leader_name = max(counts, key=counts.get)
-            gap = counts[leader_name] - counts[lagger_name]
+            # ── 1. Rank arms by episode count ─────────────────────────────────
+            sorted_arms = sorted(arm_states, key=lambda s: counts[s["name"]])
+            n           = len(sorted_arms)
+            min_count   = counts[sorted_arms[0]["name"]]
+            max_count   = counts[sorted_arms[-1]["name"]]
+            total_gap   = max_count - min_count
 
-            leader_s = next(s for s in arm_states if s["name"] == leader_name)
-            lagger_s = next(s for s in arm_states if s["name"] == lagger_name)
-            lagger_live = live[lagger_name]
-            leader_live = live[leader_name]
+            # Tier boundaries (indices into sorted_arms)
+            bottom_end  = max(1, n // 3)    # bottom third (laggers)
+            top_start   = n - max(1, n // 3) # top third (leaders)
 
-            if gap > 500:
-                # ── Burst mode: extreme catch-up ─────────────────────────────
-                # Throttle ALL arms with more episodes than the lagger.
-                for s in arm_states:
-                    if counts[s["name"]] > counts[lagger_name] + 100:
-                        if s["throttle_event"].is_set():
-                            s["throttle_event"].clear()
-                            log.warning(
-                                "Rebalancer BURST: throttling %s (gap=%d vs lagger=%s=%d)",
-                                s["name"], counts[s["name"]] - counts[lagger_name],
-                                lagger_name, counts[lagger_name],
-                            )
-                # Spawn burst workers for ALL laggers below median
-                median_count = sorted(counts.values())[len(counts) // 2]
-                for s in arm_states:
-                    if counts[s["name"]] < median_count - 50:
-                        current_live = _live(s)
-                        # Spawn up to 3 extra workers in burst mode
-                        workers_to_add = min(3, MAX_WORKERS_PER_ARM - current_live)
-                        for _ in range(workers_to_add):
-                            log.warning(
-                                "Rebalancer BURST: spawning worker for lagger=%s "
-                                "(%d eps, gap=%d, live=%d→%d)",
-                                s["name"], counts[s["name"]],
-                                median_count - counts[s["name"]],
-                                current_live, current_live + 1,
-                            )
-                            _spawn_worker(s)
-                            current_live += 1
+            # ── 2. Set pace for each arm ──────────────────────────────────────
+            for i, s in enumerate(sorted_arms):
+                arm_count = counts[s["name"]]
+                gap_vs_lagger = arm_count - min_count
 
-            elif gap > 200:
-                # ── Moderate gap: throttle leader, add proportional workers ──
-                if leader_s["throttle_event"].is_set():
-                    leader_s["throttle_event"].clear()
-                    log.warning(
-                        "Rebalancer: THROTTLING leader=%s (gap=%d > 200)  "
-                        "leader=%d  lagger=%s=%d",
-                        leader_name, gap, counts[leader_name],
-                        lagger_name, counts[lagger_name],
-                    )
-                # Spawn proportional extra workers for lagger
-                workers_to_add = min(2, MAX_WORKERS_PER_ARM - lagger_live)
-                for _ in range(workers_to_add):
-                    log.info(
-                        "Rebalancer: gap=%d — spawning extra worker for lagger=%s (%d eps, live=%d)",
-                        gap, lagger_name, counts[lagger_name], lagger_live + 1,
-                    )
-                    _spawn_worker(lagger_s)
-                    lagger_live += 1
-
-            elif gap > 50:
-                # ── Small gap: unthrottle, add 1 worker if needed ────────────
-                if not leader_s["throttle_event"].is_set():
-                    leader_s["throttle_event"].set()
-                    log.info("Rebalancer: gap reduced to %d — unthrottling %s", gap, leader_name)
-                if lagger_live < MAX_WORKERS_PER_ARM:
-                    log.info(
-                        "Rebalancer: gap=%d — spawning extra worker for lagger=%s (%d eps)",
-                        gap, lagger_name, counts[lagger_name],
-                    )
-                    _spawn_worker(lagger_s)
-
-            else:
-                # ── Balanced: unthrottle all arms ─────────────────────────────
-                for s in arm_states:
-                    if not s["throttle_event"].is_set():
-                        s["throttle_event"].set()
+                if i >= top_start:
+                    # Leader tier — apply proportional pace sleep
+                    raw_sleep = gap_vs_lagger / _PACE_GAP_PER_SECOND
+                    new_sleep = round(min(_PACE_MAX_SLEEP, raw_sleep), 1)
+                    if s["inter_episode_sleep"] != new_sleep:
                         log.info(
-                            "Rebalancer: gap=%d ≤ 50 — unthrottling %s",
-                            gap, s["name"],
+                            "Rebalancer: PACE  arm=%-40s  eps=%d  gap=%d  sleep=%.1f→%.1fs",
+                            s["name"], arm_count, gap_vs_lagger,
+                            s["inter_episode_sleep"], new_sleep,
                         )
+                    s["inter_episode_sleep"] = new_sleep
+
+                    # Leaders keep at least MIN_WORKERS_THROTTLED alive — kill extra workers
+                    # by not spawning new ones and letting finished ones stay dead.
+                    # (We can't kill mid-episode; just let natural worker turnover thin them.)
+
+                elif i < bottom_end:
+                    # Lagger tier — full speed + extra workers
+                    s["inter_episode_sleep"] = 0.0
+                    current_live = live[s["name"]]
+                    # How many extra workers to add scales with rank deficit:
+                    # bottom arm gets max burst (3 extra), 2nd from bottom gets 2, etc.
+                    rank_from_bottom = i  # 0 = worst lagger
+                    burst = max(1, 3 - rank_from_bottom)
+                    workers_to_add = min(burst, MAX_WORKERS_PER_ARM - current_live)
+                    for _ in range(workers_to_add):
+                        log.warning(
+                            "Rebalancer: BURST lagger arm=%-40s  eps=%d  gap=%d  "
+                            "rank_from_bottom=%d  live=%d→%d",
+                            s["name"], arm_count, gap_vs_lagger,
+                            rank_from_bottom, current_live, current_live + 1,
+                        )
+                        _spawn_worker(s)
+                        current_live += 1
+                else:
+                    # Middle tier — neutral (no pace, no extra workers)
+                    s["inter_episode_sleep"] = 0.0
+
+            # ── 3. Register lagger priority with the Bedrock semaphore ────────
+            # Map arm names → priority tier (0 = highest priority for laggers)
+            priority_map = {
+                s["name"]: i   # lower index = lagger = higher priority
+                for i, s in enumerate(sorted_arms)
+            }
+            try:
+                _register_arm_priorities(priority_map)
+            except Exception:
+                pass   # non-fatal; priority is best-effort
+
+            if total_gap > 0:
                 log.debug(
-                    "Rebalancer: balanced  leader=%s(%d)  lagger=%s(%d)  gap=%d",
-                    leader_name, counts[leader_name], lagger_name, counts[lagger_name], gap,
+                    "Rebalancer: gap=%d  leader=%s(%d)  lagger=%s(%d)  "
+                    "bottom_tier=%d  top_tier=%d",
+                    total_gap,
+                    sorted_arms[-1]["name"], max_count,
+                    sorted_arms[0]["name"], min_count,
+                    bottom_end, n - top_start,
                 )
 
     rebalancer = threading.Thread(

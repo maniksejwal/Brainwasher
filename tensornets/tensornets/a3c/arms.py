@@ -371,7 +371,7 @@ class PhysioMPSMCTSWorker(A3CWorker):
         try:
             resp = _http_post(
                 f"{_TENSORNETS_URL}/llm/scout",
-                {"system": system_prompt, "prompt": prompt, "max_tokens": 256},
+                {"system": system_prompt, "prompt": prompt, "max_tokens": 256, "arm": self.ARM},
                 timeout=20.0,
             )
             text = resp.get("text", "").strip()
@@ -536,7 +536,7 @@ class PhysioLLMWorker(A3CWorker):
         try:
             resp = _http_post(
                 f"{_TENSORNETS_URL}/llm/scout",
-                {"system": system_prompt, "prompt": prompt, "max_tokens": 256},
+                {"system": system_prompt, "prompt": prompt, "max_tokens": 256, "arm": self.ARM},
                 timeout=20.0,
             )
             response_text = resp.get("text", "").strip()
@@ -1040,7 +1040,7 @@ class PhysioLLMCoTMCTSWorker(PhysioLLMWorker):
         try:
             resp = _http_post(
                 f"{_TENSORNETS_URL}/llm/maverick",
-                {"system": "You are a clinical AI planner.", "prompt": prompt, "max_tokens": 512},
+                {"system": "You are a clinical AI planner.", "prompt": prompt, "max_tokens": 512, "arm": self.ARM},
                 timeout=40.0,
             )
         except Exception as exc:
@@ -1451,7 +1451,7 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
         # max_tokens large enough for all actions (avg ~8 chars/key, ~5 chars/val, ~30 actions)
         resp = _http_post(
             f"{_TENSORNETS_URL}/llm/scout",
-            {"system": self._PRIOR_SYSTEM, "prompt": prompt, "max_tokens": 800},
+            {"system": self._PRIOR_SYSTEM, "prompt": prompt, "max_tokens": 800, "arm": self.ARM},
             timeout=25.0,
         )
         text = (resp.get("text") or "").strip()
@@ -1656,7 +1656,7 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
         try:
             resp = _http_post(
                 f"{_TENSORNETS_URL}/llm/maverick",
-                {"prompt": cot_prompt, "max_tokens": 1400},
+                {"prompt": cot_prompt, "max_tokens": 1400, "arm": self.ARM},
             )
         except Exception as exc:
             raise RuntimeError(
