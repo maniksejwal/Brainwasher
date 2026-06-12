@@ -272,17 +272,48 @@
                         <span style="font-weight:600;font-size:13px;color:var(--gray-700);">Benchmarks</span>
                         <span id="bench-refresh-spinner" style="display:none;font-size:11px;color:var(--gray-500);">⏳ loading…</span>
                         <button id="bench-refresh-btn" class="secondary" style="font-size:11px;padding:4px 10px;">↻ Refresh</button>
-                        <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                            <!-- New 6-experiment filter toggles -->
-                            <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm"                   style="font-size:11px;padding:4px 10px;border-left:4px solid #EA4335;">Exp 0 PhysioLLM</button>
-                            <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm_cot_mcts"          style="font-size:11px;padding:4px 10px;border-left:4px solid #FF6D00;">Exp 1 CoT-MCTS</button>
-                            <button class="secondary bench-exp-btn" data-exp-toggle="physio_mps_mcts"              style="font-size:11px;padding:4px 10px;border-left:4px solid #4285F4;">Exp 2 MPS-MCTS</button>
-                            <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_mps_mcts"     style="font-size:11px;padding:4px 10px;border-left:4px solid #9C27B0;">Exp 3 Inertial-MPS</button>
-                            <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_llm_cot_mcts" style="font-size:11px;padding:4px 10px;border-left:4px solid #00897B;">Exp 4 Inertial-CoT</button>
-                            <button class="secondary bench-exp-btn" data-exp-toggle="oldschool"                    style="font-size:11px;padding:4px 10px;border-left:4px solid #34A853;">Exp 5 Oldschool</button>
-                            <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_mps_mcts"     style="font-size:11px;padding:4px 10px;border-left:4px solid #E91E8C;">Exp 6 HPVOOT-MPS</button>
-                            <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_llm_cot_mcts" style="font-size:11px;padding:4px 10px;border-left:4px solid #FF9800;">Exp 7 HPVOOT-CoT</button>
-                            <!-- Legacy arms (htn_mcts, hysteresis_prompt) are merged into Exp 0/2 at fetch time -->
+                        <div style="display:flex;flex-direction:column;gap:4px;">
+                            <!-- Group show/hide buttons -->
+                            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                                <span style="font-size:11px;color:var(--gray-500);font-weight:600;">Groups:</span>
+                                <button id="group-toggle-base"     class="secondary" style="font-size:11px;padding:3px 8px;">Base (0–7)</button>
+                                <button id="group-toggle-ablation" class="secondary" style="font-size:11px;padding:3px 8px;">Ablations (0a–7a)</button>
+                                <button id="group-toggle-dpo"      class="secondary" style="font-size:11px;padding:3px 8px;">DPO (0p–7p)</button>
+                            </div>
+                            <!-- Experiment filter toggles — Base (Exp 0–7) -->
+                            <div style="display:flex;gap:4px;flex-wrap:wrap;" data-exp-group="base">
+                                <button class="secondary bench-exp-btn" data-exp-toggle="oldschool"                                style="font-size:11px;padding:3px 8px;border-left:4px solid #34A853;">Exp 0 Oldschool</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm"                               style="font-size:11px;padding:3px 8px;border-left:4px solid #EA4335;">Exp 1 PhysioLLM</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm_cot_mcts"                      style="font-size:11px;padding:3px 8px;border-left:4px solid #FF6D00;">Exp 2 CoT-MCTS</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="physio_mps_mcts"                          style="font-size:11px;padding:3px 8px;border-left:4px solid #4285F4;">Exp 3 MPS-MCTS</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_mps_mcts"                 style="font-size:11px;padding:3px 8px;border-left:4px solid #9C27B0;">Exp 4 Inertial-MPS</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_llm_cot_mcts"             style="font-size:11px;padding:3px 8px;border-left:4px solid #00897B;">Exp 5 Inertial-CoT</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_mps_mcts"          style="font-size:11px;padding:3px 8px;border-left:4px solid #E91E8C;">Exp 6 HPVOOT-MPS</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_llm_cot_mcts"      style="font-size:11px;padding:3px 8px;border-left:4px solid #FF9800;">Exp 7 HPVOOT-CoT</button>
+                            </div>
+                            <!-- Safety ablations (Exp 0a–7a) — hidden by default -->
+                            <div style="display:none;gap:4px;flex-wrap:wrap;" data-exp-group="ablation">
+                                <button class="secondary bench-exp-btn" data-exp-toggle="oldschool_no_privacy"                     style="font-size:11px;padding:3px 8px;border-left:4px solid #81C784;">Exp 0a No-Privacy</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm_no_gate"                       style="font-size:11px;padding:3px 8px;border-left:4px solid #EF9A9A;">Exp 1a No-Gate</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm_cot_mcts_no_gate"              style="font-size:11px;padding:3px 8px;border-left:4px solid #FFAB91;">Exp 2a No-Gate</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="physio_mps_mcts_no_gate"                  style="font-size:11px;padding:3px 8px;border-left:4px solid #90CAF9;">Exp 3a No-Gate</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_mps_mcts_no_gate"         style="font-size:11px;padding:3px 8px;border-left:4px solid #CE93D8;">Exp 4a No-Gate</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_llm_cot_mcts_no_gate"     style="font-size:11px;padding:3px 8px;border-left:4px solid #80CBC4;">Exp 5a No-Gate</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_mps_mcts_no_gate"  style="font-size:11px;padding:3px 8px;border-left:4px solid #F48FB1;">Exp 6a No-Gate</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_llm_cot_mcts_no_gate" style="font-size:11px;padding:3px 8px;border-left:4px solid #FFCC80;">Exp 7a No-Gate</button>
+                            </div>
+                            <!-- DPO variants (Exp 0p–7p) — hidden by default -->
+                            <div style="display:none;gap:4px;flex-wrap:wrap;" data-exp-group="dpo">
+                                <button class="secondary bench-exp-btn" data-exp-toggle="oldschool_dpo"                            style="font-size:11px;padding:3px 8px;border-left:4px solid #1B5E20;">Exp 0p DPO</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm_dpo"                           style="font-size:11px;padding:3px 8px;border-left:4px solid #B71C1C;">Exp 1p DPO</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="physio_llm_cot_mcts_dpo"                  style="font-size:11px;padding:3px 8px;border-left:4px solid #BF360C;">Exp 2p DPO</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="physio_mps_mcts_dpo"                      style="font-size:11px;padding:3px 8px;border-left:4px solid #0D47A1;">Exp 3p DPO</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_mps_mcts_dpo"             style="font-size:11px;padding:3px 8px;border-left:4px solid #4A148C;">Exp 4p DPO</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_llm_cot_mcts_dpo"         style="font-size:11px;padding:3px 8px;border-left:4px solid #004D40;">Exp 5p DPO</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_mps_mcts_dpo"      style="font-size:11px;padding:3px 8px;border-left:4px solid #880E4F;">Exp 6p DPO</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_llm_cot_mcts_dpo"  style="font-size:11px;padding:3px 8px;border-left:4px solid #E65100;">Exp 7p DPO</button>
+                            </div>
+                            <!-- Legacy arms (htn_mcts, hysteresis_prompt) are merged into Exp 1/3 at fetch time -->
                         </div>
                         <select id="duration-filter" style="font-size:11px;padding:4px 8px;border-radius:4px;border:1px solid var(--gray-300);">
                             <option value="0">All time</option>
@@ -430,12 +461,12 @@
                         <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
                             <span style="font-size:12px;font-weight:600;color:var(--gray-700);">Scenarios Ranked by Goal Rate</span>
                             <div style="display:flex;gap:6px;flex-wrap:wrap;" id="scenario-rank-toggles">
-                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_llm">E0</button>
-                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_llm_cot_mcts">E1</button>
-                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_mps_mcts">E2</button>
-                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_physio_mps_mcts">E3</button>
-                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_physio_llm_cot_mcts">E4</button>
-                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="oldschool">E5</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="oldschool">E0</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_llm">E1</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_llm_cot_mcts">E2</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="physio_mps_mcts">E3</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_physio_mps_mcts">E4</button>
+                                <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_physio_llm_cot_mcts">E5</button>
                                 <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_hpvoot_physio_mps_mcts">E6</button>
                                 <button class="secondary" style="font-size:11px;padding:3px 10px;" data-arm="inertial_hpvoot_physio_llm_cot_mcts">E7</button>
                                 <button class="primary"   style="font-size:11px;padding:3px 10px;" data-arm="mean">Mean</button>
@@ -460,7 +491,7 @@
                         <summary style="font-weight:600;font-size:13px;cursor:pointer;padding:6px 0;position:sticky;top:0;background:white;z-index:2;">
                             Sensor vs No-Sensor Comparison
                             <span style="font-size:11px;font-weight:400;color:var(--gray-500);margin-left:6px;">
-                                Physio-aware arms vs Exp 5 (no sensor) — weighted goal rate per scenario
+                                Physio-aware arms vs Exp 0 (no sensor) — weighted goal rate per scenario
                             </span>
                         </summary>
                         <div id="sensor-comparison-section" style="margin-top:8px;"></div>
@@ -528,7 +559,7 @@
                     <!-- Cost & LLM Calls Charts -->
                     <div id="cost-charts-section" style="margin-bottom:20px;border-top:1px solid var(--gray-200);padding-top:16px;">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Cost & LLM Usage</h4>
-                        <p style="font-size:11px;color:var(--gray-500);margin:0 0 10px;">USD cost per episode and LLM API calls per episode across all experiments. CoT-MCTS experiments (Exp 1, 4) use 2 calls/turn (Maverick CoT + Scout generation). MPS-MCTS (Exp 2, 3) use 1 Scout call/turn.</p>
+                        <p style="font-size:11px;color:var(--gray-500);margin:0 0 10px;">USD cost per episode and LLM API calls per episode across all experiments. CoT-MCTS experiments (Exp 2, 5) use 2 calls/turn (Maverick CoT + Scout generation). MPS-MCTS (Exp 3, 4) use 1 Scout call/turn.</p>
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
                             <div>
                                 <div style="font-size:11px;color:var(--gray-600);margin-bottom:4px;">Episode Cost (USD)</div>
@@ -547,12 +578,12 @@
                         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
                             <select id="conv-exp-select" style="font-size:12px;padding:4px 8px;border-radius:4px;border:1px solid var(--gray-300);">
                                 <option value="">-- Select Experiment --</option>
-                                <option value="physio_llm">Exp 0 — PhysioLLM</option>
-                                <option value="physio_llm_cot_mcts">Exp 1 — PhysioLLM CoT-MCTS</option>
-                                <option value="physio_mps_mcts">Exp 2 — PhysioMPS-MCTS</option>
-                                <option value="inertial_physio_mps_mcts">Exp 3 — Inertial PhysioMPS-MCTS</option>
-                                <option value="inertial_physio_llm_cot_mcts">Exp 4 — Inertial PhysioLLM CoT</option>
-                                <option value="oldschool">Exp 5 — Oldschool (no physio)</option>
+                                <option value="oldschool">Exp 0 — Oldschool (no physio)</option>
+                                <option value="physio_llm">Exp 1 — PhysioLLM</option>
+                                <option value="physio_llm_cot_mcts">Exp 2 — PhysioLLM CoT-MCTS</option>
+                                <option value="physio_mps_mcts">Exp 3 — PhysioMPS-MCTS</option>
+                                <option value="inertial_physio_mps_mcts">Exp 4 — Inertial PhysioMPS-MCTS</option>
+                                <option value="inertial_physio_llm_cot_mcts">Exp 5 — Inertial PhysioLLM CoT</option>
                                 <option value="inertial_hpvoot_physio_mps_mcts">Exp 6 — Inertial HPVOOT MPS-MCTS</option>
                                 <option value="inertial_hpvoot_physio_llm_cot_mcts">Exp 7 — Inertial HPVOOT CoT-MCTS</option>
                                 <!-- Legacy arm names (htn_mcts, hysteresis_prompt) redirect to their canonical arms in the DB -->

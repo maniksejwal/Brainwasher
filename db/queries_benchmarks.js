@@ -21,7 +21,7 @@ async function _db() { return getDb(); }
 /**
  * Create a new benchmark run record.
  * @param {object} opts
- * @param {string} opts.arm             'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
+ * @param {string} opts.arm             arm string e.g. 'oldschool' | 'physio_llm' | 'inertial_hpvoot_physio_llm_cot_mcts'
  * @param {string} opts.label           Human-readable label
  * @param {string} opts.scenario_set    e.g. 'canonical_10'
  * @param {string} [opts.prompt_variant] 'baseline' | 'dpo' (32-exp design, default 'baseline')
@@ -158,7 +158,7 @@ export async function recordBenchmarkTurn(episode_id, run_id, arm, turn) {
         turn_number, action, response,
         hrv_ms, stress_label, stress_index,
         judge_clinical, judge_empathy, judge_safety, judge_goal, judge_strategy,
-        linguistic_stress, discrepancy_flag,
+        linguistic_stress, discrepancy_flag, critical_failure,
         tokens_scout, tokens_maverick, latency_ms,
         // Cost and hysteresis columns (new 6-exp columns)
         cost_usd_turn, llm_calls_turn, hysteresis_zone, hysteresis_zone_name,
@@ -174,9 +174,10 @@ export async function recordBenchmarkTurn(episode_id, run_id, arm, turn) {
           hrv_ms, stress_label, stress_index,
           reward_stress, reward_trust, reward_goal, reward_info, reward_consistency,
           judge_clinical, judge_empathy, judge_safety, judge_goal, judge_strategy,
-          linguistic_stress, discrepancy_flag, tokens_scout, tokens_maverick, latency_ms,
+          linguistic_stress, discrepancy_flag, critical_failure,
+          tokens_scout, tokens_maverick, latency_ms,
           cost_usd_turn, llm_calls_turn, hysteresis_zone, hysteresis_zone_name)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [episode_id, run_id, arm, turn_number, action ?? null, response ?? null,
          hrv_ms ?? null, stress_label ?? null, stress_index ?? null,
          reward_stress ?? null, reward_trust ?? null, reward_goal ?? null,
@@ -184,6 +185,7 @@ export async function recordBenchmarkTurn(episode_id, run_id, arm, turn) {
          judge_clinical ?? null, judge_empathy ?? null, judge_safety ?? null,
          judge_goal ?? null, judge_strategy ?? null,
          linguistic_stress ?? null, discrepancy_flag ? 1 : 0,
+         critical_failure ? 1 : 0,
          tokens_scout ?? 0, tokens_maverick ?? 0, latency_ms ?? null,
          cost_usd_turn ?? null, llm_calls_turn ?? 1,
          hysteresis_zone ?? null, hysteresis_zone_name ?? null]
@@ -320,7 +322,7 @@ export async function getBenchmarkMeta(key) {
  * Fetch old-pipeline (baseline) feedback stats for A3C arm comparison.
  * Returns mean score and episode count for simulations that ran before the
  * baseline cutoff (set during schema creation to 2026-05-23 23:59:59 IST).
- * A3C Arm 2 ("oldschool") reward distributions are anchored to this window.
+ * A3C Exp 0 ("oldschool") reward distributions are anchored to this window.
  *
  * @returns {Promise<{mean_score: number, episode_count: number, cutoff_ts: number}|null>}
  */
@@ -345,7 +347,7 @@ export async function getBaselineStats() {
  * Canonical scenario set for qualitative analysis and paper comparison.
  *
  * These 10 scenarios (7 regular + 3 world) are the fixed sample run across all
- * three A3C arms (htn_mcts, oldschool, hysteresis_prompt).  Transcripts for these
+ * A3C experiment arms.  Transcripts for these
  * scenarios are always stored with is_canonical=1 and a human-readable label.
  *
  * Selection rationale:
@@ -382,7 +384,7 @@ export const CANONICAL_SCENARIOS = [
  * @param {object} t
  * @param {string}   t.transcriptId  - = episode_id
  * @param {string}   t.runId
- * @param {string}   t.arm           - 'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
+ * @param {string}   t.arm           - arm string e.g. 'oldschool' | 'physio_llm' | 'inertial_hpvoot_physio_llm_cot_mcts'
  * @param {string}   t.scenarioId
  * @param {string}   t.scenarioType  - 'regular' | 'world'
  * @param {string}   [t.personaId]
@@ -503,14 +505,23 @@ export async function getMergedExperimentTimeline({ arm, windowSize = 20, slim =
         : `, e.trust_delta_final, e.turns_to_goal, e.tokens_scout, e.tokens_maverick,
              e.latency_ms_mean, e.scenario_id,
              e.cost_usd_total, e.llm_calls_total`;
+    // critical_failure lives on htn_benchmark_turns (per-turn scorer flag).
+    // An episode has a critical failure if ANY of its turns has critical_failure=1.
+    // We LEFT JOIN a pre-aggregated subquery to avoid N×M row explosion.
     const rows = await db.all(
         `SELECT e.episode_id, e.arm,
                 r.label as run_label, r.run_id, r.started_at as run_started_at,
                 e.cumulative_reward, e.goal_achieved, e.stress_auc,
-                e.turn_count, e.started_at
+                e.turn_count, e.started_at,
+                CASE WHEN cf.has_crit > 0 THEN 1 ELSE 0 END AS critical_failure
                 ${statsColumns}
          FROM htn_benchmark_episodes e
          JOIN htn_benchmark_runs r ON r.run_id = e.run_id
+         LEFT JOIN (
+             SELECT episode_id, MAX(COALESCE(critical_failure, 0)) AS has_crit
+             FROM htn_benchmark_turns
+             GROUP BY episode_id
+         ) cf ON cf.episode_id = e.episode_id
          ${where ? where + ' AND' : 'WHERE'} e.completed_at IS NOT NULL
          ORDER BY e.arm, e.started_at ASC`,
         params

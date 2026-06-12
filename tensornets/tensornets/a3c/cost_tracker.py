@@ -4,12 +4,12 @@ tensornets.a3c.cost_tracker — Per-turn LLM cost and token tracking.
 Accumulates token counts and cost estimates across every LLM call made within
 a single episode.  Each arm uses a different mix of Scout / Maverick calls:
 
-    Exp 0  physio_llm            : 1 Scout call per turn
-    Exp 1  physio_llm_cot_mcts   : 1 Maverick CoT call + 1 Scout call per turn
-    Exp 2  physio_mps_mcts       : 1 Scout call per turn  (+ MCTS HTTP, no LLM)
-    Exp 3  inertial_physio_mps_mcts : 1 Scout call per turn
-    Exp 4  inertial_physio_llm_cot_mcts : 1 Maverick CoT + 1 Scout per turn
-    Exp 5  oldschool             : JS handles LLM calls; tokens not tracked here
+    Exp 0  oldschool              : JS handles LLM calls; tokens not tracked here
+    Exp 1  physio_llm             : 1 Scout call per turn
+    Exp 2  physio_llm_cot_mcts   : 1 Maverick CoT call + 1 Scout call per turn
+    Exp 3  physio_mps_mcts       : 1 Scout call per turn  (+ MCTS HTTP, no LLM)
+    Exp 4  inertial_physio_mps_mcts : 1 Scout call per turn
+    Exp 5  inertial_physio_llm_cot_mcts : 1 Maverick CoT + 1 Scout per turn
 
 Per-token rates (USD) from tensornets.training.judge (Bedrock on-demand pricing):
     Scout    input: $0.00017 / 1K tokens    output: $0.00060 / 1K tokens

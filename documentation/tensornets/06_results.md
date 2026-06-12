@@ -1,5 +1,10 @@
 # Experimental Results — run_013
 
+> **Legacy document:** This records run_013 results using the original 3-arm experiment numbering
+> (Exp 1 = htn_mcts, Exp 2 = oldschool, Exp 3 = hysteresis_prompt). In the current 8-arm design
+> these correspond to Exp 3, Exp 0, and Exp 1 respectively. Numbers below are **not** the
+> current experiment numbers — they are the historical labels from this specific run.
+
 > Run: `tensornets/runs/run_013`  
 > Completed: 2026-05-27 03:26 UTC (11.5 hours)  
 > Episodes: 200 (130 completed per experiment; ~70 total skipped due to port migration and transient Bedrock 502s)  

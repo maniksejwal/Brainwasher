@@ -394,11 +394,14 @@ def finalise_episode(
             "stress_auc":             gm.get("stress_auc", 0.0),
             "trust_delta_final":      gm.get("trust_delta_final", 0.0),
             "turn_count":             gm.get("turn_count", summary.get("n_turns", 0)),
-            "latency_ms_mean":        summary.get("mean_latency_ms", 0.0),
-            "cost_usd_episode":       summary.get("total_cost_usd", 0.0),
-            "llm_calls_episode":      summary.get("total_llm_calls", 0),
-            "tokens_episode":         summary.get("total_tokens", 0),
+            "latency_ms_mean":        gm.get("mean_latency_ms", 0.0),
+            "cost_usd_total":         gm.get("cost_usd_total", 0.0),
+            "llm_calls_total":        gm.get("llm_calls_total", 0),
+            "tokens_scout":           gm.get("tokens_scout_total", 0),
+            "tokens_maverick":        gm.get("tokens_maverick_total", 0),
             "prompt_variant":         summary.get("prompt_variant", "baseline"),
+            "hysteresis_zone_changes": gm.get("hysteresis_zone_changes", 0),
+            "curriculum_pool":        summary.get("curriculum_pool"),
         },
     })
 
@@ -417,6 +420,7 @@ def record_turn(
     hrv_ms: Optional[float],
     reward: dict,
     judge: dict,
+    critical_failure: bool,
     latency_ms: float,
     cost_usd: float,
     llm_calls: int,
@@ -427,7 +431,7 @@ def record_turn(
 
     Why this was missing
     --------------------
-    Prior to this function, only the oldschool arm (Arm 5) wrote turn rows —
+    Prior to this function, only the oldschool arm (Exp 0) wrote turn rows —
     because its turns flow through the Node.js companion API which logs them
     automatically.  All other Python arms completed episodes but never called
     /api/benchmarks/turn, leaving htn_benchmark_turns empty for those arms.
@@ -466,6 +470,7 @@ def record_turn(
         "judge_safety":    judge.get("safety"),
         "judge_goal":      judge.get("goal"),
         "judge_strategy":  judge.get("strategy"),
+        "critical_failure": 1 if critical_failure else 0,
         "latency_ms":      round(latency_ms),
         "cost_usd_turn":   round(cost_usd, 6),
         "llm_calls_turn":  llm_calls,
@@ -483,20 +488,25 @@ def send_benchmark_message(
     arm: str,
     timeout: float = 30.0,
     skip_privacy_guard: bool = False,
+    context_hint: "str | None" = None,
 ) -> dict:
     """
     Forward a message to the Node.js companion and return its response.
 
-    Used exclusively by OldschoolWorker (Arm 5 / Exp 5) which delegates all
-    companion logic to the production Node.js system.
+    Used by OldschoolWorker (Exp 0) and OldschoolDPOWorker (Exp 0p).
 
     Maps to POST /api/benchmark/message (note: singular 'benchmark', not plural).
 
     skip_privacy_guard: when True, instructs Node.js to omit privacyGuard from
-    the CompanionCoordinator handler list (used for Exp 5a safety-ablation arm).
+    the CompanionCoordinator handler list (used for Exp 0a safety-ablation arm).
+
+    context_hint: optional plain-text context string appended as ``extra_context``
+    in the JSON payload. aiAnalysisHandler.js reads this field and injects it into
+    the companion's analysis prompt, enabling DPO-style context enrichment without
+    modifying the JS companion itself (used for Exp 0p).
     """
     url = f"{NODE_URL}/api/benchmark/message"
-    return http_post(url, {
+    body: dict = {
         "message":          message,
         "circleId":         circle_id,
         "userId":           user_id,
@@ -504,4 +514,7 @@ def send_benchmark_message(
         "benchmark":        True,
         "arm":              arm,
         "skipPrivacyGuard": skip_privacy_guard,
-    }, timeout=timeout)
+    }
+    if context_hint:
+        body["extraContext"] = context_hint
+    return http_post(url, body, timeout=timeout)

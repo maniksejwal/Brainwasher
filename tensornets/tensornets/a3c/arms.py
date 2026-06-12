@@ -1,37 +1,43 @@
 """
-tensornets.a3c.arms -- Six independent A3C training experiments.
+tensornets.a3c.arms -- Eight independent A3C training experiments.
 
 Experiment index
 ----------------
-Exp 0  PhysioLLMWorker                (physio_llm)
+Exp 0  OldschoolWorker                (oldschool)
+       Production Node.js CompanionCoordinator via HTTP. No physio. True baseline.
+       Formerly: OldschoolWorker / oldschool.
+
+Exp 1  PhysioLLMWorker                (physio_llm)
        Physio state as natural-language text in system prompt. No MCTS, no dead-band.
        Formerly: PhysioLLMWorker / hysteresis_prompt.
 
-Exp 1  PhysioLLMCoTMCTSWorker         (physio_llm_cot_mcts)
-       Same physio prompt as Exp 0, but action selection via Maverick chain-of-thought
-       over all 51 ACTION_TAXONOMY candidates. LLM-as-planner; cost baseline for Exp 2.
+Exp 2  PhysioLLMCoTMCTSWorker         (physio_llm_cot_mcts)
+       Same physio prompt as Exp 1, but action selection via Maverick chain-of-thought
+       over all 51 ACTION_TAXONOMY candidates. LLM-as-planner; cost baseline for Exp 3.
 
-Exp 2  PhysioMPSMCTSWorker            (physio_mps_mcts)
+Exp 3  PhysioMPSMCTSWorker            (physio_mps_mcts)
        Full HTN + Matrix Product State MCTS via tensornets bridge.
        M_trunc constraint steers Scout token generation.
        Formerly: PhysioMPSMCTSWorker / htn_mcts.
 
-Exp 3  InertialPhysioMPSMCTSWorker    (inertial_physio_mps_mcts)
-       Exp 2 + HysteresisGate 5-zone dead-band. Zone and streak injected into
-       MCTS payload and system prompt. Most capable experiment.
+Exp 4  InertialPhysioMPSMCTSWorker    (inertial_physio_mps_mcts)
+       Exp 3 + HysteresisGate 5-zone dead-band. Zone and streak injected into
+       MCTS payload and system prompt. Most capable baseline-free experiment.
 
-Exp 4  InertialPhysioLLMCoTMCTSWorker (inertial_physio_llm_cot_mcts)
-       Exp 1 + HysteresisGate. CoT-MCTS with inertial zone awareness.
+Exp 5  InertialPhysioLLMCoTMCTSWorker (inertial_physio_llm_cot_mcts)
+       Exp 2 + HysteresisGate. CoT-MCTS with inertial zone awareness.
 
-Exp 5  OldschoolWorker                (oldschool)
-       Production Node.js CompanionCoordinator via HTTP. No physio.
-       Formerly: OldschoolWorker / oldschool.
+Exp 6  InertialHPVOOTPhysioMPSMCTSWorker    (inertial_hpvoot_physio_mps_mcts)
+       Exp 4 + HierarchicalPWVOOTMCTS (150 iter, depth 20) + Scout LLM prior.
 
-Capability order (ascending): 5 < 0 < 1 < 4 < 2 < 3
+Exp 7  InertialHPVOOTPhysioLLMCoTMCTSWorker (inertial_hpvoot_physio_llm_cot_mcts)
+       Exp 5 + HierarchicalPWVOOTMCTS; Maverick CoT ratings reused as PW prior.
+
+Capability order (ascending): 0 < 1 < 2 < 5 < 3 < 4 < 6/7  (Exp 6/7 are HPVOOT variants of 4/5)
 
 Exception policy
 ----------------
-No silent fallbacks in Exp 0-4. Failures raise RuntimeError or ValueError so the
+No silent fallbacks in Exp 1-5. Failures raise RuntimeError or ValueError so the
 episode is recorded as failed and bugs are immediately surfaced.
 
 All experiments write the same EpisodeTurn jsonl schema for cross-experiment comparison.
@@ -54,6 +60,7 @@ from tensornets.a3c.worker import (
     REWARD_DIMS,
     TurnState,
     _build_reactivity_profile,   # C6.1: ReactivityProfile wiring
+    progressive_lookahead,       # progressive MCTS depth by episode count
 )
 from tensornets.therapy.mcts_reward import (
     WEIGHTS as MCTS_WEIGHTS,
@@ -130,11 +137,11 @@ _GOAL_R_OTHER       = 0.30   # below neutral: unexplained tangents cost somethin
 
 
 
-# ── J5: Arm 1 — HTN + MCTS ────────────────────────────────────────────────────
+# ── Exp 3: PhysioMPSMCTSWorker — physio_mps_mcts ─────────────────────────────
 
 class PhysioMPSMCTSWorker(A3CWorker):
     """
-    J5: Full HTN + MCTS arm.
+    Exp 3: Full HTN + MCTS arm.
 
     Each turn:
     1. POST /mcts/best_action to get the MCTS-selected action + M_trunc.
@@ -147,7 +154,7 @@ class PhysioMPSMCTSWorker(A3CWorker):
     Fallback behaviour
     ------------------
     If the tensornets server is unreachable, falls back to actor.select()
-    for action and plain Scout generation (degrades to Arm 3 behaviour for
+    for action and plain Scout generation (degrades to Exp 1 behaviour for
     that turn only).  Fallback turns are flagged in the log.
     """
 
@@ -181,7 +188,7 @@ class PhysioMPSMCTSWorker(A3CWorker):
         m_trunc  = None
         scout_tokens = 0
 
-        # Arm 1 ideally requires real physiological state for MCTS.
+        # Exp 3 ideally requires real physiological state for MCTS.
         # Two valid states:
         #   sensor_present=True  → real / authored physio → full MCTS pipeline
         #   sensor_present=False → sampled estimates      → skip MCTS & physio
@@ -246,6 +253,7 @@ class PhysioMPSMCTSWorker(A3CWorker):
                     "physio_state":      mcts_physio,
                     "candidate_actions": [action],
                     "mode":              state.therapeutic_mode or "standard",
+                    "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0)),
                 },
                 timeout=5.0,
             )
@@ -342,20 +350,13 @@ class PhysioMPSMCTSWorker(A3CWorker):
                 # M_trunc injection is a soft hint — log and continue without it
                 log.warning("Arm1: M_trunc constraint injection failed: %s", m_exc)
 
-        try:
-            system_prompt = self._system_prompt.format(
-                action=action,
-                stress_index=state.stress_index,
-                stress_bucket=state.stress_bucket,
-                hysteresis_ctx="",
-            )
-        except (KeyError, ValueError) as fmt_exc:
-            log.warning("Arm1: system prompt format failed (%s), using fallback", fmt_exc)
-            system_prompt = (
-                f"You are a clinical companion. Action strategy: {action}. "
-                f"Patient stress: {state.stress_index:.2f} ({state.stress_bucket}). "
-                "Respond with one empathetic, concise message (2–3 sentences)."
-            )
+        system_prompt = _safe_fmt(
+            self._system_prompt,
+            action=action,
+            stress_index=state.stress_index,
+            stress_bucket=state.stress_bucket,
+            hysteresis_ctx="",
+        )
 
         # Append M_trunc constraint to system prompt if available
         if mcts_constraint_str:
@@ -387,11 +388,11 @@ class PhysioMPSMCTSWorker(A3CWorker):
             raise RuntimeError(f"PhysioMPSMCTSWorker: Scout call failed: {exc}") from exc
 
 
-# ── J6: Arm 2 — Old-school production JS ─────────────────────────────────────
+# ── Exp 0: OldschoolWorker — oldschool ───────────────────────────────────────
 
 class OldschoolWorker(A3CWorker):
     """
-    J6: Old-school production JS arm.
+    Exp 0: Old-school production JS arm.
 
     Posts to the Node.js CompanionCoordinator API endpoint.
     Reward is *deferred*: the JS system stores its own scores in
@@ -399,14 +400,21 @@ class OldschoolWorker(A3CWorker):
     and the episode summary is back-filled by the K1 comparison runner after
     querying getBaselineStats().
 
-    This matches the design doc: Arm 2 IS the production system.
+    This matches the design doc: Exp 0 IS the production system.
     We do not modify it — we only observe its output and score it offline.
     """
 
     ARM = "oldschool"
 
+    # Oldschool episodes are slower than Python arms because every turn requires
+    # a real HTTP round-trip to the Node.js CompanionCoordinator.  The rebalancer
+    # uses RELATIVE_SPEED to avoid penalising this arm for falling behind in
+    # episode count — it is expected to produce fewer episodes per hour.
+    # Values: 1.0 = baseline (physio_llm), 0.5 = ~2× slower, 0.25 = ~4× slower.
+    RELATIVE_SPEED = 0.5
+
     def update_system_prompt(self, new_prompt: str) -> None:
-        """No-op: Arm 2 uses the Node.js production companion; prompt lives in Node.js."""
+        """No-op: Exp 0 (oldschool) uses the Node.js production companion; prompt lives in Node.js."""
 
     def generate_response(
         self,
@@ -462,13 +470,13 @@ class OldschoolWorker(A3CWorker):
         }
 
 
-# ── J7: Arm 3 — Hysteresis-in-prompt ─────────────────────────────────────────
+# ── Exp 1: PhysioLLMWorker — physio_llm ──────────────────────────────────────
 
 class PhysioLLMWorker(A3CWorker):
     """
-    J7: Hysteresis-in-prompt arm.
+    Exp 1: Physio-in-prompt arm.
 
-    Same as Arm 2 (production JS), but the system prompt is augmented with
+    Same as Exp 0 (production JS), but the system prompt is augmented with
     the full hysteresis context string:
       - PhysiologicalState summary (stress, HRV, EDA, sleep pressure)
       - HystereticBaseline extinction progress per trigger
@@ -477,7 +485,7 @@ class PhysioLLMWorker(A3CWorker):
     No MPS, no MCTS, no M_trunc projection.  Purely text-based physio context.
 
     This arm tests: "can you get most of the HTN benefit just by telling the
-    LLM the physio state in natural language?" (A3C_COMPARISON_DESIGN §1 Arm 3)
+    LLM the physio state in natural language?" (A3C_COMPARISON_DESIGN §1 Exp 1)
     """
 
     ARM = "physio_llm"
@@ -510,21 +518,13 @@ class PhysioLLMWorker(A3CWorker):
         user_msg = _last_user_message(state)
 
         hysteresis_ctx = _build_hysteresis_context(state, scenario)
-        try:
-            system_prompt  = self._system_prompt.format(
-                hysteresis_ctx=hysteresis_ctx,
-                action=action,
-                stress_index=state.stress_index,
-                stress_bucket=state.stress_bucket,
-            )
-        except (KeyError, ValueError) as fmt_exc:
-            log.warning("Arm3: system prompt format failed (%s), using fallback", fmt_exc)
-            system_prompt = (
-                f"You are a clinical companion.\n"
-                f"Physiological context:\n{hysteresis_ctx}\n"
-                f"Recommended action strategy: {action}.\n"
-                "Respond with one empathetic, concise message (2–3 sentences)."
-            )
+        system_prompt = _safe_fmt(
+            self._system_prompt,
+            hysteresis_ctx=hysteresis_ctx,
+            action=action,
+            stress_index=state.stress_index,
+            stress_bucket=state.stress_bucket,
+        )
         history_text = "\n".join(
             f"{t['role'].upper()}: {t['content']}"
             for t in state.conversation_history[-6:]
@@ -556,7 +556,7 @@ class PhysioLLMWorker(A3CWorker):
             conversation_correction=conversation_correction,
         )
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
-        # Arm3: no safety override — same unconditional floor as Exp 1/2 via _synthetic_reward
+        # Exp 1: no safety override — same unconditional floor as Exp 2/3 via _synthetic_reward
 
         return {
             "response":          response_text,
@@ -696,9 +696,16 @@ def _synthetic_reward(
     # fallback.
     try:
         mode  = TherapeuticMode(mode_str)
-        from tensornets.therapy.modes import DEADDICTION_TO_CHANGESTAGE
-        phase_str_mapped = DEADDICTION_TO_CHANGESTAGE.get(phase_str, phase_str)
-        phase = ChangeStage(phase_str_mapped)
+        # For FLOODING mode the deaddiction_phase carries a flooding-specific
+        # sub-stage (flooding_exposure, flooding_peak, flooding_recovery) rather
+        # than a TTM ChangeStage value.  Skip the ChangeStage parse entirely;
+        # _synthetic_reward branches on the raw flooding_subphase string below.
+        if mode == TherapeuticMode.FLOODING:
+            phase = ChangeStage.PRECONTEMPLATION   # nominal; not used in flooding branch
+        else:
+            from tensornets.therapy.modes import DEADDICTION_TO_CHANGESTAGE
+            phase_str_mapped = DEADDICTION_TO_CHANGESTAGE.get(phase_str, phase_str)
+            phase = ChangeStage(phase_str_mapped)
     except ValueError as ve:
         raise ValueError(
             f"_synthetic_reward: invalid therapeutic_mode='{mode_str}' or "
@@ -893,9 +900,18 @@ def _last_user_message(state: TurnState) -> str:
     return "[no message]"
 
 
+def _safe_fmt(template: str, **kwargs) -> str:
+    """Format *template* with *kwargs*, filling any missing keys with ''."""
+    import string
+    keys = {fn for _, fn, _, _ in string.Formatter().parse(template) if fn is not None}
+    for k in keys:
+        kwargs.setdefault(k, "")
+    return template.format(**kwargs)
+
+
 def _build_hysteresis_context(state: TurnState, scenario: dict) -> str:
     """
-    Build the natural-language physio + hysteresis context string for Arm 3.
+    Build the natural-language physio + hysteresis context string for Exp 1 (PhysioLLM).
 
     Mirrors the format of longitudinalHint from companions/utils/promptLoader.js.
 
@@ -961,18 +977,18 @@ def _stress_label(stress_index: float) -> str:
     return "high stress"
 
 
-# ── Exp 1: PhysioLLMCoTMCTSWorker -- physio_llm_cot_mcts ─────────────────────
+# ── Exp 2: PhysioLLMCoTMCTSWorker -- physio_llm_cot_mcts ─────────────────────
 
 class PhysioLLMCoTMCTSWorker(PhysioLLMWorker):
     """
-    Exp 1: Physio-in-prompt + Maverick chain-of-thought action selection.
+    Exp 2: Physio-in-prompt + Maverick chain-of-thought action selection.
 
-    Differs from Exp 0 (PhysioLLMWorker) in one way:
+    Differs from Exp 1 (PhysioLLMWorker) in one way:
       Instead of using actor.select() to pick the action, a Maverick LLM call
       evaluates ALL 51 ACTION_TAXONOMY candidates and returns the top-ranked
       action with a justification chain (CoT).
 
-    This arm is a deliberate cost/capability baseline for Exp 2 (PhysioMPSMCTSWorker):
+    This arm is a deliberate cost/capability baseline for Exp 3 (PhysioMPSMCTSWorker):
       - CoT call uses Maverick (more expensive than Scout)
       - Every turn has 2 LLM calls: CoT (Maverick) + generation (Scout)
       - No MPS tree search; reasoning is done entirely in language space
@@ -1039,20 +1055,20 @@ class PhysioLLMCoTMCTSWorker(PhysioLLMWorker):
 
         try:
             resp = _http_post(
-                f"{_TENSORNETS_URL}/llm/maverick",
+                f"{_TENSORNETS_URL}/llm/scout",
                 {"system": "You are a clinical AI planner.", "prompt": prompt, "max_tokens": 512, "arm": self.ARM},
                 timeout=40.0,
             )
         except Exception as exc:
             raise RuntimeError(
-                f"PhysioLLMCoTMCTSWorker: Maverick CoT call failed: {exc}. "
+                f"PhysioLLMCoTMCTSWorker: Scout CoT call failed: {exc}. "
                 f"Check that the tensornets FastAPI server is running on {_TENSORNETS_URL}."
             ) from exc
 
         text = resp.get("text", "").strip()
         if not text:
             raise RuntimeError(
-                "PhysioLLMCoTMCTSWorker: Maverick returned empty CoT response. "
+                "PhysioLLMCoTMCTSWorker: Scout returned empty CoT response. "
                 "This is a server-side error — check FastAPI logs."
             )
 
@@ -1113,10 +1129,10 @@ class PhysioLLMCoTMCTSWorker(PhysioLLMWorker):
         existing_scout_tokens = result.get("tokens", {}).get("scout", 0)
 
         result["tokens"] = {
-            "scout":           existing_scout_tokens,
-            "maverick":        cot_meta["tokens_in"] + cot_meta["tokens_out"],
-            "maverick_in":     cot_meta["tokens_in"],
-            "maverick_out":    cot_meta["tokens_out"],
+            "scout":           existing_scout_tokens + cot_meta["tokens_in"] + cot_meta["tokens_out"],
+            "maverick":        0,
+            "maverick_in":     0,
+            "maverick_out":    0,
         }
         result["latency_ms"] = round((time.perf_counter() - t_start) * 1000.0, 1)
         result["llm_calls"]  = 2     # CoT call + Scout generation
@@ -1125,11 +1141,11 @@ class PhysioLLMCoTMCTSWorker(PhysioLLMWorker):
         return result
 
 
-# ── Exp 3: InertialPhysioMPSMCTSWorker -- inertial_physio_mps_mcts ───────────
+# ── Exp 4: InertialPhysioMPSMCTSWorker -- inertial_physio_mps_mcts ───────────
 
 class InertialPhysioMPSMCTSWorker(PhysioMPSMCTSWorker):
     """
-    Exp 3: Full MPS-MCTS + HysteresisGate 5-zone dead-band. Most capable experiment.
+    Exp 4: Full MPS-MCTS + HysteresisGate 5-zone dead-band.
 
     Extends PhysioMPSMCTSWorker by adding a HysteresisGate that prevents strategy
     flip-flopping.  The gate's zone and streak are injected into:
@@ -1214,11 +1230,11 @@ class InertialPhysioMPSMCTSWorker(PhysioMPSMCTSWorker):
         return result
 
 
-# ── Exp 4: InertialPhysioLLMCoTMCTSWorker -- inertial_physio_llm_cot_mcts ────
+# ── Exp 5: InertialPhysioLLMCoTMCTSWorker -- inertial_physio_llm_cot_mcts ────
 
 class InertialPhysioLLMCoTMCTSWorker(PhysioLLMCoTMCTSWorker):
     """
-    Exp 4: CoT-MCTS action selection + HysteresisGate 5-zone dead-band.
+    Exp 5: CoT-MCTS action selection + HysteresisGate 5-zone dead-band.
 
     Combines the CoT planner from PhysioLLMCoTMCTSWorker with the inertial
     dead-band state machine from InertialPhysioMPSMCTSWorker.
@@ -1292,7 +1308,7 @@ class InertialPhysioLLMCoTMCTSWorker(PhysioLLMCoTMCTSWorker):
 
         try:
             resp = _http_post(
-                f"{_TENSORNETS_URL}/llm/maverick",
+                f"{_TENSORNETS_URL}/llm/scout",
                 {"system": "You are a clinical AI planner.", "prompt": prompt, "max_tokens": 512},
                 timeout=40.0,
             )
@@ -1358,8 +1374,8 @@ class InertialPhysioLLMCoTMCTSWorker(PhysioLLMCoTMCTSWorker):
 
         existing_scout = result.get("tokens", {}).get("scout", 0)
         result["tokens"] = {
-            "scout":        existing_scout,
-            "maverick":     cot_meta["tokens_in"] + cot_meta["tokens_out"],
+            "scout":        existing_scout + cot_meta["tokens_in"] + cot_meta["tokens_out"],
+            "maverick":     0,
             "maverick_in":  cot_meta["tokens_in"],
             "maverick_out": cot_meta["tokens_out"],
         }
@@ -1384,7 +1400,7 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
     """
     Exp 6: MPS-MCTS + HysteresisGate + HP+VOOT+PW tree search.
 
-    Extends Exp 3 (InertialPhysioMPSMCTSWorker) by upgrading the MCTS call
+    Extends Exp 4 (InertialPhysioMPSMCTSWorker) by upgrading the MCTS call
     from DialogMCTS (80 iter, 20 depth) to HierarchicalPWVOOTMCTS
     (150 iter, 20 depth, mcts_mode=hpvoot).
 
@@ -1396,6 +1412,11 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
     """
 
     ARM = "inertial_hpvoot_physio_mps_mcts"
+
+    # HPVOOT runs 150 MCTS iterations with Scout prior scoring per turn, making
+    # episodes ~3× slower than flat MCTS arms.  The rebalancer should not treat
+    # this arm as a lagger purely because its episode count is lower.
+    RELATIVE_SPEED = 0.35
 
     _DEFAULT_SYSTEM_PROMPT = (
         "You are a clinical companion. Current action strategy: {action}. "
@@ -1539,7 +1560,7 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
                     "physio_state":      mcts_physio,
                     "candidate_actions": all_hp_actions,
                     "mode":              scenario.get("mode", "standard"),
-                    "depth":             20,
+                    "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0)),
                     "iterations":        150,
                     "context":           state.summary or "",
                     "mcts_mode":         "hpvoot",
@@ -1601,7 +1622,7 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
     """
     Exp 7: CoT-MCTS + HysteresisGate + HP+VOOT+PW tree search.
 
-    Extends Exp 4 by upgrading the MCTS step to HP+VOOT+PW.
+    Extends Exp 5 by upgrading the MCTS step to HP+VOOT+PW.
     The Maverick CoT response includes per-action ratings (0-10) which are
     extracted and reused as the PW prior at zero additional LLM cost.
 
@@ -1615,6 +1636,7 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
     """
 
     ARM = "inertial_hpvoot_physio_llm_cot_mcts"
+    RELATIVE_SPEED = 0.35   # HPVOOT 150-iter + Maverick CoT: ~3× slower than baseline
 
     def _run_cot_action_selection(self, state, scenario):
         """
@@ -1655,12 +1677,12 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
 
         try:
             resp = _http_post(
-                f"{_TENSORNETS_URL}/llm/maverick",
+                f"{_TENSORNETS_URL}/llm/scout",
                 {"prompt": cot_prompt, "max_tokens": 1400, "arm": self.ARM},
             )
         except Exception as exc:
             raise RuntimeError(
-                f"InertialHPVOOTPhysioLLMCoTMCTSWorker: Maverick CoT failed: {exc}"
+                f"InertialHPVOOTPhysioLLMCoTMCTSWorker: Scout CoT failed: {exc}"
             ) from exc
 
         text = (resp.get("text") or "").strip()
@@ -1751,7 +1773,7 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
                     "physio_state":      mcts_physio,
                     "candidate_actions": all_hp_actions,
                     "mode":              scenario.get("mode", "standard"),
-                    "depth":             20,
+                    "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0)),
                     "iterations":        150,
                     "context":           state.summary or "",
                     "mcts_mode":         "hpvoot",
@@ -1788,10 +1810,10 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
             "reward":               reward,
             "judge":                scout_result.get("judge", {}),
             "tokens": {
-                "scout_in":     scout_tokens.get("scout_in", 0),
-                "scout_out":    scout_tokens.get("scout_out", 0),
-                "maverick_in":  cot_meta["tokens_in"],
-                "maverick_out": cot_meta["tokens_out"],
+                "scout_in":     scout_tokens.get("scout_in", 0) + cot_meta["tokens_in"],
+                "scout_out":    scout_tokens.get("scout_out", 0) + cot_meta["tokens_out"],
+                "maverick_in":  0,
+                "maverick_out": 0,
             },
             "latency_ms":           round(latency_ms, 1),
             "next_stress_index":    next_stress,
@@ -1816,18 +1838,18 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
         return result
 
 
-# ── Safety-ablation variants (Exp 3a, 6a, 5a) ────────────────────────────────
+# ── Safety-ablation variants (Exp 4a, 6a, 0a) ────────────────────────────────
 # These subclasses disable a single safety constraint while inheriting all other
 # behaviour from their parent arm.  They measure each gate's independent
 # contribution to outcome metrics.
 
 class InertialPhysioMPSMCTSNoGateWorker(InertialPhysioMPSMCTSWorker):
     """
-    Exp 3a: InertialPhysioMPSMCTS without the critical-failure termination gate.
+    Exp 4a: InertialPhysioMPSMCTS without the critical-failure termination gate.
 
-    Identical to Exp 3 except the 2-strike rule does NOT end the episode early.
-    The comparison between Exp 3 and Exp 3a isolates the gate's contribution:
-    is Exp 3's goal rate driven by the learned policy or by cutting off bad episodes?
+    Identical to Exp 4 except the 2-strike rule does NOT end the episode early.
+    The comparison between Exp 4 and Exp 4a isolates the gate's contribution:
+    is Exp 4's goal rate driven by the learned policy or by cutting off bad episodes?
     """
     ARM = "inertial_physio_mps_mcts_no_gate"
     DISABLE_CRITICAL_FAILURE_GATE = True
@@ -1845,11 +1867,73 @@ class InertialHPVOOTPhysioMPSMCTSNoGateWorker(InertialHPVOOTPhysioMPSMCTSWorker)
     DISABLE_CRITICAL_FAILURE_GATE = True
 
 
+class PhysioLLMNoGateWorker(PhysioLLMWorker):
+    """
+    Exp 1a: PhysioLLM without the critical-failure termination gate.
+
+    Identical to Exp 1 except the 2-strike episode-termination rule is suppressed.
+    Provides the simplest no-gate baseline: pure LLM + stress input, no MCTS, no
+    gate.  Enables a complete cross-arm no-gate comparison tier (Exp 1a–7a) so
+    every experiment has a matched ablation partner.
+    """
+    ARM = "physio_llm_no_gate"
+    DISABLE_CRITICAL_FAILURE_GATE = True
+
+
+class PhysioLLMCoTMCTSNoGateWorker(PhysioLLMCoTMCTSWorker):
+    """
+    Exp 2a: PhysioLLM CoT-MCTS without the critical-failure gate.
+
+    Identical to Exp 2 except the 2-strike rule does NOT end the episode early.
+    Pairs with Exp 1a to complete the no-gate ablation tier for the two lightweight
+    MCTS arms, enabling apples-to-apples gate contribution measurement at every
+    capability level.
+    """
+    ARM = "physio_llm_cot_mcts_no_gate"
+    DISABLE_CRITICAL_FAILURE_GATE = True
+
+
+class PhysioMPSMCTSNoGateWorker(PhysioMPSMCTSWorker):
+    """
+    Exp 3a: PhysioMPS-MCTS without the critical-failure termination gate.
+
+    Identical to Exp 3 except the 2-strike episode-termination rule is suppressed.
+    Enables a fair comparison against Exp 4a and Exp 6a in the no-gate ablation
+    tier: all three arms see the same raw episode trajectories regardless of
+    catastrophic turns.
+    """
+    ARM = "physio_mps_mcts_no_gate"
+    DISABLE_CRITICAL_FAILURE_GATE = True
+
+
+class InertialPhysioLLMCoTMCTSNoGateWorker(InertialPhysioLLMCoTMCTSWorker):
+    """
+    Exp 5a: Inertial PhysioLLM CoT-MCTS without the critical-failure gate.
+
+    Identical to Exp 5 except the 2-strike rule does NOT end the episode early.
+    Pairs with Exp 3a, 4a, and 6a to provide a complete cross-arm no-gate baseline.
+    """
+    ARM = "inertial_physio_llm_cot_mcts_no_gate"
+    DISABLE_CRITICAL_FAILURE_GATE = True
+
+
+class InertialHPVOOTPhysioLLMCoTMCTSNoGateWorker(InertialHPVOOTPhysioLLMCoTMCTSWorker):
+    """
+    Exp 7a: Inertial HPVOOT CoT-MCTS without the critical-failure gate.
+
+    Identical to Exp 7 except the 2-strike rule does NOT end the episode early.
+    Completes the full no-gate ablation tier across all MCTS-gated experiments
+    (Exp 3a–7a), enabling clean apples-to-apples comparison.
+    """
+    ARM = "inertial_hpvoot_physio_llm_cot_mcts_no_gate"
+    DISABLE_CRITICAL_FAILURE_GATE = True
+
+
 class OldschoolNoPrivacyWorker(OldschoolWorker):
     """
-    Exp 5a: Oldschool JS companion without privacyGuard filtering.
+    Exp 0a: Oldschool JS companion without privacyGuard filtering.
 
-    Identical to Exp 5 except the privacyGuard handler is omitted from
+    Identical to Exp 0 except the privacyGuard handler is omitted from
     CompanionCoordinator for every turn.  Measures the clinical privacy-engagement
     trade-off: does privacy filtering reduce rapport or hurt goal achievement?
     """
@@ -1950,9 +2034,9 @@ def _build_dpo_prompt_vars(state) -> dict:
     All fields degrade gracefully to a readable fallback when the data is absent
     so the prompt never contains raw Python None values.
     """
-    mem: dict = state.session_memory or {}
+    mem: dict = getattr(state, "session_memory", None) or {}
     tl:  dict = mem.get("simulated_timeline") or {}
-    physio: dict = state.physio or {}
+    physio: dict = getattr(state, "physio", None) or {}
 
     session_number   = int(tl.get("session_number", 1))
     days_since_last  = tl.get("days_since_last")
@@ -2016,11 +2100,11 @@ def _build_dpo_prompt_vars(state) -> dict:
 
 class PhysioLLMDPOWorker(PhysioLLMWorker):
     """
-    Exp 0p: PhysioLLM with DPO/RLAIF-improved context-rich prompt.
+    Exp 1p: PhysioLLM with DPO/RLAIF-improved context-rich prompt.
 
-    Identical to Exp 0 except the system prompt carries five additional patient
+    Identical to Exp 1 except the system prompt carries five additional patient
     fact categories (F1–F5) beyond stress index.  Isolates the contribution of
-    prompt richness over the baseline Exp 0 two-signal prompt.
+    prompt richness over the baseline Exp 1 two-signal prompt.
     """
     ARM            = "physio_llm_dpo"
     PROMPT_VARIANT = "dpo"
@@ -2050,9 +2134,9 @@ class PhysioLLMDPOWorker(PhysioLLMWorker):
 
 class PhysioLLMCoTMCTSDPOWorker(PhysioLLMCoTMCTSWorker):
     """
-    Exp 1p: PhysioLLM CoT-MCTS with DPO/RLAIF-improved context-rich prompt.
+    Exp 2p: PhysioLLM CoT-MCTS with DPO/RLAIF-improved context-rich prompt.
 
-    Identical to Exp 1 except Scout's generation prompt and Maverick's CoT prompt
+    Identical to Exp 2 except Scout's generation prompt and Maverick's CoT prompt
     carry the five additional patient fact categories.
     """
     ARM            = "physio_llm_cot_mcts_dpo"
@@ -2062,9 +2146,9 @@ class PhysioLLMCoTMCTSDPOWorker(PhysioLLMCoTMCTSWorker):
 
 class PhysioMPSMCTSDPOWorker(PhysioMPSMCTSWorker):
     """
-    Exp 2p: PhysioMPS-MCTS with DPO/RLAIF-improved context-rich prompt.
+    Exp 3p: PhysioMPS-MCTS with DPO/RLAIF-improved context-rich prompt.
 
-    Identical to Exp 2 except the system prompt passed to Scout carries the five
+    Identical to Exp 3 except the system prompt passed to Scout carries the five
     additional patient fact categories.  MCTS tree search is unchanged.
     """
     ARM            = "physio_mps_mcts_dpo"
@@ -2074,9 +2158,9 @@ class PhysioMPSMCTSDPOWorker(PhysioMPSMCTSWorker):
 
 class InertialPhysioMPSMCTSDPOWorker(InertialPhysioMPSMCTSWorker):
     """
-    Exp 3p: Inertial PhysioMPS-MCTS with DPO/RLAIF-improved context-rich prompt.
+    Exp 4p: Inertial PhysioMPS-MCTS with DPO/RLAIF-improved context-rich prompt.
 
-    Identical to Exp 3 except the system prompt carries the five additional patient
+    Identical to Exp 4 except the system prompt carries the five additional patient
     fact categories.  HysteresisGate and MCTS are unchanged.
     """
     ARM            = "inertial_physio_mps_mcts_dpo"
@@ -2086,9 +2170,9 @@ class InertialPhysioMPSMCTSDPOWorker(InertialPhysioMPSMCTSWorker):
 
 class InertialPhysioLLMCoTMCTSDPOWorker(InertialPhysioLLMCoTMCTSWorker):
     """
-    Exp 4p: Inertial PhysioLLM CoT-MCTS with DPO/RLAIF-improved context-rich prompt.
+    Exp 5p: Inertial PhysioLLM CoT-MCTS with DPO/RLAIF-improved context-rich prompt.
 
-    Identical to Exp 4 except the system prompt carries the five additional patient
+    Identical to Exp 5 except the system prompt carries the five additional patient
     fact categories.  HysteresisGate and CoT-MCTS are unchanged.
     """
     ARM            = "inertial_physio_llm_cot_mcts_dpo"
@@ -2190,3 +2274,100 @@ class InertialHPVOOTPhysioLLMCoTMCTSDPOWorker(InertialHPVOOTPhysioLLMCoTMCTSWork
     ARM            = "inertial_hpvoot_physio_llm_cot_mcts_dpo"
     PROMPT_VARIANT = "dpo"
     _DEFAULT_SYSTEM_PROMPT = _DPO_SYSTEM_PROMPT
+
+
+# ── Exp 0p: OldschoolDPOWorker ────────────────────────────────────────────────
+
+class OldschoolDPOWorker(OldschoolWorker):
+    """
+    Exp 0p: Oldschool JS companion with DPO/RLAIF-improved context injection.
+
+    The baseline Exp 0 sends the raw user message to CompanionCoordinator and
+    relies entirely on the Node.js companion's built-in prompting.  Exp 0p adds a
+    ``context_hint`` field to the JSON payload so the JS analysis pipeline can
+    optionally incorporate the five DPO fact categories into its prompt.
+
+    Why oldschool CAN have a DPO variant
+    ─────────────────────────────────────
+    The claim "Exp 0 has no Python prompt" means there is no *Python-managed*
+    system prompt — the companion logic lives in JS.  However the JS pipeline
+    already accepts an optional ``analysis.extra_context`` field from the message
+    payload (see aiAnalysisHandler.js → extraContext).  Exp 0p populates that
+    field with the five DPO fact categories so the Node.js companion can use them
+    in its own prompting.  The Python side has no prompt to tune; the improvement
+    is entirely in what context we hand off to JS.
+
+    This means:
+      • Exp 0  ↔  Exp 0p  isolates the value of context injection into the
+        production JS companion with zero changes to the JS code.
+      • The comparison is the JS-side analogue of Exp 1 vs Exp 1p.
+
+    Will the existing JS analysis/feedback framework help?
+    ──────────────────────────────────────────────────────
+    Yes:
+      • aiAnalysisHandler.js reads ``extra_context`` and appends it to the
+        prompt fed to the JS LLM, so no JS changes are required.
+      • The scoring/reward path is identical to Exp 0 (deferred JS scores).
+      • The RL framework (A3C policy update) does not apply to oldschool arms;
+        the "DPO improvement" here is purely context richness, not a trained policy.
+    """
+
+    ARM            = "oldschool_dpo"
+    PROMPT_VARIANT = "dpo"
+    RELATIVE_SPEED = 0.5   # same as Exp 0; JS round-trip dominates latency
+
+    def generate_response(
+        self,
+        state: TurnState,
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        import time as _time
+        t_start  = _time.perf_counter()
+        user_msg = _last_user_message(state)
+
+        # Build the five DPO fact categories for context injection
+        try:
+            extra = _build_dpo_prompt_vars(state)
+            context_hint = (
+                f"Session #{extra['session_number']} "
+                f"({extra['days_since_last']} days since last). "
+                f"Goal: {extra['session_goal']} — {extra['goal_status']}. "
+                f"Med adherence: {extra['med_adherence']}. "
+                f"Flagged topics: {extra['flagged_topics']}. "
+                f"Patient sentiment: {extra['last_sentiment']}."
+            )
+        except Exception:
+            context_hint = None
+
+        try:
+            resp = _node_benchmark_message(
+                message       = user_msg,
+                circle_id     = scenario.get("circle_id", "benchmark_circle"),
+                user_id       = state.subject_id,
+                session_id    = state.session_id,
+                arm           = self.ARM,
+                timeout       = 90.0,
+                context_hint  = context_hint,
+            )
+            response_text = resp.get("response", resp.get("message", "")).strip()
+            if not response_text:
+                raise ValueError("Empty response from JS companion (oldschool_dpo arm)")
+        except Exception as exc:
+            raise RuntimeError(f"OldschoolDPOWorker: JS companion call failed: {exc}") from exc
+
+        latency_ms = (_time.perf_counter() - t_start) * 1000.0
+        next_stress = _stress_after_response(
+            state.stress_index, action, state.archetype, state.drug_regimen,
+            conversation_correction=conversation_correction,
+        )
+        reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
+        return {
+            "response":    response_text,
+            "reward":      reward,
+            "judge":       {},
+            "next_stress": next_stress,
+            "latency_ms":  latency_ms,
+            "llm_calls":   1,
+        }

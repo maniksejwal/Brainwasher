@@ -38,6 +38,7 @@
  * Defined in `EXP_META` (top of file).  Each entry has `label`, `shortLabel`,
  * `color` (hex), and `bg` (rgba for fill bands).  The order matches the
  * `--arms` CLI index in `tensornets/a3c/train.py` (1=Exp0 … 8=Exp7).
+ * Exp 0 = Oldschool (no physio) — true baseline placed first.
  *
  * ### Chart types
  *   - **Learning curves** (`_buildLineDatasets`): per-arm WMA of cumulative
@@ -78,14 +79,35 @@
 import config from '../config.js';
 
 const EXP_META = {
-    physio_llm:                          { label: 'Exp 0 \u2014 PhysioLLM',               shortLabel: 'Exp 0', color: '#EA4335', bg: 'rgba(234,67,53,0.18)'    },
-    physio_llm_cot_mcts:                 { label: 'Exp 1 \u2014 PhysioLLM CoT-MCTS',      shortLabel: 'Exp 1', color: '#FF6D00', bg: 'rgba(255,109,0,0.18)'    },
-    physio_mps_mcts:                     { label: 'Exp 2 \u2014 PhysioMPS-MCTS',          shortLabel: 'Exp 2', color: '#4285F4', bg: 'rgba(66,133,244,0.18)'   },
-    inertial_physio_mps_mcts:            { label: 'Exp 3 \u2014 Inertial PhysioMPS-MCTS', shortLabel: 'Exp 3', color: '#9C27B0', bg: 'rgba(156,39,176,0.18)'   },
-    inertial_physio_llm_cot_mcts:        { label: 'Exp 4 \u2014 Inertial PhysioLLM CoT',  shortLabel: 'Exp 4', color: '#00897B', bg: 'rgba(0,137,123,0.18)'    },
-    oldschool:                           { label: 'Exp 5 \u2014 Oldschool (no physio)',    shortLabel: 'Exp 5', color: '#34A853', bg: 'rgba(52,168,83,0.18)'    },
-    inertial_hpvoot_physio_mps_mcts:     { label: 'Exp 6 \u2014 Inertial HPVOOT MPS',     shortLabel: 'Exp 6', color: '#E91E8C', bg: 'rgba(233,30,140,0.18)'   },
-    inertial_hpvoot_physio_llm_cot_mcts: { label: 'Exp 7 \u2014 Inertial HPVOOT CoT',     shortLabel: 'Exp 7', color: '#FF9800', bg: 'rgba(255,152,0,0.18)'    },
+    // ── Base experiments (Exp 0–7) ──────────────────────────────────────────
+    oldschool:                                    { label: 'Exp 0 \u2014 Oldschool (no physio)',          shortLabel: 'Exp 0',  color: '#34A853', bg: 'rgba(52,168,83,0.18)',    group: 'base'      },
+    physio_llm:                                   { label: 'Exp 1 \u2014 PhysioLLM',                      shortLabel: 'Exp 1',  color: '#EA4335', bg: 'rgba(234,67,53,0.18)',    group: 'base'      },
+    physio_llm_cot_mcts:                          { label: 'Exp 2 \u2014 PhysioLLM CoT-MCTS',             shortLabel: 'Exp 2',  color: '#FF6D00', bg: 'rgba(255,109,0,0.18)',    group: 'base'      },
+    physio_mps_mcts:                              { label: 'Exp 3 \u2014 PhysioMPS-MCTS',                 shortLabel: 'Exp 3',  color: '#4285F4', bg: 'rgba(66,133,244,0.18)',   group: 'base'      },
+    inertial_physio_mps_mcts:                     { label: 'Exp 4 \u2014 Inertial PhysioMPS-MCTS',        shortLabel: 'Exp 4',  color: '#9C27B0', bg: 'rgba(156,39,176,0.18)',   group: 'base'      },
+    inertial_physio_llm_cot_mcts:                 { label: 'Exp 5 \u2014 Inertial PhysioLLM CoT',         shortLabel: 'Exp 5',  color: '#00897B', bg: 'rgba(0,137,123,0.18)',    group: 'base'      },
+    inertial_hpvoot_physio_mps_mcts:              { label: 'Exp 6 \u2014 Inertial HPVOOT MPS',            shortLabel: 'Exp 6',  color: '#E91E8C', bg: 'rgba(233,30,140,0.18)',   group: 'base'      },
+    inertial_hpvoot_physio_llm_cot_mcts:          { label: 'Exp 7 \u2014 Inertial HPVOOT CoT',            shortLabel: 'Exp 7',  color: '#FF9800', bg: 'rgba(255,152,0,0.18)',    group: 'base'      },
+    // ── Safety ablations (Exp 0a–7a) ────────────────────────────────────────
+    // Dashed / muted tones: same hue family as parent, lighter saturation
+    oldschool_no_privacy:                         { label: 'Exp 0a \u2014 Oldschool (no privacy)',         shortLabel: 'Exp 0a', color: '#81C784', bg: 'rgba(129,199,132,0.14)', group: 'ablation'  },
+    physio_llm_no_gate:                           { label: 'Exp 1a \u2014 PhysioLLM (no gate)',            shortLabel: 'Exp 1a', color: '#EF9A9A', bg: 'rgba(239,154,154,0.14)', group: 'ablation'  },
+    physio_llm_cot_mcts_no_gate:                  { label: 'Exp 2a \u2014 PhysioLLM CoT-MCTS (no gate)',  shortLabel: 'Exp 2a', color: '#FFAB91', bg: 'rgba(255,171,145,0.14)', group: 'ablation'  },
+    physio_mps_mcts_no_gate:                      { label: 'Exp 3a \u2014 PhysioMPS-MCTS (no gate)',      shortLabel: 'Exp 3a', color: '#90CAF9', bg: 'rgba(144,202,249,0.14)', group: 'ablation'  },
+    inertial_physio_mps_mcts_no_gate:             { label: 'Exp 4a \u2014 Inertial MPS-MCTS (no gate)',   shortLabel: 'Exp 4a', color: '#CE93D8', bg: 'rgba(206,147,216,0.14)', group: 'ablation'  },
+    inertial_physio_llm_cot_mcts_no_gate:         { label: 'Exp 5a \u2014 Inertial CoT (no gate)',        shortLabel: 'Exp 5a', color: '#80CBC4', bg: 'rgba(128,203,196,0.14)', group: 'ablation'  },
+    inertial_hpvoot_physio_mps_mcts_no_gate:      { label: 'Exp 6a \u2014 HPVOOT MPS (no gate)',         shortLabel: 'Exp 6a', color: '#F48FB1', bg: 'rgba(244,143,177,0.14)', group: 'ablation'  },
+    inertial_hpvoot_physio_llm_cot_mcts_no_gate:  { label: 'Exp 7a \u2014 HPVOOT CoT (no gate)',         shortLabel: 'Exp 7a', color: '#FFCC80', bg: 'rgba(255,204,128,0.14)', group: 'ablation'  },
+    // ── DPO/RLAIF variants (Exp 0p–7p) ─────────────────────────────────────
+    // Dotted / bold tones: same hue family as parent, deeper/darker
+    oldschool_dpo:                                { label: 'Exp 0p \u2014 Oldschool + DPO',               shortLabel: 'Exp 0p', color: '#1B5E20', bg: 'rgba(27,94,32,0.18)',    group: 'dpo'       },
+    physio_llm_dpo:                               { label: 'Exp 1p \u2014 PhysioLLM DPO',                 shortLabel: 'Exp 1p', color: '#B71C1C', bg: 'rgba(183,28,28,0.18)',   group: 'dpo'       },
+    physio_llm_cot_mcts_dpo:                      { label: 'Exp 2p \u2014 PhysioLLM CoT-MCTS DPO',        shortLabel: 'Exp 2p', color: '#BF360C', bg: 'rgba(191,54,12,0.18)',   group: 'dpo'       },
+    physio_mps_mcts_dpo:                          { label: 'Exp 3p \u2014 PhysioMPS-MCTS DPO',            shortLabel: 'Exp 3p', color: '#0D47A1', bg: 'rgba(13,71,161,0.18)',   group: 'dpo'       },
+    inertial_physio_mps_mcts_dpo:                 { label: 'Exp 4p \u2014 Inertial MPS-MCTS DPO',         shortLabel: 'Exp 4p', color: '#4A148C', bg: 'rgba(74,20,140,0.18)',   group: 'dpo'       },
+    inertial_physio_llm_cot_mcts_dpo:             { label: 'Exp 5p \u2014 Inertial PhysioLLM CoT DPO',    shortLabel: 'Exp 5p', color: '#004D40', bg: 'rgba(0,77,64,0.18)',     group: 'dpo'       },
+    inertial_hpvoot_physio_mps_mcts_dpo:          { label: 'Exp 6p \u2014 HPVOOT MPS DPO',               shortLabel: 'Exp 6p', color: '#880E4F', bg: 'rgba(136,14,79,0.18)',   group: 'dpo'       },
+    inertial_hpvoot_physio_llm_cot_mcts_dpo:      { label: 'Exp 7p \u2014 HPVOOT CoT DPO',               shortLabel: 'Exp 7p', color: '#E65100', bg: 'rgba(230,81,0,0.18)',    group: 'dpo'       },
 };
 const EXP_KEYS = Object.keys(EXP_META);
 
@@ -320,6 +342,18 @@ function _attachToolbar() {
             _renderMetricBars(); _renderCritFailTable(); _renderPhysioScatter();
         });
     });
+
+    // ── Group show/hide buttons: toggle the row of per-arm toggle buttons ────
+    ['base', 'ablation', 'dpo'].forEach(group => {
+        const btn = document.getElementById(`group-toggle-${group}`);
+        const row = document.querySelector(`[data-exp-group="${group}"]`);
+        if (!btn || !row) return;
+        btn.addEventListener('click', () => {
+            const nowVisible = row.style.display !== 'none' && row.style.display !== '';
+            row.style.display = nowVisible ? 'none' : 'flex';
+            btn.classList.toggle('inactive', nowVisible);
+        });
+    });
 }
 
 function _renderAll() {
@@ -454,65 +488,48 @@ function _mergeRows(rows) {
     });
 }
 
+/**
+ * Build per-arm line datasets.  Each arm's x-axis is its own episode index
+ * starting at 1 — no cross-arm alignment or run offsets.  The tooltip looks up
+ * per-episode metadata (scenario, run, goal, reward) directly from the row array
+ * stored on the dataset as `_rows`.
+ */
 function _buildLineDatasets(rows, yKey, wmaKey) {
     const datasets = [];
+    _state._lineOffsets = {};   // kept for tooltip compat — always 0 now
 
-    // Right-align all arms so their last episode lands at the same x position.
-    // Arms with fewer episodes are shifted rightward (offset = globalMax - armLen),
-    // making new experiments appear as starting "after" the legacy data, which
-    // mirrors the actual chronological ordering.
-    const armEpCounts = {};
-    for (const [arm] of Object.entries(EXP_META)) {
-        if (!_state.activeExperiments.has(arm)) continue;
-        const ep = rows.filter(r => r.arm === arm);
-        if (ep.length) armEpCounts[arm] = ep.length;
-    }
-    const globalMax = Math.max(1, ...Object.values(armEpCounts));
-
-    // Expose offsets globally so tooltip callbacks can compute actual episode numbers.
-    _state._lineOffsets = {};
-
-    // timelineData is already canonical; no per-call merging needed
     for (const [arm, meta] of Object.entries(EXP_META)) {
         if (!_state.activeExperiments.has(arm)) continue;
         const ep = rows.filter(r => r.arm === arm);
         if (!ep.length) continue;
 
-        // Right-shift offset so this arm's last episode aligns with globalMax
-        const offset = globalMax - ep.length;
-        _state._lineOffsets[arm] = offset;
+        _state._lineOffsets[arm] = 0;
 
-        const data = [];
-        ep.forEach((r, i) => {
-            if (r.missing_arm_slot) return;
-            if (r.run_restart && i > 0) {
-                // null break point — use shifted x
-                data.push({ x: offset + i, y: null });
-            }
+        const data = ep.map((r, i) => {
             const yVal = r[wmaKey ?? yKey];
-            data.push({ x: offset + i + 1, y: (yVal !== null && yVal !== undefined) ? yVal : null });
+            return { x: i + 1, y: (yVal != null) ? yVal : null };
         });
 
         datasets.push({
-            label: meta.shortLabel,
+            label: meta.label,
             data,
             borderColor: meta.color, backgroundColor: 'transparent',
             borderWidth: 2.5, pointRadius: 0, tension: 0.3,
-            spanGaps: false,
+            spanGaps: true,
             order: 1,
-            // tag with arm key so tooltip can reverse-lookup offset and episode rows
             _arm: arm,
+            _rows: ep,   // per-episode metadata for tooltip
         });
 
         if (_state.showSD && wmaKey === 'smoothed_reward') {
-            const sdData    = ep.map((r, i) => ({ x: offset + i + 1, y: r.smoothed_reward + r.stddev }));
-            const sdDataLow = ep.map((r, i) => ({ x: offset + i + 1, y: Math.max(0, r.smoothed_reward - r.stddev) }));
-            datasets.push({ label: '_+sd', data: sdData,    borderColor: 'transparent', backgroundColor: meta.bg, fill: '+1', pointRadius: 0, tension: 0.3, spanGaps: false, order: 3 });
-            datasets.push({ label: '_-sd', data: sdDataLow, borderColor: 'transparent', backgroundColor: meta.bg, fill: false, pointRadius: 0, tension: 0.3, spanGaps: false, order: 3 });
+            const sdData    = ep.map((r, i) => ({ x: i + 1, y: r.smoothed_reward + r.stddev }));
+            const sdDataLow = ep.map((r, i) => ({ x: i + 1, y: Math.max(0, r.smoothed_reward - r.stddev) }));
+            datasets.push({ label: '_+sd', data: sdData,    borderColor: 'transparent', backgroundColor: meta.bg, fill: '+1', pointRadius: 0, tension: 0.3, spanGaps: true, order: 3 });
+            datasets.push({ label: '_-sd', data: sdDataLow, borderColor: 'transparent', backgroundColor: meta.bg, fill: false, pointRadius: 0, tension: 0.3, spanGaps: true, order: 3 });
         }
 
         if (_state.showRawTraces && yKey) {
-            datasets.push({ label: '_raw', data: ep.map((r, i) => ({ x: offset + i + 1, y: r[yKey] })), borderColor: meta.color, backgroundColor: meta.color + '44', borderWidth: 0, pointRadius: 2.5, showLine: false, order: 2 });
+            datasets.push({ label: '_raw', data: ep.map((r, i) => ({ x: i + 1, y: r[yKey] })), borderColor: meta.color, backgroundColor: meta.color + '44', borderWidth: 0, pointRadius: 2.5, showLine: false, order: 2, _arm: arm, _rows: ep });
         }
     }
     return datasets;
@@ -535,45 +552,29 @@ function _buildLineDatasets(rows, yKey, wmaKey) {
 function _lineTooltipCallbacks(valueFormat = 'decimal', withFooter = false) {
     return {
         // Replace the default per-dataset label with episode-number-aware text.
-        // We iterate all EXP_META arms so every experiment appears, even if its
-        // line has a null at the hovered x (i.e. data hasn't reached that episode).
         label(item) {
-            if (item.dataset.label?.startsWith('_')) return null;   // hide SD / raw bands
+            if (item.dataset.label?.startsWith('_')) return null;
             const arm = item.dataset._arm;
             if (!arm) return item.dataset.label;
-
             const displayX = item.parsed.x;
             const offset   = _state._lineOffsets?.[arm] ?? 0;
-            const epNum    = Math.round(displayX - offset);         // actual episode # for this arm
+            const epNum    = Math.round(displayX - offset);
             const yVal     = item.parsed.y;
             const valStr   = (yVal == null) ? '—'
                 : valueFormat === 'percent' ? (yVal * 100).toFixed(1) + '%'
                 : yVal.toFixed(3);
-            const epStr    = (epNum > 0) ? `ep ${epNum}` : '—';
-            return `${item.dataset.label}: ${valStr}  (${epStr})`;
+            return `${item.dataset.label}: ${valStr}  (ep ${epNum > 0 ? epNum : '—'})`;
         },
 
-        // Inject rows for every active arm that is NOT in the current tooltip items
-        // (i.e. its line has a gap/null at the hovered x — it still needs to appear).
-        afterBody(items) {
-            if (!items.length) return [];
-            const displayX   = items[0].parsed.x;
-            const shownArms  = new Set(items.map(i => i.dataset._arm).filter(Boolean));
-            const extraLines = [];
-            for (const [arm, meta] of Object.entries(EXP_META)) {
-                if (!_state.activeExperiments.has(arm)) continue;
-                if (shownArms.has(arm)) continue;                   // already in tooltip
-                const offset = _state._lineOffsets?.[arm] ?? 0;
-                const epNum  = Math.round(displayX - offset);
-                const epStr  = (epNum > 0 && epNum <= (_state.armEpisodeCounts?.[arm] ?? 0))
-                    ? `ep ${epNum}` : 'no data';
-                extraLines.push(`${meta.shortLabel}: —  (${epStr})`);
-            }
-            return extraLines;
+        labelColor(item) {
+            const arm = item.dataset._arm;
+            if (!arm || item.dataset.label?.startsWith('_')) return undefined;
+            const meta = EXP_META[arm];
+            if (!meta) return undefined;
+            return { borderColor: meta.color, backgroundColor: meta.color };
         },
 
         footer: withFooter ? function(items) {
-            // Show metadata for the first non-helper dataset item
             const item = items.find(i => !i.dataset.label?.startsWith('_'));
             if (!item) return [];
             const arm      = item.dataset._arm;
@@ -582,7 +583,7 @@ function _lineTooltipCallbacks(valueFormat = 'decimal', withFooter = false) {
             const epNum    = Math.round(displayX - offset);
             const allRows  = _state.timelineData?.episodes || _state.timelineData || [];
             const armRows  = allRows.filter(r => r.arm === arm);
-            const d        = armRows[epNum - 1];  // 1-indexed → 0-indexed
+            const d        = armRows[epNum - 1];
             if (!d) return [];
             return [
                 `─── ${EXP_META[arm]?.label ?? arm} ───`,
@@ -593,6 +594,179 @@ function _lineTooltipCallbacks(valueFormat = 'decimal', withFooter = false) {
                 `Stress AUC: ${d.stress_auc?.toFixed(3) ?? '?'}`,
             ];
         } : undefined,
+    };
+}
+
+/**
+ * Build a Chart.js `external` tooltip renderer that produces a fully styled
+ * HTML tooltip showing ALL active experiments — including those with no data
+ * at the hovered x — with correct color swatches for every row.
+ *
+ * Drop-in replacement for the `tooltip.callbacks` approach.  To use, pass
+ *   tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip(valueFormat) }
+ * in the chart options (omit `callbacks` entirely).
+ *
+ * @param {string} [valueFormat='decimal'] - 'decimal' or 'percent'
+ * @param {boolean} [withFooter=false]     - append per-episode metadata block
+ */
+/**
+ * Build a styled external tooltip for bar charts (categorical x-axis).
+ * Shows arm name, value, and optional n-count with color swatch.
+ */
+function _buildBarExternalTooltip(valueFormat = 'decimal') {
+    return function barTooltip({ chart, tooltip }) {
+        let el = chart.canvas.parentNode.querySelector('.cj-ext-tooltip');
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'cj-ext-tooltip';
+            el.style.cssText = [
+                'position:absolute', 'pointer-events:none', 'z-index:999',
+                'background:rgba(20,20,30,0.92)', 'border:1px solid rgba(255,255,255,0.15)',
+                'border-radius:6px', 'padding:8px 12px', 'font-size:11px',
+                'color:#e8e8e8', 'line-height:1.7', 'min-width:200px',
+                'max-width:320px', 'box-shadow:0 4px 16px rgba(0,0,0,0.5)',
+                'white-space:nowrap',
+            ].join(';');
+            chart.canvas.parentNode.style.position = 'relative';
+            chart.canvas.parentNode.appendChild(el);
+        }
+        if (tooltip.opacity === 0) { el.style.opacity = '0'; return; }
+
+        const title = tooltip.dataPoints?.[0]?.label ?? '';
+        let html = `<div style="font-weight:700;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:4px">${title}</div>`;
+
+        for (const item of (tooltip.dataPoints || [])) {
+            const arm   = item.dataset._arm;
+            const meta  = arm ? EXP_META[arm] : null;
+            const color = item.dataset.borderColor
+                ?? (Array.isArray(item.dataset.backgroundColor)
+                    ? item.dataset.backgroundColor[item.dataIndex]
+                    : item.dataset.backgroundColor)
+                ?? '#888';
+            const label = meta?.label ?? item.dataset.label ?? '';
+            const n     = item.dataset._epCounts?.[item.dataIndex];
+            const val   = item.parsed.y;
+            const valStr = val == null ? '—'
+                : valueFormat === 'percent' ? `<b>${(val * 100).toFixed(1)}%</b>`
+                : `<b>${val.toFixed(3)}</b>`;
+            const nStr  = n != null ? `<span style="opacity:0.6;font-size:10px;margin-left:6px">n=${n}</span>` : '';
+            html += `<div style="display:flex;align-items:center;gap:6px">
+                <span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${color};flex-shrink:0"></span>
+                <span>${label}:&nbsp;${valStr}${nStr}</span></div>`;
+        }
+
+        el.innerHTML = html;
+        el.style.opacity = '1';
+        const pos = chart.canvas.getBoundingClientRect();
+        const cx  = tooltip.caretX;
+        const cy  = tooltip.caretY;
+        el.style.left = (cx + 14) + 'px';
+        el.style.top  = Math.max(0, cy - 20) + 'px';
+    };
+}
+
+
+function _buildExternalTooltip(valueFormat = 'decimal', withFooter = false) {
+    return function externalTooltip({ chart, tooltip }) {
+        // Get or create the HTML tooltip element
+        let el = chart.canvas.parentNode.querySelector('.cj-ext-tooltip');
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'cj-ext-tooltip';
+            el.style.cssText = [
+                'position:absolute', 'pointer-events:none', 'z-index:999',
+                'background:rgba(20,20,30,0.92)', 'border:1px solid rgba(255,255,255,0.15)',
+                'border-radius:6px', 'padding:8px 12px', 'font-size:11px',
+                'color:#e8e8e8', 'line-height:1.6', 'min-width:220px',
+                'max-width:340px', 'box-shadow:0 4px 16px rgba(0,0,0,0.5)',
+                'white-space:nowrap',
+            ].join(';');
+            chart.canvas.parentNode.style.position = 'relative';
+            chart.canvas.parentNode.appendChild(el);
+        }
+
+        if (tooltip.opacity === 0) { el.style.opacity = '0'; return; }
+
+        // Build dataset lookup keyed by arm: value + row reference
+        const armInfo = {};
+        for (const item of (tooltip.dataPoints || [])) {
+            if (item.dataset.label?.startsWith('_')) continue;
+            const arm = item.dataset._arm;
+            if (!arm) continue;
+            const epNum = Math.round(item.parsed.x);
+            const row   = item.dataset._rows?.[epNum - 1] ?? null;
+            armInfo[arm] = { y: item.parsed.y, epNum, row };
+        }
+
+        // Title: episode index (same per-arm meaning now, no offsets)
+        const titleX = tooltip.dataPoints?.find(p => !p.dataset.label?.startsWith('_'))?.parsed?.x ?? '';
+
+        let html = `<div style="font-weight:700;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:4px">
+            Episode ${Math.round(titleX)}</div>`;
+
+        // One row per active experiment — in EXP_META order
+        for (const [arm, meta] of Object.entries(EXP_META)) {
+            if (!_state.activeExperiments.has(arm)) continue;
+            const info   = armInfo[arm];
+            const yVal   = info?.y;
+            const epNum  = info?.epNum;
+            const row    = info?.row;
+            const epStr  = epNum > 0 ? `ep ${epNum}` : '—';
+            const valStr = (yVal == null)
+                ? '<span style="opacity:0.45">—</span>'
+                : valueFormat === 'percent'
+                    ? `<b>${(yVal * 100).toFixed(1)}%</b>`
+                    : `<b>${yVal.toFixed(3)}</b>`;
+            const dimmed = (yVal == null) ? 'opacity:0.55;' : '';
+            html += `<div style="display:flex;align-items:center;gap:6px;${dimmed}">
+                <span style="display:inline-block;width:10px;height:10px;border-radius:2px;
+                    background:${meta.color};flex-shrink:0"></span>
+                <span style="flex:1">${meta.shortLabel}</span>
+                <span style="color:${meta.color};font-family:monospace">${valStr}</span>
+                <span style="opacity:0.55;font-size:10px">(${epStr})</span>
+            </div>`;
+        }
+
+        // Footer: per-episode metadata for the hovered arm (learning curves / any chart with _rows)
+        if (withFooter) {
+            const item = tooltip.dataPoints?.find(p => !p.dataset.label?.startsWith('_') && p.dataset._rows);
+            if (item) {
+                const epNum = Math.round(item.parsed.x);
+                const d     = item.dataset._rows?.[epNum - 1];
+                const arm   = item.dataset._arm;
+                if (d) {
+                    const runTag  = d.run_label?.replace(/^run_0*/, 'R') ?? '?';
+                        const goalTag = d.goal_achieved ? '✓ GOAL' : (d.goal_achieved === 0 ? '✗ miss' : '—');
+                    html += `<div style="margin-top:6px;padding-top:4px;
+                        border-top:1px solid rgba(255,255,255,0.15);font-size:10px;opacity:0.8">
+                        <div><b>${EXP_META[arm]?.label ?? arm}</b></div>
+                        <div>Run: ${runTag} | Ep: ${epNum}</div>
+                        <div>Scenario: ${d.scenario_id?.replace(/^js_/, '') ?? '?'}</div>
+                        <div>Turns: ${d.turn_count ?? '?'} | R/turn: ${d.reward_per_turn?.toFixed(3) ?? '?'}</div>
+                        <div>Cumul R: ${d.cumulative_reward?.toFixed(2) ?? '?'} | Stress AUC: ${d.stress_auc?.toFixed(3) ?? '?'}</div>
+                        <div>${goalTag}</div>
+                    </div>`;
+                }
+            }
+        }
+
+        el.innerHTML = html;
+        el.style.opacity = '1';
+
+        // Position: follow cursor, avoid overflow
+        const canvasRect = chart.canvas.getBoundingClientRect();
+        const parentRect = chart.canvas.parentNode.getBoundingClientRect();
+        const cx = tooltip.caretX;
+        const cy = tooltip.caretY;
+        const elW = el.offsetWidth || 260;
+        const elH = el.offsetHeight || 160;
+        let left = cx + 12;
+        let top  = cy - elH / 2;
+        if (left + elW > canvasRect.width) left = cx - elW - 12;
+        if (top < 0) top = 4;
+        if (top + elH > canvasRect.height) top = canvasRect.height - elH - 4;
+        el.style.left = left + 'px';
+        el.style.top  = top  + 'px';
     };
 }
 
@@ -794,6 +968,7 @@ function _renderStatsTableInto(targetId, lastN) {
 
     const allRows = _filterByDuration(_state.statsTimelineData) ?? [];
 
+    // Show all arms that have any data — not limited to activeExperiments
     const stats = EXP_KEYS.map(arm => {
         let ep = allRows.filter(r => r.arm === arm);
         if (!ep.length) return null;
@@ -805,12 +980,13 @@ function _renderStatsTableInto(targetId, lastN) {
         const mean    = vals.reduce((a, b) => a + b, 0) / vals.length;
         const sd      = Math.sqrt(vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length);
         const goalPct = (ep.filter(r => r.goal_achieved).length / ep.length * 100).toFixed(1);
+        const critFailPct = (ep.filter(r => r.critical_failure === 1 || r.critical_failure === true).length / ep.length * 100).toFixed(1);
         const stressVals  = ep.map(r => r.stress_auc).filter(v => v != null);
         const stressMean  = stressVals.length
             ? (stressVals.reduce((a, b) => a + b, 0) / stressVals.length).toFixed(3) : '—';
         return { arm, meta: EXP_META[arm], n: vals.length, totalAvail: allRows.filter(r => r.arm === arm).length,
                  min: Math.min(...vals).toFixed(2), max: Math.max(...vals).toFixed(2),
-                 mean: mean.toFixed(2), sd: sd.toFixed(2), goalPct, stressMean };
+                 mean: mean.toFixed(2), sd: sd.toFixed(2), goalPct, critFailPct, stressMean };
     }).filter(Boolean);
 
     const nLabel = lastN != null ? `(last&nbsp;${lastN})` : '';
@@ -822,10 +998,12 @@ function _renderStatsTableInto(targetId, lastN) {
             <th style="padding:6px 10px;">Max</th>
             <th style="padding:6px 10px;">Mean &plusmn; SD</th>
             <th style="padding:6px 10px;">Goal %</th>
+            <th style="padding:6px 10px;" title="Episodes where the scorer flagged a critical failure (harmful/unsafe turn)">Crit Fail %</th>
             <th style="padding:6px 10px;" title="Mean calmness AUC: (1−stress). Higher is calmer.">Stress AUC ↑</th>
         </tr></thead>
         <tbody>${stats.map(s => {
             const sliced = lastN != null && s.n < s.totalAvail;
+                const failColor = parseFloat(s.critFailPct) > 5 ? 'color:#d32f2f;font-weight:600;' : '';
             return `<tr style="border-bottom:1px solid var(--gray-100);">
                 <td style="padding:6px 10px;">
                     <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.meta.color};margin-right:6px;"></span>
@@ -838,6 +1016,7 @@ function _renderStatsTableInto(targetId, lastN) {
                 <td style="text-align:center;padding:6px 10px;">${s.max}</td>
                 <td style="text-align:center;padding:6px 10px;">${s.mean} &plusmn; ${s.sd}</td>
                 <td style="text-align:center;padding:6px 10px;">${s.goalPct}%</td>
+                <td style="text-align:center;padding:6px 10px;${failColor}">${s.critFailPct}%</td>
                 <td style="text-align:center;padding:6px 10px;">${s.stressMean}</td>
             </tr>`;
         }).join('')}</tbody>
@@ -875,14 +1054,13 @@ function _renderLearningCurves() {
         options: {
             ..._LINE_CHART_OPTIONS,
             scales: {
-                x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
+                x: { type: 'linear', title: { display: true, text: 'Episode # (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
                 y: { title: { display: true, text: 'Reward per Turn (WMA)', font: { size: 11 } } },
             },
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
-                annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: { callbacks: _lineTooltipCallbacks('decimal', true) },
+                tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal', true) },
             },
         },
     });
@@ -902,14 +1080,13 @@ function _renderGoalRateChart() {
         options: {
             ..._LINE_CHART_OPTIONS,
             scales: {
-                x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
+                x: { type: 'linear', title: { display: true, text: 'Episode # (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
                 y: { min: 0, max: 1, title: { display: true, text: 'Goal Rate (WMA)', font: { size: 11 } }, ticks: { callback: v => (v*100).toFixed(0)+'%' } },
             },
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
-                annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: { callbacks: _lineTooltipCallbacks('percent') },
+                tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('percent') },
             },
         },
     });
@@ -929,15 +1106,14 @@ function _renderCritFailRateChart() {
         options: {
             ..._LINE_CHART_OPTIONS,
             scales: {
-                x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
+                x: { type: 'linear', title: { display: true, text: 'Episode # (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
                 y: { min: 0, max: 1, title: { display: true, text: 'Critical Failure Rate (WMA)', font: { size: 11 } },
                      ticks: { callback: v => (v * 100).toFixed(0) + '%' } },
             },
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
-                annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: { callbacks: _lineTooltipCallbacks('percent') },
+                tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('percent') },
             },
         },
     });
@@ -957,14 +1133,13 @@ function _renderStressAucChart() {
         options: {
             ..._LINE_CHART_OPTIONS,
             scales: {
-                x: { type: 'linear', title: { display: true, text: 'Episode number (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
+                x: { type: 'linear', title: { display: true, text: 'Episode # (per arm)', font: { size: 11 } }, ticks: { callback: v => Math.round(v) } },
                 y: { min: 0, max: 1, title: { display: true, text: 'Stress AUC (↑ better)', font: { size: 11 } } },
             },
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
-                annotation: { annotations: _buildRestartAnnotations() },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: { callbacks: _lineTooltipCallbacks('decimal') },
+                tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal') },
             },
         },
     });
@@ -1067,14 +1242,7 @@ function _renderScenarioHeatmap() {
             plugins: {
                 legend: { display: false },  // too many series; arm color is sufficient
                 tooltip: {
-                    callbacks: {
-                        title: ctx => ctx[0]?.label ?? '',
-                        label: ctx => {
-                            const ds = ctx.dataset;
-                            const arm = EXP_META[ds._arm]?.label ?? ds._arm ?? '';
-                            return ` ${arm}  ?  ${ds._runLabel ?? ''}:  ${ctx.parsed.y?.toFixed(2) ?? 'n/a'}`;
-                        },
-                    },
+                    external: _buildBarExternalTooltip('decimal'),
                     mode: 'index', intersect: false,
                 },
             },
@@ -1159,13 +1327,7 @@ function _renderScenarioGoalRates() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 10, font: { size: 11 } } },
                 tooltip: {
-                    callbacks: {
-                        label: ctx => {
-                            const pct = ctx.parsed.y != null ? (ctx.parsed.y * 100).toFixed(1) + '%' : 'n/a';
-                            const n   = ctx.dataset._epCounts?.[ctx.dataIndex] ?? '?';
-                            return ` ${ctx.dataset.label}: ${pct}  (n=${n})`;
-                        },
-                    },
+                    external: _buildBarExternalTooltip('percent'),
                     mode: 'index', intersect: false,
                 },
             },
@@ -1644,7 +1806,7 @@ function _renderCumulativeRewardDist() {
             responsive: true,
             plugins: {
                 legend: { labels: { font: { size: 11 } } },
-                tooltip: { mode: 'index', intersect: false },
+                    tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal') },
             },
             scales: {
                 x: { ticks: { font: { size: 10 }, maxRotation: 45 } },
@@ -1732,15 +1894,7 @@ function _renderRewardComponentCharts() {
                 parsing: false,
                 plugins: {
                     legend: { labels: { font: { size: 11 } } },
-                    tooltip: {
-                        mode: 'index', intersect: false,
-                        callbacks: {
-                            label: item => {
-                                const val = item.parsed.y != null ? item.parsed.y.toFixed(3) : '—';
-                                return `${item.dataset.label}: ${val}  (ep ${Math.round(item.parsed.x)})`;
-                            },
-                        },
-                    },
+                    tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal') },
                     zoom: _ZOOM_PLUGIN,
                 },
                 scales: {
@@ -1830,13 +1984,7 @@ function _renderMetricBars() {
                     legend: { display: false },
                     title: { display: true, text: label, font: { size: 11 }, padding: { bottom: 4 } },
                     tooltip: {
-                        callbacks: {
-                            label: ctx => {
-                                const arm = activeArms[ctx.dataIndex];
-                                const n   = armAgg[arm]?._totalEpisodes ?? '?';
-                                return ` ${EXP_META[arm].label}: ${ctx.parsed.y ?? 'n/a'}  (n=${n} eps)`;
-                            },
-                        },
+                        external: _buildBarExternalTooltip('decimal'),
                     },
                 },
             },
@@ -1877,7 +2025,11 @@ function _renderCostCharts() {
                 data: { datasets },
                 options: {
                     ..._LINE_CHART_OPTIONS,
-                    plugins: { legend: { position: 'top' }, title: { display: true, text: 'Cost per Episode (USD)' } },
+                    plugins: {
+                        legend: { position: 'top' },
+                        title: { display: true, text: 'Cost per Episode (USD)' },
+                        tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal') },
+                    },
                     scales: { x: { title: { display: true, text: 'Episode #' } }, y: { title: { display: true, text: 'USD' } } },
                 },
             });
@@ -1966,9 +2118,7 @@ function _renderStratifiedGoalRates() {
             plugins: {
                 legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } },
                 tooltip: {
-                    callbacks: {
-                        label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? '-'}%`,
-                    },
+                    external: _buildBarExternalTooltip('decimal'),
                 },
             },
             scales: {
@@ -2210,7 +2360,7 @@ function _renderSensorComparison() {
     const cardHtml = [
         { label: 'With Sensor (physio_source=sensor/simulated)', color: '#4285F4',
           eps: sensorEps, reward: sensorMeanReward, stress: sensorStressAuc },
-        { label: 'No Sensor (_no_sensor suffix or oldschool)', color: '#34A853',
+        { label: 'No Sensor (_no_sensor suffix or Exp 0 oldschool)', color: '#34A853',
           eps: noSensorEps, reward: noSensorMeanReward, stress: noSensorStressAuc },
     ].map(g => `
         <div class="stat-card" style="border-left:4px solid ${g.color};">
@@ -2279,22 +2429,7 @@ function _renderSensorComparison() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 10, font: { size: 11 } } },
                 tooltip: {
-                    callbacks: {
-                        label: ctx => ctx.parsed.y != null
-                            ? ` ${ctx.dataset.label}: ${(ctx.parsed.y * 100).toFixed(1)}%`
-                            : ` ${ctx.dataset.label}: no data`,
-                        footer: items => {
-                            const base = baseScenarios[items[0]?.dataIndex];
-                            if (!base) return [];
-                            const sCnt = goalRows.filter(r => !_isNoSensor(r.arm, r.scenario_id)
-                                && _baseScenario(r.scenario_id) === base)
-                                .reduce((s, r) => s + (r.episode_count || 0), 0);
-                            const nsCnt = goalRows.filter(r => _isNoSensor(r.arm, r.scenario_id)
-                                && _baseScenario(r.scenario_id) === base)
-                                .reduce((s, r) => s + (r.episode_count || 0), 0);
-                            return [`sensor n=${sCnt}  |  no-sensor n=${nsCnt}`];
-                        },
-                    },
+                    external: _buildBarExternalTooltip('percent'),
                     mode: 'index', intersect: false,
                 },
             },

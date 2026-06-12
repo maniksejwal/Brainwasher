@@ -405,46 +405,56 @@ def _get_arm_classes():
             OldschoolWorker,
             InertialHPVOOTPhysioMPSMCTSWorker,
             InertialHPVOOTPhysioLLMCoTMCTSWorker,
-            # Safety-ablation arms (Exp 3a, 6a, 5a)
-            InertialPhysioMPSMCTSNoGateWorker,
-            InertialHPVOOTPhysioMPSMCTSNoGateWorker,
+            # Safety-ablation arms (Exp 0a, 1a, 2a, 3a, 4a, 5a, 6a, 7a)
             OldschoolNoPrivacyWorker,
-            # DPO/RLAIF prompt-improved variants (Exp 0p–7p, indices 12–19)
-            # Each is a context-rich prompt variant of its baseline counterpart.
-            # Exp 5 (oldschool) has no Python prompt, so it has no DPO variant.
-            PhysioLLMDPOWorker,                          # Exp 0p: physio_llm_dpo
-            PhysioLLMCoTMCTSDPOWorker,                   # Exp 1p: physio_llm_cot_mcts_dpo
-            PhysioMPSMCTSDPOWorker,                      # Exp 2p: physio_mps_mcts_dpo
-            InertialPhysioMPSMCTSDPOWorker,              # Exp 3p: inertial_physio_mps_mcts_dpo
-            InertialPhysioLLMCoTMCTSDPOWorker,           # Exp 4p: inertial_physio_llm_cot_mcts_dpo
-            InertialHPVOOTPhysioMPSMCTSDPOWorker,        # Exp 6p: inertial_hpvoot_physio_mps_mcts_dpo
-            InertialHPVOOTPhysioLLMCoTMCTSDPOWorker,     # Exp 7p: inertial_hpvoot_physio_llm_cot_mcts_dpo
+            PhysioLLMNoGateWorker,
+            PhysioLLMCoTMCTSNoGateWorker,
+            PhysioMPSMCTSNoGateWorker,
+            InertialPhysioMPSMCTSNoGateWorker,
+            InertialPhysioLLMCoTMCTSNoGateWorker,
+            InertialHPVOOTPhysioMPSMCTSNoGateWorker,
+            InertialHPVOOTPhysioLLMCoTMCTSNoGateWorker,
+            # DPO/RLAIF prompt-improved variants (Exp 0p–7p)
+            OldschoolDPOWorker,
+            PhysioLLMDPOWorker,
+            PhysioLLMCoTMCTSDPOWorker,
+            PhysioMPSMCTSDPOWorker,
+            InertialPhysioMPSMCTSDPOWorker,
+            InertialPhysioLLMCoTMCTSDPOWorker,
+            InertialHPVOOTPhysioMPSMCTSDPOWorker,
+            InertialHPVOOTPhysioLLMCoTMCTSDPOWorker,
         )
         # Indices:
         #   1–8:   main experiments (Exp 0–7)
-        #   9–11:  safety-ablation arms (Exp 3a, 6a, 5a)
-        #   12–18: DPO/RLAIF prompt-improved variants (Exp 0p–4p, 6p, 7p; no 5p)
+        #   9–16:  safety-ablation arms (Exp 0a–7a; 0a=no privacy guard, 1a–7a=no crit gate)
+        #   17–24: DPO/RLAIF prompt-improved variants (Exp 0p–7p)
         _ARM_CLASSES = [
-            PhysioLLMWorker,                             # Exp 0 (idx 1): physio_llm
-            PhysioLLMCoTMCTSWorker,                      # Exp 1 (idx 2): physio_llm_cot_mcts
-            PhysioMPSMCTSWorker,                         # Exp 2 (idx 3): physio_mps_mcts
-            InertialPhysioMPSMCTSWorker,                 # Exp 3 (idx 4): inertial_physio_mps_mcts
-            InertialPhysioLLMCoTMCTSWorker,              # Exp 4 (idx 5): inertial_physio_llm_cot_mcts
-            OldschoolWorker,                             # Exp 5 (idx 6): oldschool
-            InertialHPVOOTPhysioMPSMCTSWorker,           # Exp 6 (idx 7): inertial_hpvoot_physio_mps_mcts
-            InertialHPVOOTPhysioLLMCoTMCTSWorker,        # Exp 7 (idx 8): inertial_hpvoot_physio_llm_cot_mcts
-            # Safety-ablation arms — share initial weights with parent arm
-            InertialPhysioMPSMCTSNoGateWorker,           # Exp 3a (idx 9):  same as Exp 3, no crit gate
-            InertialHPVOOTPhysioMPSMCTSNoGateWorker,     # Exp 6a (idx 10): same as Exp 6, no crit gate
-            OldschoolNoPrivacyWorker,                    # Exp 5a (idx 11): same as Exp 5, no privacy guard
+            OldschoolWorker,                             # Exp 0  (idx 1):  oldschool
+            PhysioLLMWorker,                             # Exp 1  (idx 2):  physio_llm
+            PhysioLLMCoTMCTSWorker,                      # Exp 2  (idx 3):  physio_llm_cot_mcts
+            PhysioMPSMCTSWorker,                         # Exp 3  (idx 4):  physio_mps_mcts
+            InertialPhysioMPSMCTSWorker,                 # Exp 4  (idx 5):  inertial_physio_mps_mcts
+            InertialPhysioLLMCoTMCTSWorker,              # Exp 5  (idx 6):  inertial_physio_llm_cot_mcts
+            InertialHPVOOTPhysioMPSMCTSWorker,           # Exp 6  (idx 7):  inertial_hpvoot_physio_mps_mcts
+            InertialHPVOOTPhysioLLMCoTMCTSWorker,        # Exp 7  (idx 8):  inertial_hpvoot_physio_llm_cot_mcts
+            # Safety-ablation arms — share run dir with parent arm
+            OldschoolNoPrivacyWorker,                    # Exp 0a (idx 9):  no privacy guard
+            PhysioLLMNoGateWorker,                       # Exp 1a (idx 10): no critical-failure gate
+            PhysioLLMCoTMCTSNoGateWorker,                # Exp 2a (idx 11): no critical-failure gate
+            PhysioMPSMCTSNoGateWorker,                   # Exp 3a (idx 12): no critical-failure gate
+            InertialPhysioMPSMCTSNoGateWorker,           # Exp 4a (idx 13): no critical-failure gate
+            InertialPhysioLLMCoTMCTSNoGateWorker,        # Exp 5a (idx 14): no critical-failure gate
+            InertialHPVOOTPhysioMPSMCTSNoGateWorker,     # Exp 6a (idx 15): no critical-failure gate
+            InertialHPVOOTPhysioLLMCoTMCTSNoGateWorker,  # Exp 7a (idx 16): no critical-failure gate
             # DPO/RLAIF prompt-improved variants — cold-start weights (fair comparison)
-            PhysioLLMDPOWorker,                          # Exp 0p (idx 12): physio_llm_dpo
-            PhysioLLMCoTMCTSDPOWorker,                   # Exp 1p (idx 13): physio_llm_cot_mcts_dpo
-            PhysioMPSMCTSDPOWorker,                      # Exp 2p (idx 14): physio_mps_mcts_dpo
-            InertialPhysioMPSMCTSDPOWorker,              # Exp 3p (idx 15): inertial_physio_mps_mcts_dpo
-            InertialPhysioLLMCoTMCTSDPOWorker,           # Exp 4p (idx 16): inertial_physio_llm_cot_mcts_dpo
-            InertialHPVOOTPhysioMPSMCTSDPOWorker,        # Exp 6p (idx 17): inertial_hpvoot_physio_mps_mcts_dpo
-            InertialHPVOOTPhysioLLMCoTMCTSDPOWorker,     # Exp 7p (idx 18): inertial_hpvoot_physio_llm_cot_mcts_dpo
+            OldschoolDPOWorker,                          # Exp 0p (idx 17): oldschool + DPO context injection
+            PhysioLLMDPOWorker,                          # Exp 1p (idx 18): physio_llm_dpo
+            PhysioLLMCoTMCTSDPOWorker,                   # Exp 2p (idx 19): physio_llm_cot_mcts_dpo
+            PhysioMPSMCTSDPOWorker,                      # Exp 3p (idx 20): physio_mps_mcts_dpo
+            InertialPhysioMPSMCTSDPOWorker,              # Exp 4p (idx 21): inertial_physio_mps_mcts_dpo
+            InertialPhysioLLMCoTMCTSDPOWorker,           # Exp 5p (idx 22): inertial_physio_llm_cot_mcts_dpo
+            InertialHPVOOTPhysioMPSMCTSDPOWorker,        # Exp 6p (idx 23): inertial_hpvoot_physio_mps_mcts_dpo
+            InertialHPVOOTPhysioLLMCoTMCTSDPOWorker,     # Exp 7p (idx 24): inertial_hpvoot_physio_llm_cot_mcts_dpo
         ]
     return _ARM_CLASSES
 
@@ -582,7 +592,7 @@ def train(
     total_episodes_cap: Optional[int] = None,
 ) -> None:
     """
-    Run (or resume) the three-experiment A3C training loop.
+    Run (or resume) the 24-arm A3C training loop.
 
     Each experiment has its own independent Actor + Critic.  With
     workers_per_experiment > 1, each experiment spawns N parallel worker
@@ -622,7 +632,7 @@ def train(
     # > 1, multiple worker threads share these objects via an update_lock.
     # `arm_states` holds one dict per *experiment* (not per worker thread).
     arm_states: list[dict] = []
-    for ArmCls in selected_arm_classes:
+    for idx, ArmCls in enumerate(selected_arm_classes):
         arm_name   = ArmCls.ARM
         arm_dir    = run_dir / f"arm_{arm_name}"
         ckpt_dir   = arm_dir / "checkpoints"
@@ -675,20 +685,37 @@ def train(
             "state_path":       state_path,
             "start_ep":         start_ep,
             "db_run_id":        run_state.get("db_run_id"),
-            "ep_count":         run_state.get("ep_count", 0),
+            # ep_count tracks cumulative episodes for target comparisons.
+            # Must start at start_ep (not run_state["ep_count"]) so that
+            # target = start_ep + episodes_per_arm is always coherent.
+            "ep_count":         start_ep,
             "successful":       run_state.get("successful_eps", 0),
             "active_prompt":    active_prompt,
             "last_improved_at": run_state.get("last_improved_at", 0),
             # ep_count_lock: protects shared ep_count across N workers of this experiment
             "ep_count_lock":    threading.Lock(),
-            # throttle_event: SET = run freely, CLEAR = pause (rebalancer controls this)
-            # NOTE: rebalancer no longer uses CLEAR (hard pause); it uses inter_episode_sleep.
-            # This event is kept for backward compat but stays SET.
+            # throttle_event: kept for backward compat; stays permanently SET.
+            # Actual pacing is done via inter_episode_sleep and rebalancer_stopped.
             "throttle_event":     threading.Event(),
             # inter_episode_sleep: seconds this arm waits after each episode ends before
             # starting the next.  Rebalancer adjusts this to pace leaders without stopping them.
             # 0.0 = run at full speed.  Leaders get up to _PACE_MAX_SLEEP seconds.
             "inter_episode_sleep": 0.0,
+            # rebalancer_stopped: True when this arm has been parked by the rebalancer
+            # because its normalised gap vs the lagger exceeds STOP_GAP.  Workers spin-wait
+            # (5-second poll) and resume automatically when the flag is cleared.
+            "rebalancer_stopped": False,
+            # relative_speed: expected throughput of this arm relative to the fastest arm.
+            # 1.0 = same speed as physio_llm baseline; 0.35 = HPVOOT (~3× slower).
+            # The rebalancer normalises episode counts by this factor so slow arms are
+            # not treated as laggers purely because they complete fewer episodes per hour.
+            "relative_speed": getattr(ArmCls, "RELATIVE_SPEED", 1.0),
+            # group: which set of 8 this arm belongs to — used by the rebalancer to
+            # guarantee ≥1 live worker per group at all times.
+            #   0 = base (Exp 0–7)
+            #   1 = safety-ablation (Exp 0a–7a)
+            #   2 = DPO/RLAIF (Exp 0p–7p)
+            "group": 0 if idx < 8 else (1 if idx < 16 else 2),
         })
         arm_states[-1]["throttle_event"].set()  # always set (not used for hard pause any more)
 
@@ -809,10 +836,28 @@ def train(
         target = s["start_ep"] + episodes_per_arm
 
         while not stop_event.is_set():
-            # ── Pace control: rebalancer sets inter_episode_sleep for leader arms ──
-            # This replaces the hard-pause throttle_event with a gentle sleep that
-            # keeps leaders moving (so they don't fall completely idle) while giving
-            # laggers priority for new episodes.
+            # ── Stop-on-gap: rebalancer parks this worker when arm is too far ahead ──
+            # rebalancer_stopped=True means this arm's normalised gap vs the lagger
+            # exceeds STOP_GAP.  ALL workers in the arm park (spin-wait) to free
+            # Bedrock slots.  The group-level guarantee in the rebalancer ensures at
+            # least one arm per group of 8 is always live — so even if all workers
+            # for one arm park, the group still has other arms progressing.
+            if s.get("rebalancer_stopped"):
+                log.info(
+                    "Worker %s/%d parked by rebalancer (STOP_GAP exceeded) — "
+                    "waiting for gap to close",
+                    s["name"], worker_idx,
+                )
+                while not stop_event.is_set() and s.get("rebalancer_stopped"):
+                    stop_event.wait(timeout=5.0)
+                if stop_event.is_set():
+                    return
+                log.info(
+                    "Worker %s/%d resumed by rebalancer (gap recovered)",
+                    s["name"], worker_idx,
+                )
+
+            # ── Pace control: proportional sleep for moderate gaps ────────────
             pace = s.get("inter_episode_sleep", 0.0)
             if pace > 0.0:
                 log.debug(
@@ -858,6 +903,9 @@ def train(
             # Reset the HysteresisGate between episodes for inertial workers.
             if hasattr(thread_worker, "reset_gate"):
                 thread_worker.reset_gate()
+
+            # Inject episode count so MCTS arms can use progressive_lookahead().
+            scenario = {**scenario, "_arm_ep_count": current_ep_count}
 
             try:
                 summary = thread_worker.run_episode(
@@ -1029,119 +1077,197 @@ def train(
 
     def _rebalance_workers() -> None:
         """
-        Pace-based rebalancer — never stops leaders, just slows them down.
+        Stop-on-gap rebalancer — stops leader arm workers completely when the
+        normalised episode gap exceeds a hard threshold; restarts them once the
+        gap closes.  Throttling (sleep) is only used for moderate gaps.
 
-        Every `sleep_secs` seconds:
-          1. Rank all arms by episode count.
-          2. Compute each arm's gap vs. the bottom arm.
-          3. Leaders (top third by count) get an inter_episode_sleep proportional
-             to their surplus:
-               sleep = min(_PACE_MAX_SLEEP, gap / _PACE_GAP_PER_SECOND)
-             This keeps them running (workers stay alive) but paces throughput
-             so laggers can use the available Bedrock quota.
-          4. Bottom third (laggers) get inter_episode_sleep = 0 (full speed) and
-             extra workers up to MAX_WORKERS_PER_ARM.  2nd and 3rd from bottom
-             also get extra workers (down to 2nd-to-bottom tier).
-          5. Middle third runs at natural speed (sleep = 0, no extra workers).
+        Uses SPEED-NORMALISED episode counts:
+          normalised_count = raw_ep_count / relative_speed
+        so slow arms (HPVOOT=0.35, oldschool=0.5) are not penalised for having
+        fewer raw episodes per hour.
 
-        Priority semaphore (in server.py): lagger arms register a lower priority
-        value which lets them acquire the Bedrock semaphore sooner.  See
-        _register_arm_priority() for the contract.
+        Gap policy (normalised units):
+          gap < THROTTLE_GAP   → leader runs freely (sleep = 0)
+          THROTTLE_GAP ≤ gap   → leader sleeps proportionally (up to _PACE_MAX_SLEEP)
+          gap ≥ STOP_GAP       → leader workers are STOPPED entirely; lagger gets
+                                  full speed + burst workers.  Leader is restarted
+                                  once its gap falls below RESTART_GAP.
+
+        Why stop instead of throttle?
+        ─────────────────────────────
+        Throttling (sleep between episodes) only prevents the leader from starting
+        a NEW episode.  It does NOT release the Bedrock semaphore slot the leader
+        is currently holding inside an in-flight episode.  With 8 arms × 2 workers
+        each, up to 16 threads may be simultaneously holding Bedrock slots; a slow
+        arm that is "highest priority" still waits for 15 other threads to release.
+        Stopping the leader's workers entirely frees those Bedrock slots for the
+        lagger.  When the lagger catches up, leaders restart from where they left off
+        (episode target unchanged; just fewer episodes completed in the gap window).
         """
-        _PACE_MAX_SLEEP      = 45.0   # max inter-episode sleep for the most-ahead leader
-        _PACE_GAP_PER_SECOND = 20.0   # each 20-episode gap adds 1 second of sleep
-        MAX_WORKERS_PER_ARM  = 6
-        MIN_WORKERS_THROTTLED = 1     # leaders always keep at least 1 worker alive
-        sleep_secs           = 20.0   # check every 20 s
+        THROTTLE_GAP     = 20.0    # normalised gap before any throttling
+        STOP_GAP         = 60.0    # normalised gap above which leader is stopped
+        RESTART_GAP      = 30.0    # leader restarts once its gap drops below this
+        _PACE_MAX_SLEEP  = 30.0    # max sleep (s) in the throttle zone
+        _PACE_GAP_PER_S  = 5.0     # 1 second of sleep per 5 normalised-ep gap
+        MAX_WORKERS      = 2       # max workers per lagger arm (1 = no burst spawning; 16 total across 2 runs)
+        sleep_secs       = 15.0    # rebalance check interval (s)
 
         def _live(s: dict) -> int:
             return sum(1 for t in arm_thread_map[s["name"]] if t.is_alive())
+
+        def _normalised(s: dict) -> float:
+            speed = max(0.1, s.get("relative_speed", 1.0))
+            return counts[s["name"]] / speed
 
         while not stop_event.wait(timeout=sleep_secs):
             counts = {s["name"]: s["ep_count"] for s in arm_states}
             live   = {s["name"]: _live(s) for s in arm_states}
 
-            # Alert on dead arms
+            # ── Group-level minimum: ≥1 live worker per group of 8 ───────────
+            # Groups: 0=base(0-7)  1=ablation(8-15)  2=dpo(16-23)
+            # Before any stop/throttle decisions, ensure each group has at least
+            # one arm that is NOT stopped.  If all arms in a group are stopped,
+            # wake the one with the fewest episodes (the lagger within the group).
+            group_live: dict[int, list] = {0: [], 1: [], 2: []}
+            for s in arm_states:
+                g = s.get("group", 0)
+                if _live(s) > 0 and not s.get("rebalancer_stopped"):
+                    group_live.setdefault(g, []).append(s)
+
+            for grp, active in group_live.items():
+                if not active:
+                    # All arms in this group are stopped — wake the one with fewest eps
+                    grp_arms = [s for s in arm_states if s.get("group", 0) == grp]
+                    if grp_arms:
+                        wake = min(grp_arms, key=lambda s: counts[s["name"]])
+                        if wake.get("rebalancer_stopped"):
+                            log.warning(
+                                "Rebalancer: group %d fully stopped — waking lagger arm=%s",
+                                grp, wake["name"],
+                            )
+                            wake["rebalancer_stopped"] = False
+                            wake["inter_episode_sleep"] = 0.0
+                            if _live(wake) == 0:
+                                _spawn_worker(wake)
+
+            # Alert on arms that have gone fully silent (not intentionally)
             for arm_name, n_live in live.items():
-                if n_live == 0:
-                    log.error("Rebalancer: arm=%s has 0 live workers — all died!", arm_name)
+                stopped_flag = next(
+                    (s.get("rebalancer_stopped", False)
+                     for s in arm_states if s["name"] == arm_name), False
+                )
+                if n_live == 0 and not stopped_flag:
+                    log.error(
+                        "Rebalancer: arm=%s has 0 live workers (not intentionally stopped)!",
+                        arm_name,
+                    )
 
             if len(counts) < 2:
                 continue
 
-            # ── 1. Rank arms by episode count ─────────────────────────────────
-            sorted_arms = sorted(arm_states, key=lambda s: counts[s["name"]])
+            # ── Rank arms by normalised count ────────────────────────────────
+            sorted_arms = sorted(arm_states, key=_normalised)
             n           = len(sorted_arms)
-            min_count   = counts[sorted_arms[0]["name"]]
-            max_count   = counts[sorted_arms[-1]["name"]]
-            total_gap   = max_count - min_count
+            min_norm    = _normalised(sorted_arms[0])
+            total_gap   = _normalised(sorted_arms[-1]) - min_norm
 
-            # Tier boundaries (indices into sorted_arms)
-            bottom_end  = max(1, n // 3)    # bottom third (laggers)
-            top_start   = n - max(1, n // 3) # top third (leaders)
+            bottom_end  = max(1, n // 3)
 
-            # ── 2. Set pace for each arm ──────────────────────────────────────
             for i, s in enumerate(sorted_arms):
-                arm_count = counts[s["name"]]
-                gap_vs_lagger = arm_count - min_count
+                arm_count     = counts[s["name"]]
+                norm_count    = _normalised(s)
+                gap_vs_lagger = norm_count - min_norm
 
-                if i >= top_start:
-                    # Leader tier — apply proportional pace sleep
-                    raw_sleep = gap_vs_lagger / _PACE_GAP_PER_SECOND
+                # ── Gap-driven policy: applies to ALL arms above the lagger ──
+                # No tier check — every arm whose normalised gap exceeds STOP_GAP
+                # is stopped, regardless of whether it is "top third" or "middle".
+                # This prevents the scenario where 5 of 8 arms are far ahead but only
+                # 2 get stopped because only 2 are in the "top tier" by index.
+                if gap_vs_lagger >= STOP_GAP:
+                    # Hard stop: park all workers for this arm to free Bedrock slots.
+                    # Group-level guarantee (above) ensures ≥1 arm per group stays alive.
+                    if not s.get("rebalancer_stopped"):
+                        log.warning(
+                            "Rebalancer: STOP  arm=%-40s  eps=%d  norm_gap=%.1f≥%.1f  "
+                            "keeping 1 worker, parking rest",
+                            s["name"], arm_count, gap_vs_lagger, STOP_GAP,
+                        )
+                        s["rebalancer_stopped"] = True
+                    # Single surviving worker runs at max sleep (= minimum pace)
+                    s["inter_episode_sleep"] = _PACE_MAX_SLEEP
+
+                elif s.get("rebalancer_stopped"):
+                    # Gap shrank below STOP_GAP but above RESTART_GAP — don't restart yet;
+                    # the restart block below handles that when gap < RESTART_GAP.
+                    pass
+
+                elif gap_vs_lagger >= THROTTLE_GAP and i >= bottom_end:
+                    # Throttle: sleep proportionally — only for non-laggers
+                    raw_sleep = (gap_vs_lagger - THROTTLE_GAP) / _PACE_GAP_PER_S
                     new_sleep = round(min(_PACE_MAX_SLEEP, raw_sleep), 1)
                     if s["inter_episode_sleep"] != new_sleep:
                         log.info(
-                            "Rebalancer: PACE  arm=%-40s  eps=%d  gap=%d  sleep=%.1f→%.1fs",
-                            s["name"], arm_count, gap_vs_lagger,
-                            s["inter_episode_sleep"], new_sleep,
+                            "Rebalancer: PACE  arm=%-40s  eps=%d  norm_gap=%.1f  sleep=%.1fs",
+                            s["name"], arm_count, gap_vs_lagger, new_sleep,
                         )
                     s["inter_episode_sleep"] = new_sleep
 
-                    # Leaders keep at least MIN_WORKERS_THROTTLED alive — kill extra workers
-                    # by not spawning new ones and letting finished ones stay dead.
-                    # (We can't kill mid-episode; just let natural worker turnover thin them.)
-
                 elif i < bottom_end:
-                    # Lagger tier — full speed + extra workers
+                    # ── LAGGER tier ───────────────────────────────────────────
                     s["inter_episode_sleep"] = 0.0
                     current_live = live[s["name"]]
-                    # How many extra workers to add scales with rank deficit:
-                    # bottom arm gets max burst (3 extra), 2nd from bottom gets 2, etc.
-                    rank_from_bottom = i  # 0 = worst lagger
-                    burst = max(1, 3 - rank_from_bottom)
-                    workers_to_add = min(burst, MAX_WORKERS_PER_ARM - current_live)
+                    rank_from_bottom = i   # 0 = worst lagger
+                    burst = max(1, 2 - rank_from_bottom)
+                    workers_to_add = min(burst, MAX_WORKERS - current_live)
                     for _ in range(workers_to_add):
                         log.warning(
-                            "Rebalancer: BURST lagger arm=%-40s  eps=%d  gap=%d  "
-                            "rank_from_bottom=%d  live=%d→%d",
+                            "Rebalancer: BURST lagger arm=%-40s  eps=%d  norm_gap=%.1f  "
+                            "live=%d→%d",
                             s["name"], arm_count, gap_vs_lagger,
-                            rank_from_bottom, current_live, current_live + 1,
+                            current_live, current_live + 1,
                         )
                         _spawn_worker(s)
                         current_live += 1
+
                 else:
-                    # Middle tier — neutral (no pace, no extra workers)
+                    # Gap is below THROTTLE_GAP and arm is not a lagger: run freely
                     s["inter_episode_sleep"] = 0.0
 
-            # ── 3. Register lagger priority with the Bedrock semaphore ────────
-            # Map arm names → priority tier (0 = highest priority for laggers)
-            priority_map = {
-                s["name"]: i   # lower index = lagger = higher priority
-                for i, s in enumerate(sorted_arms)
-            }
+            # ── Restart stopped leaders whose gap has recovered ───────────────
+            # Recompute after the above loop (lagger burst may have changed counts
+            # slightly, but mainly we're checking the flag set in prior cycles).
+            fresh_min_norm = min(_normalised(s) for s in arm_states)
+            for s in arm_states:
+                if not s.get("rebalancer_stopped"):
+                    continue
+                gap_now = _normalised(s) - fresh_min_norm
+                if gap_now < RESTART_GAP:
+                    log.info(
+                        "Rebalancer: RESTART arm=%-40s  norm_gap=%.1f<%.1f  respawning 1 worker",
+                        s["name"], gap_now, RESTART_GAP,
+                    )
+                    s["rebalancer_stopped"] = False
+                    s["inter_episode_sleep"] = 0.0
+                    if live[s["name"]] == 0:
+                        _spawn_worker(s)   # at least one worker back
+
+            # ── Register lagger priority with the Bedrock semaphore ──────────
+            priority_map = {s["name"]: i for i, s in enumerate(sorted_arms)}
             try:
                 _register_arm_priorities(priority_map)
             except Exception:
-                pass   # non-fatal; priority is best-effort
+                pass
 
             if total_gap > 0:
                 log.debug(
-                    "Rebalancer: gap=%d  leader=%s(%d)  lagger=%s(%d)  "
-                    "bottom_tier=%d  top_tier=%d",
+                    "Rebalancer: norm_gap=%.1f  leader=%s(raw=%d,norm=%.1f)  "
+                    "lagger=%s(raw=%d,norm=%.1f)  stopped=%s",
                     total_gap,
-                    sorted_arms[-1]["name"], max_count,
-                    sorted_arms[0]["name"], min_count,
-                    bottom_end, n - top_start,
+                    sorted_arms[-1]["name"], counts[sorted_arms[-1]["name"]],
+                    _normalised(sorted_arms[-1]),
+                    sorted_arms[0]["name"],  counts[sorted_arms[0]["name"]],
+                    _normalised(sorted_arms[0]),
+                    [s["name"] for s in arm_states if s.get("rebalancer_stopped")],
                 )
 
     rebalancer = threading.Thread(
@@ -1149,6 +1275,124 @@ def train(
     )
     rebalancer.start()
     log.info("Rebalancer thread started (checks every ~30 s — burst mode at gap>500, throttle at gap>200)")
+
+    # ── Internal stall detector + physio auto-restart ─────────────────────────
+    # Runs every 5 minutes.  If no arm has completed a new episode in
+    # STALL_MINUTES, assume the physio/MCTS server is stuck and restart it.
+    # The training workers themselves recover once the server comes back online
+    # (their HTTP timeouts and back-off logic kick in).
+    _STALL_MINUTES       = 25
+    _STALL_SECONDS       = _STALL_MINUTES * 60
+    _PHYSIO_CHECK_SECS   = 300    # check every 5 minutes
+    _PHYSIO_RESTART_COOL = 300    # at most one restart per 5 minutes
+
+    def _stall_detector() -> None:
+        import urllib.request as _ureq
+        import urllib.error   as _uerr
+
+        last_restart_t:  float = 0.0
+        last_ep_counts: dict   = {}
+
+        def _physio_healthy() -> bool:
+            try:
+                with _ureq.urlopen(f"{_TENSORNETS_URL}/health", timeout=8) as r:
+                    return r.status < 500
+            except _uerr.HTTPError as e:
+                return e.code < 500
+            except Exception:
+                return False
+
+        def _restart_physio() -> None:
+            nonlocal last_restart_t
+            if time.monotonic() - last_restart_t < _PHYSIO_RESTART_COOL:
+                log.warning("Stall-detector: physio restart suppressed (cooldown active)")
+                return
+            log.error("Stall-detector: physio server not healthy — attempting restart")
+            # Kill any process listening on 8765
+            try:
+                import subprocess as _sp
+                r = _sp.run(["netstat", "-ano"], capture_output=True, text=True, timeout=10)
+                for line in r.stdout.splitlines():
+                    if "8765" in line and "LISTENING" in line:
+                        pid = int(line.split()[-1])
+                        if pid > 4:
+                            _sp.run(["taskkill", "/F", "/PID", str(pid)],
+                                    capture_output=True)
+                            log.info("Stall-detector: killed stale PID %d on :8765", pid)
+            except Exception as exc:
+                log.debug("Stall-detector: kill-stale failed: %s", exc)
+            import time as _time; _time.sleep(2)
+            # Spawn fresh uvicorn
+            try:
+                import subprocess as _sp
+                _sp.Popen(
+                    [sys.executable, "-m", "uvicorn", "server:app",
+                     "--host", "127.0.0.1", "--port", "8765"],
+                    cwd=str(Path(__file__).resolve().parents[3] / "tensornets"),
+                    env={**os.environ, "PYTHONPATH": str(
+                        Path(__file__).resolve().parents[3] / "tensornets"
+                    )},
+                    stdout=_sp.DEVNULL,
+                    stderr=_sp.DEVNULL,
+                )
+                last_restart_t = time.monotonic()
+                log.info("Stall-detector: physio server restarted")
+            except Exception as exc:
+                log.error("Stall-detector: could not restart physio server: %s", exc)
+
+        while not stop_event.wait(timeout=_PHYSIO_CHECK_SECS):
+            current_counts = {s["name"]: s["ep_count"] for s in arm_states}
+
+            # Check whether any arm made progress since last check
+            any_progress = any(
+                current_counts.get(name, 0) > last_ep_counts.get(name, 0)
+                for name in current_counts
+            )
+            last_ep_counts = current_counts
+
+            # Also look at newest episode file on disk (catches the edge case where
+            # ep_count is incremented but the JSONL hasn't been flushed yet)
+            newest_mtime = 0.0
+            try:
+                run_path = Path(run_dir)
+                for ep_file in run_path.rglob("episode_*.jsonl"):
+                    newest_mtime = max(newest_mtime, ep_file.stat().st_mtime)
+            except Exception:
+                pass
+
+            file_age = time.time() - newest_mtime if newest_mtime else _STALL_SECONDS + 1
+            all_done = all(v >= episodes_per_arm for v in current_counts.values())
+
+            if all_done:
+                continue   # training finished normally — no stall concern
+
+            if not any_progress and file_age > _STALL_SECONDS:
+                log.error(
+                    "Stall-detector: no new episodes in %d min  counts=%s",
+                    _STALL_MINUTES,
+                    {k.replace("arm_", ""): v for k, v in current_counts.items()},
+                )
+                if not _physio_healthy():
+                    _restart_physio()
+                else:
+                    log.warning(
+                        "Stall-detector: physio appears healthy but training stalled — "
+                        "may be a Bedrock quota issue or a deadlock in worker threads"
+                    )
+            elif not any_progress:
+                log.info(
+                    "Stall-detector: no progress this cycle (file_age=%.0fm) — watching",
+                    file_age / 60,
+                )
+
+    stall_detector = threading.Thread(
+        target=_stall_detector, name="stall_detector", daemon=True
+    )
+    stall_detector.start()
+    log.info(
+        "Stall-detector thread started (checks every %dm, restarts physio if stalled >%dm)",
+        _PHYSIO_CHECK_SECS // 60, _STALL_MINUTES,
+    )
 
     # Wait for all arms to finish (or stop_event from STOP_AT_CHECKPOINT / signal)
     for t in threads:
@@ -1206,10 +1450,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--prior",            default=None,          help="Path to bandit_actor_prior.json (I4 output)")
     p.add_argument("--scenario-url",     default=None,          help="Override tensornets server URL for /api/scenarios")
     p.add_argument("--patient-mode",     default="llm", choices=["llm", "scripted"], help="Patient generation mode")
-    p.add_argument("--arms",             type=int, nargs="+", default=[1, 2, 3], choices=[1, 2, 3, 4, 5, 6, 7, 8],
-                   help="Which experiments to run by number (1=Exp0 … 8=Exp7)")
+    p.add_argument("--arms",             type=int, nargs="+", default=[1, 2, 3], choices=list(range(1, 25)),
+                   help="Which experiments to run by number (1=Exp0/Oldschool … 8=Exp7/HPVOOT-CoT)")
     p.add_argument("--workers",          type=int, default=1,
-                   help="Parallel worker threads per experiment (default 1; use 3 for real A3C)")
+                   help="Parallel worker threads per experiment at startup (default 1; rebalancer may burst-spawn up to MAX_WORKERS=2 for laggers)")
     p.add_argument("--total-episodes",   type=int, default=None,
                    help="Hard cap: stop ALL workers once this many episodes have been completed globally (across all experiments). "
                         "Use for data-analysis checkpoints without modifying --episodes.")

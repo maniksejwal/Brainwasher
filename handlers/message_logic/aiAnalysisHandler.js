@@ -150,8 +150,11 @@ export async function performCompanionAnalysis(userId, role, message, circleId, 
             circleId,
             behavioralModels,
             userAge: userProfile?.age || currentState?.age || null, // Prioritize profile age
-            // Safety-ablation flags (Exp 5a): propagated from the benchmark call opts
+            // Safety-ablation flags (Exp 0a): propagated from the benchmark call opts
             skipPrivacyGuard: opts.skipPrivacyGuard === true,
+            // DPO context injection (Exp 0p): rich patient-fact string from Python side.
+            // CompanionCoordinator appends this to the companion's prompt when present.
+            extraContext: opts.extraContext || null,
         };
 
         // Coordinate companions

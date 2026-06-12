@@ -137,11 +137,14 @@ class SubjectPersistentState:
     # Habit hysteresis (per behaviour)
     habit_states: dict = field(default_factory=dict)   # habit_label → {h, relapse_count}
 
-    # Companion relationship
-    alliance: float = 0.3
-    trust: float = 0.3
+    # Companion relationship — legacy scalar fields kept for backward compat.
+    # The full alliance graph lives in tensornets/state/alliances/{subject_id}.json
+    # and is managed by AllianceGraph in tensornets.agents.social_alliance.
+    # These scalars mirror the companion→patient edge's primary metrics.
+    alliance: float = 0.3          # mirrors AllianceEdge.alliance_score
+    trust: float = 0.3             # mirrors AllianceEdge.trust
     strategic_patience: float = 1.0
-    rupture_count: int = 0
+    rupture_count: int = 0         # mirrors AllianceEdge.rupture_count
 
     # Therapeutic progress
     deaddiction_phase: str = "precontemplation"

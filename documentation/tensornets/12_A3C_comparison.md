@@ -30,11 +30,16 @@
 | **F5** Latency test | Confirm MCTS can run in background without blocking inference | `tensornets/benchmarks/mcts_latency_test.py` |
 | **G7** CompanionCoordinator → HTN subspace mapping | Without this, Arm 1 does not flow through the production system | `companions/coordinator.js` → `tensornets/bridge/htn_subspace.py` |
 
+
 ---
 
-## 1. The Three Arms
+## 1. The Three Original Arms (now expanded to 8 experiments)
 
-### Arm 1 — HTN + MCTS (full system)
+> **Note:** The original design described three arms (1/2/3 → HTN+MCTS / Oldschool / Physio-prompt).
+> These are now Exp 3, Exp 0, and Exp 1 respectively in the 8-experiment design.
+> See `A3C_COMPARISON_DESIGN.md` for the full current experiment matrix.
+
+### Exp 3 — PhysioMPS-MCTS / HTN + MCTS (full system)
 The complete HTN framework:
 - MPS evolves with `apply_transition(H)` at each turn
 - DialogMCTS selects best action from `M_trunc`-constrained candidates
@@ -43,7 +48,7 @@ The complete HTN framework:
 - V_int shared tensor buffer active (multi-agent awareness)
 - All 6-dim HTN judge scores collected per turn
 
-### Arm 2 — Old-school (no HTN, no MCTS)
+### Exp 0 — Oldschool / Old-school (no HTN, no MCTS)
 The production system as it exists today in the JS project, with no tensornets bridge:
 - CompanionCoordinator generates response with existing prompts
 - No physiological state beyond the empathyHandler's stress label
@@ -56,14 +61,14 @@ as shipped — multi-agent, LLM-generated, with all existing prompt engineering.
 
 **Historical baseline anchor:** All simulation and feedback data generated before
 `2026-05-23T23:59:59 IST` is the pre-HTN baseline window. This cutoff is stored in
-`htn_benchmark_metadata.baseline_cutoff_ts`. Arm 2 reward distributions must be
+`htn_benchmark_metadata.baseline_cutoff_ts`. Exp 0 reward distributions must be
 compared against `getBaselineStats()` (mean score, episode count) from that window
-to verify A3C Arm 2 is internally consistent with the historical pipeline.
+to verify Exp 0 is internally consistent with the historical pipeline.
 The old pipeline produced quality data — the A3C arms compete against this empirical
 baseline, not a synthetic one. See `db/queries_benchmarks.js::getBaselineStats()`.
 
-### Arm 3 — Hysteresis-in-prompts (no MCTS, no MPS)
-The same production system but with hysteresis context injected into every prompt:
+### Exp 1 — PhysioLLM / Physio-in-prompt (no MCTS, no MPS)
+The same production system but with physio context injected into every prompt:
 - HystereticBaseline state and TriggerHysteresis extinction progress included in system prompt
 - Stress label and physio context string included (same as current empathyHandler)
 - No MCTS, no M_trunc, no V_int propagation
@@ -135,8 +140,8 @@ Initialise the A3C actor from the Thompson Sampling policy:
 - This avoids the cold-start problem where A3C wastes exploration on obviously bad actions
 
 ### Step 3 — Three-way A3C with shared simulator
-Arm 1 and Arm 3 run in the same Python environment.
-Arm 2 (old-school) runs the JS system via HTTP — each A3C step calls the production
+All Python arms (Exp 1–7) run in the same Python environment.
+Exp 0 (oldschool) runs the JS system via HTTP — each A3C step calls the production
 CompanionCoordinator via the same CLI/API, then scores the response with the HTN judge.
 
 ### ACTION_TAXONOMY (action_bandit.py)
@@ -232,7 +237,7 @@ For every episode across all three arms, collect and store:
 | token_count | Total tokens consumed per episode (cost efficiency) |
 | latency_ms | Wall time per turn |
 
-### Qualitative comparison (same dialog graphs as Arm 2/3)
+### Qualitative comparison (same dialog graphs across all 8 arms)
 - Run the same 10 canonical scenarios (billing denial, deaddiction strike, flooding,
   phd_supervisor_rigour, etc.) through all three arms
 - Record full dialogue for HTN judge batch scoring
@@ -322,7 +327,7 @@ The existing project has:
 
 **Is the old method still valid?**
 
-Yes, as Arm 2. The old learning method is:
+Yes, as Exp 0 (oldschool). The old learning method is:
 1. Generate response via LLM with prompt engineering
 2. Get user feedback (implicit via HRV, explicit via rating)
 3. Update future_plans table with lessons learned
@@ -339,7 +344,7 @@ clinical companions.
 - It cannot coordinate strategy across multiple companions in a circle
 - It cannot exploit physiological predictors to pre-empt stress responses
 
-These are the specific claims A3C Arm 1 (HTN+MCTS) will test.
+These are the specific claims Exp 3/4/6/7 (HTN+MCTS variants) will test.
 
 ---
 
@@ -352,12 +357,13 @@ These are the specific claims A3C Arm 1 (HTN+MCTS) will test.
 | HTN judge (real-time) | Maverick | Per-turn scoring during simulation. |
 | HTN judge (batch) | 405B or Maverick | Offline, once per episode. |
 | Prompt iteration / DPO | Maverick | Policy improvement loop, not in real time. |
-| Arm 2 (production JS) | Scout via bedrock.js | Same as production — no change. |
+| Exp 0 (oldschool / production JS) | Scout via bedrock.js | Same as production — no change. |
 
 **Expected token budget per 10-turn episode:**
-- Arm 1 (HTN+MCTS): ~2,500 tokens Scout + ~1,800 tokens Maverick
-- Arm 2 (old-school): ~2,200 tokens Scout
-- Arm 3 (hysteresis-prompt): ~2,700 tokens Scout (larger context string) + ~1,800 Maverick
+- Exp 3 (PhysioMPS-MCTS / HTN+MCTS): ~2,500 tokens Scout + ~1,800 tokens Maverick
+- Exp 0 (oldschool): ~2,200 tokens Scout
+- Exp 1 (PhysioLLM / hysteresis-prompt): ~2,700 tokens Scout (larger context string)
+- Exp 2 (PhysioLLM CoT-MCTS): ~2,700 tokens Scout + ~1,800 tokens Maverick
 - HTN judge (batch, per episode): ~4,000 tokens Maverick
 - Total per 3-arm comparison run (100 episodes each): ~3.3M tokens
 
@@ -386,9 +392,9 @@ Week 3 — A3C skeleton
   [ ] J2: Actor network (Scout prompt template = policy head)
   [ ] J3: Critic network (Maverick value estimate)
   [ ] J4: Advantage computation + gradient update
-  [ ] J5: Arm 1 worker (HTN+MCTS)
-  [ ] J6: Arm 2 worker (production JS via HTTP)
-  [ ] J7: Arm 3 worker (hysteresis-in-prompt)
+  [ ] J5: Exp 3 worker (PhysioMPS-MCTS / HTN+MCTS)
+  [ ] J6: Exp 0 worker (oldschool / production JS via HTTP)
+  [ ] J7: Exp 1 worker (PhysioLLM / hysteresis-in-prompt)
 
 Week 4 — Full comparison run + analysis
   [ ] K1: 3-arm parallel run (100 episodes each)

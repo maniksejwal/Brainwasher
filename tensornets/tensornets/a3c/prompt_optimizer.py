@@ -69,7 +69,7 @@ DEFAULT_PROMPTS: dict[str, str] = {
         "Recommended action strategy: {action}.\n"
         "Respond with one empathetic, concise message (2–3 sentences)."
     ),
-    # Arm 2 (oldschool) uses the production JS companion — prompt lives in Node.js.
+    # Exp 0 (oldschool) uses the production JS companion — prompt lives in Node.js.
     "oldschool": None,
 }
 
@@ -100,7 +100,7 @@ def maybe_improve_prompt(
     new_prompt is None if no change was made.
     """
     if current_prompt is None:
-        # Arm 2 uses Node.js prompt — skip
+        # Exp 0 (oldschool) uses Node.js prompt — skip
         return None, last_improved_at
 
     episodes_since = ep_count - last_improved_at

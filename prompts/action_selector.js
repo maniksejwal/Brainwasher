@@ -55,6 +55,7 @@ You SELECT the best action type for this conversational turn.
 - Repetition detected: {{REPETITION_DETECTED}}
 - Last action taken: {{LAST_ACTION}}
 {{LONGITUDINAL_HINT}}
+{{EXTRA_CONTEXT}}
 
 **USER MESSAGE:**
 "{{MESSAGE}}"

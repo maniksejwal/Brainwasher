@@ -203,7 +203,11 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
                     enhancedContext.tensorRAGContext
                         ? `\n\n${enhancedContext.tensorRAGContext}`
                         : '')
-                .replace('{{PENDING_INTERVENTION}}', pendingInterventionBlock);
+                .replace('{{PENDING_INTERVENTION}}', pendingInterventionBlock)
+                .replace('{{EXTRA_CONTEXT}}',
+                    context.extraContext
+                        ? `\n**DPO CONTEXT (Exp 0p — patient facts from Python side):**\n${context.extraContext}`
+                        : '');
 
             const actionResult = await processUserMessage(
                 userId, role, actionPrompt,

@@ -206,7 +206,167 @@
 
 ---
 
-## Notes for PhD Documentation
+## PHASE 4b — Partial Trace Operations (Planned)
+
+### What is a partial trace?
+
+In quantum mechanics, the *partial trace* `Tr_B[ρ_AB]` discards one subsystem B from a bipartite
+density matrix `ρ_AB`, yielding the *reduced density matrix* `ρ_A` for subsystem A.  In our context:
+
+- The full MPS `|Ψ⟩` lives in a tensor product space `H_semantic ⊗ H_physio ⊗ H_session`.
+- `partial_trace_physio(|Ψ⟩)` traces over `H_physio`, producing a reduced density matrix
+  `ρ_semantic` that describes only the semantic (linguistic) content of the conversation without
+  exposing raw physiological signals.
+- `partial_trace_session(|Ψ⟩)` traces over `H_session`, useful for cross-agent reads where
+  session-private state must not leak to companion agents.
+
+### Why we need it
+
+1. **Privacy / inter-agent sandboxing** — `CompanionCoordinator` routes queries between the primary
+   companion and specialist agents (sleep, medication, exercise).  Each agent should read only the
+   subspace it is authorised to see.  Passing the full `|Ψ⟩` tensor leaks physiological and
+   session state that the receiving agent has no business accessing.
+2. **Mixed-state formulation** — In long therapy relationships the patient state is genuinely
+   mixed: uncertainty over diagnosis, dual hysteresis attractors, medication side-effect ambiguity.
+   The pure-state MPS is an approximation.  Full density-matrix treatment (Lindblad evolution)
+   requires partial trace as a primitive operation to compute environmental decoherence.
+3. **TensorRAG retrieval** — The bond fingerprint (`bond_fingerprint()`) is a heuristic.  A
+   principled retrieval key is `ρ_semantic`, which separates *what was discussed* from *how the
+   patient felt*, enabling retrieval of semantically similar past episodes regardless of physio state.
+4. **Distillation** — The distillation objective will require computing a per-agent information
+   gain, defined as `I(semantic; physio) = S(ρ_semantic) + S(ρ_physio) - S(ρ)`.  All three terms
+   require partial-trace reduced matrices.
+
+### Current implementation status
+
+`partial_trace_physio()` in `core/mps.py` (line ~985) exists and is tested, but it implements
+an *approximation*: it restricts the transfer-matrix update to the first `chi_semantic` bond
+indices rather than computing a true partial trace over the full density matrix.  This is correct
+in the limit where the physio and semantic bonds are orthogonally ordered, but breaks down when
+SVD mixes the subspaces (which it will after many policy updates).
+
+The `SharedTensorBuffer.partial_trace_physio()` wrapper in `agents/shared_tensor_state.py`
+calls the MPS method correctly but is marked Phase 4 — its full mixed-state counterpart
+(trace over the full `|Ψ⟩⟨Ψ|` density matrix) is not yet built.
+
+### Implementation plan
+
+- [ ] **PT1** Define `density_matrix() -> Tensor[D, D]` on `MatrixProductState`: contract
+  `ρ = |Ψ⟩⟨Ψ|` by double-layer contraction, returning the full `(d^N) × (d^N)` density matrix
+  for small systems (N ≤ 6 sites, d ≤ 4 physical dim) and a truncated `chi² × chi²` bond-space
+  approximation for production.  This is the *exact* Phase 4 primitive.
+
+- [ ] **PT2** Upgrade `partial_trace_physio()` to use the exact double-layer contraction, not
+  the transfer-matrix heuristic.  Benchmark against current approximation on 10-turn integration
+  test.  Acceptance criterion: `‖ρ_exact - ρ_approx‖_F < 1e-4` for identity-initialised MPS;
+  must degrade gracefully (not diverge) after 50 A3C policy updates.
+
+- [ ] **PT3** Add `partial_trace_session()` to marginalise over the longitudinal session bond
+  (last `chi_session` indices of the right bond).  This is the "amnesia gate" for cross-agent reads.
+
+- [ ] **PT4** Wire `partial_trace_physio()` into the inter-agent read path in
+  `agents/shared_tensor_state.py`.  Replace the current full-tensor JSON dump in `/session/tensor/summary`
+  with `ρ_semantic`.  Add authorisation header `X-Subspace: semantic|physio|full` — only the primary
+  companion receives `full`.
+
+- [ ] **PT5** TensorRAG: replace `bond_fingerprint()` as the retrieval key with the top-`k`
+  eigenvectors of `ρ_semantic` (PCA of the semantic reduced density matrix).  This gives a
+  retrieval key that is invariant to physiological confounders.
+
+- [ ] **PT6** Benchmark PT2 latency: partial trace must complete in < 5 ms per turn at χ = 64.
+  Profile with `torch.profiler`.
+
+### Effect on training
+
+The partial trace does **not** change the A3C policy gradient itself — the actor and critic
+operate on the full `|Ψ⟩` (or the `PatientState` feature vector derived from it).  Its effects
+on training are:
+
+1. **Reward shaping** — PT4 enables an information-theoretic reward component: `r_privacy = -I(semantic; physio)`
+   penalises turns that increase entanglement between the semantic and physiological subspaces
+   (i.e. the model over-indexes on physio signals to drive the conversation).  This encourages
+   the companion to respond to *meaning*, not just to stress indicators.
+2. **Curriculum** — PT5's semantic retrieval key will improve the curriculum pool retrieval:
+   the scheduler will be able to find episodes with similar *conversation content* (not just
+   similar stress trajectories), producing more targeted past-state curriculum injection.
+3. **Distillation loss** — Once PT1 is implemented, the `mutual_information_loss()` term in the
+   distillation objective becomes exact rather than heuristic, improving the quality of the
+   distilled smaller model.
+4. **No impact on current runs** — runs_023 and earlier use only the `PatientState` feature
+   vector; the MPS is a side-channel.  Partial trace is a Phase 4b addition, not a blocker for
+   the current 8-arm comparison.
+
+---
+
+## SOCIAL ALLIANCE — Production-Safe Extension Plan
+
+> **Boundary rule**: `AllianceGraph` state is loaded/updated only inside `worker.py::run_episode()` (training).
+> The alliance graph is **never mutated from production code**; production only *reads* it via
+> `session_memory["alliance"]` → `known_context` text injection in `_build_state_with_continuity()`.
+> All signals that update edges (`signals_from_score_result`, `trust_delta_final`, rupture/repair)
+> come from the **training A3CScorer**, not from any production scorer or companion event.
+> This must be preserved: do NOT wire `AllianceGraph.update_from_episode()` to production paths.
+
+### SA1 — Direct messaging channel + vent delta (pending)
+
+The social alliance model currently only covers companion-mediated turns.  Real care circles also
+have **direct user-to-user messages** (patient ↔ family, family ↔ cardiologist) that bypass
+companions entirely.  These must update the alliance graph through their own path — not through
+the training scorer.
+
+Key design points:
+- **Vent delta**: people can be positive in direct interactions but vent frustration to their
+  companion about the same person (and vice versa: warm in reality, poor direct communicator).
+  The direct edge (`patient → daughter`) and the companion-relayed perception
+  (`companion.perception_of[daughter]`) can diverge.  Both edges must be tracked separately.
+- **DirectMessageEvent** dataclass:
+    ```
+    from_role:       str       # e.g. "patient"
+    to_role:         str       # e.g. "daughter"
+    channel:         str       # "direct" | "companion_relay" | "group"
+    sentiment:       float     # ±1, Scout-classified at send time
+    stress_proxy:    float     # wearable HRV-derived, or null
+    timestamp:       float
+    session_id:      str
+    ```
+- `AllianceGraph.update_from_direct_message(event)` — updates the `from→to` edge using
+  asymmetric trust/rupture mechanics but **without** `goal_achieved` (no therapeutic goal in
+  direct messages).  Sentiment < -0.4 → mild rupture; sentiment > 0.6 → positive interaction.
+- `V_int.put_mps(from_role, None, stress_proxy_hrv)` — seeds physiological carry-over so
+  the companion sees the residual stress at episode start, not neutral 0.50.
+- `CareCircleOrchestrator` (synthetic patient orchestrator in training) needs a
+  `relay_channel` concept: messages tagged `channel="direct"` bypass the companion response
+  step and update only the graph + V_int.  A lightweight Scout sentiment call classifies
+  the message (not a full companion generation).
+
+- [ ] **SA1.1** Add `DirectMessageEvent` dataclass to `agents/social_alliance.py`
+- [ ] **SA1.2** Add `AllianceGraph.update_from_direct_message(event)` with vent-delta support:
+      separate `direct_rapport` and `perceived_rapport` fields on `AllianceEdge`
+- [ ] **SA1.3** Add `vent_delta` to `AllianceEdge`: tracks divergence between how A behaves
+      toward B directly vs. how A describes B to companions (positive = nicer in person than
+      to companion; negative = meaner in person)
+- [ ] **SA1.4** Wire `direct_message` stress_proxy into `V_int / SharedTensorBuffer` at
+      episode start so residual inter-session stress propagates correctly
+- [ ] **SA1.5** Add `relay_channel` turn type to `CareCircleOrchestrator` (training-only):
+      direct turns skip companion generation, update only graph + V_int
+- [ ] **SA1.6** `prompt_context_for()` upgrade: include vent-delta hint so companion knows
+      "patient speaks positively of daughter directly but vented frustration in prior session"
+- [ ] **SA1.7** Benchmark: multi-person scenarios with direct channel events vs. companion-only
+      baseline.  Metric: alliance score trajectory + goal rate across chained episodes
+
+### SA2 — Co-regulation and contagion coupling (pending)
+
+Currently per-participant physiological inertia has no social coupling:
+- [ ] **SA2.1** `social_Gamma_modifier(alliance_score, speaker_stress) → Δγ`:
+      high alliance + calm speaker → reduces patient recovery time constant;
+      ruptured alliance + panicked speaker → increases it
+- [ ] **SA2.2** Contagion asymmetry: negative HRV deltas propagate at 1.5× rate vs positive
+      (fear/panic spreads faster than calm — empirically supported)
+- [ ] **SA2.3** MCTS action `await_co_regulation` — strategic pause until multi-person physio
+      stabilises, gated on `vint_consistency_hint` showing all participants below zone threshold
+- [ ] **SA2.4** Wire SA2.1 into `PhysioSimulator.step()` via `ReactivityProfile.gamma_modifier()`
+
+
 
 - Every benchmark: date, model version, hardware spec, random seed, software versions
 - Keep `EXPERIMENTS.md`: one entry per experiment — hypothesis, result, interpretation

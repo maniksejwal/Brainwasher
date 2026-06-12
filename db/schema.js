@@ -424,6 +424,7 @@ export async function migrateDatabase(db) {
             llm_calls_turn:       'INTEGER',
             hysteresis_zone:      'INTEGER',
             hysteresis_zone_name: 'TEXT',
+            critical_failure:     'INTEGER',  // 1 if scorer flagged any dim ≤ -2 this turn
         };
         for (const [col, colType] of Object.entries(benchTurnCols)) {
             try {
@@ -640,7 +641,7 @@ export async function addHTNBenchmarkTables(db) {
     await db.exec(`
         CREATE TABLE IF NOT EXISTS htn_benchmark_runs (
             run_id          TEXT PRIMARY KEY,
-            arm             TEXT NOT NULL,   -- 'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
+            arm             TEXT NOT NULL,   -- arm string e.g. 'oldschool' | 'physio_llm' | 'inertial_hpvoot_physio_llm_cot_mcts'
             label           TEXT,            -- human-readable label
             scenario_set    TEXT NOT NULL,   -- e.g. 'canonical_10' | 'deaddiction' | 'flooding'
             prompt_variant  TEXT DEFAULT 'baseline',  -- 'baseline' | 'dpo' (32-exp design)
@@ -746,7 +747,7 @@ export async function addHTNBenchmarkTables(db) {
         CREATE TABLE IF NOT EXISTS htn_transcripts (
             transcript_id   TEXT PRIMARY KEY,  -- = episode_id from htn_benchmark_episodes
             run_id          TEXT NOT NULL,
-            arm             TEXT NOT NULL,     -- 'htn_mcts' | 'oldschool' | 'hysteresis_prompt'
+            arm             TEXT NOT NULL,     -- arm string e.g. 'oldschool' | 'physio_llm' | 'inertial_hpvoot_physio_llm_cot_mcts'
             scenario_id     TEXT NOT NULL,
             scenario_type   TEXT NOT NULL DEFAULT 'regular',  -- 'regular' | 'world'
             persona_id      TEXT,
@@ -773,7 +774,7 @@ export async function addHTNBenchmarkTables(db) {
 
     // Mark the baseline cutoff: end of Saturday 2026-05-23 (day before yesterday).
     // All feedback/simulation data created BEFORE this timestamp is considered the
-    // "pre-HTN baseline" for A3C comparison. Arm 2 (oldschool) reward distributions
+    // "pre-HTN baseline" for A3C comparison. Exp 0 (oldschool) reward distributions
     // are anchored to this window. Only insert once; do not overwrite if already set.
     const existing = await db.get(
         "SELECT key FROM htn_benchmark_metadata WHERE key = 'baseline_cutoff_ts'"

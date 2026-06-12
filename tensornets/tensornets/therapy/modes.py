@@ -100,6 +100,13 @@ DEADDICTION_TO_CHANGESTAGE: dict[str, str] = {
     "ambivalence": ChangeStage.CONTEMPLATION.value,
     "insight":     ChangeStage.PREPARATION.value,
     "strike":      ChangeStage.ACTION.value,
+    # Flooding sub-phases — used as deaddiction_phase in flooding scenarios.
+    # They do not map to a TTM stage; we fold them to PRECONTEMPLATION so any
+    # code that calls ChangeStage(mapped) doesn't raise ValueError.
+    "flooding_exposure":  ChangeStage.PRECONTEMPLATION.value,
+    "flooding_peak":      ChangeStage.PRECONTEMPLATION.value,
+    "flooding_recovery":  ChangeStage.PRECONTEMPLATION.value,
+
 }
 
 CHANGESTAGE_TO_DEADDICTION: dict[str, str] = {v: k for k, v in DEADDICTION_TO_CHANGESTAGE.items()}

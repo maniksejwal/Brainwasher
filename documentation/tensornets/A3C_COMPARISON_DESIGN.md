@@ -33,10 +33,10 @@
 ## 1. The Eight Experiments
 
 The experiment matrix is defined in `tensornets/tensornets/a3c/arms.py`.
-Capability order (ascending): **Exp 5 < 0 < 1 < 4 < 2 < 3**, with Exp 6/7 as
-HP+VOOT+PW variants of Exp 3/4 (outcome still under evaluation).
+Capability order (ascending): **0 < 1 < 2 < 5 < 3 < 4 < 6/7**, with Exp 6/7 as
+HP+VOOT+PW variants of Exp 4/5 (outcome still under evaluation).
 
-### Exp 0 — PhysioLLM (`physio_llm`)
+### Exp 1 — PhysioLLM (`physio_llm`)
 Physio state as natural-language text in the system prompt. No MCTS, no dead-band.
 The simplest Python arm — establishes the floor for physio-augmented generation.
 - PhysiologicalState 8-channel context string in every system prompt
@@ -45,42 +45,42 @@ The simplest Python arm — establishes the floor for physio-augmented generatio
 
 **Answers:** "Does physio text in the prompt improve over the production JS baseline?"
 
-### Exp 1 — PhysioLLM CoT-MCTS (`physio_llm_cot_mcts`)
-Exp 0 + Maverick chain-of-thought over all 51 ACTION_TAXONOMY candidates.
-LLM-as-planner; the cost baseline for Exp 2.
+### Exp 2 — PhysioLLM CoT-MCTS (`physio_llm_cot_mcts`)
+Exp 1 + Maverick chain-of-thought over all 51 ACTION_TAXONOMY candidates.
+LLM-as-planner; the cost baseline for Exp 3.
 - Two LLM calls per turn: Maverick CoT (action selection) + Scout (generation)
 - No MPS tree search; reasoning is entirely in language space
 - CHOSEN_ACTION parsed from structured CoT output
 
 **Answers:** "Can an LLM reason its way to MPS-MCTS action quality? At what cost?"
 
-### Exp 2 — PhysioMPS-MCTS (`physio_mps_mcts`)
+### Exp 3 — PhysioMPS-MCTS (`physio_mps_mcts`)
 Full HTN + Matrix Product State MCTS via tensornets bridge. The original "Arm 1".
 - POST /mcts/best-action for action + M_trunc constraint
 - M_trunc dominant vector soft-steers Scout token generation (F3/F4)
 - PhysioHistory append per turn (tracks longitudinal physio trajectory)
 - Falls back to Actor.select() if MCTS bridge is unavailable
 
-**Answers:** "Does structured tensor-geometry planning beat CoT planning (Exp 1)?"
+**Answers:** "Does structured tensor-geometry planning beat CoT planning (Exp 2)?"
 
-### Exp 3 — Inertial PhysioMPS-MCTS (`inertial_physio_mps_mcts`)
-Exp 2 + HysteresisGate 5-zone dead-band. Most capable experiment.
+### Exp 4 — Inertial PhysioMPS-MCTS (`inertial_physio_mps_mcts`)
+Exp 3 + HysteresisGate 5-zone dead-band. Most capable flat-MCTS experiment.
 - Zone and streak injected into MCTS physio payload and system prompt
 - Strategy locked to the sustained stress tier, not the instantaneous reading
 - stress_bucket overridden by zone_name — prevents flip-flopping under noise
 - No fallbacks; ValueError if stress_index ∉ [0,1]
 
-**Answers:** "Does inertial zone locking improve over raw stress-index MCTS (Exp 2)?"
+**Answers:** "Does inertial zone locking improve over raw stress-index MCTS (Exp 3)?"
 
-### Exp 4 — Inertial PhysioLLM CoT (`inertial_physio_llm_cot_mcts`)
-Exp 1 + HysteresisGate. CoT-MCTS with inertial zone awareness.
+### Exp 5 — Inertial PhysioLLM CoT (`inertial_physio_llm_cot_mcts`)
+Exp 2 + HysteresisGate. CoT-MCTS with inertial zone awareness.
 - Zone name and streak injected into Maverick CoT prompt as `{zone_ctx}`
 - LLM reasons about sustained physiological state, not instantaneous stress_index
-- Combines linguistic planning (Exp 1) with physiological inertia (Exp 3)
+- Combines linguistic planning (Exp 2) with physiological inertia (Exp 4)
 
 **Answers:** "Does zone-awareness improve CoT planning the same way it improves MPS-MCTS?"
 
-### Exp 5 — Oldschool (`oldschool`) — **True Baseline**
+### Exp 0 — Oldschool (`oldschool`) — **True Baseline**
 Production Node.js CompanionCoordinator via HTTP. No physio, no MCTS.
 - Posts to /api/benchmark/message; reads actual JS companion response
 - Reward computed with same _synthetic_reward function as all other arms
@@ -88,21 +88,21 @@ Production Node.js CompanionCoordinator via HTTP. No physio, no MCTS.
 - Includes caregiverOptimizer, consentManager, historyAnalyzer, future_plans
 
 **Historical baseline anchor:** All data before `2026-05-23T23:59:59 IST` is the
-pre-HTN window. Arm 5 must be internally consistent with `getBaselineStats()`.
+pre-HTN window. Exp 0 must be internally consistent with `getBaselineStats()`.
 
 **Answers:** "What is the empirical ceiling of prompt-engineering-only clinical companions?"
 
 ### Exp 6 — Inertial HPVOOT MPS (`inertial_hpvoot_physio_mps_mcts`)
-Exp 3 + HP+VOOT+PW tree search (150 iter, 20 depth).
+Exp 4 + HP+VOOT+PW tree search (150 iter, 20 depth).
 - Hierarchical Partitioning: 6 semantic action clusters; VOOT bandit at cluster level
 - Progressive Widening: actions admitted one-at-a-time in LLM-prior rank order
 - Scout prior scores all HP actions before tree search (seeding PW expansion order)
 - Zone-to-cluster affinity boosts (e.g. zone 4 → de_escalate +0.40)
 
-**Answers:** "Does structured cluster-level planning improve over flat MCTS (Exp 3)?"
+**Answers:** "Does structured cluster-level planning improve over flat MCTS (Exp 4)?"
 
 ### Exp 7 — Inertial HPVOOT CoT (`inertial_hpvoot_physio_llm_cot_mcts`)
-Exp 4 + HP+VOOT+PW. Maverick CoT ratings recycled as PW prior at zero extra LLM cost.
+Exp 5 + HP+VOOT+PW. Maverick CoT ratings recycled as PW prior at zero extra LLM cost.
 - RATINGS section extracted from CoT output; mapped to HP action prior scores
 - Same MCTS call as Exp 6 (mcts_mode=hpvoot, 150 iter, depth 20)
 - CoT action and MCTS action both logged (cot_action vs mcts_action)
@@ -115,19 +115,19 @@ Exp 4 + HP+VOOT+PW. Maverick CoT ratings recycled as PW prior at zero extra LLM 
 
 | Exp | ARM | N (total) | Mean ± SD | Goal % | Stress AUC |
 |---|---|---|---|---|---|
-| 0 | physio_llm | 2961 | 9.16 ± 4.87 | 8.0% | 0.741 |
-| 1 | physio_llm_cot_mcts | 1645 | 8.43 ± 4.62 | 11.0% | 0.769 |
-| 2 | physio_mps_mcts | 2861 | 8.23 ± 4.49 | **19.0%** | 0.711 |
-| 3 | inertial_physio_mps_mcts | 826 | 8.40 ± 4.35 | 15.0% | 0.711 |
-| 4 | inertial_physio_llm_cot | 771 | 9.10 ± 5.10 | 11.0% | **0.782** |
-| 5 | oldschool | 1832 | 7.89 ± 4.29 | 9.0% | 0.722 |
+| 0 | oldschool | 1832 | 7.89 ± 4.29 | 9.0% | 0.722 |
+| 1 | physio_llm | 2961 | 9.16 ± 4.87 | 8.0% | 0.741 |
+| 2 | physio_llm_cot_mcts | 1645 | 8.43 ± 4.62 | 11.0% | 0.769 |
+| 3 | physio_mps_mcts | 2861 | 8.23 ± 4.49 | **19.0%** | 0.711 |
+| 4 | inertial_physio_mps_mcts | 826 | 8.40 ± 4.35 | 15.0% | 0.711 |
+| 5 | inertial_physio_llm_cot | 771 | 9.10 ± 5.10 | 11.0% | **0.782** |
 | 6 | inertial_hpvoot_mps | 822 | 8.21 ± 4.44 | 9.0% | 0.770 |
 | 7 | inertial_hpvoot_cot | 655 | 8.04 ± 4.15 | 12.0% | 0.780 |
 
 **Notable observations:**
-- Exp 2 has highest goal rate (19%) but lower stress AUC than Exp 4 — MPS is goal-efficient
-  but may be stress-aggressive; inertia (Exp 3) softens this at a goal cost (-4pp)
-- Exp 6 goal rate (9%) is worse than Exp 3 (15%) — HPVOOT is **not yet converging** (see §10)
+- Exp 3 has highest goal rate (19%) but lower stress AUC than Exp 5 — MPS is goal-efficient
+  but may be stress-aggressive; inertia (Exp 4) softens this at a goal cost (-4pp)
+- Exp 6 goal rate (9%) is worse than Exp 4 (15%) — HPVOOT is **not yet converging** (see §10)
 - All arms show downward goal rate trend — see §10 for diagnosis
 
 ---
@@ -191,9 +191,9 @@ Initialise the A3C actor from the Thompson Sampling policy:
 - Convert bandit probabilities P(arm | stress_bucket) → softmax actor initialisation
 - This avoids the cold-start problem where A3C wastes exploration on obviously bad actions
 
-### Step 3 — Three-way A3C with shared simulator
-Arm 1 and Arm 3 run in the same Python environment.
-Arm 2 (old-school) runs the JS system via HTTP — each A3C step calls the production
+### Step 3 — Multi-arm A3C with shared simulator
+All Python arms (Exp 1–7) run in the same Python environment.
+Exp 0 (oldschool) runs the JS system via HTTP — each A3C step calls the production
 CompanionCoordinator via the same CLI/API, then scores the response with the HTN judge.
 
 ---
@@ -233,9 +233,9 @@ For every episode across all three arms, collect and store:
 | token_count | Total tokens consumed per episode (cost efficiency) |
 | latency_ms | Wall time per turn |
 
-### Qualitative comparison (same dialog graphs as Arm 2/3)
+### Qualitative comparison (same dialog graphs across all 8 arms)
 - Run the same 10 canonical scenarios (billing denial, deaddiction strike, flooding,
-  phd_supervisor_rigour, etc.) through all three arms
+  phd_supervisor_rigour, etc.) through all arms
 - Record full dialogue for HTN judge batch scoring
 - Produce side-by-side transcript comparison (same user input, different arm responses)
 
@@ -292,7 +292,7 @@ The existing project has:
 
 **Is the old method still valid?**
 
-Yes, as Arm 2. The old learning method is:
+Yes, as Exp 0 (oldschool). The old learning method is:
 1. Generate response via LLM with prompt engineering
 2. Get user feedback (implicit via HRV, explicit via rating)
 3. Update future_plans table with lessons learned
@@ -309,8 +309,8 @@ clinical companions.
 - It cannot coordinate strategy across multiple companions in a circle
 - It cannot exploit physiological predictors to pre-empt stress responses
 
-These are the specific claims A3C Arm 1 (HTN+MCTS) will test.
-Now operationalised as Exp 2 (physio_mps_mcts) vs Exp 5 (oldschool).
+These are the specific claims A3C Exp 6/7 (HPVOOT) will test.
+Now operationalised as Exp 3 (physio_mps_mcts) vs Exp 0 (oldschool).
 
 ---
 
@@ -381,14 +381,15 @@ in the benchmark dashboard to separate scenario difficulty from arm quality.
 | HTN judge (real-time) | Maverick | Per-turn scoring during simulation. |
 | HTN judge (batch) | 405B or Maverick | Offline, once per episode. |
 | Prompt iteration / DPO | Maverick | Policy improvement loop, not in real time. |
-| Arm 2 (production JS) | Scout via bedrock.js | Same as production — no change. |
+| Exp 0 (oldschool / production JS) | Scout via bedrock.js | Same as production — no change. |
 
 **Expected token budget per 10-turn episode:**
-- Arm 1 (HTN+MCTS): ~2,500 tokens Scout + ~1,800 tokens Maverick
-- Arm 2 (old-school): ~2,200 tokens Scout
-- Arm 3 (hysteresis-prompt): ~2,700 tokens Scout (larger context string) + ~1,800 Maverick
+- Exp 1 (PhysioLLM): ~2,700 tokens Scout (larger context string)
+- Exp 2 (PhysioLLM CoT-MCTS): ~2,700 tokens Scout + ~1,800 tokens Maverick
+- Exp 3 (PhysioMPS-MCTS / HTN+MCTS): ~2,500 tokens Scout + ~1,800 tokens Maverick
+- Exp 0 (oldschool): ~2,200 tokens Scout
 - HTN judge (batch, per episode): ~4,000 tokens Maverick
-- Total per 3-arm comparison run (100 episodes each): ~3.3M tokens
+- Total per 8-arm comparison run (100 episodes each): ~3.3M tokens
 
 At Bedrock pricing (Scout ~$0.17/1M, Maverick ~$0.40/1M):
   Estimated cost per full comparison run: ~$0.60–0.90 USD (very manageable).
@@ -415,9 +416,9 @@ Week 3 — A3C skeleton
   [ ] J2: Actor network (Scout prompt template = policy head)
   [ ] J3: Critic network (Maverick value estimate)
   [ ] J4: Advantage computation + gradient update
-  [ ] J5: Arm 1 worker (HTN+MCTS)
-  [ ] J6: Arm 2 worker (production JS via HTTP)
-  [ ] J7: Arm 3 worker (hysteresis-in-prompt)
+  [ ] J5: Exp 3 worker (PhysioMPS-MCTS / HTN+MCTS)
+  [ ] J6: Exp 0 worker (oldschool / production JS via HTTP)
+  [ ] J7: Exp 1 worker (PhysioLLM / hysteresis-in-prompt)
 
 Week 4 — Full comparison run + analysis
   [ ] K1: 3-arm parallel run (100 episodes each)

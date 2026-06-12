@@ -99,6 +99,7 @@ def _log_turn_to_db(
             hrv_ms       = state.physio.get("hrv_ms") if state.physio else None,
             reward       = reward_dict,
             judge        = score_result.dimensions or {},
+            critical_failure = score_result.critical_failure,
             latency_ms   = latency_ms,
             cost_usd     = cost_usd,
             llm_calls    = llm_calls,
@@ -183,6 +184,24 @@ GAMMA_DISCOUNT: float = 0.95        # temporal discount for V(s')
 ALPHA_LR: float       = 0.05        # learning rate for log-bias update
 ENTROPY_COEF: float   = 0.01        # entropy bonus weight (prevents collapse)
 MAX_TURNS: int        = 50          # episode truncation; individual scenarios may override
+
+
+def progressive_lookahead(ep_count: int) -> int:
+    """
+    Return the MCTS lookahead depth for the given episode count.
+
+    Early training has random policy — deep lookahead wastes compute on noise.
+    Ramp up as the policy stabilises:
+
+      ep <  100  →  4  (fast iterations, policy is random — no point looking far)
+      ep < 1000  → 10  (policy has some signal, moderate tree depth)
+      ep >= 1000 → 20  (trained policy, full lookahead for quality decisions)
+    """
+    if ep_count < 100:
+        return 4
+    if ep_count < 1000:
+        return 10
+    return 20
 
 
 # ── Per-turn LLM cost estimator ───────────────────────────────────────────────
@@ -979,10 +998,20 @@ class A3CWorker:
     """
     J1: Episode runner and per-turn reward accumulator.
 
-    Subclasses override `generate_response()` to implement the three arms:
-      - Arm1Worker  (J5): HTN + MCTS (full tensornets bridge)
-      - Arm2Worker  (J6): Old-school production JS via HTTP
-      - Arm3Worker  (J7): Hysteresis-in-prompt (no MPS, no MCTS)
+    Subclasses override `generate_response()` to implement all 24 experiment arms:
+
+    Base (Exp 0–7):
+      - OldschoolWorker                        (Exp 0): Classic JS via HTTP (no physio)
+      - PhysioLLMWorker                        (Exp 1): Physio in prompt, no MCTS
+      - PhysioLLMCoTMCTSWorker                 (Exp 2): PhysioLLM + CoT + MCTS
+      - PhysioMPSMCTSWorker                    (Exp 3): Full HTN + MPS + MCTS
+      - InertialPhysioMPSMCTSWorker            (Exp 4): Exp 3 + zone inertia
+      - InertialPhysioLLMCoTMCTSWorker         (Exp 5): Exp 2 + zone inertia
+      - InertialHPVOOTPhysioMPSMCTSWorker      (Exp 6): Exp 4 + HPVOOT
+      - InertialHPVOOTPhysioLLMCoTMCTSWorker   (Exp 7): Exp 5 + HPVOOT
+
+    Safety ablations (Exp 0a–7a): same as base but DISABLE_CRITICAL_FAILURE_GATE=True.
+    DPO/RLAIF variants (Exp 0p–7p): same as base but PROMPT_VARIANT="dpo".
 
     Protocol
     --------
@@ -1006,15 +1035,14 @@ class A3CWorker:
     # ── Experimental safety-veto flags ───────────────────────────────────────
     # These are class-level so that a subclass can disable a single safety
     # mechanism while inheriting all other behaviour unchanged.  Setting them
-    # to True produces the "a" variant arms used to measure each gate's
-    # contribution to the outcome metrics (Exp 3a, 6a, 5a).
+    # to True produces the "a" variant arms (Exp 0a–7a) used to measure each
+    # gate's contribution to outcome metrics.
     #
     # DISABLE_CRITICAL_FAILURE_GATE:
     #   When True, the 2-strike critical-failure episode-termination rule is
     #   suppressed.  The episode runs to the configured max turns even when
     #   the patient would normally have triggered the safety cutoff.
-    #   Used in Exp 3a / 6a to measure how much of Exp 3/6's goal rate comes
-    #   from the gate versus the learned policy.
+    #   All 8 "a" ablation arms set this to True (Exp 0a–7a).
     DISABLE_CRITICAL_FAILURE_GATE: bool = False
 
     def __init__(
@@ -1213,6 +1241,23 @@ class A3CWorker:
         # Build initial state — load from prior session if given
         state = self._build_state_with_continuity(scenario, prior_session)
 
+        # ── Social Alliance Graph — load or create for this circle ───────────────
+        # circle_id uses subject_id so alliance persists across chained episodes.
+        _alliance_circle_id = (
+            scenario.get("subject_id") or scenario.get("scenario_id") or "synthetic"
+        )
+        _alliance_state_dir = Path(self.run_dir).parent.parent / "state"
+        try:
+            from tensornets.agents.social_alliance import AllianceGraph, signals_from_score_result
+            _alliance_graph = AllianceGraph.load_or_create(
+                state_dir = _alliance_state_dir,
+                circle_id = _alliance_circle_id,
+                members   = ["companion", "patient"],
+            )
+            _alliance_graph.apply_cross_session_decay()
+        except Exception:
+            _alliance_graph = None
+
         # ── C6.1: ReactivityProfile — instantiate from archetype string ──────────
         # Maps the scenario/persona archetype to a ReactivityProfile that modifies
         # the Γ operator (autonomic recovery) based on trait-level reactivity.
@@ -1316,6 +1361,22 @@ class A3CWorker:
         # _escalation_missed   = escalation was expected but scorer never gave quality > 0.
         _escalation_expected: bool = bool(scenario.get("escalation_expected", False))
         _escalation_occurred: bool = False
+
+        # ── Inject alliance context into known_context at episode start ──────────
+        # The companion prompt gets a one-line summary of the current alliance state.
+        if _alliance_graph is not None:
+            try:
+                _alliance_ctx = _alliance_graph.prompt_context_for(
+                    companion_role="companion", patient_role="patient"
+                )
+                existing_ctx = state.known_context or ""
+                state = state.__class__(
+                    **{**state.__dict__,
+                       "known_context": (_alliance_ctx + "\n\n" + existing_ctx).strip()}
+                )
+            except Exception:
+                pass
+
         # With only 10-15 turns per episode and a 0.75 info_coverage threshold
         # to achieve the goal, skipping odd turns cuts goal-coverage opportunities
         # nearly in half.  The extra Scout calls increase episode cost slightly
@@ -1898,7 +1959,7 @@ class A3CWorker:
             if score_result.critical_failure:
                 # 2-strike rule: two *consecutive* critical failures → end episode.
                 # Can be disabled at the class level (DISABLE_CRITICAL_FAILURE_GATE=True)
-                # in safety-ablation experiments (Exp 3a / 6a) to measure the gate's
+                # in safety-ablation experiments (Exp 0a–7a) to measure the gate's
                 # independent contribution to goal rate.
                 #
                 # Grace period for turns 0–2: during rapport-building, denial and
@@ -2115,7 +2176,10 @@ class A3CWorker:
             "llm_calls_total":     sum(t.llm_calls for t in self._episode_log),
             "tokens_scout_total":  sum(t.tokens.get("scout", 0) for t in self._episode_log),
             "tokens_maverick_total": sum(t.tokens.get("maverick", 0) for t in self._episode_log),
-            # Hysteresis gate metrics (non-zero only for Exp 3/4)
+            "mean_latency_ms":     round(
+                sum(t.latency_ms for t in self._episode_log) / max(len(self._episode_log), 1), 1
+            ),
+            # Hysteresis gate metrics (non-zero only for Exp 4/5/6/7)
             "hysteresis_zone_changes": sum(
                 1 for t in self._episode_log
                 if t.state.get("hysteresis_changed", False)
@@ -2161,6 +2225,39 @@ class A3CWorker:
                 norm_reward = float(cumulative_reward) / max(1.0, abs(float(cumulative_reward)) + 1e-6)
                 vint_buf.record_interaction_outcome("companion", norm_reward)
                 vint_buf.close_session()
+            except Exception:
+                pass
+
+        # ── Social Alliance Graph: update + persist ────────────────────────────────
+        # Use the aggregated trust_delta from genuine_metrics and rupture signals
+        # from the last scorer result to update the companion→patient edge.
+        if _alliance_graph is not None:
+            try:
+                _last_score = score_history[-1] if score_history else None
+                _rupture, _repair, _no_go = signals_from_score_result(_last_score)
+                _td = genuine_metrics.get("trust_delta_final", 0.0)
+                _goal = genuine_metrics.get("goal_achieved", False)
+                # Update companion→patient edge
+                _alliance_graph.update_from_episode(
+                    speaker_role       = "companion",
+                    listener_role      = "patient",
+                    trust_delta        = _td,
+                    goal_achieved      = _goal,
+                    rupture_signal     = _rupture,
+                    repair_signal      = _repair,
+                    new_no_go          = _no_go or None,
+                    advance_disclosure = state.info_coverage >= 0.6,
+                    session_id         = episode_id,
+                )
+                # Persist to disk
+                _alliance_graph.persist(_alliance_state_dir)
+                # Embed compact alliance snapshot in session_memory
+                summary["session_memory"]["alliance"] = (
+                    _alliance_graph.to_session_memory_snippet(
+                        companion_role="companion", patient_role="patient"
+                    )
+                )
+                summary["session_memory"]["alliance_circle_id"] = _alliance_circle_id
             except Exception:
                 pass
 
@@ -2291,6 +2388,31 @@ class A3CWorker:
         # Pre-populate conversation history from prior session
         prior_history = prior_session.get("conversation_history", [])
         state.conversation_history = list(prior_history)
+
+        # ── Restore alliance context into known_context if available ─────────
+        # The alliance graph is loaded from disk in run_episode() separately.
+        # Here we inject the prior session's compact alliance snippet as text so
+        # the companion prompt immediately reflects the relationship state.
+        prior_alliance = prior_session.get("alliance")
+        if prior_alliance:
+            try:
+                _score = prior_alliance.get("alliance_score", 0.35)
+                _rupt  = prior_alliance.get("rupture_pending", False)
+                _disc  = ["none", "surface", "moderate", "deep"][
+                    min(3, int(prior_alliance.get("disclosure_level", 0)))
+                ]
+                _nogo  = prior_alliance.get("no_go_zones", [])
+                alliance_hint = (
+                    f"[Prior session alliance] Score: {_score:.0%}, "
+                    f"rupture: {'YES — repair first' if _rupt else 'no'}, "
+                    f"disclosure: {_disc}"
+                    + (f", no-go: {', '.join(_nogo)}" if _nogo else "")
+                )
+                prev_ctx = state.known_context or ""
+                state.known_context = (alliance_hint + "\n" + prev_ctx).strip()
+            except Exception:
+                pass
+
         return state
 
     # ── Logging ──────────────────────────────────────────────────────────────
