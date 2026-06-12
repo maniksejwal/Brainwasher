@@ -692,32 +692,11 @@ def train(
             "successful":       run_state.get("successful_eps", 0),
             "active_prompt":    active_prompt,
             "last_improved_at": run_state.get("last_improved_at", 0),
-            # ep_count_lock: protects shared ep_count across N workers of this experiment
+            # ep_count_lock: protects shared ep_count across N pool slots for this arm
             "ep_count_lock":    threading.Lock(),
-            # throttle_event: kept for backward compat; stays permanently SET.
-            # Actual pacing is done via inter_episode_sleep and rebalancer_stopped.
-            "throttle_event":     threading.Event(),
-            # inter_episode_sleep: seconds this arm waits after each episode ends before
-            # starting the next.  Rebalancer adjusts this to pace leaders without stopping them.
-            # 0.0 = run at full speed.  Leaders get up to _PACE_MAX_SLEEP seconds.
-            "inter_episode_sleep": 0.0,
-            # rebalancer_stopped: True when this arm has been parked by the rebalancer
-            # because its normalised gap vs the lagger exceeds STOP_GAP.  Workers spin-wait
-            # (5-second poll) and resume automatically when the flag is cleared.
-            "rebalancer_stopped": False,
-            # relative_speed: expected throughput of this arm relative to the fastest arm.
-            # 1.0 = same speed as physio_llm baseline; 0.35 = HPVOOT (~3× slower).
-            # The rebalancer normalises episode counts by this factor so slow arms are
-            # not treated as laggers purely because they complete fewer episodes per hour.
-            "relative_speed": getattr(ArmCls, "RELATIVE_SPEED", 1.0),
-            # group: which set of 8 this arm belongs to — used by the rebalancer to
-            # guarantee ≥1 live worker per group at all times.
-            #   0 = base (Exp 0–7)
-            #   1 = safety-ablation (Exp 0a–7a)
-            #   2 = DPO/RLAIF (Exp 0p–7p)
+            # group: informational only — 0=base(Exp 0–7)  1=ablation(0a–7a)  2=DPO(0p–7p)
             "group": 0 if idx < 8 else (1 if idx < 16 else 2),
         })
-        arm_states[-1]["throttle_event"].set()  # always set (not used for hard pause any more)
 
         # Register actor/critic in the shadow mode registry so the FastAPI
         # /session/a3c/action endpoint can evaluate them without loading files.
@@ -806,236 +785,128 @@ def train(
     signal.signal(signal.SIGINT,  _emergency_save)
     signal.signal(signal.SIGTERM, _emergency_save)
 
-    def _run_arm(s: dict, worker_idx: int = 0) -> None:
-        """
-        Worker thread: run one worker for experiment `s` until the shared
-        episode target is reached.
 
-        Each thread gets its own fresh ArmCls instance so _episode_log is
-        never shared.  The Actor and Critic are shared across all workers of
-        the same experiment via s["actor"]/s["critic"] + s["update_lock"].
-
-        Throttling: when the rebalancer sets s["throttle_event"], this worker
-        waits until cleared.  This is how the leader is slowed down without
-        killing threads.
+    def _run_single_episode(
+        w, s, scenario, prior_session, arm_ep, target, my_ep,
+        consec_fails, curriculum, chain_info, slot_id,
+    ) -> "dict | None":
         """
-        # Each thread needs its own worker instance (isolated _episode_log,
-        # per-turn state).  Actor/Critic are shared by reference.
-        thread_worker = s["ArmCls"](
-            actor       = s["actor"],
-            critic      = s["critic"],
-            run_dir     = s["arm_dir"],
-            worker_id   = f"{s['name']}_w{worker_idx}",
-            update_lock = s["update_lock"],
+        Run one episode for arm *s* using worker *w*.
+        Returns the episode summary dict on success, None on failure.
+        Raises on unrecoverable errors so the caller can back off.
+        """
+        use_prior = prior_session is not None
+        ep_uuid   = str(uuid.uuid4())
+
+        db_episode_id = _db_create_episode(
+            s["db_run_id"], s["name"], scenario.get("scenario_id", ""), ep_uuid
         )
-        # Restore the active prompt on this worker too
-        if s["active_prompt"]:
-            thread_worker.update_system_prompt(s["active_prompt"])
 
-        consec_fail = 0
-        target = s["start_ep"] + episodes_per_arm
+        if hasattr(w, "reset_gate"):
+            w.reset_gate()
 
-        while not stop_event.is_set():
-            # ── Stop-on-gap: rebalancer parks this worker when arm is too far ahead ──
-            # rebalancer_stopped=True means this arm's normalised gap vs the lagger
-            # exceeds STOP_GAP.  ALL workers in the arm park (spin-wait) to free
-            # Bedrock slots.  The group-level guarantee in the rebalancer ensures at
-            # least one arm per group of 8 is always live — so even if all workers
-            # for one arm park, the group still has other arms progressing.
-            if s.get("rebalancer_stopped"):
-                log.info(
-                    "Worker %s/%d parked by rebalancer (STOP_GAP exceeded) — "
-                    "waiting for gap to close",
-                    s["name"], worker_idx,
-                )
-                while not stop_event.is_set() and s.get("rebalancer_stopped"):
-                    stop_event.wait(timeout=5.0)
-                if stop_event.is_set():
-                    return
-                log.info(
-                    "Worker %s/%d resumed by rebalancer (gap recovered)",
-                    s["name"], worker_idx,
-                )
+        scenario = {**scenario, "_arm_ep_count": my_ep}
 
-            # ── Pace control: proportional sleep for moderate gaps ────────────
-            pace = s.get("inter_episode_sleep", 0.0)
-            if pace > 0.0:
-                log.debug(
-                    "Worker %s/%d paced — sleeping %.1fs before next episode",
-                    s["name"], worker_idx, pace,
-                )
-                # Use stop_event.wait so we exit cleanly if training is halted mid-sleep
-                if stop_event.wait(timeout=pace):
-                    return
+        summary = w.run_episode(
+            scenario      = scenario,
+            prior_session = prior_session,
+            patient_mode  = patient_mode,
+            episode_id    = ep_uuid,
+            run_id        = s.get("db_run_id"),
+        )
 
-            # ── Claim the next episode slot atomically ────────────────────────
-            # Check global cap first, then per-arm target.
-            if not _claim_global_slot():
-                log.info(
-                    "Worker %s/%d: global cap hit — exiting", s["name"], worker_idx
-                )
-                break
-            with s["ep_count_lock"]:
-                if s["ep_count"] >= target:
-                    break
-                my_ep  = s["ep_count"]
-                s["ep_count"] += 1
-            arm_ep = my_ep + 1   # 1-indexed for logging
+        with s["ep_count_lock"]:
+            s["successful"] += 1
 
-            # ── CurriculumScheduler: scenario + prior-session selection ──────
-            # Replaces the old flat random draw + flat 20% prior probability.
-            # The scheduler maintains per-arm success/recovery pools and a
-            # progressive chaining rate that rises from 0% to 50% as episodes
-            # accumulate.
-            with s["ep_count_lock"]:
-                current_ep_count = s["ep_count"]  # read under lock for accuracy
-            scenario, use_prior_session = curriculum.pick_episode(
-                arm_name  = s["name"],
-                ep_count  = current_ep_count,
+        hitl_delta = hitl.get_correction(ep_uuid)
+        if hitl_delta != 0.0:
+            summary["cumulative_reward"] = round(
+                summary.get("cumulative_reward", 0.0) + hitl_delta, 5
             )
-            use_prior = use_prior_session is not None
-            ep_uuid   = str(uuid.uuid4())
+            summary.setdefault("genuine_metrics", {})["hitl_delta"] = round(hitl_delta, 3)
 
-            db_episode_id = _db_create_episode(
-                s["db_run_id"], s["name"], scenario.get("scenario_id", ""), ep_uuid
-            )
+        curriculum.record_outcome(s["name"], summary)
+        pool_s = curriculum.pool_stats(s["name"])
 
-            # Reset the HysteresisGate between episodes for inertial workers.
-            if hasattr(thread_worker, "reset_gate"):
-                thread_worker.reset_gate()
+        _goal = bool(summary.get("goal_achieved", False))
+        _crit = bool(summary.get("critical_failure", False))
+        _drop = bool(summary.get("synthetic_dropout", False))
+        _cov  = float(summary.get("info_coverage", 0.0))
+        MIN_REC = 0.35
+        if _goal:
+            summary["curriculum_pool"] = "success"
+        elif _crit or _drop:
+            summary["curriculum_pool"] = "dormant"
+        elif _cov >= MIN_REC:
+            summary["curriculum_pool"] = "recovery"
+        else:
+            summary["curriculum_pool"] = "initial"
 
-            # Inject episode count so MCTS arms can use progressive_lookahead().
-            scenario = {**scenario, "_arm_ep_count": current_ep_count}
+        _db_finalise_episode(db_episode_id or summary.get("episode_id"), summary)
 
-            try:
-                summary = thread_worker.run_episode(
-                    scenario      = scenario,
-                    prior_session = use_prior_session if use_prior else None,
-                    patient_mode  = patient_mode,
-                    episode_id    = ep_uuid,
-                    run_id        = s.get("db_run_id"),
-                )
-            except Exception as exc:
-                log.error("Episode failed (%s w%d %s): %s — skipping",
-                          s["name"], worker_idx, scenario.get("scenario_id", "?"), exc)
-                consec_fail += 1
-                if consec_fail >= 3:
-                    wait = min(5 * (2 ** (consec_fail - 3)), 40)
-                    log.warning("Back-off: arm=%s w%d waiting %.0fs (%d consecutive failures)",
-                                s["name"], worker_idx, wait, consec_fail)
-                    time.sleep(wait)
-                continue
+        log.info(
+            "arm=%-36s  s%d  ep=%04d/%d  scenario=%-35s  reward=%.3f  turns=%d  "
+            "| ep_counts=%s  total_new=%d/%d  chain=%s  pool=S%d/R%d/D%d",
+            s["name"], slot_id, arm_ep, target,
+            scenario.get("scenario_id", "?")[:35],
+            summary.get("mean_reward", 0.0),
+            summary.get("n_turns", 0),
+            ",".join(str(a["ep_count"]) for a in arm_states),
+            sum(max(0, a["ep_count"] - a["start_ep"]) for a in arm_states),
+            episodes_per_arm * n_arms,
+            "Y" if use_prior else "N",
+            pool_s["success"], pool_s["recovery"], pool_s["dormant"],
+        )
 
-            consec_fail = 0
+        # ── Checkpoint ───────────────────────────────────────────────────────
+        with s["ep_count_lock"]:
+            ep_now     = s["ep_count"]
+            should_ckpt = (ep_now % checkpoint_every == 0) or (ep_now >= target)
+
+        if should_ckpt:
             with s["ep_count_lock"]:
-                s["successful"] += 1
+                if ep_now not in s.setdefault("_ckpt_done", set()):
+                    s["_ckpt_done"].add(ep_now)
+                    do_ckpt = True
+                else:
+                    do_ckpt = False
 
-            # ── HITL reward correction ────────────────────────────────────────
-            # If a human annotated this episode before the gradient batch was
-            # applied, blend the human signal into the cumulative reward.
-            # The correction is bounded by HITL_WEIGHT (±0.5) so it adjusts
-            # without overriding the LLM scorer signal entirely.
-            hitl_delta = hitl.get_correction(ep_uuid)
-            if hitl_delta != 0.0:
-                summary["cumulative_reward"] = round(
-                    summary.get("cumulative_reward", 0.0) + hitl_delta, 5
+            if do_ckpt:
+                w.save_checkpoint(ep_now)
+
+                stop_sentinel = Path(run_dir) / "STOP_AT_CHECKPOINT"
+                stopping = stop_sentinel.exists()
+                if stopping:
+                    log.info("STOP_AT_CHECKPOINT — arm=%s stopping after ep=%d",
+                             s["name"], ep_now)
+                    stop_event.set()
+
+                _db_post_checkpoint(s["db_run_id"], s["name"], ep_now, stopped=stopping)
+
+                new_prompt, s["last_improved_at"] = maybe_improve_prompt(
+                    arm_name         = s["name"],
+                    arm_dir          = s["arm_dir"],
+                    ep_count         = ep_now,
+                    last_improved_at = s["last_improved_at"],
+                    current_prompt   = s["active_prompt"],
                 )
-                summary.setdefault("genuine_metrics", {})["hitl_delta"] = round(hitl_delta, 3)
+                if new_prompt:
+                    with s["ep_count_lock"]:
+                        s["active_prompt"] = new_prompt
+                    w.update_system_prompt(new_prompt)
 
-            # Register this episode's outcome with the curriculum so future
-            # episodes on this arm can chain from it appropriately.
-            curriculum.record_outcome(s["name"], summary)
-            pool_s = curriculum.pool_stats(s["name"])
+                _save_run_state(s["state_path"], {
+                    "last_completed_episode": ep_now,
+                    "ep_count":               ep_now,
+                    "successful_eps":         s["successful"],
+                    "db_run_id":              s["db_run_id"],
+                    "last_session_memory":    None,
+                    "active_prompt":          s["active_prompt"],
+                    "last_improved_at":       s["last_improved_at"],
+                })
+                log.info("Checkpoint written: arm=%s ep=%d", s["name"], ep_now)
 
-            # L5: tag the episode with which curriculum pool it landed in.
-            # Mirrors the routing logic in CurriculumScheduler.record_outcome().
-            _goal = bool(summary.get("goal_achieved", False))
-            _crit = bool(summary.get("critical_failure", False))
-            _drop = bool(summary.get("synthetic_dropout", False))
-            _cov  = float(summary.get("info_coverage", 0.0))
-            MIN_REC = 0.35   # mirrors CurriculumScheduler.MIN_RECOVERY_COV
-            if _goal:
-                summary["curriculum_pool"] = "success"
-            elif _crit or _drop:
-                summary["curriculum_pool"] = "dormant"
-            elif _cov >= MIN_REC:
-                summary["curriculum_pool"] = "recovery"
-            else:
-                summary["curriculum_pool"] = "initial"
-
-            _db_finalise_episode(db_episode_id or summary.get("episode_id"), summary)
-
-            log.info(
-                "arm=%-32s  w%d  ep=%04d/%d  scenario=%-35s  reward=%.3f  turns=%d  "
-                "| ep_counts=%s  total_new=%d/%d  chain=%s  pool=S%d/R%d/D%d",
-                s["name"], worker_idx, arm_ep, target,
-                scenario.get("scenario_id", "?")[:35],
-                summary.get("mean_reward", 0.0),
-                summary.get("n_turns", 0),
-                ",".join(str(a["ep_count"]) for a in arm_states),
-                sum(max(0, a["ep_count"] - a["start_ep"]) for a in arm_states),
-                episodes_per_arm * n_arms,
-                "Y" if use_prior else "N",
-                pool_s["success"],
-                pool_s["recovery"],
-                pool_s["dormant"],
-            )
-
-            # Brief pause to avoid exhausting Bedrock per-minute token quota.
-            time.sleep(1)
-
-            # ── Periodic checkpoint (only one worker per checkpoint boundary) ─
-            # We use ep_count_lock so exactly one worker triggers the save.
-            with s["ep_count_lock"]:
-                ep_now = s["ep_count"]
-                should_ckpt = (ep_now % checkpoint_every == 0) or (ep_now >= target)
-
-            if should_ckpt:
-                # Only checkpoint if this specific ep_now hasn't been saved yet.
-                # Use a simple set to track which checkpoint steps are done.
-                with s["ep_count_lock"]:
-                    if ep_now not in s.setdefault("_ckpt_done", set()):
-                        s["_ckpt_done"].add(ep_now)
-                        do_ckpt = True
-                    else:
-                        do_ckpt = False
-
-                if do_ckpt:
-                    thread_worker.save_checkpoint(ep_now)
-
-                    stop_sentinel = Path(run_dir) / "STOP_AT_CHECKPOINT"
-                    stopping = stop_sentinel.exists()
-                    if stopping:
-                        log.info("STOP_AT_CHECKPOINT — arm=%s stopping after ep=%d",
-                                 s["name"], ep_now)
-                        stop_event.set()
-
-                    _db_post_checkpoint(s["db_run_id"], s["name"], ep_now, stopped=stopping)
-
-                    new_prompt, s["last_improved_at"] = maybe_improve_prompt(
-                        arm_name         = s["name"],
-                        arm_dir          = s["arm_dir"],
-                        ep_count         = ep_now,
-                        last_improved_at = s["last_improved_at"],
-                        current_prompt   = s["active_prompt"],
-                    )
-                    if new_prompt:
-                        with s["ep_count_lock"]:
-                            s["active_prompt"] = new_prompt
-                        # Propagate to all workers by updating the shared dict;
-                        # each worker will pick it up on the next checkpoint.
-                        thread_worker.update_system_prompt(new_prompt)
-
-                    _save_run_state(s["state_path"], {
-                        "last_completed_episode": ep_now,
-                        "ep_count":               ep_now,
-                        "successful_eps":         s["successful"],
-                        "db_run_id":              s["db_run_id"],
-                        "last_session_memory":    None,
-                        "active_prompt":          s["active_prompt"],
-                        "last_improved_at":       s["last_improved_at"],
-                    })
-                    log.info("Checkpoint written: arm=%s ep=%d", s["name"], ep_now)
+        return summary
 
         log.info("Worker arm=%s w%d finished.", s["name"], worker_idx)
 
@@ -1045,236 +916,130 @@ def train(
     # Dynamic rebalancing: a monitor thread checks arm progress every
     # `checkpoint_every` episodes and adjusts worker counts so laggers get an
     # extra worker and leaders lose one.  Target: all arms within 30 episodes.
-    threads = []
-    # Track live worker threads per arm so the rebalancer can add/remove.
-    arm_thread_map: dict[str, list[threading.Thread]] = {s["name"]: [] for s in arm_states}
-    arm_worker_counters: dict[str, int] = {s["name"]: 0 for s in arm_states}
+    # ── Round-Robin Pool Rebalancer ───────────────────────────────────────────
+    # Replace per-arm dedicated threads + complex STOP/PACE rebalancer with a
+    # simple shared worker pool.
+    #
+    # Design:
+    #   - POOL_SIZE slot threads share all Bedrock quota.  Tune this to stay
+    #     below the Bedrock rate limit (8 is safe for Scout on us-east-1).
+    #   - Each slot, when free, atomically picks the arm with the fewest raw
+    #     episodes that still has episodes remaining.  Leaders are skipped
+    #     naturally — they are never the minimum.
+    #   - No RELATIVE_SPEED normalisation, no STOP_GAP, no THROTTLE_GAP.
+    #   - A slot that finds all arms at target sleeps briefly then exits.
+    #
+    # Per-arm worker instances are created once per slot (not per episode) so
+    # initialisation cost is O(POOL_SIZE), not O(n_episodes).
+    POOL_SIZE = max(1, workers_per_experiment)
 
-    def _spawn_worker(s: dict) -> threading.Thread:
-        w_idx = arm_worker_counters[s["name"]]
-        arm_worker_counters[s["name"]] += 1
+    # Pre-create one worker instance per (slot × arm) pair so each slot always
+    # has a ready worker for whichever arm it picks.
+    # Shape: slot_workers[slot_id][arm_name] → ArmCls instance
+    slot_workers: list[dict] = []
+    for slot_id in range(POOL_SIZE):
+        slot_map: dict = {}
+        for s in arm_states:
+            w = s["ArmCls"](
+                actor       = s["actor"],
+                critic      = s["critic"],
+                run_dir     = s["arm_dir"],
+                worker_id   = f"{s['name']}_s{slot_id}",
+                update_lock = s["update_lock"],
+            )
+            if s["active_prompt"]:
+                w.update_system_prompt(s["active_prompt"])
+            slot_map[s["name"]] = w
+        slot_workers.append(slot_map)
+
+    # Lock that serialises arm selection so two slots never pick the same arm
+    # for the same episode slot.
+    _pick_lock = threading.Lock()
+
+    def _pick_arm() -> "dict | None":
+        """
+        Return the arm_state with the fewest episodes that hasn't yet hit its
+        target.  Returns None when all arms are at or past their targets.
+        Caller must hold _pick_lock.
+        """
+        eligible = [
+            s for s in arm_states
+            if s["ep_count"] < s["start_ep"] + episodes_per_arm
+        ]
+        if not eligible:
+            return None
+        return min(eligible, key=lambda s: s["ep_count"])
+
+
+    def _pool_slot(slot_id: int) -> None:
+        """
+        Pool slot thread: loop picking the lagger arm and running one episode.
+        Exits when all arms are done or stop_event is set.
+        """
+        consec_fails: dict[str, int] = {s["name"]: 0 for s in arm_states}
+
+        while not stop_event.is_set():
+            with _pick_lock:
+                s = _pick_arm()
+                if s is None:
+                    break
+                if not _claim_global_slot():
+                    break
+                my_ep      = s["ep_count"]
+                s["ep_count"] += 1
+
+            arm_ep = my_ep + 1
+            arm_name = s["name"]
+            target = s["start_ep"] + episodes_per_arm
+            w = slot_workers[slot_id][arm_name]
+
+            with s["ep_count_lock"]:
+                current_ep_count = s["ep_count"]
+            scenario, prior_session = curriculum.pick_episode(
+                arm_name=arm_name, ep_count=current_ep_count,
+            )
+
+            try:
+                summary = _run_single_episode(
+                    w=w, s=s, scenario=scenario, prior_session=prior_session,
+                    arm_ep=arm_ep, target=target, my_ep=my_ep,
+                    consec_fails=consec_fails, curriculum=curriculum,
+                    chain_info=None, slot_id=slot_id,
+                )
+            except Exception as exc:
+                log.error("Episode failed (%s s%d %s): %s — skipping",
+                          arm_name, slot_id, scenario.get("scenario_id", "?"), exc)
+                consec_fails[arm_name] = consec_fails.get(arm_name, 0) + 1
+                wait = min(5 * (2 ** min(consec_fails[arm_name] - 1, 6)), 40)
+                if consec_fails[arm_name] >= 3:
+                    log.warning("Back-off: arm=%s s%d waiting %.0fs (%d consecutive failures)",
+                                arm_name, slot_id, wait, consec_fails[arm_name])
+                if stop_event.wait(timeout=wait if consec_fails[arm_name] >= 3 else 0):
+                    break
+            else:
+                if summary:
+                    consec_fails[arm_name] = 0
+
+        log.info("Pool slot %d finished.", slot_id)
+
+    # ── Launch pool threads ───────────────────────────────────────────────────
+    threads = []
+    for slot_id in range(POOL_SIZE):
         t = threading.Thread(
-            target = _run_arm,
-            args   = (s, w_idx),
-            name   = f"{s['name']}_w{w_idx}",
-            daemon = True,
+            target=_pool_slot, args=(slot_id,),
+            name=f"pool_slot_{slot_id}", daemon=True,
         )
-        arm_thread_map[s["name"]].append(t)
         threads.append(t)
         t.start()
-        log.info("Started thread: %s", t.name)
-        return t
+        log.info("Started pool slot %d", slot_id)
 
-    for s in arm_states:
-        for _ in range(workers_per_experiment):
-            _spawn_worker(s)
-
-    n_threads = len(threads)
     log.info(
-        "Launching %d threads: %d experiment(s) × %d worker(s) each",
-        n_threads, len(arm_states), workers_per_experiment,
+        "Round-robin pool started: %d slots across %d arms (no STOP/PACE/RELATIVE_SPEED)",
+        POOL_SIZE, len(arm_states),
     )
 
-    def _rebalance_workers() -> None:
-        """
-        Stop-on-gap rebalancer — stops leader arm workers completely when the
-        normalised episode gap exceeds a hard threshold; restarts them once the
-        gap closes.  Throttling (sleep) is only used for moderate gaps.
+    # ── Internal stall detector + physio auto-restart ─────────────────────────
 
-        Uses SPEED-NORMALISED episode counts:
-          normalised_count = raw_ep_count / relative_speed
-        so slow arms (HPVOOT=0.35, oldschool=0.5) are not penalised for having
-        fewer raw episodes per hour.
-
-        Gap policy (normalised units):
-          gap < THROTTLE_GAP   → leader runs freely (sleep = 0)
-          THROTTLE_GAP ≤ gap   → leader sleeps proportionally (up to _PACE_MAX_SLEEP)
-          gap ≥ STOP_GAP       → leader workers are STOPPED entirely; lagger gets
-                                  full speed + burst workers.  Leader is restarted
-                                  once its gap falls below RESTART_GAP.
-
-        Why stop instead of throttle?
-        ─────────────────────────────
-        Throttling (sleep between episodes) only prevents the leader from starting
-        a NEW episode.  It does NOT release the Bedrock semaphore slot the leader
-        is currently holding inside an in-flight episode.  With 8 arms × 2 workers
-        each, up to 16 threads may be simultaneously holding Bedrock slots; a slow
-        arm that is "highest priority" still waits for 15 other threads to release.
-        Stopping the leader's workers entirely frees those Bedrock slots for the
-        lagger.  When the lagger catches up, leaders restart from where they left off
-        (episode target unchanged; just fewer episodes completed in the gap window).
-        """
-        THROTTLE_GAP     = 20.0    # normalised gap before any throttling
-        STOP_GAP         = 60.0    # normalised gap above which leader is stopped
-        RESTART_GAP      = 30.0    # leader restarts once its gap drops below this
-        _PACE_MAX_SLEEP  = 30.0    # max sleep (s) in the throttle zone
-        _PACE_GAP_PER_S  = 5.0     # 1 second of sleep per 5 normalised-ep gap
-        MAX_WORKERS      = 2       # max workers per lagger arm (1 = no burst spawning; 16 total across 2 runs)
-        sleep_secs       = 15.0    # rebalance check interval (s)
-
-        def _live(s: dict) -> int:
-            return sum(1 for t in arm_thread_map[s["name"]] if t.is_alive())
-
-        def _normalised(s: dict) -> float:
-            speed = max(0.1, s.get("relative_speed", 1.0))
-            return counts[s["name"]] / speed
-
-        while not stop_event.wait(timeout=sleep_secs):
-            counts = {s["name"]: s["ep_count"] for s in arm_states}
-            live   = {s["name"]: _live(s) for s in arm_states}
-
-            # ── Group-level minimum: ≥1 live worker per group of 8 ───────────
-            # Groups: 0=base(0-7)  1=ablation(8-15)  2=dpo(16-23)
-            # Before any stop/throttle decisions, ensure each group has at least
-            # one arm that is NOT stopped.  If all arms in a group are stopped,
-            # wake the one with the fewest episodes (the lagger within the group).
-            group_live: dict[int, list] = {0: [], 1: [], 2: []}
-            for s in arm_states:
-                g = s.get("group", 0)
-                if _live(s) > 0 and not s.get("rebalancer_stopped"):
-                    group_live.setdefault(g, []).append(s)
-
-            for grp, active in group_live.items():
-                if not active:
-                    # All arms in this group are stopped — wake the one with fewest eps
-                    grp_arms = [s for s in arm_states if s.get("group", 0) == grp]
-                    if grp_arms:
-                        wake = min(grp_arms, key=lambda s: counts[s["name"]])
-                        if wake.get("rebalancer_stopped"):
-                            log.warning(
-                                "Rebalancer: group %d fully stopped — waking lagger arm=%s",
-                                grp, wake["name"],
-                            )
-                            wake["rebalancer_stopped"] = False
-                            wake["inter_episode_sleep"] = 0.0
-                            if _live(wake) == 0:
-                                _spawn_worker(wake)
-
-            # Alert on arms that have gone fully silent (not intentionally)
-            for arm_name, n_live in live.items():
-                stopped_flag = next(
-                    (s.get("rebalancer_stopped", False)
-                     for s in arm_states if s["name"] == arm_name), False
-                )
-                if n_live == 0 and not stopped_flag:
-                    log.error(
-                        "Rebalancer: arm=%s has 0 live workers (not intentionally stopped)!",
-                        arm_name,
-                    )
-
-            if len(counts) < 2:
-                continue
-
-            # ── Rank arms by normalised count ────────────────────────────────
-            sorted_arms = sorted(arm_states, key=_normalised)
-            n           = len(sorted_arms)
-            min_norm    = _normalised(sorted_arms[0])
-            total_gap   = _normalised(sorted_arms[-1]) - min_norm
-
-            bottom_end  = max(1, n // 3)
-
-            for i, s in enumerate(sorted_arms):
-                arm_count     = counts[s["name"]]
-                norm_count    = _normalised(s)
-                gap_vs_lagger = norm_count - min_norm
-
-                # ── Gap-driven policy: applies to ALL arms above the lagger ──
-                # No tier check — every arm whose normalised gap exceeds STOP_GAP
-                # is stopped, regardless of whether it is "top third" or "middle".
-                # This prevents the scenario where 5 of 8 arms are far ahead but only
-                # 2 get stopped because only 2 are in the "top tier" by index.
-                if gap_vs_lagger >= STOP_GAP:
-                    # Hard stop: park all workers for this arm to free Bedrock slots.
-                    # Group-level guarantee (above) ensures ≥1 arm per group stays alive.
-                    if not s.get("rebalancer_stopped"):
-                        log.warning(
-                            "Rebalancer: STOP  arm=%-40s  eps=%d  norm_gap=%.1f≥%.1f  "
-                            "keeping 1 worker, parking rest",
-                            s["name"], arm_count, gap_vs_lagger, STOP_GAP,
-                        )
-                        s["rebalancer_stopped"] = True
-                    # Single surviving worker runs at max sleep (= minimum pace)
-                    s["inter_episode_sleep"] = _PACE_MAX_SLEEP
-
-                elif s.get("rebalancer_stopped"):
-                    # Gap shrank below STOP_GAP but above RESTART_GAP — don't restart yet;
-                    # the restart block below handles that when gap < RESTART_GAP.
-                    pass
-
-                elif gap_vs_lagger >= THROTTLE_GAP and i >= bottom_end:
-                    # Throttle: sleep proportionally — only for non-laggers
-                    raw_sleep = (gap_vs_lagger - THROTTLE_GAP) / _PACE_GAP_PER_S
-                    new_sleep = round(min(_PACE_MAX_SLEEP, raw_sleep), 1)
-                    if s["inter_episode_sleep"] != new_sleep:
-                        log.info(
-                            "Rebalancer: PACE  arm=%-40s  eps=%d  norm_gap=%.1f  sleep=%.1fs",
-                            s["name"], arm_count, gap_vs_lagger, new_sleep,
-                        )
-                    s["inter_episode_sleep"] = new_sleep
-
-                elif i < bottom_end:
-                    # ── LAGGER tier ───────────────────────────────────────────
-                    s["inter_episode_sleep"] = 0.0
-                    current_live = live[s["name"]]
-                    rank_from_bottom = i   # 0 = worst lagger
-                    burst = max(1, 2 - rank_from_bottom)
-                    workers_to_add = min(burst, MAX_WORKERS - current_live)
-                    for _ in range(workers_to_add):
-                        log.warning(
-                            "Rebalancer: BURST lagger arm=%-40s  eps=%d  norm_gap=%.1f  "
-                            "live=%d→%d",
-                            s["name"], arm_count, gap_vs_lagger,
-                            current_live, current_live + 1,
-                        )
-                        _spawn_worker(s)
-                        current_live += 1
-
-                else:
-                    # Gap is below THROTTLE_GAP and arm is not a lagger: run freely
-                    s["inter_episode_sleep"] = 0.0
-
-            # ── Restart stopped leaders whose gap has recovered ───────────────
-            # Recompute after the above loop (lagger burst may have changed counts
-            # slightly, but mainly we're checking the flag set in prior cycles).
-            fresh_min_norm = min(_normalised(s) for s in arm_states)
-            for s in arm_states:
-                if not s.get("rebalancer_stopped"):
-                    continue
-                gap_now = _normalised(s) - fresh_min_norm
-                if gap_now < RESTART_GAP:
-                    log.info(
-                        "Rebalancer: RESTART arm=%-40s  norm_gap=%.1f<%.1f  respawning 1 worker",
-                        s["name"], gap_now, RESTART_GAP,
-                    )
-                    s["rebalancer_stopped"] = False
-                    s["inter_episode_sleep"] = 0.0
-                    if live[s["name"]] == 0:
-                        _spawn_worker(s)   # at least one worker back
-
-            # ── Register lagger priority with the Bedrock semaphore ──────────
-            priority_map = {s["name"]: i for i, s in enumerate(sorted_arms)}
-            try:
-                _register_arm_priorities(priority_map)
-            except Exception:
-                pass
-
-            if total_gap > 0:
-                log.debug(
-                    "Rebalancer: norm_gap=%.1f  leader=%s(raw=%d,norm=%.1f)  "
-                    "lagger=%s(raw=%d,norm=%.1f)  stopped=%s",
-                    total_gap,
-                    sorted_arms[-1]["name"], counts[sorted_arms[-1]["name"]],
-                    _normalised(sorted_arms[-1]),
-                    sorted_arms[0]["name"],  counts[sorted_arms[0]["name"]],
-                    _normalised(sorted_arms[0]),
-                    [s["name"] for s in arm_states if s.get("rebalancer_stopped")],
-                )
-
-    rebalancer = threading.Thread(
-        target=_rebalance_workers, name="rebalancer", daemon=True
-    )
-    rebalancer.start()
-    log.info("Rebalancer thread started (checks every ~30 s — burst mode at gap>500, throttle at gap>200)")
 
     # ── Internal stall detector + physio auto-restart ─────────────────────────
     # Runs every 5 minutes.  If no arm has completed a new episode in
@@ -1452,8 +1217,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--patient-mode",     default="llm", choices=["llm", "scripted"], help="Patient generation mode")
     p.add_argument("--arms",             type=int, nargs="+", default=[1, 2, 3], choices=list(range(1, 25)),
                    help="Which experiments to run by number (1=Exp0/Oldschool … 8=Exp7/HPVOOT-CoT)")
-    p.add_argument("--workers",          type=int, default=1,
-                   help="Parallel worker threads per experiment at startup (default 1; rebalancer may burst-spawn up to MAX_WORKERS=2 for laggers)")
+    p.add_argument("--workers",          type=int, default=8,
+                   help="Pool size: number of shared worker slots across all experiments (default 8). "
+                        "All slots share Bedrock quota; round-robin picks the lagger arm each time. "
+                        "8 is safe for Scout on us-east-1; raise carefully to avoid quota triggers.")
     p.add_argument("--total-episodes",   type=int, default=None,
                    help="Hard cap: stop ALL workers once this many episodes have been completed globally (across all experiments). "
                         "Use for data-analysis checkpoints without modifying --episodes.")
