@@ -1,0 +1,79 @@
+{
+  "circle_id": "js_conflicting_reports_no_sensor",
+  "last_seen": {
+    "companion": 1781266203.2639465
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781266203.2639465,
+      "session_history": [
+        {
+          "session_id": "48950547-da31-4185-9314-8009bbc0cbda",
+          "timestamp": 1781248557.7182765,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "b1dcf99a-295c-4995-8112-88e7bdb216fe",
+          "timestamp": 1781249462.69078,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "3490ad5d-1f33-41ae-8ac2-fd6d7b64c623",
+          "timestamp": 1781249614.425482,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "a2ee91e4-4e6c-497a-bde1-795b3e01b992",
+          "timestamp": 1781250146.560705,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "bc1355df-4879-4956-ab88-a20161ddcaa7",
+          "timestamp": 1781253016.5397768,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "c21b557b-1216-4dcb-ab68-e85fa8a1dffe",
+          "timestamp": 1781266203.2639465,
+          "goal_achieved": false,
+          "trust_delta": 5.75,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781248388.753425,
+      "session_history": []
+    }
+  }
+}

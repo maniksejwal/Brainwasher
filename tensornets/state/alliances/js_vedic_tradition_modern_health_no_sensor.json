@@ -1,0 +1,72 @@
+{
+  "circle_id": "js_vedic_tradition_modern_health_no_sensor",
+  "last_seen": {
+    "companion": 1781264168.6121333
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781264168.6121333,
+      "session_history": [
+        {
+          "session_id": "9ddbf7ca-e0b1-40e3-855a-86949770fc26",
+          "timestamp": 1781250709.6267288,
+          "goal_achieved": false,
+          "trust_delta": 4.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "a16410a4-d077-4447-a5d6-dd950b2e1c95",
+          "timestamp": 1781251086.0582402,
+          "goal_achieved": false,
+          "trust_delta": 4.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "a3d43b99-29a0-407c-a40b-7e7c36826c75",
+          "timestamp": 1781252033.5842757,
+          "goal_achieved": false,
+          "trust_delta": 4.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "da863091-12b7-4045-8bbf-f32c30bacf9f",
+          "timestamp": 1781253364.7383194,
+          "goal_achieved": false,
+          "trust_delta": 4.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "5e1bea2b-82c2-4479-a9ff-84aaee2cf25f",
+          "timestamp": 1781264168.6121333,
+          "goal_achieved": false,
+          "trust_delta": 4.5,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781250569.3456447,
+      "session_history": []
+    }
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "circle_id": "buyer_seller_price_negotiation_no_sensor",
+  "last_seen": {
+    "companion": 1781271996.9525301
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 3,
+      "last_outcome": "positive",
+      "last_updated": 1781271996.9525301,
+      "session_history": [
+        {
+          "session_id": "5ee9f6e2-5340-4431-8a67-9b2741287c55",
+          "timestamp": 1781250734.2159832,
+          "goal_achieved": true,
+          "trust_delta": 7.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "9acdef4f-6c82-479f-82ca-8e40776fa9c1",
+          "timestamp": 1781251149.1543694,
+          "goal_achieved": true,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "73a84297-9cb6-46a9-81a2-f91a7377eb03",
+          "timestamp": 1781252444.659459,
+          "goal_achieved": true,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "98101a3d-95d8-4102-a1f6-44f29d1982d1",
+          "timestamp": 1781268587.5231044,
+          "goal_achieved": true,
+          "trust_delta": 7.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "d8a5f737-a945-4be6-b988-7c928b25de20",
+          "timestamp": 1781269891.9754717,
+          "goal_achieved": true,
+          "trust_delta": 7.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "a08fcc1d-33a2-4769-8a85-d35dc160170c",
+          "timestamp": 1781271996.9525301,
+          "goal_achieved": true,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781250513.7338603,
+      "session_history": []
+    }
+  }
+}

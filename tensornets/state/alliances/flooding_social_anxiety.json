@@ -1,0 +1,72 @@
+{
+  "circle_id": "flooding_social_anxiety",
+  "last_seen": {
+    "companion": 1781271248.8131623
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 1,
+      "last_outcome": "positive",
+      "last_updated": 1781271248.8131623,
+      "session_history": [
+        {
+          "session_id": "e0524548-348d-4dc4-a517-d05bebfb1b9b",
+          "timestamp": 1781248837.1754909,
+          "goal_achieved": false,
+          "trust_delta": 3.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "acbf5188-c167-420c-b49b-cbc5be73d8dd",
+          "timestamp": 1781251648.5570428,
+          "goal_achieved": false,
+          "trust_delta": 8.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "a50b7c94-79e4-4faf-9d4a-9748271be80c",
+          "timestamp": 1781254127.3786151,
+          "goal_achieved": false,
+          "trust_delta": 3.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "53c8efe8-d206-4a14-9831-5c3787070820",
+          "timestamp": 1781256762.5164587,
+          "goal_achieved": false,
+          "trust_delta": 3.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "1d1764be-476c-4c2b-9b6e-088103202af9",
+          "timestamp": 1781271248.8131623,
+          "goal_achieved": false,
+          "trust_delta": 7.75,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781248706.450876,
+      "session_history": []
+    }
+  }
+}

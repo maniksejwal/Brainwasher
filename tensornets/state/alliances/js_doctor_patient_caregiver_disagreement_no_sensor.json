@@ -1,0 +1,51 @@
+{
+  "circle_id": "js_doctor_patient_caregiver_disagreement_no_sensor",
+  "last_seen": {
+    "companion": 1781252588.3041272
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781252588.3041272,
+      "session_history": [
+        {
+          "session_id": "30cf49b2-ade4-4977-8687-82f940946e7f",
+          "timestamp": 1781252174.1725864,
+          "goal_achieved": false,
+          "trust_delta": 9.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "3faa2d5d-5b7b-47c5-b0c6-b82912767e2a",
+          "timestamp": 1781252588.3041272,
+          "goal_achieved": false,
+          "trust_delta": 9.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781251960.6467872,
+      "session_history": []
+    }
+  }
+}

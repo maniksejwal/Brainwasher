@@ -87,8 +87,7 @@ const EXP_META = {
     inertial_physio_mps_mcts:                     { label: 'Exp 4 \u2014 Inertial PhysioMPS-MCTS',        shortLabel: 'Exp 4',  color: '#9C27B0', bg: 'rgba(156,39,176,0.18)',   group: 'base'      },
     inertial_physio_llm_cot_mcts:                 { label: 'Exp 5 \u2014 Inertial PhysioLLM CoT',         shortLabel: 'Exp 5',  color: '#00897B', bg: 'rgba(0,137,123,0.18)',    group: 'base'      },
     inertial_hpvoot_physio_mps_mcts:              { label: 'Exp 6 \u2014 Inertial HPVOOT MPS',            shortLabel: 'Exp 6',  color: '#E91E8C', bg: 'rgba(233,30,140,0.18)',   group: 'base'      },
-    inertial_hpvoot_physio_llm_cot_mcts:          { label: 'Exp 7 \u2014 Inertial HPVOOT CoT',            shortLabel: 'Exp 7',  color: '#FF9800', bg: 'rgba(255,152,0,0.18)',    group: 'base'      },
-    // ── Safety ablations (Exp 0a–7a) ────────────────────────────────────────
+    inertial_hpvoot_physio_llm_cot_mcts:          { label: 'Exp 7 \u2014 Inertial HPVOOT CoT',            shortLabel: 'Exp 7',  color: '#FF9800', bg: 'rgba(255,152,0,0.18)',    group: 'base'      },    // ── Safety ablations (Exp 0a–7a) ────────────────────────────────────────
     // Dashed / muted tones: same hue family as parent, lighter saturation
     oldschool_no_privacy:                         { label: 'Exp 0a \u2014 Oldschool (no privacy)',         shortLabel: 'Exp 0a', color: '#81C784', bg: 'rgba(129,199,132,0.14)', group: 'ablation'  },
     physio_llm_no_gate:                           { label: 'Exp 1a \u2014 PhysioLLM (no gate)',            shortLabel: 'Exp 1a', color: '#EF9A9A', bg: 'rgba(239,154,154,0.14)', group: 'ablation'  },
@@ -96,8 +95,8 @@ const EXP_META = {
     physio_mps_mcts_no_gate:                      { label: 'Exp 3a \u2014 PhysioMPS-MCTS (no gate)',      shortLabel: 'Exp 3a', color: '#90CAF9', bg: 'rgba(144,202,249,0.14)', group: 'ablation'  },
     inertial_physio_mps_mcts_no_gate:             { label: 'Exp 4a \u2014 Inertial MPS-MCTS (no gate)',   shortLabel: 'Exp 4a', color: '#CE93D8', bg: 'rgba(206,147,216,0.14)', group: 'ablation'  },
     inertial_physio_llm_cot_mcts_no_gate:         { label: 'Exp 5a \u2014 Inertial CoT (no gate)',        shortLabel: 'Exp 5a', color: '#80CBC4', bg: 'rgba(128,203,196,0.14)', group: 'ablation'  },
-    inertial_hpvoot_physio_mps_mcts_no_gate:      { label: 'Exp 6a \u2014 HPVOOT MPS (no gate)',         shortLabel: 'Exp 6a', color: '#F48FB1', bg: 'rgba(244,143,177,0.14)', group: 'ablation'  },
-    inertial_hpvoot_physio_llm_cot_mcts_no_gate:  { label: 'Exp 7a \u2014 HPVOOT CoT (no gate)',         shortLabel: 'Exp 7a', color: '#FFCC80', bg: 'rgba(255,204,128,0.14)', group: 'ablation'  },
+    inertial_hpvoot_physio_mps_mcts_no_gate:      { label: 'Exp 6a \u2014 Inertial HPVOOT MPS (no gate)', shortLabel: 'Exp 6a', color: '#F48FB1', bg: 'rgba(244,143,177,0.14)', group: 'ablation'  },
+    inertial_hpvoot_physio_llm_cot_mcts_no_gate:  { label: 'Exp 7a \u2014 Inertial HPVOOT CoT (no gate)', shortLabel: 'Exp 7a', color: '#FFCC80', bg: 'rgba(255,204,128,0.14)', group: 'ablation'  },
     // ── DPO/RLAIF variants (Exp 0p–7p) ─────────────────────────────────────
     // Dotted / bold tones: same hue family as parent, deeper/darker
     oldschool_dpo:                                { label: 'Exp 0p \u2014 Oldschool + DPO',               shortLabel: 'Exp 0p', color: '#1B5E20', bg: 'rgba(27,94,32,0.18)',    group: 'dpo'       },
@@ -106,8 +105,8 @@ const EXP_META = {
     physio_mps_mcts_dpo:                          { label: 'Exp 3p \u2014 PhysioMPS-MCTS DPO',            shortLabel: 'Exp 3p', color: '#0D47A1', bg: 'rgba(13,71,161,0.18)',   group: 'dpo'       },
     inertial_physio_mps_mcts_dpo:                 { label: 'Exp 4p \u2014 Inertial MPS-MCTS DPO',         shortLabel: 'Exp 4p', color: '#4A148C', bg: 'rgba(74,20,140,0.18)',   group: 'dpo'       },
     inertial_physio_llm_cot_mcts_dpo:             { label: 'Exp 5p \u2014 Inertial PhysioLLM CoT DPO',    shortLabel: 'Exp 5p', color: '#004D40', bg: 'rgba(0,77,64,0.18)',     group: 'dpo'       },
-    inertial_hpvoot_physio_mps_mcts_dpo:          { label: 'Exp 6p \u2014 HPVOOT MPS DPO',               shortLabel: 'Exp 6p', color: '#880E4F', bg: 'rgba(136,14,79,0.18)',   group: 'dpo'       },
-    inertial_hpvoot_physio_llm_cot_mcts_dpo:      { label: 'Exp 7p \u2014 HPVOOT CoT DPO',               shortLabel: 'Exp 7p', color: '#E65100', bg: 'rgba(230,81,0,0.18)',    group: 'dpo'       },
+    inertial_hpvoot_physio_mps_mcts_dpo:          { label: 'Exp 6p \u2014 Inertial HPVOOT MPS DPO',      shortLabel: 'Exp 6p', color: '#880E4F', bg: 'rgba(136,14,79,0.18)',   group: 'dpo'       },
+    inertial_hpvoot_physio_llm_cot_mcts_dpo:      { label: 'Exp 7p \u2014 Inertial HPVOOT CoT DPO',      shortLabel: 'Exp 7p', color: '#E65100', bg: 'rgba(230,81,0,0.18)',    group: 'dpo'       },
 };
 const EXP_KEYS = Object.keys(EXP_META);
 
@@ -302,7 +301,7 @@ function _attachToolbar() {
     const rawCb = document.getElementById('show-raw-traces');
     if (rawCb) {
         rawCb.title = 'Show individual episode reward dots behind the Weighted Moving Average line.';
-        rawCb.addEventListener('change', () => { _state.showRawTraces = rawCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderCritFailRateChart(); _renderStressAucChart(); });
+        rawCb.addEventListener('change', () => { _state.showRawTraces = rawCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderGoalRateBucketsChart(); _renderCritFailRateChart(); _renderStressAucChart(); });
         const lbl = rawCb.closest('label') || rawCb.parentElement;
         if (lbl && !lbl.querySelector('.trace-tooltip-hint')) {
             const hint = document.createElement('span');
@@ -312,7 +311,7 @@ function _attachToolbar() {
         }
     }
     const sdCb = document.getElementById('show-sd-band');
-    if (sdCb) sdCb.addEventListener('change', () => { _state.showSD = sdCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderCritFailRateChart(); _renderStressAucChart(); });
+    if (sdCb) sdCb.addEventListener('change', () => { _state.showSD = sdCb.checked; _renderLearningCurves(); _renderGoalRateChart(); _renderGoalRateBucketsChart(); _renderCritFailRateChart(); _renderStressAucChart(); });
     const critCb = document.getElementById('show-crit-fail');
     if (critCb) critCb.addEventListener('change', () => { _state.showCritFail = critCb.checked; _renderLearningCurves(); });
     const durSel = document.getElementById('duration-filter');
@@ -328,7 +327,7 @@ function _attachToolbar() {
         });
         wmaSlider.addEventListener('change', async () => {
             await _fetchTimeline();
-            _renderLearningCurves(); _renderGoalRateChart(); _renderCritFailRateChart(); _renderStressAucChart(); _renderRewardStatsTable();
+            _renderLearningCurves(); _renderGoalRateChart(); _renderGoalRateBucketsChart(); _renderCritFailRateChart(); _renderStressAucChart(); _renderRewardStatsTable();
         });
     }
 
@@ -338,20 +337,30 @@ function _attachToolbar() {
             if (_state.activeExperiments.has(exp)) _state.activeExperiments.delete(exp);
             else _state.activeExperiments.add(exp);
             btn.classList.toggle('inactive', !_state.activeExperiments.has(exp));
-            _renderLearningCurves(); _renderGoalRateChart(); _renderCritFailRateChart(); _renderStressAucChart();
-            _renderMetricBars(); _renderCritFailTable(); _renderPhysioScatter();
+            _renderLearningCurves(); _renderGoalRateChart(); _renderGoalRateBucketsChart(); _renderCritFailRateChart(); _renderStressAucChart();
+            _renderMetricBars(); _renderCritFailTable(); _renderPhysioScatter(); _renderRecentStatsTable();
         });
     });
 
-    // ── Group show/hide buttons: toggle the row of per-arm toggle buttons ────
+    // ── Group show/hide buttons: toggle all arms in this group on/off ────────
     ['base', 'ablation', 'dpo'].forEach(group => {
         const btn = document.getElementById(`group-toggle-${group}`);
-        const row = document.querySelector(`[data-exp-group="${group}"]`);
-        if (!btn || !row) return;
+        if (!btn) return;
         btn.addEventListener('click', () => {
-            const nowVisible = row.style.display !== 'none' && row.style.display !== '';
-            row.style.display = nowVisible ? 'none' : 'flex';
-            btn.classList.toggle('inactive', nowVisible);
+            const groupArms = Object.entries(EXP_META)
+                .filter(([, m]) => m.group === group)
+                .map(([k]) => k);
+            // If ALL group arms are active → deactivate all; otherwise activate all
+            const allOn = groupArms.every(a => _state.activeExperiments.has(a));
+            groupArms.forEach(a => {
+                if (allOn) _state.activeExperiments.delete(a);
+                else       _state.activeExperiments.add(a);
+                const armBtn = document.querySelector(`[data-exp-toggle="${a}"]`);
+                if (armBtn) armBtn.classList.toggle('inactive', allOn);
+            });
+            btn.classList.toggle('inactive', allOn);
+            _renderLearningCurves(); _renderGoalRateChart(); _renderGoalRateBucketsChart(); _renderCritFailRateChart();
+            _renderStressAucChart(); _renderMetricBars(); _renderCritFailTable(); _renderPhysioScatter(); _renderRecentStatsTable();
         });
     });
 }
@@ -363,6 +372,7 @@ function _renderAll() {
     _renderRecentStatsTable();
     _renderLearningCurves();
     _renderGoalRateChart();
+    _renderGoalRateBucketsChart();
     _renderCritFailRateChart();
     _renderStressAucChart();
 
@@ -452,19 +462,19 @@ function _resetLazy() {
 // Wheel zoom requires Ctrl/Cmd held (standard UX: scroll = page, Ctrl+scroll = zoom)
 // so normal page scrolling is never blocked.
 // Pinch (touch) zoom is always enabled without modifier.
+// Mode 'xy' enables both axes; x-only mode can be restored per chart if needed.
 const _ZOOM_PLUGIN = {
     zoom: {
         wheel:  { enabled: true, modifierKey: 'ctrl', speed: 0.1 },
         pinch:  { enabled: true },
-        mode:   'x',
+        mode:   'xy',
     },
     pan: {
         enabled: true,
-        mode:    'x',
-        // Only pan when the user holds the mouse button; free scroll otherwise.
+        mode:    'xy',
         modifierKey: null,
     },
-    limits: { x: { min: 'original', max: 'original' } },
+    limits: { x: { min: 'original', max: 'original' }, y: { min: 'original', max: 'original' } },
 };
 
 // Shared options block for every line chart in the dashboard.
@@ -598,18 +608,6 @@ function _lineTooltipCallbacks(valueFormat = 'decimal', withFooter = false) {
 }
 
 /**
- * Build a Chart.js `external` tooltip renderer that produces a fully styled
- * HTML tooltip showing ALL active experiments — including those with no data
- * at the hovered x — with correct color swatches for every row.
- *
- * Drop-in replacement for the `tooltip.callbacks` approach.  To use, pass
- *   tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip(valueFormat) }
- * in the chart options (omit `callbacks` entirely).
- *
- * @param {string} [valueFormat='decimal'] - 'decimal' or 'percent'
- * @param {boolean} [withFooter=false]     - append per-episode metadata block
- */
-/**
  * Build a styled external tooltip for bar charts (categorical x-axis).
  * Shows arm name, value, and optional n-count with color swatch.
  */
@@ -666,109 +664,7 @@ function _buildBarExternalTooltip(valueFormat = 'decimal') {
 }
 
 
-function _buildExternalTooltip(valueFormat = 'decimal', withFooter = false) {
-    return function externalTooltip({ chart, tooltip }) {
-        // Get or create the HTML tooltip element
-        let el = chart.canvas.parentNode.querySelector('.cj-ext-tooltip');
-        if (!el) {
-            el = document.createElement('div');
-            el.className = 'cj-ext-tooltip';
-            el.style.cssText = [
-                'position:absolute', 'pointer-events:none', 'z-index:999',
-                'background:rgba(20,20,30,0.92)', 'border:1px solid rgba(255,255,255,0.15)',
-                'border-radius:6px', 'padding:8px 12px', 'font-size:11px',
-                'color:#e8e8e8', 'line-height:1.6', 'min-width:220px',
-                'max-width:340px', 'box-shadow:0 4px 16px rgba(0,0,0,0.5)',
-                'white-space:nowrap',
-            ].join(';');
-            chart.canvas.parentNode.style.position = 'relative';
-            chart.canvas.parentNode.appendChild(el);
-        }
 
-        if (tooltip.opacity === 0) { el.style.opacity = '0'; return; }
-
-        // Build dataset lookup keyed by arm: value + row reference
-        const armInfo = {};
-        for (const item of (tooltip.dataPoints || [])) {
-            if (item.dataset.label?.startsWith('_')) continue;
-            const arm = item.dataset._arm;
-            if (!arm) continue;
-            const epNum = Math.round(item.parsed.x);
-            const row   = item.dataset._rows?.[epNum - 1] ?? null;
-            armInfo[arm] = { y: item.parsed.y, epNum, row };
-        }
-
-        // Title: episode index (same per-arm meaning now, no offsets)
-        const titleX = tooltip.dataPoints?.find(p => !p.dataset.label?.startsWith('_'))?.parsed?.x ?? '';
-
-        let html = `<div style="font-weight:700;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:4px">
-            Episode ${Math.round(titleX)}</div>`;
-
-        // One row per active experiment — in EXP_META order
-        for (const [arm, meta] of Object.entries(EXP_META)) {
-            if (!_state.activeExperiments.has(arm)) continue;
-            const info   = armInfo[arm];
-            const yVal   = info?.y;
-            const epNum  = info?.epNum;
-            const row    = info?.row;
-            const epStr  = epNum > 0 ? `ep ${epNum}` : '—';
-            const valStr = (yVal == null)
-                ? '<span style="opacity:0.45">—</span>'
-                : valueFormat === 'percent'
-                    ? `<b>${(yVal * 100).toFixed(1)}%</b>`
-                    : `<b>${yVal.toFixed(3)}</b>`;
-            const dimmed = (yVal == null) ? 'opacity:0.55;' : '';
-            html += `<div style="display:flex;align-items:center;gap:6px;${dimmed}">
-                <span style="display:inline-block;width:10px;height:10px;border-radius:2px;
-                    background:${meta.color};flex-shrink:0"></span>
-                <span style="flex:1">${meta.shortLabel}</span>
-                <span style="color:${meta.color};font-family:monospace">${valStr}</span>
-                <span style="opacity:0.55;font-size:10px">(${epStr})</span>
-            </div>`;
-        }
-
-        // Footer: per-episode metadata for the hovered arm (learning curves / any chart with _rows)
-        if (withFooter) {
-            const item = tooltip.dataPoints?.find(p => !p.dataset.label?.startsWith('_') && p.dataset._rows);
-            if (item) {
-                const epNum = Math.round(item.parsed.x);
-                const d     = item.dataset._rows?.[epNum - 1];
-                const arm   = item.dataset._arm;
-                if (d) {
-                    const runTag  = d.run_label?.replace(/^run_0*/, 'R') ?? '?';
-                        const goalTag = d.goal_achieved ? '✓ GOAL' : (d.goal_achieved === 0 ? '✗ miss' : '—');
-                    html += `<div style="margin-top:6px;padding-top:4px;
-                        border-top:1px solid rgba(255,255,255,0.15);font-size:10px;opacity:0.8">
-                        <div><b>${EXP_META[arm]?.label ?? arm}</b></div>
-                        <div>Run: ${runTag} | Ep: ${epNum}</div>
-                        <div>Scenario: ${d.scenario_id?.replace(/^js_/, '') ?? '?'}</div>
-                        <div>Turns: ${d.turn_count ?? '?'} | R/turn: ${d.reward_per_turn?.toFixed(3) ?? '?'}</div>
-                        <div>Cumul R: ${d.cumulative_reward?.toFixed(2) ?? '?'} | Stress AUC: ${d.stress_auc?.toFixed(3) ?? '?'}</div>
-                        <div>${goalTag}</div>
-                    </div>`;
-                }
-            }
-        }
-
-        el.innerHTML = html;
-        el.style.opacity = '1';
-
-        // Position: follow cursor, avoid overflow
-        const canvasRect = chart.canvas.getBoundingClientRect();
-        const parentRect = chart.canvas.parentNode.getBoundingClientRect();
-        const cx = tooltip.caretX;
-        const cy = tooltip.caretY;
-        const elW = el.offsetWidth || 260;
-        const elH = el.offsetHeight || 160;
-        let left = cx + 12;
-        let top  = cy - elH / 2;
-        if (left + elW > canvasRect.width) left = cx - elW - 12;
-        if (top < 0) top = 4;
-        if (top + elH > canvasRect.height) top = canvasRect.height - elH - 4;
-        el.style.left = left + 'px';
-        el.style.top  = top  + 'px';
-    };
-}
 
 // Restart annotations — episode-index axis
 // Only two kinds of markers are shown:
@@ -930,18 +826,18 @@ function _renderSimOverview() {
 
 // -- Reward Stats Table -------------------------------------------------------
 function _renderRewardStatsTable() {
-    // Always use last-100 window — full-history mean is invalid once training
-    // process or reward function changes mid-run.
-    _renderStatsTableInto('reward-stats-table', 100);
+    // All-time: no episode window cap — show every recorded episode.
+    _renderStatsTableInto('reward-stats-table', null);
 }
 
 /**
  * Render the "last N episodes" stats table.
  * N is read from the #recent-stats-n input (default 100).
+ * Respects activeExperiments filter and renders immediately on load.
  */
 function _renderRecentStatsTable() {
     const n = parseInt(document.getElementById('recent-stats-n')?.value || '100', 10) || 100;
-    _renderStatsTableInto('recent-stats-table', n);
+    _renderStatsTableInto('recent-stats-table', n, { compare500: true, filterActive: true });
 }
 
 /**
@@ -949,8 +845,11 @@ function _renderRecentStatsTable() {
  *
  * @param {string} targetId  - DOM element id to write into
  * @param {number|null} lastN - if non-null, only use the last N episodes per arm
+ * @param {object} opts
+ *   opts.compare500    {bool}  - add a Last-500 goal% column for comparison
+ *   opts.filterActive  {bool}  - skip arms not in activeExperiments
  */
-function _renderStatsTableInto(targetId, lastN) {
+function _renderStatsTableInto(targetId, lastN, opts = {}) {
     const el = document.getElementById(targetId);
     // Use the full stats timeline (has cumulative_reward, stress_auc, etc.)
     // If not yet loaded, kick off a fetch and re-render when it arrives.
@@ -958,7 +857,7 @@ function _renderStatsTableInto(targetId, lastN) {
         if (!_state.statsTimelineData) {
             _state.statsTimelineData = [];   // prevent duplicate fetches
             _fetchTimelineForStats().then(() => {
-                _renderStatsTableInto(targetId, lastN);
+                _renderStatsTableInto(targetId, lastN, opts);
             });
         }
         if (el) el.innerHTML = '<p style="font-size:12px;color:var(--gray-400);padding:8px;">Loading…</p>';
@@ -966,44 +865,72 @@ function _renderStatsTableInto(targetId, lastN) {
     }
     if (!el) return;
 
+    const { compare500 = false, filterActive = false } = opts;
     const allRows = _filterByDuration(_state.statsTimelineData) ?? [];
 
-    // Show all arms that have any data — not limited to activeExperiments
-    const stats = EXP_KEYS.map(arm => {
-        let ep = allRows.filter(r => r.arm === arm);
-        if (!ep.length) return null;
-        // Slice to the last N if requested (most recent = end of sorted array)
-        if (lastN != null && ep.length > lastN) ep = ep.slice(ep.length - lastN);
+    const stats = EXP_KEYS
+        .filter(arm => !filterActive || _state.activeExperiments.has(arm))
+        .map(arm => {
+            let ep = allRows.filter(r => r.arm === arm);
+            if (!ep.length) return null;
+            const totalAvail = ep.length;
+            // Slice to the last N if requested (most recent = end of sorted array)
+            if (lastN != null && ep.length > lastN) ep = ep.slice(ep.length - lastN);
 
-        const vals = ep.map(r => r.cumulative_reward).filter(v => v != null);
-        if (!vals.length) return null;
-        const mean    = vals.reduce((a, b) => a + b, 0) / vals.length;
-        const sd      = Math.sqrt(vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length);
-        const goalPct = (ep.filter(r => r.goal_achieved).length / ep.length * 100).toFixed(1);
-        const critFailPct = (ep.filter(r => r.critical_failure === 1 || r.critical_failure === true).length / ep.length * 100).toFixed(1);
-        const stressVals  = ep.map(r => r.stress_auc).filter(v => v != null);
-        const stressMean  = stressVals.length
-            ? (stressVals.reduce((a, b) => a + b, 0) / stressVals.length).toFixed(3) : '—';
-        return { arm, meta: EXP_META[arm], n: vals.length, totalAvail: allRows.filter(r => r.arm === arm).length,
-                 min: Math.min(...vals).toFixed(2), max: Math.max(...vals).toFixed(2),
-                 mean: mean.toFixed(2), sd: sd.toFixed(2), goalPct, critFailPct, stressMean };
-    }).filter(Boolean);
+            const vals = ep.map(r => r.cumulative_reward).filter(v => v != null);
+            if (!vals.length) return null;
+            const mean    = vals.reduce((a, b) => a + b, 0) / vals.length;
+            const sd      = Math.sqrt(vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length);
+            const goalPct = (ep.filter(r => r.goal_achieved).length / ep.length * 100).toFixed(1);
+            const critFailPct = ep.some(r => r.critical_failure != null)
+                ? (ep.filter(r => r.critical_failure === 1 || r.critical_failure === true).length / ep.length * 100).toFixed(1)
+                : '—';
+            const stressVals  = ep.map(r => r.stress_auc).filter(v => v != null);
+            const stressMean  = stressVals.length
+                ? (stressVals.reduce((a, b) => a + b, 0) / stressVals.length).toFixed(3) : '—';
 
-    const nLabel = lastN != null ? `(last&nbsp;${lastN})` : '';
+            // Last-500 goal% for comparison column
+            let goal500 = null;
+            if (compare500) {
+                const ep500 = totalAvail > 500
+                    ? allRows.filter(r => r.arm === arm).slice(-500)
+                    : allRows.filter(r => r.arm === arm);
+                if (ep500.length) goal500 = (ep500.filter(r => r.goal_achieved).length / ep500.length * 100).toFixed(1);
+            }
+
+            return { arm, meta: EXP_META[arm], n: vals.length, totalAvail,
+                     min: Math.min(...vals).toFixed(2), max: Math.max(...vals).toFixed(2),
+                     mean: mean.toFixed(2), sd: sd.toFixed(2), goalPct, critFailPct, stressMean, goal500 };
+        }).filter(Boolean);
+
+    const nLabel = lastN != null ? `last&nbsp;${lastN}` : 'All';
+    const goal500Header = compare500
+        ? `<th style="padding:6px 10px;color:var(--gray-500);" title="Goal rate across last 500 episodes for comparison">Goal % (500)</th>` : '';
+
     el.innerHTML = `<table style="border-collapse:collapse;width:100%;font-size:12px;">
         <thead><tr style="background:var(--gray-50);border-bottom:1px solid var(--gray-200);">
             <th style="text-align:left;padding:6px 10px;">Experiment</th>
-            <th style="padding:6px 10px;" title="Episodes included in this window">N ${nLabel}</th>
+            <th style="padding:6px 10px;" title="Episodes in this window">N (${nLabel})</th>
             <th style="padding:6px 10px;">Min</th>
             <th style="padding:6px 10px;">Max</th>
             <th style="padding:6px 10px;">Mean &plusmn; SD</th>
-            <th style="padding:6px 10px;">Goal %</th>
+            <th style="padding:6px 10px;font-weight:700;">Goal %</th>
+            ${goal500Header}
             <th style="padding:6px 10px;" title="Episodes where the scorer flagged a critical failure (harmful/unsafe turn)">Crit Fail %</th>
             <th style="padding:6px 10px;" title="Mean calmness AUC: (1−stress). Higher is calmer.">Stress AUC ↑</th>
         </tr></thead>
         <tbody>${stats.map(s => {
             const sliced = lastN != null && s.n < s.totalAvail;
-                const failColor = parseFloat(s.critFailPct) > 5 ? 'color:#d32f2f;font-weight:600;' : '';
+            const failColor = parseFloat(s.critFailPct) > 5 ? 'color:#d32f2f;font-weight:600;' : '';
+            // Highlight goal% improvement vs 500-ep baseline
+            let goalDelta = '';
+            if (s.goal500 != null) {
+                const diff = parseFloat(s.goalPct) - parseFloat(s.goal500);
+                if (diff > 1)       goalDelta = `<span style="color:#2e7d32;font-size:10px;"> ▲${diff.toFixed(1)}</span>`;
+                else if (diff < -1) goalDelta = `<span style="color:#c62828;font-size:10px;"> ▼${Math.abs(diff).toFixed(1)}</span>`;
+            }
+            const goal500Cell = compare500
+                ? `<td style="text-align:center;padding:6px 10px;color:var(--gray-500);">${s.goal500 != null ? s.goal500 + '%' : '—'}</td>` : '';
             return `<tr style="border-bottom:1px solid var(--gray-100);">
                 <td style="padding:6px 10px;">
                     <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.meta.color};margin-right:6px;"></span>
@@ -1015,8 +942,9 @@ function _renderStatsTableInto(targetId, lastN) {
                 <td style="text-align:center;padding:6px 10px;">${s.min}</td>
                 <td style="text-align:center;padding:6px 10px;">${s.max}</td>
                 <td style="text-align:center;padding:6px 10px;">${s.mean} &plusmn; ${s.sd}</td>
-                <td style="text-align:center;padding:6px 10px;">${s.goalPct}%</td>
-                <td style="text-align:center;padding:6px 10px;${failColor}">${s.critFailPct}%</td>
+                <td style="text-align:center;padding:6px 10px;font-weight:600;">${s.goalPct}%${goalDelta}</td>
+                ${goal500Cell}
+                <td style="text-align:center;padding:6px 10px;${failColor}">${s.critFailPct === '—' ? '—' : s.critFailPct + '%'}</td>
                 <td style="text-align:center;padding:6px 10px;">${s.stressMean}</td>
             </tr>`;
         }).join('')}</tbody>
@@ -1060,7 +988,7 @@ function _renderLearningCurves() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal', true) },
+                tooltip: { mode: 'index', intersect: false },
             },
         },
     });
@@ -1086,11 +1014,110 @@ function _renderGoalRateChart() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('percent') },
+                tooltip: { mode: 'index', intersect: false },
             },
         },
     });
     _renderLagBadges('goal-rate-lag');
+}
+
+// -- Goal Rate Bucket Chart (100-ep windows, recency ladder) ------------------
+function _renderGoalRateBucketsChart() {
+    if (typeof Chart === 'undefined') return;
+    const canvas = _destroyChart('goal-rate-buckets-chart');
+    if (!canvas) return;
+    const allRows = _filterByDuration(_state.timelineData);
+    if (!allRows?.length) return;
+
+    const BUCKET = 100;
+
+    // Group rows by arm, keep only active arms
+    const byArm = {};
+    for (const r of allRows) {
+        if (!_state.activeExperiments.has(r.arm)) continue;
+        (byArm[r.arm] = byArm[r.arm] || []).push(r);
+    }
+
+    // Find the maximum number of full buckets across all arms
+    let maxBuckets = 0;
+    for (const rows of Object.values(byArm)) {
+        maxBuckets = Math.max(maxBuckets, Math.floor(rows.length / BUCKET));
+    }
+    if (maxBuckets === 0) return;
+
+    // Build x-axis labels: "0–100", "100–200", …  (bucket 0 = most recent)
+    const labels = Array.from({ length: maxBuckets }, (_, i) =>
+        `${i * BUCKET}–${(i + 1) * BUCKET}`
+    );
+
+    const datasets = [];
+    // Iterate EXP_META in its canonical order (0-7, 0a-7a, 0p-7p) so the legend
+    // always appears in that order regardless of DB insertion order.
+    for (const [arm, meta] of Object.entries(EXP_META)) {
+        const rows = byArm[arm];
+        if (!rows) continue;
+        // Rows arrive in ascending episode order from the DB — preserve that order
+        const sorted = [...rows];
+        const nFull = Math.floor(sorted.length / BUCKET);
+        if (nFull === 0) continue;
+
+        // Build buckets from the end (index 0 = most recent BUCKET episodes)
+        const data = Array.from({ length: maxBuckets }, (_, i) => {
+            if (i >= nFull) return null;
+            const endIdx   = sorted.length - i * BUCKET;
+            const startIdx = endIdx - BUCKET;
+            const bucket   = sorted.slice(startIdx, endIdx);
+            const goals    = bucket.filter(r => r.goal_achieved === 1 || r.goal_achieved === true).length;
+            return goals / bucket.length;
+        });
+
+        datasets.push({
+            label:           meta.label,
+            data,
+            borderColor:     meta.color,
+            backgroundColor: meta.bg,
+            borderWidth:     2,
+            pointRadius:     4,
+            pointHoverRadius: 6,
+            tension:         0.3,
+            spanGaps:        false,
+            _arm:            arm,
+        });
+    }
+
+    if (!datasets.length) return;
+
+    new Chart(canvas, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                x: {
+                    title: { display: true, text: 'Episodes before latest  →', font: { size: 11 } },
+                    ticks: { font: { size: 10 } },
+                },
+                y: {
+                    min: 0, max: 1,
+                    title: { display: true, text: 'Goal Rate', font: { size: 11 } },
+                    ticks: { callback: v => (v * 100).toFixed(0) + '%', font: { size: 10 } },
+                },
+            },
+            plugins: {
+                legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+                zoom: _ZOOM_PLUGIN,
+                tooltip: {
+                    mode: 'index', intersect: false,
+                    callbacks: {
+                        title: items => `Bucket: ${items[0]?.label ?? ''} eps before latest`,
+                        label: item => `${item.dataset.label}: ${item.parsed.y != null ? (item.parsed.y * 100).toFixed(1) + '%' : '—'}`,
+                    },
+                },
+            },
+        },
+    });
 }
 
 // -- Critical Failure Rate Chart (time-series WMA) ----------------------------
@@ -1113,7 +1140,7 @@ function _renderCritFailRateChart() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('percent') },
+                tooltip: { mode: 'index', intersect: false },
             },
         },
     });
@@ -1139,7 +1166,7 @@ function _renderStressAucChart() {
             plugins: {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 }, filter: i => !i.text.startsWith('_') } },
                 zoom: _ZOOM_PLUGIN,
-                tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal') },
+                tooltip: { mode: 'index', intersect: false },
             },
         },
     });
@@ -1806,7 +1833,7 @@ function _renderCumulativeRewardDist() {
             responsive: true,
             plugins: {
                 legend: { labels: { font: { size: 11 } } },
-                    tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal') },
+                    tooltip: { mode: 'index', intersect: false },
             },
             scales: {
                 x: { ticks: { font: { size: 10 }, maxRotation: 45 } },
@@ -1894,7 +1921,7 @@ function _renderRewardComponentCharts() {
                 parsing: false,
                 plugins: {
                     legend: { labels: { font: { size: 11 } } },
-                    tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal') },
+                    tooltip: { mode: 'index', intersect: false },
                     zoom: _ZOOM_PLUGIN,
                 },
                 scales: {
@@ -2028,7 +2055,7 @@ function _renderCostCharts() {
                     plugins: {
                         legend: { position: 'top' },
                         title: { display: true, text: 'Cost per Episode (USD)' },
-                        tooltip: { mode: 'index', intersect: false, external: _buildExternalTooltip('decimal') },
+                        tooltip: { mode: 'index', intersect: false },
                     },
                     scales: { x: { title: { display: true, text: 'Episode #' } }, y: { title: { display: true, text: 'USD' } } },
                 },

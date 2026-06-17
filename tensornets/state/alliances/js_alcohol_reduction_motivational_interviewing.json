@@ -1,0 +1,65 @@
+{
+  "circle_id": "js_alcohol_reduction_motivational_interviewing",
+  "last_seen": {
+    "companion": 1781269071.6099539
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 2,
+      "last_outcome": "positive",
+      "last_updated": 1781269071.6099539,
+      "session_history": [
+        {
+          "session_id": "7bb3b46c-94b0-4f70-8476-f8f61c65cb14",
+          "timestamp": 1781250663.4156022,
+          "goal_achieved": false,
+          "trust_delta": 9.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "ab92f869-2cd8-4e9a-b026-2a53c0f8d806",
+          "timestamp": 1781251831.2889793,
+          "goal_achieved": false,
+          "trust_delta": 9.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "0983d1ac-e428-4fe3-8076-df4e45734043",
+          "timestamp": 1781263577.6839383,
+          "goal_achieved": false,
+          "trust_delta": 9.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "243e6a2b-b76a-4fde-a52a-3e65f9c1d4c3",
+          "timestamp": 1781269071.6099539,
+          "goal_achieved": false,
+          "trust_delta": 9.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781250368.418785,
+      "session_history": []
+    }
+  }
+}

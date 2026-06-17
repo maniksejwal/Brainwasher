@@ -1,0 +1,20 @@
+{
+  "ts": "2026-06-12T06:08:21.934778+00:00",
+  "physio_ok": true,
+  "node_ok": false,
+  "stalled": false,
+  "newest_episode_age_s": 235.8,
+  "episode_counts": {
+    "arm_inertial_hpvoot_physio_llm_cot_mcts_no_gate": 20,
+    "arm_inertial_hpvoot_physio_mps_mcts_no_gate": 10,
+    "arm_inertial_physio_llm_cot_mcts_no_gate": 20,
+    "arm_inertial_physio_mps_mcts_no_gate": 25,
+    "arm_oldschool_no_privacy": 20,
+    "arm_physio_llm_cot_mcts_no_gate": 25,
+    "arm_physio_llm_no_gate": 35,
+    "arm_physio_mps_mcts_no_gate": 30
+  },
+  "training_restarts": 0,
+  "physio_reason": "HTTP 200",
+  "all_done": false
+}

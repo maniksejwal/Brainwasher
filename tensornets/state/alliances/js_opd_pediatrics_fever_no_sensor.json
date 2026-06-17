@@ -1,0 +1,79 @@
+{
+  "circle_id": "js_opd_pediatrics_fever_no_sensor",
+  "last_seen": {
+    "companion": 1781273371.9987922
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 1,
+      "last_outcome": "positive",
+      "last_updated": 1781273371.9987922,
+      "session_history": [
+        {
+          "session_id": "610113a3-b67f-4be8-97e2-6971292b5e0c",
+          "timestamp": 1781250068.885629,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "5c946537-b0d7-4505-9a8e-edcb7ddc8056",
+          "timestamp": 1781251261.8316011,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "4d529789-06e0-4dde-ad1c-407b2ca4472c",
+          "timestamp": 1781268584.8079865,
+          "goal_achieved": false,
+          "trust_delta": 5.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "08fda2a5-7af6-4fcd-9317-dea289637177",
+          "timestamp": 1781270545.3735108,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "51d73be8-53af-4cd3-bdaa-c2c89b5a9656",
+          "timestamp": 1781271301.5395062,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "c084cd4f-6cc3-4043-a6b1-a99f187db739",
+          "timestamp": 1781273371.9987922,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781249756.8555083,
+      "session_history": []
+    }
+  }
+}

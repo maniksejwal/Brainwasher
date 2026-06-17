@@ -1,0 +1,65 @@
+{
+  "circle_id": "js_caregiver_burnout_crisis_no_sensor",
+  "last_seen": {
+    "companion": 1781271927.8145595
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781271927.8145595,
+      "session_history": [
+        {
+          "session_id": "655ce94e-41c6-40ea-918a-aabf30e0ccc1",
+          "timestamp": 1781253161.9721522,
+          "goal_achieved": false,
+          "trust_delta": 7.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "c2c9066f-69e0-47bf-8162-924ea37f9d56",
+          "timestamp": 1781253525.3229375,
+          "goal_achieved": false,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "afb5dc77-14a2-450e-9434-9d1422b80c93",
+          "timestamp": 1781253988.668203,
+          "goal_achieved": false,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "b4c57fa9-d08f-4a55-ab54-f2b47ad20e0c",
+          "timestamp": 1781271927.8145595,
+          "goal_achieved": false,
+          "trust_delta": 7.75,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781253032.400013,
+      "session_history": []
+    }
+  }
+}

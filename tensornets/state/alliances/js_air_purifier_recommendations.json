@@ -1,0 +1,44 @@
+{
+  "circle_id": "js_air_purifier_recommendations",
+  "last_seen": {
+    "companion": 1781249246.616603
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781249246.616603,
+      "session_history": [
+        {
+          "session_id": "5ef1331e-aa19-4446-aba4-dda5a28a80d3",
+          "timestamp": 1781249246.616603,
+          "goal_achieved": false,
+          "trust_delta": 4.5,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781249111.077531,
+      "session_history": []
+    }
+  }
+}

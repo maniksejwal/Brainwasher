@@ -60,9 +60,23 @@ TENSORNETS_URL  = os.environ.get("TENSORNETS_URL",  "http://localhost:8765")
 
 # ── Core HTTP utility ─────────────────────────────────────────────────────────
 
+def _http_post_attempt(url: str, data: bytes, timeout: float) -> dict:
+    """Single urlopen attempt — runs in a dedicated thread so the wall-clock
+    deadline is enforced even if the OS socket read blocks indefinitely."""
+    import urllib.request as _req
+    request = _req.Request(url, data=data,
+                           headers={"Content-Type": "application/json"})
+    with _req.urlopen(request, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
 def http_post(url: str, payload: dict, timeout: float = 10.0) -> dict:
     """
     Minimal synchronous HTTP POST — no external dependencies (urllib only).
+
+    Each attempt runs inside a ``concurrent.futures`` thread so the hard
+    wall-clock deadline is guaranteed even when the OS socket's read() blocks
+    beyond the urllib timeout (observed on Windows with Bedrock long-polls).
 
     Retries once on transient failure (connection reset, timeout) with a 1.5 s
     back-off.  Raises ``ConnectionError`` after both attempts fail so callers
@@ -71,7 +85,7 @@ def http_post(url: str, payload: dict, timeout: float = 10.0) -> dict:
     Args:
         url:     Full URL including scheme and path.
         payload: Dict serialised to JSON.
-        timeout: Per-attempt timeout in seconds.
+        timeout: Hard wall-clock deadline per attempt in seconds.
 
     Returns:
         Parsed JSON response dict.
@@ -79,20 +93,28 @@ def http_post(url: str, payload: dict, timeout: float = 10.0) -> dict:
     Raises:
         ConnectionError: If both attempts fail.
     """
-    import urllib.request as _req
+    import concurrent.futures as _cf
 
     data     = json.dumps(payload).encode()
-    request  = _req.Request(url, data=data,
-                            headers={"Content-Type": "application/json"})
     last_exc: Exception | None = None
+
     for attempt in range(2):
-        try:
-            with _req.urlopen(request, timeout=timeout) as resp:
-                return json.loads(resp.read())
-        except Exception as exc:
-            last_exc = exc
-            if attempt == 0:
-                time.sleep(1.5)
+        with _cf.ThreadPoolExecutor(max_workers=1) as _ex:
+            fut = _ex.submit(_http_post_attempt, url, data, timeout)
+            try:
+                # Add 5 s grace on top of the urllib timeout so the thread
+                # has time to raise its own exception before we cancel it.
+                return fut.result(timeout=timeout + 5.0)
+            except _cf.TimeoutError as exc:
+                last_exc = TimeoutError(
+                    f"POST {url} exceeded hard deadline ({timeout + 5:.0f}s)"
+                )
+                fut.cancel()
+            except Exception as exc:
+                last_exc = exc
+        if attempt == 0:
+            time.sleep(1.5)
+
     raise ConnectionError(f"POST {url} failed: {last_exc}") from last_exc
 
 

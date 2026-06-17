@@ -1,0 +1,51 @@
+{
+  "circle_id": "js_contract_negotiation",
+  "last_seen": {
+    "companion": 1781266173.6535544
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781266173.6535544,
+      "session_history": [
+        {
+          "session_id": "2dc3f9bb-fae4-45d0-b0b2-c6663b2f73dc",
+          "timestamp": 1781250959.3217866,
+          "goal_achieved": false,
+          "trust_delta": 18.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "7529d427-2f49-4e45-b3a5-0c437a94f8e0",
+          "timestamp": 1781266173.6535544,
+          "goal_achieved": false,
+          "trust_delta": 18.75,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781250341.8566608,
+      "session_history": []
+    }
+  }
+}

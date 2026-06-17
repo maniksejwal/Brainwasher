@@ -1,0 +1,72 @@
+{
+  "circle_id": "js_opd_cardiology_initial_no_sensor",
+  "last_seen": {
+    "companion": 1781275252.6557481
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781275252.6557481,
+      "session_history": [
+        {
+          "session_id": "49852d71-31ad-425e-8c1b-ce8203fcd3b1",
+          "timestamp": 1781247731.0536528,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "46500b73-4767-4c92-8642-b39a41ff7173",
+          "timestamp": 1781250610.1651678,
+          "goal_achieved": false,
+          "trust_delta": 6.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "6f57c755-b8de-49ed-a931-e2374c85d1c2",
+          "timestamp": 1781252728.5562582,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "4d833997-9ecb-4145-9845-359d2b5c968f",
+          "timestamp": 1781269606.2627954,
+          "goal_achieved": false,
+          "trust_delta": 5.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "dbfc91b9-28f0-4cd6-8529-69a5d2495cb8",
+          "timestamp": 1781275252.6557481,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781247575.4009624,
+      "session_history": []
+    }
+  }
+}

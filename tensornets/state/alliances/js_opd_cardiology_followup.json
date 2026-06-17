@@ -1,0 +1,65 @@
+{
+  "circle_id": "js_opd_cardiology_followup",
+  "last_seen": {
+    "companion": 1781269407.9568574
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781269407.9568574,
+      "session_history": [
+        {
+          "session_id": "8caa8a25-01b2-4bac-bd05-6ff11c076bfb",
+          "timestamp": 1781253289.2344668,
+          "goal_achieved": false,
+          "trust_delta": 7.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "1f555515-5911-4304-8863-0d88d2b57f8c",
+          "timestamp": 1781253477.893454,
+          "goal_achieved": false,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "e58fe895-22b7-4a45-9297-d280300b53a4",
+          "timestamp": 1781265705.4145503,
+          "goal_achieved": false,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "62d06bbe-ba1d-4231-b26b-ad37b1d04dfa",
+          "timestamp": 1781269407.9568574,
+          "goal_achieved": false,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781253151.063868,
+      "session_history": []
+    }
+  }
+}

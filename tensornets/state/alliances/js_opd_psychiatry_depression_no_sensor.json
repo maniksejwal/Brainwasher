@@ -1,0 +1,51 @@
+{
+  "circle_id": "js_opd_psychiatry_depression_no_sensor",
+  "last_seen": {
+    "companion": 1781254085.539188
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 2,
+      "last_outcome": "positive",
+      "last_updated": 1781254085.539188,
+      "session_history": [
+        {
+          "session_id": "aa7a8db7-99b2-4cef-aaea-8054364c8680",
+          "timestamp": 1781252805.0173187,
+          "goal_achieved": true,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "98115c0a-d135-4a42-8be2-ea97a3e99395",
+          "timestamp": 1781254085.539188,
+          "goal_achieved": true,
+          "trust_delta": 7.75,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781252635.2841144,
+      "session_history": []
+    }
+  }
+}

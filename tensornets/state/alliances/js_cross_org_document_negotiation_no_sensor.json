@@ -1,0 +1,51 @@
+{
+  "circle_id": "js_cross_org_document_negotiation_no_sensor",
+  "last_seen": {
+    "companion": 1781272456.4340067
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781272456.4340067,
+      "session_history": [
+        {
+          "session_id": "6f5a48bb-13a4-41c8-a2ea-5816450a7d19",
+          "timestamp": 1781248219.4888844,
+          "goal_achieved": false,
+          "trust_delta": 18.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "330c2861-f382-42dc-b437-2185539ef944",
+          "timestamp": 1781272456.4340067,
+          "goal_achieved": false,
+          "trust_delta": 18.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781247601.487713,
+      "session_history": []
+    }
+  }
+}

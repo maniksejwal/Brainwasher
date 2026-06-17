@@ -1,0 +1,72 @@
+{
+  "circle_id": "js_elderly_cognitive_no_sensor",
+  "last_seen": {
+    "companion": 1781271533.2555618
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 3,
+      "last_outcome": "positive",
+      "last_updated": 1781271533.2555618,
+      "session_history": [
+        {
+          "session_id": "a103d2ba-3fc0-4b44-9f08-77881679f6b3",
+          "timestamp": 1781249175.8428664,
+          "goal_achieved": true,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "b9d36932-7118-478a-94d1-5cfefcb0bf79",
+          "timestamp": 1781249568.1147428,
+          "goal_achieved": true,
+          "trust_delta": 5.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "c6d6db31-1730-4c54-b666-c3546dcdd93a",
+          "timestamp": 1781253297.9339223,
+          "goal_achieved": true,
+          "trust_delta": 6.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "fe6c4a55-ce02-4cb0-9fed-4671406f4fe6",
+          "timestamp": 1781271047.664328,
+          "goal_achieved": true,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "c09ef038-d8ef-4061-9408-43d1d70c240c",
+          "timestamp": 1781271533.2555618,
+          "goal_achieved": true,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781248999.0080397,
+      "session_history": []
+    }
+  }
+}

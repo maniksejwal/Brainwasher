@@ -1,0 +1,44 @@
+{
+  "circle_id": "js_vanity_vs_health_no_sensor",
+  "last_seen": {
+    "companion": 1781248105.3260026
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 1,
+      "last_outcome": "positive",
+      "last_updated": 1781248105.3260026,
+      "session_history": [
+        {
+          "session_id": "977bd10e-5589-4b16-b039-0160e9294327",
+          "timestamp": 1781248105.3260026,
+          "goal_achieved": false,
+          "trust_delta": 8.75,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781247854.82918,
+      "session_history": []
+    }
+  }
+}

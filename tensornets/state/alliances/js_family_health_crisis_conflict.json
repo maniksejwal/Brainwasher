@@ -1,0 +1,72 @@
+{
+  "circle_id": "js_family_health_crisis_conflict",
+  "last_seen": {
+    "companion": 1781266318.9636445
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781266318.9636445,
+      "session_history": [
+        {
+          "session_id": "c39820d6-47c6-42bf-a6da-7d9e97956040",
+          "timestamp": 1781249434.283175,
+          "goal_achieved": false,
+          "trust_delta": 11.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "b01abec1-300c-47c8-a573-28213a13e7ba",
+          "timestamp": 1781249996.075504,
+          "goal_achieved": false,
+          "trust_delta": 11.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "0aa857a8-ca1c-4d4a-96ee-a9f119b39e11",
+          "timestamp": 1781251333.7705214,
+          "goal_achieved": false,
+          "trust_delta": 11.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "388cfdbc-0748-4d3b-b7a1-27512aa20c34",
+          "timestamp": 1781252849.9212534,
+          "goal_achieved": false,
+          "trust_delta": 11.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "1d52f251-9706-49fc-b8a4-9f5102cf74bf",
+          "timestamp": 1781266318.9636445,
+          "goal_achieved": false,
+          "trust_delta": 11.25,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781249067.893009,
+      "session_history": []
+    }
+  }
+}

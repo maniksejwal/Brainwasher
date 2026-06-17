@@ -85,6 +85,17 @@ _ARM_CLASSES = None   # lazy import to avoid circular deps at module load
 _TENSORNETS_URL = _nc.TENSORNETS_URL
 _NODE_URL       = _nc.NODE_URL
 
+# Default path for the historical episode count query used by the rebalancer.
+# Override with env var BENCHMARK_DB_PATH if the DB is not in the standard location.
+# Walk up: tensornets/a3c/ → tensornets(pkg)/ → tensornets(dir)/ → project root
+_DEFAULT_DB_PATH = os.path.abspath(
+    os.path.join(os.path.dirname(__file__),   # .../tensornets/a3c
+                 "..",                          # .../tensornets (package)
+                 "..",                          # .../tensornets (src dir)
+                 "..",                          # project root
+                 "data", "dbs", "care_circle_dev.db")
+)
+
 
 def _register_arm_priorities(priority_map: dict[str, int]) -> None:
     """
@@ -956,10 +967,65 @@ def train(
     # for the same episode slot.
     _pick_lock = threading.Lock()
 
+    # ── Historical-deficit-aware arm picker ───────────────────────────────────
+    # Selection weight: 90 % historical deficit (total DB episodes across ALL
+    # runs) + 10 % run-local deficit (current run ep_count).
+    # Rationale: the experiment with the least cumulative experience should be
+    # explored more, not the one that merely started this run later.
+    #
+    # _hist_totals is refreshed by a background thread every HIST_REFRESH_SECS.
+    # It maps arm_name → total DB episode count.  Protected by _hist_lock.
+    HIST_REFRESH_SECS = 120   # re-query DB every 2 minutes
+    HIST_W            = 0.9   # weight for historical deficit
+    RUN_W             = 0.1   # weight for run-local deficit
+
+    _hist_totals: dict = {s["name"]: 0 for s in arm_states}
+    _hist_lock   = threading.Lock()
+
+    def _refresh_hist_totals() -> None:
+        """Read total episode counts per arm from the SQLite DB (read-only)."""
+        db_path = os.environ.get("BENCHMARK_DB_PATH", _DEFAULT_DB_PATH)
+        db_path = os.path.abspath(db_path)
+        try:
+            uri = f"file:{db_path}?mode=ro"
+            con = __import__("sqlite3").connect(uri, uri=True, timeout=5)
+            rows = con.execute(
+                "SELECT arm, COUNT(*) FROM htn_benchmark_episodes GROUP BY arm"
+            ).fetchall()
+            con.close()
+            new_totals = {arm: cnt for arm, cnt in rows}
+            with _hist_lock:
+                _hist_totals.update(new_totals)
+            log.debug("Historical totals refreshed: %s",
+                      {k: v for k, v in sorted(new_totals.items())})
+        except Exception as exc:
+            log.warning("Could not refresh historical episode totals: %s", exc)
+
+    def _hist_refresh_loop() -> None:
+        """Background thread: refresh DB totals every HIST_REFRESH_SECS."""
+        while not stop_event.wait(timeout=HIST_REFRESH_SECS):
+            _refresh_hist_totals()
+
+    # Initial load before any episodes start
+    _refresh_hist_totals()
+    threading.Thread(target=_hist_refresh_loop, name="hist_refresh",
+                     daemon=True).start()
+    log.info("Historical-deficit rebalancer active (%.0f%% hist / %.0f%% run).",
+             HIST_W * 100, RUN_W * 100)
+
     def _pick_arm() -> "dict | None":
         """
-        Return the arm_state with the fewest episodes that hasn't yet hit its
-        target.  Returns None when all arms are at or past their targets.
+        Return the arm with the highest *experience deficit* score.
+
+        Score = HIST_W * norm_hist_deficit + RUN_W * norm_run_deficit
+
+        norm_hist_deficit  = (max_hist - arm_hist) / max(hist_range, 1)
+            — arms with fewer cumulative DB episodes across all runs score higher.
+
+        norm_run_deficit   = (max_run_ep - arm_run_ep) / max(run_range, 1)
+            — arms behind the leader within the current run score higher.
+
+        Returns None when all arms have hit their per-run target.
         Caller must hold _pick_lock.
         """
         eligible = [
@@ -968,7 +1034,27 @@ def train(
         ]
         if not eligible:
             return None
-        return min(eligible, key=lambda s: s["ep_count"])
+
+        with _hist_lock:
+            hist_snap = dict(_hist_totals)
+
+        hist_vals = [hist_snap.get(s["name"], 0) for s in eligible]
+        run_vals  = [s["ep_count"]               for s in eligible]
+
+        max_hist, min_hist = max(hist_vals), min(hist_vals)
+        max_run,  min_run  = max(run_vals),  min(run_vals)
+
+        hist_range = max(max_hist - min_hist, 1)
+        run_range  = max(max_run  - min_run,  1)
+
+        def _score(s: dict) -> float:
+            h = hist_snap.get(s["name"], 0)
+            r = s["ep_count"]
+            hist_deficit = (max_hist - h) / hist_range
+            run_deficit  = (max_run  - r) / run_range
+            return HIST_W * hist_deficit + RUN_W * run_deficit
+
+        return max(eligible, key=_score)
 
 
     def _pool_slot(slot_id: int) -> None:
@@ -1046,7 +1132,7 @@ def train(
     # STALL_MINUTES, assume the physio/MCTS server is stuck and restart it.
     # The training workers themselves recover once the server comes back online
     # (their HTTP timeouts and back-off logic kick in).
-    _STALL_MINUTES       = 25
+    _STALL_MINUTES       = 15
     _STALL_SECONDS       = _STALL_MINUTES * 60
     _PHYSIO_CHECK_SECS   = 300    # check every 5 minutes
     _PHYSIO_RESTART_COOL = 300    # at most one restart per 5 minutes
@@ -1142,8 +1228,15 @@ def train(
                 else:
                     log.warning(
                         "Stall-detector: physio appears healthy but training stalled — "
-                        "may be a Bedrock quota issue or a deadlock in worker threads"
+                        "likely Bedrock worker threads are hung.  Triggering self-restart."
                     )
+                    # Set stop_event so all pool slots drain cleanly, then
+                    # re-exec this process with the same argv to resume from
+                    # the latest checkpoint.
+                    stop_event.set()
+                    time.sleep(5)
+                    log.warning("Stall-detector: re-execing training process now")
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
             elif not any_progress:
                 log.info(
                     "Stall-detector: no progress this cycle (file_age=%.0fm) — watching",

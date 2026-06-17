@@ -346,6 +346,19 @@
                         <div id="simulation-overview-stats" style="display:flex;gap:12px;flex-wrap:wrap;"></div>
                     </div>
 
+                    <!-- Recent episodes reward stats table — shown first for quick scan -->
+                    <div style="margin-bottom:16px;" id="recent-stats-section">
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+                            <h4 style="margin:0;font-size:13px;color:var(--gray-700);">Episode Stats — Last</h4>
+                            <input id="recent-stats-n" type="number" min="10" max="2000" value="100"
+                                style="width:68px;font-size:12px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;">
+                            <span style="font-size:13px;color:var(--gray-700);">episodes per arm</span>
+                            <button id="recent-stats-apply" class="secondary" style="font-size:11px;padding:3px 9px;">Apply</button>
+                            <span style="font-size:11px;color:var(--gray-400);">Filters to most recent N per arm · respects experiment toggles above · double-click a row to highlight</span>
+                        </div>
+                        <div id="recent-stats-table" style="overflow-x:auto;"></div>
+                    </div>
+
                     <!-- Learning curves (reward WMA) -->
                     <div style="margin-bottom:16px;">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Learning Curves — Cumulative Reward (Weighted Moving Average)</h4>
@@ -364,6 +377,15 @@
                         <div id="goal-rate-lag"></div>
                     </div>
 
+                    <!-- Goal rate by 100-episode bucket (recency ladder) -->
+                    <div style="margin-bottom:16px;">
+                        <h4 style="margin:0 0 4px;font-size:13px;color:var(--gray-700);">Goal Rate — 100-Episode Buckets (most recent → oldest)</h4>
+                        <p style="font-size:11px;color:var(--gray-500);margin:0 0 8px;">Each point = mean goal rate for 100 consecutive episodes. Left = latest 100, right = further back. Arms with fewer than 100 total episodes are omitted.</p>
+                        <div style="position:relative;height:260px;">
+                            <canvas id="goal-rate-buckets-chart"></canvas>
+                        </div>
+                    </div>
+
                     <!-- Critical failure rate chart (time-series WMA) -->
                     <div style="margin-bottom:16px;">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Critical Failure Rate over Episodes (Weighted Moving Average)</h4>
@@ -378,22 +400,6 @@
                     <div style="margin-bottom:16px;" id="reward-stats-section">
                         <h4 style="margin:0 0 8px;font-size:13px;color:var(--gray-700);">Episode Reward Statistics — All Time</h4>
                         <div id="reward-stats-table" style="overflow-x:auto;"></div>
-                    </div>
-
-                    <!-- Recent episodes reward stats table -->
-                    <div style="margin-bottom:16px;" id="recent-stats-section">
-                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-                            <h4 style="margin:0;font-size:13px;color:var(--gray-700);">Episode Reward Statistics — Last</h4>
-                            <input id="recent-stats-n" type="number" min="10" max="2000" value="100"
-                                style="width:68px;font-size:12px;padding:3px 6px;border:1px solid var(--gray-300);border-radius:4px;text-align:center;">
-                            <span style="font-size:13px;color:var(--gray-700);">episodes per arm</span>
-                            <button id="recent-stats-apply" class="secondary" style="font-size:11px;padding:3px 9px;">Apply</button>
-                        </div>
-                        <p style="font-size:11px;color:var(--gray-400);margin:0 0 6px;">
-                            Filters to the most recent N completed episodes per arm, independent of the time-range filter above.
-                            Use this to track latest-version performance without legacy data inflating the averages.
-                        </p>
-                        <div id="recent-stats-table" style="overflow-x:auto;"></div>
                     </div>
 
                     <!-- Cumulative reward distribution chart -->

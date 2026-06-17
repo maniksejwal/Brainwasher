@@ -1,0 +1,72 @@
+{
+  "circle_id": "js_limited_disclosure_negotiation_no_sensor",
+  "last_seen": {
+    "companion": 1781263906.9521534
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781263906.9521534,
+      "session_history": [
+        {
+          "session_id": "00275caf-37ad-418e-be2d-cb7aef546a1d",
+          "timestamp": 1781250061.2079253,
+          "goal_achieved": false,
+          "trust_delta": 18.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "7d39782f-d013-4da9-ac8a-527af9ee6349",
+          "timestamp": 1781250801.7980037,
+          "goal_achieved": false,
+          "trust_delta": 18.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "1eecf5bc-7105-480b-8a2b-aaee858a688e",
+          "timestamp": 1781252614.2423046,
+          "goal_achieved": false,
+          "trust_delta": 18.25,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "4918ea63-b6b3-4ea6-a373-7a498795f71d",
+          "timestamp": 1781253459.715691,
+          "goal_achieved": false,
+          "trust_delta": 18.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "80118883-f7d0-4ed8-8828-9f426f50b953",
+          "timestamp": 1781263906.9521534,
+          "goal_achieved": false,
+          "trust_delta": 18.5,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781249343.9956543,
+      "session_history": []
+    }
+  }
+}

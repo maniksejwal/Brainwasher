@@ -1,0 +1,58 @@
+{
+  "circle_id": "js_opd_oncology_chemotherapy",
+  "last_seen": {
+    "companion": 1781251524.4001606
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 3,
+      "last_outcome": "positive",
+      "last_updated": 1781251524.4001606,
+      "session_history": [
+        {
+          "session_id": "bcc1ef3b-52cb-4108-a502-f1f1d1818c1d",
+          "timestamp": 1781247675.9242768,
+          "goal_achieved": true,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "b131b97d-2856-4fab-854a-6d73de49f2ca",
+          "timestamp": 1781249207.6319122,
+          "goal_achieved": true,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "1e4d95d0-b6b0-4fe8-a90e-831caeec5eaf",
+          "timestamp": 1781251524.4001606,
+          "goal_achieved": true,
+          "trust_delta": 7.5,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781247437.3417695,
+      "session_history": []
+    }
+  }
+}

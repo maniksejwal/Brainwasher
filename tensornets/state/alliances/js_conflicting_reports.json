@@ -1,0 +1,72 @@
+{
+  "circle_id": "js_conflicting_reports",
+  "last_seen": {
+    "companion": 1781262740.10134
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781262740.10134,
+      "session_history": [
+        {
+          "session_id": "0d543085-ecfd-4dab-8471-4eebc8c9676b",
+          "timestamp": 1781247839.829721,
+          "goal_achieved": false,
+          "trust_delta": 5.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "cfe84f25-4d96-44a6-8552-301dca51d3d1",
+          "timestamp": 1781250751.4317813,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "5fc9ad97-bdd3-4300-aeb8-281ff1b3efb4",
+          "timestamp": 1781252274.643772,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "9a1f12dd-b150-432c-bd0f-08c847da72e8",
+          "timestamp": 1781254036.5633419,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "a5a80a7d-6627-41a0-82be-92b823236d26",
+          "timestamp": 1781262740.10134,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781247701.7476807,
+      "session_history": []
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "circle_id": "deaddiction_alcohol_rapport_no_sensor",
+  "last_seen": {
+    "companion": 1781269912.6605115
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781269912.6605115,
+      "session_history": [
+        {
+          "session_id": "25d76d7f-579a-4a42-ac52-932169936de7",
+          "timestamp": 1781247769.1820002,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "20dd2329-bee7-4862-9e84-9bd5ad7031d0",
+          "timestamp": 1781249079.3915854,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "6341d236-2d8f-44c7-b20d-c867ab933b8f",
+          "timestamp": 1781250131.4018533,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "20c23e2f-9164-488a-aecb-07b83fcb3c5e",
+          "timestamp": 1781253745.9352024,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "0aa81f7f-424c-4579-b646-9e26c7c2af94",
+          "timestamp": 1781269912.6605115,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781247628.5195162,
+      "session_history": []
+    }
+  }
+}

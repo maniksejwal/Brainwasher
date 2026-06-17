@@ -1,0 +1,51 @@
+{
+  "circle_id": "negotiation_undefined_no_sensor",
+  "last_seen": {
+    "companion": 1781272204.812394
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781272204.812394,
+      "session_history": [
+        {
+          "session_id": "844c974b-4cfa-4fd3-b7ac-0fdc0c2b8566",
+          "timestamp": 1781251337.6083913,
+          "goal_achieved": false,
+          "trust_delta": 18.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "3c994c4f-8635-4209-a80c-172be738ba00",
+          "timestamp": 1781272204.812394,
+          "goal_achieved": false,
+          "trust_delta": 18.75,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781250553.5052204,
+      "session_history": []
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "circle_id": "js_delhi_winter_air_crisis_no_sensor",
+  "last_seen": {
+    "companion": 1781263006.0464194
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781263006.0464194,
+      "session_history": [
+        {
+          "session_id": "5caf9b6c-a7f1-4d46-8de6-2e5f20447d64",
+          "timestamp": 1781247549.1939478,
+          "goal_achieved": false,
+          "trust_delta": 5.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "f6488849-9404-48c9-a7ec-9de78173ecf4",
+          "timestamp": 1781248358.5410643,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "9af3e62b-59ed-4b13-a9b2-5192c8e1e343",
+          "timestamp": 1781250366.17937,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "48504f8b-955b-45f8-9486-b90ef81ca5ac",
+          "timestamp": 1781254703.2318459,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "ddf29ebc-23a1-4bd6-99a0-e3712c6be4b0",
+          "timestamp": 1781263006.0464194,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781247412.8499684,
+      "session_history": []
+    }
+  }
+}

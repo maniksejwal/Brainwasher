@@ -1,0 +1,65 @@
+{
+  "circle_id": "js_opd_diabetes_management",
+  "last_seen": {
+    "companion": 1781274657.6849623
+  },
+  "edges": {
+    "companion__patient": {
+      "src_role": "companion",
+      "tgt_role": "patient",
+      "alliance_score": 1.0,
+      "trust": 1.0,
+      "rapport": 1.0,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "positive",
+      "last_updated": 1781274657.6849623,
+      "session_history": [
+        {
+          "session_id": "40629dad-eac3-42be-8063-dcf4de797d66",
+          "timestamp": 1781249530.8424535,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "9419892c-50c0-4aa8-969e-7701ecd3f9c6",
+          "timestamp": 1781252601.8109913,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "83ab4d32-2565-4e23-bddd-e4eeb60d4f0f",
+          "timestamp": 1781253934.6692119,
+          "goal_achieved": false,
+          "trust_delta": 5.75,
+          "alliance_at_end": 1.0
+        },
+        {
+          "session_id": "44d24057-9b30-473b-b223-2b23d04a2fe0",
+          "timestamp": 1781274657.6849623,
+          "goal_achieved": false,
+          "trust_delta": 6.0,
+          "alliance_at_end": 1.0
+        }
+      ]
+    },
+    "patient__companion": {
+      "src_role": "patient",
+      "tgt_role": "companion",
+      "alliance_score": 0.35,
+      "trust": 0.3,
+      "rapport": 0.25,
+      "rupture_pending": false,
+      "rupture_count": 0,
+      "no_go_zones": [],
+      "disclosure_level": 0,
+      "last_outcome": "",
+      "last_updated": 1781249336.9955454,
+      "session_history": []
+    }
+  }
+}
