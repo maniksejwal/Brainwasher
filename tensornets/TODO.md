@@ -1,4 +1,4 @@
-﻿# tensornets — TODO (Active)
+# tensornets — TODO (Active)
 
 > PhD research package. Every item that generates a result must be benchmarked.
 > Status legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[!]` blocked
@@ -28,33 +28,33 @@
 | **Longitudinal session state** + secret detection | `therapy/longitudinal.py` | ✅ |
 | **MCTS comparison runner** (billing, deaddiction-strike, flooding) | `therapy/comparison_runner.py` | ✅ |
 | **FastAPI bridge** (physio, MCTS, therapy, longitudinal endpoints) | `server.py` | ✅ |
-|| **Multi-dimensional MCTS reward** (stress, trust, goal, info, consistency) | `therapy/mcts_reward.py` | done |
-|| **Document clause MCTS** (ordering, acceptance probability) | `documents/clause_mcts.py` | done |
-|| **Scheduling MCTS** (physio-aware slot ranking, PK/PD + hysteresis) | `scheduling/mcts_scheduling.py` | done |
-|| **LLM-as-judge** (405B, 6-dim rubric, DPO counterfactuals) | `training/judge.py` | done |
-|| **MET/OARS/SPIKE framework** (phase gates, readiness, phase prompts) | `therapy/met_framework.py` | done |
-|| **Linguistic stress model** (confrontation, density, valence, loss-frame) | `linguistic/stress_model.py` | done |
-|| **Habit hysteresis** (formation, decay, relapse, rebuild asymmetry) | `physio/habit_hysteresis.py` | done |
-|| **Inter-agent communication** (SharedDialogueState, V_int coupling) | `agents/inter_agent_comm.py` | done |
-|| **EXPERIMENTS.md** (benchmarking register, paper section -> experiment map) | `docs/tensornets/EXPERIMENTS.md` | done |
-|| **Companion hysteresis** (alliance, trust, strategic patience, rupture/repair) | `agents/companion_hysteresis.py` | done |
-|| **Activity context** (post-workout, fasting, illness, pain, food-drug gate) | `physio/activity_context.py` | done |
-|| **Action selector prompt** (planning layer, MCTS action taxonomy) | `prompts/action_selector.js` | done |
-|| **Benchmarks runner** (dedicated, separate from tests) | `benchmarks/runner.py` | done |
-|| **Edge-case personas** (bipolar, ASPD, NPD, 6 religions, game-theory) | `training/simulation/personas/edge_case_personas.js` | done |
-|| **Privacy layer** (info classes I-IV, consent gates, disclosure advantage, audit log) | `agents/privacy_layer.py` | done |
-|| **Phase 3: BaseMCTS + DialogMCTS** (UCB1, backprop, multi-dim reward, 13ms latency) | `mcts/base.py` | ✅ DONE |
-|| **Session manager** (multi-session state, longitudinal MCTS, contact preferences) | `agents/session_manager.py` | done |
-|| **JS judge** → DELETED (redundant with `llm_scorer.js` + `simulation_scorer.js`) | — | done |
-|| **HTN Judge endpoints** (/judge/turn, /judge/session, /judge/audit) | `server.py` | done |
-|| **DiscrepancyAudit** (cross-evaluator divergence detection, trust-weighted scoring) | `training/judge.py` | done |
-|| **MCTS best-action endpoint** (/mcts/best-action, Phase 3 FastAPI) | `server.py` | done |
-|| **Personas subpackage** + **docs/tensornets/** (file organisation) | `training/simulation/personas/index.js` | done |
-|| **Phase 2: SVD truncation, apply_transition, expectation_value, ALS update** | `core/mps.py` | ✅ DONE |
-|| **Phase 2: partial_trace_physio** (Phase 4 preview, privacy) | `core/mps.py` | done |
-|| **PhD defence pre-meeting document** (clause_mcts, DisclosureAdvantagePlanner) | `documents/clause_mcts.py` | done |
-|| **auditJudgeDiscrepancy** JS bridge function | `companions/physio/tensornetsBridge.js` | done |
-|| 67 tests (physio + core) | `tests/test_physio.py`, `tests/test_core.py` | ✅ 67/67 |
+| **Multi-dimensional MCTS reward** (stress, trust, goal, info, consistency) | `therapy/mcts_reward.py` | ✅ |
+| **Document clause MCTS** (ordering, acceptance probability) | `documents/clause_mcts.py` | ✅ |
+| **Scheduling MCTS** (physio-aware slot ranking, PK/PD + hysteresis) | `scheduling/mcts_scheduling.py` | ✅ |
+| **LLM-as-judge** (405B, 6-dim rubric, DPO counterfactuals) | `training/judge.py` | ✅ |
+| **MET/OARS/SPIKE framework** (phase gates, readiness, phase prompts) | `therapy/met_framework.py` | ✅ |
+| **Linguistic stress model** (confrontation, density, valence, loss-frame) | `linguistic/stress_model.py` | ✅ |
+| **Habit hysteresis** (formation, decay, relapse, rebuild asymmetry) | `physio/habit_hysteresis.py` | ✅ |
+| **Inter-agent communication** (SharedDialogueState, V_int coupling) | `agents/inter_agent_comm.py` | ✅ |
+| **EXPERIMENTS.md** (benchmarking register, paper section -> experiment map) | `docs/tensornets/EXPERIMENTS.md` | ✅ |
+| **Companion hysteresis** (alliance, trust, strategic patience, rupture/repair) | `agents/companion_hysteresis.py` | ✅ |
+| **Activity context** (post-workout, fasting, illness, pain, food-drug gate) | `physio/activity_context.py` | ✅ |
+| **Action selector prompt** (planning layer, MCTS action taxonomy) | `prompts/action_selector.js` | ✅ |
+| **Benchmarks runner** (dedicated, separate from tests) | `benchmarks/runner.py` | ✅ |
+| **Edge-case personas** (bipolar, ASPD, NPD, 6 religions, game-theory) | `training/simulation/personas/edge_case_personas.js` | ✅ |
+| **Privacy layer** (info classes I-IV, consent gates, disclosure advantage, audit log) | `agents/privacy_layer.py` | ✅ |
+| **Phase 3: BaseMCTS + DialogMCTS** (UCB1, backprop, multi-dim reward, 13ms latency) | `mcts/base.py` | ✅ |
+| **Session manager** (multi-session state, longitudinal MCTS, contact preferences) | `agents/session_manager.py` | ✅ |
+| **JS judge** → DELETED (redundant with `llm_scorer.js` + `simulation_scorer.js`) | — | ✅ |
+| **HTN Judge endpoints** (/judge/turn, /judge/session, /judge/audit) | `server.py` | ✅ |
+| **DiscrepancyAudit** (cross-evaluator divergence detection, trust-weighted scoring) | `training/judge.py` | ✅ |
+| **MCTS best-action endpoint** (/mcts/best-action, Phase 3 FastAPI) | `server.py` | ✅ |
+| **Personas subpackage** + **docs/tensornets/** (file organisation) | `training/simulation/personas/index.js` | ✅ |
+| **Phase 2: SVD truncation, apply_transition, expectation_value, ALS update** | `core/mps.py` | ✅ |
+| **Phase 2: partial_trace_physio** (Phase 4 preview, privacy) | `core/mps.py` | ✅ |
+| **PhD defence pre-meeting document** (clause_mcts, DisclosureAdvantagePlanner) | `documents/clause_mcts.py` | ✅ |
+| **auditJudgeDiscrepancy** JS bridge function | `companions/physio/tensornetsBridge.js` | ✅ |
+| 67 tests (physio + core) | `tests/test_physio.py`, `tests/test_core.py` | ✅ 67/67 |
 
 ---
 
@@ -181,11 +181,11 @@
 - [x] **J6** Arm 2 worker: Old-school production JS via HTTP (no tensornets) — DONE `a3c/arms.py::Arm2Worker`
 - [x] **J7** Arm 3 worker: Hysteresis-in-prompt (tensornets physio state as text, no MPS/MCTS) — DONE `a3c/arms.py::Arm3Worker`
 
-### Full comparison run
-- [ ] **K1** 3-arm parallel run (50 episodes each, 10 canonical scenarios, same synthetic personas)
+### Full comparison run  *(unblocked — 24-arm run_027 is live, ~800+ eps on base arms)*
+- [ ] **K1** Run 10 canonical scenarios through all 8 base arms; collect full transcripts
 - [ ] **K2** Learning curves: reward, actor/critic loss, entropy per arm
-- [ ] **K3** Per-scenario transcript comparison (same dialog graph → 3 arm responses side-by-side)
-- [ ] **K4** Statistical analysis: Wilcoxon signed-rank + effect size (Arm 1 vs 2 and Arm 1 vs 3)
+- [ ] **K3** Per-scenario transcript comparison (same user input → all arm responses side-by-side)
+- [ ] **K4** Statistical analysis: Wilcoxon signed-rank + effect size (Arm 1 vs 2, Arm 1 vs 3, etc.)
 - [ ] **K5** EXPERIMENTS.md entry with results, interpretation, limitations
 
 ---
@@ -372,4 +372,27 @@ Currently per-participant physiological inertia has no social coupling:
 - Keep `EXPERIMENTS.md`: one entry per experiment — hypothesis, result, interpretation
 - Stress decay plot (C4.3) = Figure 3. SVD spectra (distillation) = Figures 1–2.
 - Section 5 of paper is blank — filled by H1–H7
+
+---
+
+## ACTIVE SPRINT — Python Arm Improvements  *(detail in root TODO.md)*
+
+> These items are tracked in the Cursor agent sprint list and root `TODO.md`.
+> Listed here for cross-reference; do not duplicate the implementation notes.
+
+- [ ] **PA1** Align `_DEFAULT_SYSTEM_PROMPT` with JS `PROMPT_ACTION_SELECTOR` (12+ vars)
+- [ ] **PA2** Inject `_build_longitudinal_hint(state)` into generation prompt
+- [ ] **PA3** Wire TensorRAG into Python arms via `/rag/query` endpoint
+- [ ] **PA4** Wire `facts_v2` known-context block into Python arms
+- [ ] **PA5** Document reward measurement confound (Exp 0 generator quality vs policy quality)
+- [ ] **PA6** Refactor arms.py: `_BasePythonGenerationMixin`, collapse ablations to class-attribute flags
+- [ ] **PA7** Extend no-privacy ablation to Python arms 1–7; resolve 1a–7a slot question
+
+---
+
+## ACTIVE SPRINT — New Experiments  *(detail in root TODO.md)*
+
+- [ ] **EXP-RENAME-ABLATIONS** Rename `NoGate` → `NoCritGate` (class names, ARM strings, dashboard, docs)
+- [ ] **EXP-RAG** Three new arms: Exp 8 PlainRAG, Exp 9 TensorRAG, Exp 10 TensorRAG+MPS-MCTS
+- [ ] **EXP-ABL-EXTENDED** After run_027: no-longitudinal, no-hysteresis, no-physio, frozen-bandit ablations
 

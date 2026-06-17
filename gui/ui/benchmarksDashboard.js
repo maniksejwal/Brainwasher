@@ -1024,6 +1024,23 @@ function _renderGoalRateChart() {
 // -- Goal Rate Bucket Chart (100-ep windows, recency ladder) ------------------
 function _renderGoalRateBucketsChart() {
     if (typeof Chart === 'undefined') return;
+
+    // Register the positioner lazily so Chart.js is guaranteed to be loaded.
+    if (!Chart.Tooltip.positioners.bucketOffset) {
+        Chart.Tooltip.positioners.bucketOffset = function (elements) {
+            if (!elements.length) return false;
+            const el   = elements[0];
+            const x    = el.element.x;
+            const y    = el.element.y;
+            const cw   = el.element.$context?.chart?.width  ?? Infinity;
+            const ch   = el.element.$context?.chart?.height ?? Infinity;
+            return {
+                x: Math.min(x + 18, cw - 10),
+                y: Math.max(y - 44, 10),
+            };
+        };
+    }
+
     const canvas = _destroyChart('goal-rate-buckets-chart');
     if (!canvas) return;
     const allRows = _filterByDuration(_state.timelineData);
@@ -1093,7 +1110,8 @@ function _renderGoalRateBucketsChart() {
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
+            // nearest: only the single closest data point shows in tooltip
+            interaction: { mode: 'nearest', intersect: true },
             scales: {
                 x: {
                     title: { display: true, text: 'Episodes before latest  →', font: { size: 11 } },
@@ -1109,10 +1127,23 @@ function _renderGoalRateBucketsChart() {
                 legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
                 zoom: _ZOOM_PLUGIN,
                 tooltip: {
-                    mode: 'index', intersect: false,
+                    mode: 'nearest',
+                    intersect: true,
+                    // Offset tooltip so it never sits on top of the data point.
+                    // Chart.js built-in positioner puts it at the point; we nudge it
+                    // 12 px right and 28 px above so the line stays visible.
+                    position: 'bucketOffset',
                     callbacks: {
-                        title: items => `Bucket: ${items[0]?.label ?? ''} eps before latest`,
-                        label: item => `${item.dataset.label}: ${item.parsed.y != null ? (item.parsed.y * 100).toFixed(1) + '%' : '—'}`,
+                        title: items => {
+                            const lbl = items[0]?.label ?? '';
+                            return `Bucket: ${lbl} eps before latest`;
+                        },
+                        label: item => {
+                            const pct = item.parsed.y != null
+                                ? (item.parsed.y * 100).toFixed(1) + '%'
+                                : '—';
+                            return `${item.dataset.label}: ${pct}`;
+                        },
                     },
                 },
             },
