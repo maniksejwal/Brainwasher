@@ -39,7 +39,7 @@ The system is simultaneously a clinical product and a PhD research platform. The
 | [`tensornets/16_experiments.md`](tensornets/16_experiments.md) *(pending)* | PhD experiment register: run log, hypotheses, outcomes, status | Track research progress and experiment provenance |
 | [`tensornets/17_distillation.md`](tensornets/17_distillation.md) *(pending)* | Distillation track: compressing HTN policy into deployable model | Deploy a lightweight inference version |
 | [`VARIABLE_GLOSSARY.md`](VARIABLE_GLOSSARY.md) | Symbol and variable reference for all mathematical notation used across docs | Look up the meaning of any symbol (Γ, V_int, H_eff, etc.) |
-| [`uml_diagrams/`](uml_diagrams/) | UML sequence diagrams: 5 files covering message flow, conflict resolution, and more | Trace runtime interaction sequences visually |
+| [`uml_diagrams/`](uml_diagrams/) | All architecture diagrams — see [`DIAGRAMS.md`](DIAGRAMS.md) for the full index with image locations and paper figure assignments | Trace runtime interaction sequences visually; find the right image for a paper section |
 | [`privacy_policy.md`](privacy_policy.md) | Data classification, consent policy, retention rules, HIPAA/GDPR mapping | Handle patient data or review compliance posture |
 | [`vision_goals.md`](vision_goals.md) | Mission, strategic goals, and operationalised success metrics | Align feature development with product and research mission |
 
@@ -236,17 +236,20 @@ Superseded documents are archived in **`documentation/deprecated/`** (see its [`
 
 ---
 
-## 9. UML Diagrams Directory
+## 9. Diagram Index
 
-The [`uml_diagrams/`](uml_diagrams/) subdirectory contains Mermaid-based sequence and flow diagrams. Each file covers a distinct interaction scenario. Consult these alongside the process view in [`tensornets/00_architecture.md §3`](tensornets/00_architecture.md) for the most complete picture of runtime behaviour.
+A complete index of all diagrams — source files, exported images, scale, and suggested PDF figure assignments — is maintained in [`DIAGRAMS.md`](DIAGRAMS.md).
 
-| File | Scenario covered |
-|---|---|
-| [`uml_diagrams/basic_message_flow.md`](uml_diagrams/basic_message_flow.md) | End-to-end path from user message receipt through companion response delivery |
-| [`uml_diagrams/conflict_resolution.md`](uml_diagrams/conflict_resolution.md) | How competing companion recommendations are adjudicated by the orchestrator |
-| *(3 further diagrams pending)* | Escalation flow, MCTS action selection, A3C worker episode lifecycle |
+There are two diagram sets:
 
-When adding new diagrams, follow the naming pattern `<scenario_slug>.md` and register the file in the table above.
+- **`uml_diagrams/`** — 16 large system diagrams covering deployment, interaction sequences (v1 original vs. v2 real modules), environment/training views, and care circle topology.
+- **`uml_diagrams/htn_architecture/`** — 11 focused small-scale diagrams (one idea per file) at system-context, deployment, DFD, component, and algorithm levels. Designed for embedding in individual paper sections.
+
+Exported PNG images live in `figures/uml/` and `figures/uml/htn_architecture/`. Re-export all with:
+
+```bash
+python scripts/export_mermaid.py
+```
 
 ---
 

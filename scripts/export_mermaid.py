@@ -28,10 +28,13 @@ import subprocess
 import sys
 import tempfile
 
-ROOT    = pathlib.Path(__file__).parent.parent
-SRC_DIR = ROOT / "documentation" / "uml_diagrams"
-OUT_DIR = ROOT / "figures" / "uml"
+ROOT     = pathlib.Path(__file__).parent.parent
+SRC_DIR  = ROOT / "documentation" / "uml_diagrams"
+HTN_DIR  = SRC_DIR / "htn_architecture"   # new small-scale diagrams
+OUT_DIR  = ROOT / "figures" / "uml"
+HTN_OUT  = ROOT / "figures" / "uml" / "htn_architecture"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+HTN_OUT.mkdir(parents=True, exist_ok=True)
 
 # Which files to export and in which order (matches PDF figure assignments)
 # Files not listed here are still exported but sorted alphabetically at the end.
@@ -130,6 +133,13 @@ def ordered_md_files() -> list[pathlib.Path]:
     return ordered
 
 
+def ordered_htn_files() -> list[pathlib.Path]:
+    """Return all .md files in the htn_architecture subfolder, sorted."""
+    if not HTN_DIR.exists():
+        return []
+    return sorted(HTN_DIR.glob("*.md"))
+
+
 def main(fmt: str = "png") -> None:
     try:
         mmdc = find_mmdc()
@@ -138,12 +148,13 @@ def main(fmt: str = "png") -> None:
         sys.exit(1)
 
     print(f"Using mmdc: {mmdc}")
-    print(f"Output dir: {OUT_DIR}")
     print(f"Format:     {fmt}\n")
 
     total_ok = 0
     total_fail = 0
 
+    # ── Original uml_diagrams/*.md ────────────────────────────────────────────
+    print(f"=== uml_diagrams/  ->  {OUT_DIR} ===")
     for md_path in ordered_md_files():
         blocks = extract_blocks(md_path)
         if not blocks:
@@ -166,8 +177,35 @@ def main(fmt: str = "png") -> None:
                 print(f"    [fail] {out_path.name}.{fmt}")
                 total_fail += 1
 
+    # ── New htn_architecture small diagrams ───────────────────────────────────
+    print(f"\n=== htn_architecture/  ->  {HTN_OUT} ===")
+    for md_path in ordered_htn_files():
+        if md_path.name == "README.md":
+            continue
+        blocks = extract_blocks(md_path)
+        if not blocks:
+            print(f"  skip  {md_path.name}  (no mermaid blocks)")
+            continue
+
+        stem = md_path.stem
+        print(f"  {md_path.name}  ({len(blocks)} block(s))")
+
+        for idx, block in enumerate(blocks, 1):
+            suffix = f"_{idx}" if len(blocks) > 1 else ""
+            out_path = HTN_OUT / f"{stem}{suffix}"
+            ok = export_block(mmdc, block, out_path, fmt=fmt)
+            final = out_path.with_suffix(f".{fmt}")
+            if ok and final.exists():
+                kb = final.stat().st_size // 1024
+                print(f"    [ok] {final.name}  ({kb} KB)")
+                total_ok += 1
+            else:
+                print(f"    [fail] {out_path.name}.{fmt}")
+                total_fail += 1
+
     print(f"\nDone.  {total_ok} exported, {total_fail} failed.")
-    print(f"Files in: {OUT_DIR.resolve()}")
+    print(f"Legacy UML:  {OUT_DIR.resolve()}")
+    print(f"HTN small:   {HTN_OUT.resolve()}")
 
 
 if __name__ == "__main__":

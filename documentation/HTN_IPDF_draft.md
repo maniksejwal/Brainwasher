@@ -1,4 +1,4 @@
-# Intellectual Property Disclosure Form
+﻿# Intellectual Property Disclosure Form
 
 ## Title: Inertial Physio-Social Deliberation in Clinical Multi-Agent Tensor Networks
 
@@ -6,43 +6,39 @@
 
 ## A. Abstract
 
-Current multi-agent conversational systems rely on deep neural networks that are mathematically opaque, prone to semantic hallucination, and constrained by the Markov assumption. This makes safety-critical, medical-grade deployments difficult. This disclosure introduces a framework to address these issues. For inference, it replaces black box neural networks with a transparent mathematical structure called a tensor manifold which includes tensorised neural networks. This conversational engine allows us to unify Monte Carlo Tree Search (MCTS), Chain of Thought (CoT) reasoning, and multi-agent communication.
-
-We model the conversation as a dynamic state that directly incorporates the patient's physiological state like stress levels, measured via Heart Rate Variability (HRV). By using non-Hermitian mathematics, the system natively accounts for physiological memory, the way a patient stays anxious even after a stressful topic has passed.
-
-To ensure that the system is fast enough for real-world use, we employ a dual-agent architecture and avoid the combinatorial explosion of high-order tensor contractions during continuous tree search. This involves a high-rank strategic agent which executes global MCTS rollouts using a tensor network. A low-rank tactical agent handles real-time token generation under a strict Singular Value Decomposition (SVD) constraint matrix projected by the strategic layer. This mathematically restricts the tactical probability space to compliant dialogue nodes. By leveraging the zero-shot reasoning capabilities of open-weights frontier models into structured tensor cores offline, the architecture eliminates runtime deep learning bloat, reduces memory-bandwidth bottlenecks during autoregressive decoding, and allows for localized, deterministic weight updates that prevent catastrophic forgetting.
+Human decisions are shaped by physiological state. Stress, sleep pressure, and autonomic recovery rate alter what a person can process and agree with in real time. This disclosure describes a system that encodes these parameters -- using non-Hermitian mathematics to model their asymmetric rates of change -- into a matrix product state to run Monte Carlo tree search and simulate how physiology will evolve across future conversational turns. It selects the dialogue path that minimizes physiological arousal while mediating interactions among multiple human users. Agents across a care circle share this physiological state directly without messaging each other. Clinical evaluation shows a 10 percentage point improvement in goal achievement over a standard LLM baseline.
 
 ---
 
-## B. Use Case: Inertial Physio-Social Deliberation for Safe Clinical Conversational AI
+## B. Use Case
 
-### The Problem This Solves
+A patient managing panic disorder reports a panic attack to their digital health companion. The companion's protocol calls for delivering a breathing retraining exercise -- a standard cognitive-behavioural technique for building self-regulation. A standard AI system delivers it immediately because the verbal report matches the trigger condition. The patient is still in physiological recovery: autonomic arousal is elevated, heart rate has not settled, and prefrontal engagement is suppressed. The patient follows the instructions mechanically but does not internalize the skill. The intervention was clinically correct and physiologically mistimed.
 
-When a person experiences a sudden threat, their autonomic nervous system floods the body with stress hormones. If they realize seconds later that the threat was a false alarm, their heart rate does not drop instantly. The body requires time to process the chemicals and return to a baseline state. This lag between the removal of a stressor and the physical relaxation response is called physiological inertia. It acts as the biological memory of stress.
+This disclosure tracks the patient's autonomic state continuously from wearable data. In the minutes following a panic attack, the physiological state places the patient outside the window of tolerance for cognitive skill acquisition. The path to skill delivery does not exist in the tensor operator at that state. The companion instead delivers somatic grounding and validation -- for example: "That sounds frightening. It makes sense you're still unsettled. Can you feel your feet on the floor?" rather than "Let's work through the breathing technique now." When the autonomic state recovers to the level that supports cognitive engagement, the skill delivery path opens. No rule was written for this transition. The patient's physiology, modelled turn by turn, produced it.
 
-An artificial agent might deliver a highly stressful piece of news, such as an unexpectedly high out-of-pocket cost. The agent might immediately follow up with the benefits of the treatment. However, due to this physiological inertia, the patient is still in a state of high sympathetic arousal. Their brain is experiencing cognitive tunneling and it can fail to process the reassuring solution. The biological state has not caught up to the conversational state.
+The same principle extends to any interaction where a decision's success depends on the physiological readiness of the people involved. A caregiver who has been awake through a medical crisis is not in a state to absorb a complex medication adjustment discussion. A patient whose anxiety has been elevated across three consecutive sessions is unlikely to commit to a new behavioural protocol, regardless of what they say in the moment. When multiple people share a care circle, the system tracks the physiological state of each and selects the action that the entire group's physiology can support. A negotiation that would resolve one person's distress by escalating another's is identified before it is attempted. The right conversation happens when the physiology of the room -- not the schedule -- allows it.
 
-When a human is under stress, the attention is aimed more towards the threats than the rewards. This can lead the patient to resist or delay the treatment.
+---
 
-Conventional solutions that rely on the Markov assumption fail here because they are not sensing the changes in the patient state. There is nothing preventing from assuming that the patient is calm the moment the reassuring text is generated. Additionally, they exclude the physiological memory that develops through the environment. For example, an individual who lives in a high stress environment reacts differently than an individual who does not deal with stress frequently. The extent to which a person's body reacts to a stressor and stress change over time and from person to person. This makes simulations like the monte carlo simulations about how a human will react to a given stimuli harder to predict.
+**Alternative scenario: caregiver blocking angiography (LAMA)**
 
-The clinical environment is a space of acute vulnerability where information asymmetry frequently induces severe psychological friction. When a patient is confronted with a complex diagnostic explanation or an unexpected breakdown of insurance coverage, their capacity to process logical arguments deteriorates rapidly. In clinical practice, an experienced healthcare provider does not treat this interaction as a sequence of isolated, transactional statements. Instead, the clinician recognizes that the patient's cognitive state is heavily modulated by their physiological state, creating an environment where a single threatening word can trigger a prolonged period of elevated anxiety. Existing automated communication tools struggle in these high-stakes scenarios because they assume human dialogue is a series of independent exchanges, leaving them unable to navigate the continuous, biological undercurrents of clinical anxiety.
+A patient with recurrent chest symptoms following prior stenting is advised to undergo a repeat angiography to rule out in-stent restenosis. The patient's spouse is present. The spouse is terrified -- a family member died during a cardiac procedure years earlier -- and is vocally urging the patient to leave. The patient is wavering. Both are in acute physiological distress. The companion attempts to support the clinical team by presenting the rationale for the procedure: the risks of untreated restenosis, the safety record of modern angiography. Neither party can process this information. The spouse's fear intensifies. The patient signs a LAMA form and leaves. Three days later the patient presents with an acute coronary event.
 
-### The Multi-Agent Coordination Problem
+This disclosure tracks the physiological state of both parties in real time. The V_int coupling shows that the caregiver's arousal is the dominant driver of the patient's current state -- the patient's own fear is being amplified by the spouse's. The companion identifies that delivering clinical information to the patient while the caregiver is in critical stress will not produce a rational decision: the information will be processed through the threat lens and rejected. It routes to the caregiver first -- not to override the decision but to create the physiological conditions in which a decision can be made. "It sounds like you've been through something terrible before. Can you tell me what's frightening you most right now?" When the caregiver's arousal drops to a level at which clinical information can be received, the pathway to the procedure rationale opens for both parties simultaneously. The decision is made from a regulated state, not a reactive one.
 
-In standard deployment architectures, multi-agent frameworks operate in isolated containers and communicate by passing serialized JSON payloads or natural language strings over APIs. This creates a severe semantic bottleneck where critical contextual probability is destroyed.
+---
 
-A concrete example: within a patient's companion, a Physiological Agent continuously monitors HRV and stress. A Clinical Agent governs adherence and pharmacological reasoning. In a standard architecture these two agents exchange text summaries ("patient stress is elevated") at every decision step -- every serialization compresses and loses physiological resolution. Simultaneously, at the organizational boundary, a hospital Claims Agent handling prior authorization must coordinate with a TPA Compliance Agent enforcing step-therapy policy, while the caregiver is overwhelmed and the patient is ready to drop out. The serialized text API cannot capture this coupled four-party geometry simultaneously -- it processes each agent pair sequentially, by which point the physiological state has already changed.
+**Alternative scenario: caregiver blocking rehabilitation progress (cardiac rehab)**
 
-### What This Disclosure Delivers
+A patient six weeks post-cardiac stenting is clinically stable and medically cleared to begin supervised exercise -- the cornerstone of cardiac rehabilitation. Their spouse, who serves as their primary caregiver, has been present at every session. The companion is ready to finalise the exercise plan with the patient. The patient's own autonomic state is calm. The caregiver's wearable, however, shows elevated arousal whenever exercise is discussed: three sessions of escalating physiological response to the topic, not the words. The caregiver verbally agrees -- "yes, the doctor said it's fine" -- but their physiological state tells a different story. A standard AI logs the session as a successful commitment. The patient goes home, attempts exercise, and the caregiver's visible distress at every attempt quietly erodes the patient's confidence until the plan is abandoned.
 
-This disclosure forces the agent to explore and evaluate the delivery of information, instead of merely acting like a stochastic parrot. The framework actively uses de-escalation tactics and waits for the physiological arousal to decay before presenting complex logical arguments.
+This disclosure tracks both parties. The caregiver's escalating arousal across sessions is encoded in the social coupling state. The system identifies that finalising an exercise commitment while the caregiver is in an elevated stress zone will produce an unstable outcome -- the commitment is made in the session and undone at home. It pivots: the companion addresses the caregiver's fear directly, delivering psychoeducation about safe exercise parameters after stenting and the physiological basis for the clearance decision. Only when both autonomic states are within the zone that supports a durable commitment does the exercise plan get finalised. The patient did not need a different clinical message. The timing of who received what, and in what order, was the intervention.
 
 ---
 
 ## C. Keywords
 
-Tensor Networks, Matrix Product State, Non-Hermitian Operators, Physiological Inertia, Monte Carlo Tree Search, Multi-Agent Systems, Clinical Conversational AI, Heart Rate Variability, Singular Value Decomposition, Social Coupling Matrix, Contrastive Subspace Distillation, Bond Dimension, Asynchronous Advantage Actor-Critic (A3C), Revenue Cycle Management, Quality Improvement, Patient Adherence
+Tensor Networks, Matrix Product State, Non-Hermitian Operators, Physiological Inertia, Monte Carlo Tree Search, Multi-Agent Systems, Clinical Conversational AI, Heart Rate Variability, Pharmacokinetics, Pharmacodynamics, Singular Value Decomposition, Social Coupling Matrix, Bond Dimension, Asynchronous Advantage Actor-Critic (A3C), Patient Adherence, Chronic Disease Management, Mental Health Companion
 
 ---
 
@@ -52,17 +48,13 @@ Tensor Networks, Matrix Product State, Non-Hermitian Operators, Physiological In
 
 Current artificial intelligence architectures are fundamentally unsuited for safety-critical clinical dialogue due to their reliance on the Markov assumption and opaque neural networks. Large language models simulate reasoning by passing vector representations through hundreds of dense layers. While this method excels at pattern recognition, it globally scrambles the underlying geometric structure of the data, making it difficult to enforce absolute safety boundaries or predict how a conversation will alter a patient's physiological trajectory over a multi-turn horizon. Furthermore, when these neural models are forced to execute a chain of thought or simulate multiple conversational agents simultaneously, the statistical errors at each step compound exponentially, leading to catastrophic hallucinations or logical drift precisely when the patient is most distressed.
 
-Standard Transformer architectures can process temporal variables or physiological limits when provided in their context window, but they are fundamentally statistical, auto-regressive engines driven by softmax probability distributions. Even with strict system prompts, chain-of-thought reasoning and temperature set to zero, a standard LLM assigns a non-zero probability (epsilon > 0) to every token in its vocabulary. When a Transformer is prompted with complex pharmacodynamic rules or physiological inertia decay rates, it attempts to simulate differential equations using attention weights over discrete text tokens.
+Standard Transformer architectures can process temporal variables or physiological limits when provided in their context window. However, they generate each word by converting raw scores into a probability distribution across the entire vocabulary. In the standard softmax output layer used by all major deployed language models, every token retains a strictly positive probability because the softmax function maps any finite logit to a positive value. Sparse output functions such as sparsemax can assign exact zeros to some tokens, but the sparsity pattern is learned from training data and varies with each input: a token that receives zero probability for one prompt may receive positive probability for a semantically similar but novel one. Neither approach allows a clinician or an engineer to specify that a particular action is structurally unavailable -- the constraint is probabilistic and input-dependent. A safety rule written in the system prompt lowers the probability of a dangerous output; it cannot guarantee it to zero across all inputs. When a Transformer is prompted with complex pharmacodynamic rules or physiological inertia decay rates, it attempts to simulate differential equations using attention weights over discrete text tokens. Attention weights are trained on statistical patterns in language, not on solving differential equations -- the model may approximate the right answer in familiar cases and fail silently in unfamiliar ones, with no mechanism to detect the error.
 
-### The Tensor Manifold
+### System Overview
 
-Formally, a tensor is a multilinear map over a set of vector spaces that transforms a given set of input vectors and dual vectors into a scalar. The same can be represented as a multi-dimensional grid of numbers. A tensor manifold is a continuous geometric space created by linking many of these tensors together in a specific structure. It can be thought of as an organized mathematical landscape where every possible state of a conversation has a specific physical coordinate. In other words, every combination of spoken words, clinical rules, and patient stress levels is assigned a precise numerical location within this grid. Progressing the dialogue is mathematically identical to calculating a path from one coordinate to the next.
+This disclosure represents the conversational state as a Matrix Product State (MPS) whose virtual bond is partitioned into three orthogonal subspaces: a semantic subspace (H_sem) carrying vocabulary and clinical logic, a physiological subspace (H_phys) carrying the patient's real-time biometric state, and a social subspace (H_social) carrying the coupling weights between principals in the care circle along with contextual signals such as location, session history, and relationship state as defined in the care circle architecture. A single operator H_total governs the evolution of all three subspaces simultaneously. Because the three subspaces share one tensor structure, no agent needs to serialize its state to communicate with another -- physiological context is structurally present in every semantic decision.
 
-Standard neural networks process information by passing numbers through layers of arbitrary equations. The original shape of the data is destroyed and turned into a black box of hidden weights. Safety rules just lower the probability of a bad output. Because they model using a softmax function, there is always a small, non-zero probability of a hallucination. In contrast, a tensor manifold preserves the geometric structure of the information. The semantic rules of human language and the measured limits of human physiology form the physical boundaries of this geometric space.
-
-Because the manifold has a rigid mathematical structure, we can calculate exact boundaries within it. When the strategic agent plans a conversation, it is plotting a geometric trajectory across this tensor space. If a specific dialogue choice violates a clinical safety rule or pushes the simulated patient stress beyond a safe limit, that path is mathematically severed from the manifold.
-
-In a tensor network, if an output (word or action) violates a safety boundary, the matrix multiplication equals zero. The system does not just try to avoid the output, but the mathematical path to generate it no longer exists.
+The system operates at two levels of computational complexity. A strategic agent runs Monte Carlo Tree Search over the tensor state to find the dialogue path that minimizes physiological arousal across future turns, then compresses this plan via SVD into a guidance matrix. A tactical agent generates natural language constrained by that guidance -- either a cloud language model that reads the guidance as a structured prompt, or a low-rank MPS language model whose token probability distribution is directly shaped by the tensor contraction, or a model initialized from an LLM via offline activation distillation and deployed on-device without a cloud dependency. Across all three realizations, the same physiological constraints govern which conversational moves are available. In an MPS, if a core tensor entry governing a prohibited action is set to zero, the matrix contraction along that path evaluates to the zero vector. The squared norm of the zero vector is exactly zero -- not a small number, exactly zero. The action is not assigned a low probability; it is absent from the distribution.
 
 ### The Conversational Matrix Product State
 
@@ -74,21 +66,42 @@ A matrix product state (MPS) represents a quantum or probabilistic state |psi> o
 |psi> = Sum over s1,...,sn of A^s1[1] * A^s2[2] * ... * A^sn[n] * |s1...sn>
 ```
 
-where each A^sk[k] is a chi x chi matrix and chi is the bond dimension. SVD truncation retains only the chi_trunc largest singular values. In this disclosure, physiological state history is encoded as an MPS over T = 10 turns with chi = 4, providing a compact fixed-size representation that avoids KV-cache growth.
+In this disclosure, physiological state history is encoded as an MPS over T = 10 turns with chi = 4. These are the values used in the current implementation; both are hyperparameters and can be increased to carry richer physiological and conversational context at the cost of computation. In the hybrid embodiment this MPS feeds the MCTS cost function and the PhysioInertiaGate, which determine what appears in the guidance passed to the language model. In the full tensor train realization, the MPS extends to carry the vocabulary distribution directly -- chi scales up to several hundred channels, d covers the full token vocabulary (~50,000 tokens), and the physiological constraint propagates into language generation through the contraction itself, replacing the language model's KV-cache with a fixed-size tensor representation. In the distilled realization, a frontier LLM initializes the tensor core weights offline, and the resulting compact model runs on-device without a cloud dependency.
 
-Let our natural language vocabulary have a size of d (where d is approximately 50,000 tokens). Let our virtual bond dimension, which carries the contextual and physiological rules, be bounded by chi. For every conversational step t, the system utilizes a 3rd order tensor denoted as A(t). The dimensions of this core tensor are precisely [chi x d x chi].
+The virtual bond dimension chi is the number of parallel information channels connecting one tensor core to the next -- the higher chi, the more context the system can carry forward across turns. Let our natural language vocabulary have a size of d (where d is approximately 50,000 tokens). Let our virtual bond dimension, which carries the contextual and physiological rules, be bounded by chi. For every conversational step t, the system utilizes a 3rd order tensor denoted as A(t). The dimensions of this core tensor are precisely [chi x d x chi].
 
 To calculate the probability amplitude of an entire sentence consisting of N words, we perform a sequential matrix multiplication (multilinear contraction) across the virtual indices. This structure ensures that computational complexity scales linearly with sequence length O(N*d*chi^2), rather than quadratically as seen in standard neural attention mechanisms O(N^2*d).
 
 The bond dimension (chi) is the equivalent (in our work) of the Multi-Head Attention mechanism. If the tensor has a bond dimension of chi = 256, it means there are 256 parallel mathematical channels connecting this word to the next word. Channel 1 might carry grammatical rules. Channel 2 might carry the clinical policy. Channel 3 (the physiological subspace) carries the patient's stress level. To generate the next state, we multiply (contract) the core tensor of Word 1 with the core tensor of Word 2 along these 256 channels.
 
+### The Dual-Rank Architecture: Strategic and Tactical Agents
+
+Calculating biological changes for a task involving MCTS and language processing is computationally heavy. To make the framework fast enough for a live conversation, we split the workload using a dual-rank design: two agents operating at different levels of mathematical complexity.
+
+**Strategic Agent (High-Rank):**
+In the background, a high-rank strategic agent handles the heavy calculations. It uses a look-ahead algorithm (Monte Carlo Tree Search) to navigate the conversational state space and find a dialogue path that minimizes physiological arousal over a multi-turn horizon. The standard arm runs 80 MCTS iterations; the HPVOOT variant (Hierarchical PW+VOOT) runs 150 iterations with hierarchical decomposition.
+
+The MCTS objective function minimizes the accumulated physiological stress (the integral of the anti-Hermitian decay component Gamma over the search horizon):
+
+```
+C = Sum over j=1 to k of  <Psi_{t+j} | Gamma | Psi_{t+j}>
+```
+
+**SVD Compression Bridge:**
+Once the Strategic Agent finds the optimal action sequence, it compresses the plan by reshaping the planned path tensor into a matrix M and performing Singular Value Decomposition:
+
+```
+M = U * Sigma * V_dagger
+```
+
+Retaining only the top singular values up to chi_max produces Mtrunc. The top-3 actions from Mtrunc are serialized as a structured hint ([MCTS GUIDANCE]) injected into the tactical agent's system prompt.
+
+**Tactical Agent (Low-Rank):**
+The Tactical Agent generates natural language constrained by the SVD guidance, enabling conversational response latency compatible with live interaction while adhering to the strategic plan.
+
 ### The Non-Hermitian Transition Operator
 
-The evolution of this state from one conversational turn to the next is governed by a Matrix Product Operator denoted as H. In closed physical systems, transition operators are Hermitian, meaning they conserve energy and their eigenvalues are strictly real. Human physiology operates differently because it is an open, dissipative system. A stress response represents an injection of biological energy that dissipates over time as the patient calms down.
-
-In standard physics, Hermitian matrices represent closed systems where everything is balanced and conserved. But a human being is an open, dissipative system. When a patient gets stressed, that energy does not just vanish; it lingers. If we used standard (Hermitian) math, the AI would forget the stress too quickly. By using non-Hermitian Matrix Product Operators (MPOs), we are using the exact branch of math designed to model systems that lose or retain energy over time. It is the only way to mathematically guarantee the AI feels the patient's stress memory (physiological inertia) without needing a massive, unreliable neural memory bank.
-
-A Hermitian operator guarantees that energy is conserved and probabilities always add up to exactly one. If you apply a stressor to a Hermitian system, it acts like a pendulum in a perfect vacuum. The stress state will simply swing back and forth forever without losing momentum. Human stress does not oscillate endlessly in a vacuum. Adrenaline spikes and then slowly decays away as the body processes the chemicals. Hormones and medicines both follow their own kinetics and dynamics.
+The tensor state |Psi_t> evolves from one conversational turn to the next under a matrix product operator denoted as H. In closed physical systems, transition operators are Hermitian, i.e. they conserve energy and their eigenvalues are strictly real. Human physiology operates differently and can be compared with an open, dissipative system. A stress response, therefore, can be represented as an injection of biological ‘energy’ that ‘dissipates’ over time as the patient calms down. This disclosure models similar changes in human physiology using non-hermitian matrix product operators. For example, adrenaline spikes and then slowly decays away as the body processes the chemicals. Hormones and medicines both follow their own kinetics and dynamics.
 
 To model this biological reality, we treat human physiology as an open system that leaks energy. By adding an imaginary component to the transition operator, we mathematically force the energy of the system to decay over time. This decay is the exact mathematical equivalent of a patient calming down.
 
@@ -103,20 +116,45 @@ The transition operator for a discrete dialogue step is:  H = exp(-i * H_eff * d
 
 Because the operator is non-Hermitian, it does not preserve the probability amplitude of the excited stress state indefinitely. The physiological arousal mathematically decays as the tensor network contracts sequentially over time.
 
-The decay matrix Gamma is assembled from six additive components, each representing a distinct dissipation channel:
+The decay matrix Gamma is assembled from seven additive components, each representing a distinct dissipation channel:
 
 ```
-Gamma = Gamma_physio + Gamma_habit + Gamma_pkpd + Gamma_reactivity + Gamma_fear + Gamma_companion
+Gamma = Gamma_physio + Gamma_habit + Gamma_pkpd + Gamma_reactivity + Gamma_fear + Gamma_companion + Gamma_setpoint
 ```
+
+The additive construction is a first-order approximation: each channel contributes independently to the total dissipation rate. In reality, channels interact (high anxiety can blunt drug efficacy; prior fear events amplify autonomic reactivity), and future embodiments may replace the sum with a learned coupling matrix. The additive form is computationally tractable and consistent with the Lindblad master equation formalism for open quantum systems.
 
 where:
 
-- Gamma_physio encodes autonomic stress (HRV, EDA)
-- Gamma_habit encodes behavioural inertia
-- Gamma_pkpd encodes pharmacodynamic modulation (one-compartment model with Emax Hill equation)
-- Gamma_reactivity encodes individual-difference reactivity
-- Gamma_fear encodes extinction-resistant fear inertia (Rescorla-Wagner delta rule)
-- Gamma_companion encodes the therapeutic alliance coupling
+- Gamma_physio encodes acute autonomic stress derived from real-time biometrics (HRV, EDA)
+- Gamma_habit encodes behavioural inertia -- the resistance of established routines to change
+- Gamma_pkpd encodes pharmacodynamic modulation: how much of a drug's therapeutic effect is currently active, computed from a PK/PD model at every turn
+- Gamma_reactivity encodes individual-difference reactivity -- the baseline sensitivity of this patient's stress response relative to population norms
+- Gamma_fear encodes extinction-resistant fear inertia via the Rescorla-Wagner delta rule: conditioned fear that generalizes to new stimuli after prior high-fear events
+- Gamma_companion encodes the therapeutic alliance and emotional contagion coupling between companions in the same care circle (e.g., the clinician's calm tone attenuating the patient's predicted arousal before the patient companion generates its next response). Coupling strengths are literature-grounded priors (Roter 2002; Hatfield et al. 1993; Epstein et al. 2007; Pinquart & Sorensen 2004) updated per-session by the A3C training loop.
+- Gamma_setpoint encodes chronic resting-arousal elevation -- the upward shift in the patient's equilibrium point due to sensitization history (recurrent panic, PTSD, chronic pain). Unlike Gamma_physio which tracks the current acute deviation, Gamma_setpoint shifts the mean-reversion target of the Ornstein-Uhlenbeck process from zero to mu_0 + setpoint_offset, so the system's resting state is no longer calm-by-default. Fitted from intake questionnaires or prior session trajectories rather than real-time sensors.
+
+### Managing Pharmacokinetics and Pharmacodynamics
+
+When we shift from modeling endogenous hormones (like adrenaline and cortisol) to exogenous medications, the math in the physiological subspace has to account for a different kind of delay. With adrenaline, physiological inertia is caused by the time it takes the body to clear a naturally released chemical. With medications, the inertia is driven by the disconnect between the drug's concentration in the blood (pharmacokinetics, or PK) and its actual effect at the receptor site (pharmacodynamics, or PD).
+
+**Hemodynamic Inertia for Hypertension Medication (Beta-Blockers):**
+
+When a patient takes a beta-blocker like Metoprolol, the drug enters the bloodstream and binds to receptors in the heart. However, there is a temporal lag between the plasma concentration Cp(t) peaking in the blood and the effect-site concentration Ce(t) peaking at the actual cardiac receptors. The rate at which the drug moves from the blood to the active receptor site is defined by the equilibration rate constant, ke0.
+
+Because of this ke0 delay, the physical drop in blood pressure lags significantly behind the peak concentration of the drug in the bloodstream. If the patient checks their blood pressure 45 minutes after taking the pill, their blood plasma might be saturated with the drug, but the clinical effect on the blood pressure has not fully materialized.
+
+If the AI only looks at the current blood pressure reading, it might panic and recommend immediate clinical intervention. Instead, we encode the ke0 rate constant directly into the tensor network's transition operator. The strategic agent calculates that the drug is still in the equilibration phase. The tactical agent is mathematically barred from suggesting a second dose (preventing dangerous dose-stacking) and instead generates a prompt to wait 60 minutes and retest, aligning the conversation with the drug's true biological timeline.
+
+**SSRI Pharmacodynamics -- Two-Timescale Bridge Prescription:**
+
+The physiological inertia of SSRIs operates on a much longer, systemic timeline than most medications. When a patient starts an SSRI, the drug immediately blocks the serotonin transporter (SERT). The synaptic cleft floods with serotonin within hours -- but the patient does not feel better. The sudden serotonin excess overstimulates 5-HT1A autoreceptors, which can temporarily trigger activation syndrome: increased anxiety, restlessness, and insomnia. The actual therapeutic effect requires the body to downregulate those excess autoreceptors, a structural remodeling process that takes two to four weeks.
+
+Because of this, standard clinical practice bridges the first two to four weeks with a fast-acting anxiolytic -- typically a benzodiazepine such as clonazepam (0.5mg BID). The benzo acts within minutes via GABA-A modulation and blunts the activation syndrome while the SSRI's slow receptor downregulation completes. The patient is now on two simultaneous drug curves with completely different timescales: the benzo (tau ~ hours) and the SSRI (tau ~ two weeks). As the SSRI takes effect, the benzo is tapered.
+
+This creates a compound PK/PD mismatch that is invisible to a standard language model. When the patient reports on day 5 that their anxiety is worse, the model must reason about three simultaneous states: (1) the SSRI plasma concentration is high but the receptor downregulation has not completed -- therapeutic effect near zero; (2) the benzo is actively attenuating the activation syndrome -- its E(t) is near peak; (3) the benzo taper schedule means its contribution will decline over the next two weeks exactly as the SSRI comes online. An LLM may have abstract knowledge that "SSRIs take a few weeks to work," but it has no mechanism to compute where this patient is on both drug curves right now based on their real-time HRV and current dosing schedule.
+
+In our framework, Gamma_pkpd carries two active components simultaneously -- one per drug -- each computing its own E(t) from a PK/PD model parameterized by the patient's current prescription and biometric feedback. The tensor operator at each turn reflects the combined pharmacodynamic state of both drugs, ensuring the system neither treats the day-5 anxiety report as a treatment failure nor attempts to taper the benzo before the SSRI has reached therapeutic effect.
 
 The full expansion of the transition operator: H = exp(-i*H0*t) * exp(-Gamma*t)
 
@@ -126,12 +164,13 @@ This decay factor provides the mathematical exactness of physiological inertia. 
 
 ### Encoding the Physiological Decay Rate
 
-The physiological inertia and the specific biological memory of the patient are encoded entirely within the eigenvalue spectrum of the transfer matrix associated with H. We isolate the specific block of the transfer matrix that acts exclusively on the physiological bond subspace.
+The patient's biological memory -- how long stress persists after a triggering event -- is encoded as a single number: the second eigenvalue |lambda_1| of the tensor's transition operator H. A value of |lambda_1| close to 1 means the stress state lingers for many conversational turns; a value close to 0 means it dissipates within one or two turns. Because |lambda_0| is normalized to 1 (representing the patient's baseline resting state), the recovery rate is simply:
 
-Let the eigenvalues of this physiological transfer matrix be ordered by their magnitude:
-    |lambda_0| > |lambda_1| >= |lambda_2| ...
+```
+time to calm proportional to  1 / (1 - |lambda_1|)
+```
 
-The dominant eigenvalue lambda_0 represents the absolute baseline homeostasis of the patient. We normalize the operator such that |lambda_0| = 1. The biological memory of the patient is dictated entirely by the spectral gap between the baseline and the first excitation state lambda_1. When a stressful token is introduced into the conversation, the system transitions into an excited state. The amplitude of remaining in this stressed state after n subsequent conversational turns is proportional to |lambda_1|^n. We directly map the patient's measured autonomic decay constant gamma, derived from real-time heart rate variability metrics, to this second eigenvalue:
+The time it takes the patient to return to calm is governed by |lambda_1| alone. We directly map the patient's measured autonomic decay constant gamma, derived from real-time heart rate variability metrics, to this eigenvalue:
 
 ```
 |lambda_1| = exp(-gamma * delta_t)
@@ -145,20 +184,19 @@ s = w1 * sigma_HRV + w2 * sigma_EDA + w3 * sigma_sleep + w4 * sigma_glucose + w5
 
 where (w1, ..., w5) = (0.35, 0.25, 0.20, 0.10, 0.10) and each sigma is min-max normalised.
 
-Through this formulation, the decay rate is not a learned weight buried in a neural network layer. It is a strict geometric property of the tensor space. If a patient has a slow physiological recovery rate due to clinical fragility, gamma is small. This forces |lambda_1| to remain very close to 1. When the tactical agent attempts to generate the next word by contracting the state tensor |Psi_t> with the operator H, the complex geometry mathematically prevents the physiological bond index from collapsing back to the relaxed state. The stress persists in the virtual bond, fundamentally altering the probability distribution of the semantic vocabulary for multiple subsequent turns regardless of what the agent attempts to say.
+Through this formulation, the decay rate is not a learned weight buried in a neural network layer. It is a strict geometric property of the tensor space. If a patient has a slow physiological recovery rate due to clinical fragility, gamma is small. This forces |lambda_1| to remain very close to 1. When the system generates the next conversational move -- whether by contracting the state tensor directly in the full tensor realization, or by running the MCTS over the physiological state and guiding the language model in the hybrid realization -- the complex geometry prevents the physiological bond index from collapsing back to the relaxed state. The stress persists in the virtual bond, constraining the available conversational moves for multiple subsequent turns regardless of what the agent attempts to say.
 
 ### The PhysioInertiaGate: Five-Zone Stress State Machine
 
-Physiological inertia is the path-dependent resistance to state change: prior high-stress exposure lowers the threshold to re-enter that state. The PhysioInertiaGate implements this as a Schmitt-trigger with dead-band = 0.06, organized into five stress zones:
+Physiological inertia is the path-dependent resistance to state change: prior high-stress exposure lowers the threshold to re-enter that state. The PhysioInertiaGate implements this as a Schmitt-trigger with an asymmetric dead-band. A dead-band means the threshold to *enter* a higher-stress zone is different from the threshold to *exit* it: once stress pushes the gate into zone 3, the stress must drop to zone 3's lower boundary minus the dead-band width before the gate transitions back down. This prevents rapid oscillation when stress fluctuates near a boundary. The gate is organized into five stress zones. The zone boundaries, therapeutic mode labels, and dead-band width are implementation defaults derived from the normalized stress index s defined above; they are adjustable parameters, not fixed constants, and future embodiments may use patient-specific calibration or clinically validated cutoffs.
 
-
-| Zone | Stress Range | Code Name    | Therapeutic Mode                       |
-| ---- | ------------ | ------------ | -------------------------------------- |
-| 0    | [0.00, 0.25) | calm         | Exploration / psychoeducation          |
-| 1    | [0.25, 0.45) | mild tension | Motivational / change-talk             |
-| 2    | [0.45, 0.60) | moderate     | Ambivalence / develop-discrepancy      |
-| 3    | [0.60, 0.78) | elevated     | Validate / de-escalate                 |
-| 4    | [0.78, 1.00] | critical     | Safety-only / flooding-hold / escalate |
+| Zone | Stress Range (default) | Code Name    | Therapeutic Mode                       |
+| ---- | ---------------------- | ------------ | -------------------------------------- |
+| 0    | [0.00, 0.25)           | calm         | Exploration / psychoeducation          |
+| 1    | [0.25, 0.45)           | mild tension | Motivational / change-talk             |
+| 2    | [0.45, 0.60)           | moderate     | Ambivalence / develop-discrepancy      |
+| 3    | [0.60, 0.78)           | elevated     | Validate / de-escalate                 |
+| 4    | [0.78, 1.00]           | critical     | Safety-only / flooding-hold / escalate |
 
 
 Downward transition threshold = upward threshold - 0.06 (the dead-band), preventing rapid zone oscillation from small stress fluctuations. Action availability is stress-gated: confrontational and high-demand actions are suppressed in zones 3 and 4.
@@ -169,7 +207,7 @@ This converts the PhysioInertiaGate signal directly into search guidance without
 
 In standard multi-agent AI systems -- including frameworks such as LangGraph, AutoGen, and CAMEL -- agents are separate processes that communicate by serializing their internal state into natural language text or structured JSON payloads passed over APIs. Each serialization step compresses and loses continuous information; the receiving agent reconstructs a discrete approximation from the text.
 
-In this disclosure, agents within a companion share direct read/write access to the same Matrix Product State buffer |Psi_t>. No serialization step exists. The virtual bond of the MPS is explicitly partitioned into three orthogonal subspaces:
+In this disclosure, agents within a companion share direct read/write access to the same Matrix Product State buffer |Psi_t>. No serialization step exists. The virtual bond of the MPS is explicitly partitioned into three orthogonal subspaces -- each subspace is a dedicated region of the tensor's information-carrying channels, separated by purpose so that operations on one do not interfere with the others:
 
 ```
 |Psi_t> belongs to H_sem (x) H_phys (x) H_social
@@ -196,14 +234,18 @@ Reading this term by term:
 - H_sem (x) I (x) I: the semantic flow operator -- governs the vocabulary and clinical language logic. Acts only on the semantic subspace; leaves physiology and social coupling unchanged.
 - I (x) H_phys (x) I: the physiological operator -- governs how the patient's stress state evolves forward in time according to the Ornstein-Uhlenbeck dynamics. Acts only on H_phys.
 - I (x) I (x) H_social: the social operator -- governs how the relationship weights between principals evolve (e.g., caregiver trust building or erosion). Acts only on H_social.
-- V_int: the COUPLING term. This is what makes the agents interact without text. V_int is a matrix that acts across all three subspaces simultaneously. When the amplitude in H_phys exceeds the PhysioInertiaGate threshold, V_int suppresses specific vocabulary vectors in H_sem -- for example, zeroing out dose-escalation tokens while the stress amplitude remains elevated. This happens through a matrix multiplication, not through any agent generating a message.
+- V_int: the COUPLING term. V_int is a matrix whose off-diagonal entries represent how strongly one principal's state influences another's. Specifically: when the amplitude in H_phys (the patient's stress level) exceeds the PhysioInertiaGate threshold, V_int suppresses high-demand action categories from the available search space. In the hybrid realization this removes those action labels from the MCTS action taxonomy before the language model is prompted, so those response types are never considered for that turn. In the full tensor realization, the corresponding tensor contraction paths -- which route through the action-type clusters associated with challenge or confrontation -- are set to zero, making those response categories geometrically unreachable. Either way, the suppression is a matrix operation, not a message between agents.
+
+  V_int encodes the *strength* and *direction* of coupling between principals. Positive off-diagonal entries represent cooperative coupling (calm clinician attenuates patient arousal). Signed or near-zero entries can represent distant or adversarial relationships where one principal's stress amplifies rather than attenuates another's. The relationship quality -- comfortable, clinical, adversarial, familial -- is encoded in the sign and magnitude of V_int entries, updated per-session by the A3C training loop from observed interaction trajectories. H_social governs how these coupling weights change over time (trust building, alliance erosion); V_int is the instantaneous snapshot of that relationship state used at each turn.
+
+  V_int does not itself do the strategic planning among companions. Multi-companion strategy -- which companion speaks at which turn, how a clinician companion and patient companion sequence their interventions across a negotiation -- is handled by MCTS operating over the shared tensor state. The MCTS search can treat "companion C says X at turn t" and "companion D says Y at turn t+1" as joint actions and find the sequence that minimises total physiological cost across all principals. V_int provides the physiological coupling layer that MCTS uses to predict how each companion's action will propagate stress or relief to the others.
 - -i*Gamma: the dissipation term, forcing the physiological arousal to decay exponentially over time.
 
 **The distinction from other tensor network AI work:**
 
-Existing approaches either (a) apply tensor decompositions (Tucker, TT) to *compress the weight matrices of a single Transformer agent*, or (b) use shared MPS in *physics simulations of multi-particle quantum systems* where the "agents" are particles with no independent policy objectives. Neither applies tensor product structure to couple role-specific clinical agents with a live physiological signal in a conversational AI system. The specific novelty is that H_phys -- derived from real patient biometric data -- is structurally embedded in the same tensor contraction that generates the next clinical token, so every word the Clinical Agent generates is already constrained by the patient's current physiological state without any explicit inter-agent communication.
+Existing approaches either (a) apply tensor decompositions (Tucker, TT) to *compress the weight matrices of a single Transformer agent*, (b) use shared MPS in *physics simulations of multi-particle quantum systems* where the "agents" are particles with no independent policy objectives, or (c) use tensor-structured value networks to guide MCTS but keep the value network and the state representation as separate objects. None of these applies tensor product structure to couple role-specific clinical agents with a live physiological signal in a conversational AI system. The specific novelty is that H_phys -- derived from real patient biometric data -- is structurally embedded in the same tensor contraction that generates the next clinical token and defines the MCTS action set, so every word the Clinical Agent generates and every branch the search tree explores is already constrained by the patient's current physiological state without any explicit inter-agent communication.
 
-The Social Prior Matrix (V_int) encodes the coupling strength between principals. Initial priors for the patient-caregiver-clinician triad are (rows/columns ordered patient, caregiver, clinician):
+V_int encodes the coupling strengths between principals. Initial priors for the patient-caregiver-clinician triad are (rows/columns ordered patient, caregiver, clinician):
 
 ```
 V_int = | 1.0   0.35  0.5 |
@@ -213,66 +255,29 @@ V_int = | 1.0   0.35  0.5 |
 
 Note the asymmetry: patient->caregiver coupling (0.35) differs from caregiver->patient (0.20), reflecting the directional nature of caregiving dependency. clinician->patient (0.50) is the dominant cross-role channel.
 
-### Partial Trace Operations for Inter-Agent State Reading
+### Multi-Agent State Sharing via the Shared Tensor Buffer
 
-This disclosure implements a shared memory architecture at two distinct levels: intra-companion (agents within a single user's companion) and inter-companion / inter-orgnet (agents belonging to different users or different organizations).
+The care circle architecture assigns one companion to each user. Each companion is an independent process that makes its own response calls. The multi-agent coordination problem is: Companion B must not deliver complex information to the patient immediately after Companion A (the clinician companion) has just delivered distressing news -- even though they run independently. In a text-passing system this requires Companion A to serialize its assessment into a summary message and send it to Companion B before Companion B generates.
 
-**Level 1 -- Intra-Companion: Physiological Agent and Clinical Agent**
+In this disclosure, all companions in the same care circle write their physiological state into a shared buffer -- a thread-safe container holding the current MPS state for each active agent in the session. Before generating a response, each companion reads the physiological state of every other companion from this buffer. The reading operation is a partial trace: it returns only the stress amplitude for that agent (a privacy-safe scalar derived from the physiological bond channels), not the full semantic state. No companion needs to generate a summary sentence to convey "patient stress is currently elevated." The stress amplitude is structurally readable from the tensor state.
 
-Within a patient's companion, a dedicated Physiological Agent continuously tracks the biometric data streams (HRV, EDA, glucose, sleep index) and maintains the physiological subspace H_phys of the shared tensor state. The Clinical Agent, which handles medical history, adherence protocols, and pharmacological reasoning, does not receive a text summary such as "patient stress is elevated." Instead, it performs a partial trace over the physiological subspace to directly read the stress amplitude:
-
-```
-rho_clin = Tr_phys( |Psi_t><Psi_t| )
-```
-
-The Clinical Agent executes its own transition operator H_clin on the resulting reduced state. Because both agents operate on the same tensor buffer, the physiological context is structurally present in every clinical decision without any serialization or summarization step.
-
-**Level 2 -- Inter-Orgnet: Claims Agent and Compliance Agent**
-
-At the organizational boundary -- for example, between a hospital orgnet and a TPA (Third Party Administrator) orgnet -- a hospital-side Claims Agent handles prior authorization requests and denial resolutions, while the TPA-side Compliance Agent governs adjudication policy. In standard architectures, these systems communicate via FHIR API calls with serialized JSON payloads, losing continuous physiological context at every hop.
-
-When the Claims Agent of the hospital orgnet evaluates whether to initiate a prior authorization appeal, it performs a partial trace over the TPA Compliance Agent's policy subspace to read the adjudication state without waiting for a text response:
+In the hybrid realization, this partial trace is computed explicitly in `shared_tensor_state.py`: `partial_trace_physio(agent_id)` returns a reduced state representation from the MPS object, and the result is injected into the next companion's guidance as a numerical prior before MCTS runs. In the full tensor realization, the equivalent operation is the formal tensor partial trace:
 
 ```
-rho_claims = Tr_compliance( |Psi_t><Psi_t| )
+rho_agent = Tr_other( |Psi_t><Psi_t| )
 ```
 
-Both agents execute their independent transition operators simultaneously upon the shared inter-orgnet manifold, enabling real-time coordination at the organizational boundary without a round-trip API call.
+which marginalizes out all other agents' degrees of freedom, leaving only the target agent's reduced state. Both realizations achieve the same coordination outcome: a companion's action selection is conditioned on the physiological state of all other companions without any companion generating a natural language message to convey that state.
 
-### The Dual-Rank Architecture: Strategic and Tactical Agents
+V_int governs how strongly one companion's physiological state affects another's predicted arousal -- it is the propagation coefficient in `v_int_propagate()`. Note the distinction: Gamma encodes within-person persistence of stress over time (physiological inertia); V_int encodes cross-person transmission of stress from one companion's state to another's prediction (social coupling). They are separate mechanisms.
 
-Calculating biological changes for a task involving MCTS and language processing is computationally heavy. To make the framework fast enough for a live conversation, we split the workload using a dual-rank design - two tensors of different ranks as two different agents operating at different levels of mathematical complexity.
-
-**Strategic Agent (High-Rank):**
-In the background, a high-rank strategic agent handles the heavy calculations. It uses a look-ahead algorithm (Monte Carlo Tree Search) to navigate through the mathematical map of the conversation. It finds a dialogue path that gradually offers a high long term reduction in stress, as well as a higher agreement with the patient. The standard arm runs 80 MCTS iterations; the HPVOOT variant (Hierarchical PW+VOOT) runs 150 iterations with a hierarchical decomposition.
-
-The MCTS objective function is to minimize the accumulated physiological stress (the integral of the anti-Hermitian decay component Gamma). The agent searches for a path of core tensors that minimizes this cost function C:
-
-```
-C = Sum over j=1 to k of  <Psi_{t+j} | Gamma | Psi_{t+j}>
-```
-
-**SVD Compression Bridge:**
-Once the Strategic Agent finds the optimal sequence of words that minimizes stress, it holds a massive, uncompressed tensor representing that path. It reshapes this tensor into a standard 2nd order matrix M and performs Singular Value Decomposition:
-
-```
-M = U * Sigma * V_dagger
-```
-
-Where Sigma is a diagonal matrix containing the singular values arranged in descending order. To create the strict boundaries for the Low-Rank Tactical Agent, we discard the mathematically insignificant data and keep only the largest singular values up to a maximum bond dimension chi_max. This Mtrunc matrix is the literal filter.
-
-The truncated bond matrix Mtrunc is injected into the primary inference model system prompt as a structured natural-language hint (tag: [MCTS GUIDANCE]) indicating the MCTS-preferred action subspace.
-
-**Tactical Agent (Low-Rank):**
-The Tactical Agent then executes standard autoregressive token generation, but its probability space is structurally confined strictly to the subspace defined by the SVD projection, ensuring sub-200ms generation latency while guaranteeing adherence to the high-rank strategic constraints.
-
-### Zero-Data Initialization via Deterministic Distillation (SOP Compilation)
+### Zero-Data Initialization via Deterministic Distillation (Policy Compilation)
 
 Deploying autonomous agents in novel clinical workflows frequently suffers from the cold-start problem: a lack of historical conversational data required for Reinforcement Learning from Human Feedback (RLHF). This disclosure bypasses this requirement by initializing agents through deterministic distillation rather than statistical training.
 
-Agent logic is not defined by natural language system prompts, but by institutional Standard Operating Procedures (SOPs) and clinical policies. To initialize an agent, an offline frontier language model processes the targeted SOP. We extract the dense activation matrices generated by the model during this forward pass. We then execute a Singular Value Decomposition (SVD) on these matrices to isolate the principal mathematical components representing the clinical rule.
+Agent logic is not defined by natural language system prompts, but by institutional clinical policies and protocols. To initialize an agent, an offline frontier language model processes the targeted policy document. We extract the dense activation matrices generated by the model during this forward pass. We then execute a Singular Value Decomposition (SVD) on these matrices to isolate the principal mathematical components representing the clinical rule.
 
-Let a defined clinical SOP sequence be S = {x1, x2, ..., xN}. We pass this sequence through the frozen language model and extract the dense hidden state activations at the final layer, forming an activation matrix M of dimensions N x d_model. We then perform a truncated Singular Value Decomposition (SVD) on this matrix:
+Let a defined clinical policy sequence be S = {x1, x2, ..., xN}. We pass this sequence through the frozen language model and extract the dense hidden state activations at the final layer, forming an activation matrix M of dimensions N x d_model. We then perform a truncated Singular Value Decomposition (SVD) on this matrix:
 
 ```
 M ≈ U_k * Sigma_k * V^T_k
@@ -280,9 +285,9 @@ M ≈ U_k * Sigma_k * V^T_k
 
 Where k is the target bond dimension chi. The extracted singular vectors, scaled by their singular values, form the initialized weights of our 3rd-order core tensors A(t). This mathematical compression transfers the zero-shot reasoning capabilities of a billion-parameter neural network directly into the localized geometry of the Matrix Product State, allowing for immediate deployment without stochastic training datasets.
 
-### Contrastive Subspace Distillation for Contradictory SOPs
+### Contrastive Subspace Distillation for Contradictory Policies
 
-The core issue with messy hospital Standard Operating Procedures (SOPs) is that SVD is mathematically designed to capture maximum variance. If an SOP says "Mandatory upfront payment" in Chapter 1 but "Waive payment for acute cardiac distress" in Chapter 4, the frontier LLM's activations will contain overlapping, high-variance vectors for both. If we run a standard SVD on that noisy activation matrix, the top singular values will blend the contradictions. The resulting projection matrix P becomes clinically bipolar.
+The core issue with policies that contain internal contradictions is that SVD is designed to capture the directions of *maximum variance* in the data. In a contradictory policy, the contradictory decision points are precisely the highest-variance regions -- the model activates strongly for both branches because both are represented in the training material. Running a standard SVD on the raw activation matrix therefore promotes the contradiction into the top singular vectors: the resulting projection matrix has its highest weight exactly in the directions where the two behaviors conflict. The compiled tensor then inherits this ambiguity and will produce either behavior depending on small perturbations in the input state.
 
 To deal with this, we shift from standard extraction to Contrastive Subspace Distillation:
 
@@ -290,8 +295,8 @@ To deal with this, we shift from standard extraction to Contrastive Subspace Dis
 
 We do not just feed the SOP to the frontier LLM and extract the forward pass. We force the LLM to generate paired clinical traces for the exact point of contradiction:
 
-- The Compliant Trace: The agent correctly navigates the edge case (e.g., prioritizing clinical triage over claims collection due to high stress).
-- The Fatal Trace: The agent maliciously enforces the contradiction (e.g., demanding payment during distress).
+- The Compliant Trace: The agent correctly navigates the exception case (e.g., prioritizing clinical safety over a default protocol when the patient's physiological state warrants it).
+- The Fatal Trace: The agent blindly enforces the general rule regardless of the exception condition.
 
 **Step 2: Latent Subtraction**
 
@@ -311,56 +316,23 @@ We perform Singular Value Decomposition strictly on the difference matrix:
 A_delta = U * Sigma * V^T
 ```
 
-The highest singular values (Sigma) now mathematically represent the exact geometric boundary separating the right action from the wrong action. The shared, contradictory noise cancels itself out during the subtraction. We compile this isolated boundary into our tensor network. When the live system's MCTS algorithm reaches this state, it is mathematically repelled from the contradictory A_fatal subspace because the projection matrix is orthogonal to it.
-
-**Multi-Agent Conflict Resolution via Contrastive Distillation:**
-
-In a Quality Improvement (QI) adherence workflow, the social coupling matrix V_int tracks the collective inertia of the care circle:
-
-- Patient: Treatment fatigue and physiological stress
-- Caregiver: Burnout and advocacy capacity
-- Clinician: Urgency for clinical outcomes
-- TPA: Adjudication friction (cost containment)
-
-When the live system's MCTS algorithm reaches a specific state of high social inertia (overwhelmed caregiver + anxious patient), the extracted projection matrix acts as a physical hardware lock. The search tree is geometrically repelled from the TPA-denial pathway and forced to route through the clinical exception pathway. We have successfully distilled a messy, multi-agent human conflict into a deterministic tensor constraint.
+The highest singular values (Sigma) now mathematically represent the exact geometric boundary separating the correct action from the incorrect one. The shared contradictory noise cancels during the subtraction. We compile this isolated boundary into the tensor network. When the live system's MCTS algorithm reaches this state, it is geometrically repelled from the A_fatal subspace because the projection matrix is orthogonal to it. The same ALS mechanism described in the previous section can inject an updated contrastive matrix into the live tensor without taking the system offline.
 
 ### Localized Rank Updates vs. Context-Augmented Generation
 
 In standard deployment architectures such as RAG or CAG, clinical constraints are injected dynamically into the context window of a Transformer. This improves empirical accuracy, but because generation relies on a softmax activation function, all tokens retain a generation probability strictly greater than zero. Consequently, RAG and CAG frameworks structurally permit probabilistic hallucinations.
 
-This disclosure unifies the language generation and the deterministic constraints into a single geometric space. If an operational error is detected - such as an invalid claims workflow - the system does not require retraining, prompt engineering, or updates to a vector database. Because the parameters are localized within distinct core tensors A(t), engineers can execute a targeted mathematical update. By altering the specific tensor entry governing the prohibited action to exactly zero, the matrix pathway is permanently severed. This rank-1 update provides immediate, deterministic error correction without altering the global weight distribution or risking the catastrophic forgetting common in standard neural network fine-tuning.
+This disclosure unifies the language generation and the deterministic constraints into a single geometric space. If an operational error is detected - such as a prohibited clinical action - the system does not require retraining, prompt engineering, or updates to a vector database. Because the parameters are localized within distinct core tensors A(t), engineers can execute a targeted mathematical update. Setting the tensor entry governing the prohibited action to zero causes the matrix contraction along that path to evaluate to the zero vector -- the action is absent from the distribution, not merely penalized. In the full tensor realization this severs the token-level generation path directly. In the hybrid realization the same operation removes the action from the MCTS action vocabulary, preventing it from appearing in the guidance subspace passed to the language model. This rank-1 update provides immediate, deterministic error correction without altering the global weight distribution or risking catastrophic forgetting.
 
 ### Policy Updates via Alternating Least Squares (ALS)
 
 Standard neural networks rely on global backpropagation (e.g., Adam, SGD) to update policies. When fine-tuned on a new clinical rule, gradient descent slightly alters the global weight distribution, carrying a high risk of catastrophic forgetting where previously validated safety boundaries are inadvertently overwritten.
 
-Because This disclosure factorizes the conversational state into distinct local core tensors A(t), policy updates are executed using Alternating Least Squares (ALS) optimization. If a hospital updates a specific denial resolution policy, we do not perform a global gradient update. We mathematically freeze all core tensors A(j not equal t) and define a localized loss function exclusively for the tensor governing the updated semantic space.
+Because this disclosure factorizes the conversational state into distinct local core tensors A(t), policy updates are executed using Alternating Least Squares (ALS) optimization. If a clinical protocol is updated, we do not perform a global gradient update. We mathematically freeze all core tensors A(j not equal t) and define a localized loss function exclusively for the tensor governing the updated semantic space.
 
-By freezing the surrounding network, the optimization problem is reduced to a strictly convex linear system:  M*x = b
-
-This system is solved deterministically using standard linear algebra solvers. This localized ALS update provides immediate error correction and allows engineers to overwrite specific clinical nodes with zero risk of destructively interfering with the surrounding initialized knowledge base.
+By freezing the surrounding network, the optimization problem is reduced to a strictly convex linear system: M*x = b, solved deterministically using standard linear algebra. Because the mathematical scope of the update is bounded to the target tensor and the surrounding tensors are frozen, unintended changes to neighboring policy nodes are structurally constrained by design. The usual risks of global gradient descent -- inadvertently shifting weights elsewhere in the network -- do not apply here. The approximation quality of the overall tensor representation still depends on the original SVD truncation rank; that is a separate parameter controlled at initialization.
 
 When a hospital changes an SOP, the new contrastive SVD matrix is injected into the live tensor network using ALS without taking the system offline.
-
-### Managing Pharmacokinetics and Pharmacodynamics
-
-When we shift from modeling endogenous hormones (like adrenaline and cortisol) to exogenous medications, the math in the physiological subspace has to account for a different kind of delay. With adrenaline, physiological inertia is caused by the time it takes the body to clear a naturally released chemical. With medications, the inertia is driven by the disconnect between the drug's concentration in the blood (pharmacokinetics, or PK) and its actual effect at the receptor site (pharmacodynamics, or PD).
-
-**Hemodynamic Inertia for Hypertension Medication (Beta-Blockers):**
-
-When a patient takes a beta-blocker like Metoprolol, the drug enters the bloodstream and binds to receptors in the heart. However, there is a temporal lag between the plasma concentration Cp(t) peaking in the blood and the effect-site concentration Ce(t) peaking at the actual cardiac receptors. The rate at which the drug moves from the blood to the active receptor site is defined by the equilibration rate constant, ke0.
-
-Because of this ke0 delay, the physical drop in blood pressure lags significantly behind the peak concentration of the drug in the bloodstream. If the patient checks their blood pressure 45 minutes after taking the pill, their blood plasma might be saturated with the drug, but the clinical effect on the blood pressure has not fully materialized.
-
-If the AI only looks at the current blood pressure reading, it might panic and recommend immediate clinical intervention. Instead, we encode the ke0 rate constant directly into the tensor network's transition operator. The strategic agent calculates that the drug is still in the equilibration phase. The tactical agent is mathematically barred from suggesting a second dose (preventing dangerous dose-stacking) and instead generates a prompt to wait 60 minutes and retest, aligning the conversation with the drug's true biological timeline.
-
-**SSRI Pharmacodynamics (Two-Timescale Mismatch):**
-
-The physiological inertia of SSRIs operates on a much longer, systemic timeline. When a patient starts an SSRI, the medication immediately blocks the serotonin transporter (SERT) in the brain. The synaptic cleft is flooded with serotonin within hours. However, the patient does not feel better. In fact, this sudden serotonin flood overstimulates 5-HT1A autoreceptors, which can temporarily trigger "activation syndrome" - increased anxiety, restlessness, and insomnia. The actual anti-depressant effect requires the body to structurally adapt by downregulating (removing) these excess 5-HT1A receptors, a biological remodeling process that takes two to four weeks.
-
-This represents a massive PK/PD mismatch. High drug concentration initially equals worse symptoms. If a standard language model acts on the patient's immediate text ("I've been taking this for 5 days and my anxiety is worse"), the logical inference is that the treatment needs to be adjusted.
-
-In our framework, the matrix modeling the SSRI's effect does not map drug concentration directly to mood improvement. The tensor operator includes a decay function representing the multi-week receptor downregulation process. When the patient reports heightened anxiety on day 5, the high-rank agent maps this coordinate exactly to the expected activation syndrome phase. The tensor geometry physically isolates the AI from the "treatment failure" vocabulary. It forces the tactical agent to validate the discomfort as a known, temporary physiological mechanism and reinforces medication adherence, rather than prematurely escalating the case to a physician for a drug switch.
 
 ### Care Circle Orchestration Architecture
 
@@ -389,7 +361,7 @@ In standard multi-agent LLMs, inter-agent communication is audited by logging th
 
 For intra-manifold deliberation, the system logs the singular value spectrum (Sigma_t) and the reduced density matrix at each discrete time step t. If an agent makes a critical decision, the exact mathematical trajectory that led to that state is cryptographically hashed and logged. This provides a deterministic, geometric proof of compliance that is vastly superior to a natural language log, which is subject to semantic ambiguity.
 
-When a developer needs to debug an anomalous agent decision, the Semantic State Inspector tool isolates the logged reduced density matrix of the agent at the point of failure. It then applies a reverse projection operator onto the original semantic basis vectors. This equation mathematically collapses the complex tensor geometry back into a standard, human-readable probability distribution over the English vocabulary and clinical action space. The developer sees a standard dashboard showing exactly which semantic concepts the agent was evaluating, which concepts were mathematically suppressed by the physiological constraints, and the exact coordinate where the logic branched.
+When a developer needs to debug an anomalous agent decision, the Semantic State Inspector tool isolates the logged reduced density matrix of the agent at the point of failure. It then applies a reverse projection operator onto the original semantic basis vectors. In the full tensor realization, this collapses the tensor geometry back into a human-readable probability distribution over vocabulary and clinical action space -- the developer sees exactly which concepts the agent was evaluating and which were suppressed by the physiological constraints. In the hybrid realization, the equivalent audit shows which actions were excluded from the MCTS search space by the PhysioInertiaGate at each turn, and the exact stress amplitude that triggered the exclusion. Both produce a deterministic, geometric audit trail that is vastly superior to a natural language log, which is subject to semantic ambiguity.
 
 ---
 
@@ -543,49 +515,50 @@ These claims describe the full tensorized generation architecture. They are nove
 
 ## 4c. What is the Inventive Step?
 
-The following four inventive steps constitute the core of this disclosure. Each step bridges a domain that no single practitioner from any one field would ordinarily connect.
+The following inventive steps constitute the core of this disclosure. Each bridges a domain that no single practitioner from any one field would ordinarily connect.
 
-### Inventive Step 1: Social Inertia via Shared Geometry
+### Inventive Step 1: Multi-Principal Social State Encoded as a Tensor Coupling Term
 
-**The Step:** Multiple agents within a companion (Physiological Agent, Clinical Agent, Empathy Agent) share a single tensor state buffer instead of passing serialized text summaries. The same principle scales to the inter-orgnet level, where a Claims Agent and a Compliance Agent coordinate across organizational boundaries on a shared manifold.
+**The Step:** Multiple agents serving a care circle -- patient, caregiver, clinician -- coordinate through a shared tensor state rather than by exchanging messages. The social coupling between principals is encoded as a matrix V_int embedded directly in the system Hamiltonian, acting across the semantic, physiological, and social subspaces simultaneously.
 
-**The Technical Implementation:** The virtual bond of the Matrix Product State is expanded into a tensor product of distinct agent subspaces (H_sem, H_phys, H_social). The Social Coupling Matrix V_int is embedded directly into the system Hamiltonian. Independent agents execute their transition operators simultaneously on the shared manifold and read each other's state via partial trace operations. This enables zero-latency, zero-text coordination.
+**The Technical Claim:** The virtual bond of the MPS is partitioned into three orthogonal subspaces: H_sem (semantic vocabulary), H_phys (patient biometrics), H_social (care circle coupling weights). The total operator is H_total = H_sem x I x I + I x H_phys x I + I x I x H_social + V_int - i*Gamma. V_int is the sole term that acts across all three subspaces at once. When physiological amplitude in H_phys exceeds a threshold, V_int suppresses specific action vectors in H_sem without any agent generating a message. The coordination is a matrix multiplication, not a communication event.
 
-**Why it is Non-Obvious:** A software engineer would implement inter-agent communication as a REST API with JSON payloads - this is the industry standard. A quantum physicist would use tensor product spaces but would not apply them to clinical workflows or social coordination dynamics. A clinical informaticist would have no route to the mathematical formalism required to connect social caregiver burnout to a tensor bond dimension. The insight that the serialized text API bottleneck is mathematically equivalent to the Markovian bottleneck -- and that both can be solved by treating social coupling as a tensor interaction term in a shared Hilbert space -- requires simultaneous expertise in quantum information theory, clinical workflow design, and multi-agent systems engineering. It applies identically whether the communicating agents are intra-companion (Physiological -> Clinical) or inter-orgnet (Claims -> Compliance).
+**Why it is Non-Obvious:** Every multi-agent AI framework in production -- LangGraph, AutoGen, CAMEL -- treats inter-agent coordination as a message-passing problem. Tensor product structures are used in quantum physics to describe multi-particle systems, not multi-role clinical agents with independent policy objectives. The specific insight -- that caregiver burnout, clinician urgency, and patient stress can be encoded as coupled subspaces of a single operator, and that their interaction is a cross-subspace matrix multiplication rather than a sequence of API calls -- requires simultaneous expertise in quantum information theory, clinical workflow design, and multi-agent systems architecture that no single field produces.
 
-### Inventive Step 2: Translating Human biological inertia Directly into a Geometric Tensor Constraint
+---
 
-**The Step:** The patient's physiological stress memory (physiological inertia) is not modeled as a separate module that feeds data into an LLM. Instead, it is encoded as a strict geometric property of the tensor manifold itself - specifically, the eigenvalue spectrum of the non-Hermitian transfer matrix.
+### Inventive Step 2: Patient Autonomic Recovery Rate as a Tensor Eigenvalue
 
-**The Technical Implementation:** The patient's measured autonomic decay constant gamma, derived from real-time HRV metrics, is mapped directly to the second eigenvalue of the physiological transfer matrix: |lambda_1| = exp(-gamma * delta_t). A slow physiological recovery rate (small gamma) forces |lambda_1| to remain close to 1. The stress state then persists through the virtual bond for multiple subsequent turns, mathematically constraining the semantic vocabulary available to the tactical agent. This is not a probability adjustment; it is a geometric displacement of the accessible state space.
+**The Step:** A patient's physiological stress recovery rate -- how quickly their body returns to baseline after arousal -- is encoded not as a prompt variable, a reward penalty, or a feature in a neural network, but as the eigenvalue of the transfer matrix of the conversational operator. This makes the patient's biological memory a geometric property of the state space itself.
 
-**Why it is Non-Obvious:** A neuroscientist understands HRV and physiological inertia but has no route to eigenvalue spectra of non-Hermitian transfer matrices. A mathematician working with non-Hermitian operators models physical decay processes in open quantum systems but would not connect them to cardiac R-R intervals. A machine learning engineer would model stress as a feature in a prompt or a penalty term in a reward function. The direct mapping of a biological decay constant to a tensor eigenvalue - such that the physiological state constrains the geometric traversability of the conversational manifold - is a connection that requires all three knowledge domains simultaneously.
+**The Technical Claim:** The patient's autonomic decay constant gamma is derived from the mean-reversion rate of an Ornstein-Uhlenbeck process fitted to real-time cardiac R-R intervals (HRV). This gamma is mapped directly to the second eigenvalue of the physiological transfer matrix: |lambda_1| = exp(-gamma * delta_t). A clinically fragile patient with slow recovery (small gamma) produces |lambda_1| close to 1. After a stressful conversational event, the stress amplitude in the physiological bond subspace persists across subsequent turns proportional to |lambda_1|^n, propagating into the semantic subspace during tensor contraction and constraining which dialogue actions are accessible. The dissipation matrix Gamma is assembled from six additive channels -- autonomic stress, behavioural habit, pharmacodynamic effect, individual reactivity, fear extinction resistance, and therapeutic alliance -- each contributing a distinct decay timescale.
 
-### Inventive Step 3: Patient Stress as a Non-Hermitian Transition Operator that Gates the Accessible Semantic State Space
+**Why it is Non-Obvious:** HRV researchers fit Ornstein-Uhlenbeck processes to cardiac data but have no reason to connect this to tensor eigenvalue spectra. Physicists who work with non-Hermitian transfer matrices model physical decay in open quantum systems and have no reason to connect them to cardiac R-R intervals. Machine learning engineers who build clinical AI model stress as a scalar in a prompt or a weight in a reward function. The specific chain -- biometric measurement to OU fit to decay constant to tensor eigenvalue to conversational state constraint -- requires all three knowledge domains simultaneously and does not exist in any prior literature.
 
-**The Step:** The patient's slow physiological recovery rate (small gamma, derived from HRV) is encoded as a strict geometric property of the transition operator H = exp(-i*H0*t) * exp(-Gamma*t). When gamma is small, the second eigenvalue |lambda_1| remains close to 1 across many turns, meaning the stress amplitude persists in the physiological subspace of the virtual bond. This persistence propagates into the semantic subspace during tensor contraction, constraining which conversational moves are geometrically accessible. Chi itself stays fixed; what changes is how much of it carries live stress amplitude.
+---
 
-**The Technical Implementation:** Gamma is assembled from six physiological and psychosocial decay channels (Gamma_physio, Gamma_habit, Gamma_pkpd, Gamma_reactivity, Gamma_fear, Gamma_companion). The action availability is stress-gated: confrontational and high-demand actions are suppressed in zones 3 and 4. The PhysioInertiaGate -- which reads the Physiological Agent's output -- implements asymmetric Schmitt-trigger transitions (dead-band = 0.06) so that the system requires a genuine sustained improvement in physiological state before unlocking higher-demand dialogue moves, not just a momentary decrease in stress. The asymmetry is the implementation of inertia: it is easier to enter a high-stress zone than to leave it, mirroring the slower parasympathetic recovery relative to sympathetic activation.
+### Inventive Step 3: Pharmacodynamic Delay Encoded as a Dissipation Channel
 
-**Why it is Non-Obvious:** No prior system maps a biological decay rate constant directly to a tensor eigenvalue such that the physiological recovery trajectory geometrically constrains the semantic action space for subsequent turns. It requires the synthesis of three independent concepts: (1) the eigenvalue spectrum of a non-Hermitian transfer matrix as a memory mechanism in open quantum systems (physics literature), (2) the asymmetric speed of sympathetic activation vs. parasympathetic recovery in the autonomic nervous system (neuroscience literature), and (3) the architectural principle that safety constraints must be structural -- enforced by topology -- rather than probabilistic (AI safety literature). No domain-specific practitioner would have reason to connect all three.
+**The Step:** When a patient is prescribed a drug whose therapeutic effect is delayed -- a beta-blocker still equilibrating across the biophase, an SSRI requiring weeks of receptor desensitization -- a system that ignores this delay will attempt dialogue interventions the patient's physiology is not yet equipped to benefit from. This disclosure encodes pharmacokinetic and pharmacodynamic delay as an explicit channel within the dissipation matrix Gamma, making the tensor operator aware of the drug's current effect magnitude at every conversational turn.
 
-### Inventive Step 4: Online Policy Boundary Injection via Alternating Least Squares Without System Downtime
+**The Technical Claim:** For each active medication, a PK/PD model computes a dimensionless effect scalar E(t) in [0,1] representing the drug's current sympatholytic or anxiolytic contribution. The beta-blocker model uses a two-compartment ke0 biophase link (ke0 = 0.20/min) with an Emax Hill equation. The SSRI model uses a two-timescale accumulation model. E(t) scales Gamma_pkpd -- the pharmacodynamic dissipation channel -- at every turn. A patient whose beta-blocker has not yet reached the effect compartment has Gamma_pkpd near zero: the drug's contribution to stress recovery is absent from the operator until the pharmacokinetics deliver it. The system cannot assume the drug has worked before the kinetics say it has.
 
-**The Step:** When a policy boundary changes -- a new drug contraindication is added, a billing exception is reversed, a clinical protocol is updated -- a neural network requires retraining or fine-tuning to absorb the change. Because gradient descent on global weights alters the entire weight distribution, there is no mathematically guaranteed way to update one policy boundary without inadvertently eroding adjacent validated safety constraints. This disclosure updates a specific policy boundary by solving a strictly convex localized linear system against the affected MPS core tensors only, leaving all other cores frozen.
+**Why it is Non-Obvious:** Clinical pharmacologists model ke0 and biophase kinetics but work with drug concentration curves and clinical endpoints, not conversational AI operators. A clinical AI designer who sees "propranolol prescribed today" would either ignore it or set a binary flag in the system prompt. Neither captures the continuous PK/PD trajectory. The connection -- that a biophase equilibration equation can be the source term for a dissipation channel in a non-Hermitian conversational operator -- requires simultaneous knowledge of clinical pharmacology, non-Hermitian open system mathematics, and dialogue agent architecture that no single field produces.
 
-**The Technical Implementation:** `core/mps.py` implements 1-site and 2-site ALS sweeps. To update a policy boundary, the affected conversational region is identified by its position in the tensor chain (the core tensor A(t) governing the relevant semantic neighborhood). All adjacent cores A(j not equal t) are frozen. The update reduces to the normal equations: M * vec(A(t)) = b, where M is assembled from the frozen environment tensors and b encodes the new target constraint. This system is strictly convex -- it has exactly one solution -- and is solved with a standard linear algebra solver in a single pass. The update is applied in-place to the live tensor buffer. No training run, no gradient accumulation, no model checkpoint swap, and no system downtime is required.
+---
 
-**Why it is Non-Obvious:** A machine learning engineer updating a policy would schedule a fine-tuning job, deploy a new model version, and accept a brief service interruption. A mathematician working with ALS in the context of tensor decomposition applies it to compress data representations, not to enforce policy constraints in a live inference system. The specific insight -- that a policy boundary can be represented as a target vector in the semantic subspace of a core tensor, and that ALS convexity provides a formal proof of zero interference with adjacent constraints -- requires simultaneous knowledge of tensor algebra, online serving systems, and clinical policy management. It is the only known architecture that provides a mathematical proof of no catastrophic forgetting for a targeted policy update, not merely an empirical observation.
+### Inventive Step 4: Localized Policy Update via ALS on Frozen Tensor Cores
 
-### Inventive Step 5: Pharmacodynamic Delay Encoded as a Temporal Component of the Dissipation Matrix
+**The Step:** When a clinical policy changes -- a new drug contraindication, a revised billing exception, an updated adherence protocol -- a neural network must be retrained, risking modification of adjacent safety constraints through gradient diffusion. This disclosure updates the affected policy by solving a localized linear system against a single MPS core tensor while all adjacent cores are frozen, providing a mathematical proof of zero interference with surrounding constraints.
 
-**The Step:** When a patient is prescribed a medication whose therapeutic effect is delayed -- a beta-blocker with a biophase equilibration half-life, or an SSRI whose anxiolytic plateau requires weeks of accumulation -- a conversational AI system that ignores this delay will escalate clinically inappropriate dialogue moves during the window when the drug has been administered but not yet taken effect. This disclosure models pharmacokinetic and pharmacodynamic delays as explicit additive components of the dissipation matrix Gamma, so that the tensor operator governing the conversation is already aware of the drug's future trajectory at the moment of prescription.
+**The Technical Claim:** The update targets the core tensor A(t) governing the affected semantic region. All other cores A(j ≠ t) are frozen. The optimization reduces to the least-squares problem min ||M * vec(A(t)) - b||^2, where M is assembled from the frozen environment tensors and b encodes the new policy target. This is always a convex problem. The computational method for solving it depends on the bond dimension chi:
 
-**The Technical Implementation:** `physio/pkpd.py` implements four drug models with literature PK parameters. The beta-blocker model uses a two-compartment ke0 biophase link model (ke0 = 0.20 /min) and an Emax Hill equation to convert plasma concentration to sympatholytic effect. The SSRI model uses a two-timescale accumulation model (fast reuptake inhibition, slow receptor desensitization). The warfarin model uses an effect-compartment with INR as output. The opioid model includes tolerance via receptor downregulation. The output of each model -- a dimensionless pharmacodynamic effect scalar E(t) in [0,1] -- is injected into Gamma as Gamma_pkpd, scaling the dissipation rate for the physiological subspace at every conversational turn. A patient who has received a beta-blocker but whose biophase concentration has not yet equilibrated produces a low E(t), meaning Gamma_pkpd is near zero: the stress dissipation channel that the drug would provide is absent from the tensor operator until the drug actually reaches the effect compartment.
+- At small chi (as in the hybrid embodiment, chi = 4 for physiological state): M^T * M is small (O(chi^4) entries), the solution is unique when M has full column rank, and is obtained in a single direct linear solve with no iteration and no system downtime. A Tikhonov regularization term (lambda * ||vec(A(t))||^2) stabilizes the solve when M is ill-conditioned.
+- At large chi (as in the full tensor train embodiment for language generation, chi ~ 512--4096): the environment tensor M becomes too large for direct inversion. The standard approach is iterative DMRG sweeping: alternating single-site solves using Krylov methods (e.g., Davidson, LOBPCG) that converge to the optimum without forming M^T * M explicitly. This is still GPU-accelerated local optimization, not global backpropagation.
 
-**Why it is Non-Obvious:** A pharmacokineticist models ke0 and biophase concentration but works with drug concentration curves, not conversational AI. A clinical AI designer who reads a patient chart and sees "propranolol prescribed today" would either ignore the drug or add a static flag to the system prompt. Neither approach captures the continuous, time-varying anxiolytic trajectory of the drug and its effect on the patient's stress recovery rate. The insight -- that a PK/PD effect scalar derived from a biophase model can replace a naive physiological recovery estimate in the Gamma operator, preventing the AI from assuming the drug has worked before it has -- requires simultaneous knowledge of clinical pharmacology, open-system non-Hermitian operators, and conversational agent design. No practitioner in any one of these three fields would arrive at this combination independently.
+In both regimes the defining property holds unconditionally: because adjacent cores are frozen by construction, the update is mathematically confined to A(t) and cannot propagate to neighboring policy nodes regardless of chi, T, or condition number. This bounded-scope guarantee is the core of the claim -- not the specific solver used to achieve it.
 
-**Design claim (pending implementation):** Contrastive Subspace Distillation -- generating paired (Compliant, Fatal) clinical traces, subtracting latent representations (A_delta = A_compliant - A_fatal), and performing SVD on the difference matrix to isolate a policy decision boundary orthogonal to the forbidden subspace -- is specified as the input pipeline for Step 4 above. The mathematical specification is complete. The implementation requires HuggingFace activation extraction and is planned as a subsequent phase.
+**Why it is Non-Obvious:** ALS is a standard tool for tensor decomposition and matrix factorization, applied to data compression problems. Its application to live policy enforcement in a clinical AI system -- specifically, the insight that a policy boundary can be expressed as a target vector in the semantic subspace of a single core tensor, and that the convexity of ALS provides a proof rather than merely an empirical observation of non-interference -- requires simultaneous knowledge of tensor algebra, online inference system architecture, and clinical policy management. No prior system claims provably non-interfering policy updates; all prior work on AI safety constraints relies on empirical fine-tuning results.
 
 ---
 
@@ -595,6 +568,8 @@ The following four inventive steps constitute the core of this disclosure. Each 
 | Prior Art / Approach                                | Limitation                                                                                                                                                                                                                                                                     | the framework Advantage                                                                                                                                                                        |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Standard LLM with system prompt                     | Softmax guarantees epsilon > 0 for all tokens; safety constraints are probabilistic. Cannot prevent hallucination.                                                                                                                                                             | Tensor topology sets unsafe paths to exactly zero. Mathematical path to generate them no longer exists.                                                                                        |
+| Sparsemax output layer (Martins & Astudillo, 2016)  | Sparse alternative to softmax that assigns exact zero probability to some tokens. However, the sparsity pattern is learned from training data and varies with every input -- a token zeroed on one prompt may receive positive probability on a semantically similar novel one. An engineer cannot specify that a specific clinical action is always zero; the constraint is probabilistic and input-dependent. | Tensor topology zeros the contraction path deterministically. The entry governing a prohibited action is set to zero once; it evaluates to the zero vector for every input, unconditionally, regardless of prompt phrasing. The constraint is structural, not learned. |
+| ReLU-normalized output (sparse logit masking)       | Applying ReLU to logits before normalization can produce exact zeros for tokens with negative logits. The same limitations as sparsemax apply: which tokens receive zero depends on learned logit magnitudes, which shift with fine-tuning, few-shot examples, or prompt variation. Additionally, all major deployed LLMs were trained with softmax; retrofitting ReLU normalization requires full retraining and changes the model's calibration properties. | The tensor constraint is independent of the output normalization function. Zeroing a core tensor entry blocks the path before any output distribution is computed -- the action is absent from the generation space regardless of what normalization function is applied downstream. |
 | Retrieval-Augmented Generation (RAG)                | Injects text into context window. Model still relies on softmax. Probabilistic hallucination structurally permitted.                                                                                                                                                           | Tensor RAG retrieves projection matrices P, not text. Multiplied directly into the active transition operator. Zero hallucination on policy-governed vocabulary.                               |
 | Hybrid neuro-symbolic systems                       | Require continuous translation between continuous vector spaces and discrete symbolic logic. Parsing errors cause system failure.                                                                                                                                              | the framework unifies language generation and deterministic constraints into a single geometric space. No translation required.                                                                |
 | Standard multi-agent (JSON API / FHIR)              | Agents serialize internal state to text or structured payloads. Severe semantic bottleneck; continuous physiological context is destroyed at every API hop. Applies whether the agents are intra-companion (Physiological -> Clinical) or inter-orgnet (Claims -> Compliance). | Shared tensor buffer at both levels. Agents read each other's state via partial trace. Zero text generation for coordination. Physiological context is structurally present in every decision. |
@@ -855,3 +830,6 @@ Zone-seeded cluster priors inject additive bias q_bias into cluster prior at sea
 VOOT variance bonus penalises clusters with high reward variance, preventing premature commitment to a single therapeutic style in the first 30-50 iterations.
 
 Progressive Widening (PW) within each cluster: a new action is admitted only when visits > 2 * sqrt(visits_so_far). Risky actions (flooding_deepen, escalate) are placed last in the queue, unlocking only after the cluster has been well-explored.
+
+
+
