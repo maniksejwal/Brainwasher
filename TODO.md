@@ -18,20 +18,25 @@
 | 4 | Experiment Design | 🔴 | 3 |
 | 5 | Python Arm Improvements (post-run_027) | 🟠 | 7 |
 | 6 | A3C Full Comparison Run (K1–K5) | 🟠 | 5 |
+| 6b | A3C Feedback & Policy Quality | 🟠 | 5 |
 | 7 | Phase 4 — Integration (G7, P-RAG) | 🟠 | 2 |
 | 8 | Phase 4b — Partial Trace (PT1–PT6) | 🟠 | 6 |
-| 9 | Social Alliance (SA1, SA2) | 🟠 | 11 |
-| 10 | Phase 3 — MCTS Latency (F5) | 🟡 | 1 |
-| 11 | Physiological Subspace (C/B tracks) | 🟡 | 8 |
-| 12 | Phase 0 — Data Sourcing | ⚪ | 4 |
-| 13 | Phase 6 — Benchmarking (H1–H7) | ⚪ | 1 |
-| 14 | Product — Notifications | 🟡 | 6 |
-| 15 | Product — RBAC | 🟡 | 2 |
-| 16 | Product — Data & State Architecture | 🟡 | 6 |
-| 17 | Product — Security & Deployment | 🟡 | 5 |
-| 18 | Product — Advanced Agent Capabilities | ⚪ | 2 |
-| 19 | Open Research Questions | ⚪ | 4 |
-| 20 | Completed (recent) | — | — |
+| 9 | Social Alliance (SA1, SA2, SA3 dynamic) | 🟠 | 15 |
+| 10 | MCTS Upgrades (MPS speed-up, Mtrunc, action-space) | 🟠 | 5 |
+| 11 | Phase 3 — MCTS Latency (F5) | 🟡 | 1 |
+| 12 | Physiological Subspace (C/B tracks) | 🟡 | 8 |
+| 13 | TensorRAG (full wiring) | 🟠 | 4 |
+| 14 | Data Integrity & Logging Audit | 🔴 | 4 |
+| 15 | Distillation — Llama 17B on earned data | 🟡 | 3 |
+| 16 | Phase 0 — Data Sourcing | ⚪ | 4 |
+| 17 | Phase 6 — Benchmarking (H1–H7) | ⚪ | 1 |
+| 18 | Product — Notifications | 🟡 | 6 |
+| 19 | Product — RBAC | 🟡 | 2 |
+| 20 | Product — Data & State Architecture | 🟡 | 6 |
+| 21 | Product — Security & Deployment | 🟡 | 5 |
+| 22 | Product — Advanced Agent Capabilities | ⚪ | 2 |
+| 23 | Open Research Questions | ⚪ | 7 |
+| 24 | Completed (recent) | — | — |
 
 ---
 
@@ -116,7 +121,25 @@
 
 ---
 
-## 7. 🟠 Phase 4 — Integration Gaps
+## 6b. 🟠 A3C Feedback & Policy Quality
+
+> **Context (items 1, 2, 6 from Aug upgrade plan):**
+> Current A3C: scalar reward signal, EWA weight update, no qualitative feedback loop.
+> Exp 0 and Exp 0p are not truly trained (Actor/Critic updates disabled for Exp 0;
+> Exp 0p uses context enrichment only, not gradient updates). DPO arms 1p–7p showed
+> poor improvement because the generation gap vs JS was never closed.
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| FB1 | Qualitative feedback loop for A3C reward shaping | 🟠 | [ ] | After each episode, run a brief Scout "what went wrong / what worked?" pass over the full transcript. Extract 1-3 actionable insights (e.g. "companion repeated the same question twice", "no acknowledgement before advice"). Convert to a `qualitative_penalty` scalar added to the reward signal. This gives the policy a richer gradient than binary goal_achieved. |
+| FB2 | DPO counterfactual generation per episode | 🟠 | [ ] | For each episode where `goal_achieved=False`, generate a "what would a better response have been?" counterfactual using Scout with the full context. Store as `(state, chosen_response, rejected_response)` triple in `htn_benchmark_turns`. Use these triples for DPO fine-tuning of the generation prompt (not the action-selection policy). |
+| FB3 | Enable Exp 0 learning (A3C on JS pipeline) | 🟠 | [ ] | Currently Exp 0 runs JS generation but disables Actor/Critic updates (observed-only). To make it a proper learning baseline: wire `apply_update()` for Exp 0 using the same EWA mechanism as Exp 1–7, treating the JS action as the selected action. This lets Exp 0 improve its *action prior* over time even though generation stays in JS. |
+| FB4 | Exp 0p context enrichment → actual DPO | 🟠 | [ ] | Exp 0p currently injects richer context into JS pipeline (context enrichment only). True DPO would: (1) collect chosen/rejected pairs from episode outcomes, (2) fine-tune the system prompt template using DPO loss on Scout. This requires storing `system_prompt_used` per turn in DB and a DPO training loop outside Bedrock (since logits are not exposed). Alternative: use the counterfactuals from FB2 as DPO pairs and run prompt optimisation via RLAIF scoring. |
+| FB5 | Qualitative feedback for DPO arms (1p–7p) | 🟠 | [ ] | Arms 1p–7p show poor goal rates despite context enrichment. Add qualitative feedback (FB1) to these arms first — it is low-cost and can be toggled per arm. Measure delta in goal rate vs. base arm after 200 episodes. If no improvement, the bottleneck is generation quality (PA1–PA4), not the policy. |
+
+---
+
+
 
 | ID | Task | Priority | Status | Details |
 |----|------|----------|--------|---------|
@@ -203,9 +226,44 @@
 | SA2.3 | MCTS action `await_co_regulation` | 🟠 | [ ] | Strategic pause until multi-person physio stabilises, gated on `vint_consistency_hint` showing all participants below zone threshold. |
 | SA2.4 | Wire SA2.1 into `PhysioSimulator.step()` via `ReactivityProfile.gamma_modifier()` | 🟠 | [ ] | |
 
+### SA3 — Dynamic V_int Coupling (currently static)
+
+> **Context (item 4 from Aug upgrade plan):**
+> Currently `V_ij` coupling weights in `SharedTensorBuffer` are fixed priors initialised at startup.
+> Propagation works (husband's HRV drop flows to wife's companion) but the *coupling strength*
+> never changes. The scenario "anxious husband → wife panic attack" would require:
+> (a) high V_ij (strong coupling), (b) asymmetric negative contagion (SA2.2),
+> (c) the wife's companion detecting elevated incoming HRV delta and switching to panic support mode.
+> None of this is learned or adaptive.
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| SA3.1 | Update `V_ij` weights per session from A3C episode outcomes | 🟠 | [ ] | After each episode, if `goal_achieved=True` and `social_coupling_was_active`, increase `V_ij` by `α=0.05`. If `critical_failure=True` and couple was in conflict, decrease by `β=0.10`. Store updated weights back to `SharedTensorBuffer`. Boundary rule: update only in `worker.py`, never in production. |
+| SA3.2 | Asymmetric panic contagion: if incoming V_int HRV delta < -15ms and zone≥3, trigger `PANIC_PSYCHOEDUCATION` cluster priority boost in MCTS | 🟠 | [ ] | Companion detects that the care circle member is in physiological crisis (via Vint propagation) and pre-emptively adjusts action selection before the patient's next message. |
+| SA3.3 | Add panic scenario to training corpus with two-person physiological coupling | 🟠 | [ ] | Scenario: husband has angina episode (Zone 4, HRV 8ms). V_int propagates delta to wife's companion. Wife starts showing stress (Zone 3, HRV 22ms). Companion must not just do generic breathing instruction but provide specific reassurance about cardiac vs. panic distinction. |
+| SA3.4 | Honest documentation: V_int is currently static — update `A3C_COMPARISON_DESIGN.md` and `appendix_a_architecture.md` once SA3.1 is implemented | 🟡 | [ ] | |
+
 ---
 
-## 10. 🟡 Phase 3 — MCTS Latency
+## 10. 🟠 MCTS Upgrades
+
+> **Context (items 7, 8 from Aug upgrade plan):**
+> Current MCTS: standard UCB1 flat tree search with leaf simulation. `Mtrunc` is built from
+> the MCTS path using SVD but effectively amounts to a one-hot count of best-action visits —
+> the SVD is applied to a nearly degenerate matrix. Earlier design planned LLM calls at each
+> leaf node (expensive); switched to one LLM call on best leaf only (cheap but thin).
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| MCTS1 | MPS-accelerated MCTS leaf simulation | 🟠 | [ ] | Current: leaf simulation uses a random rollout (fast but uninformative) or falls back to actor prior. Better: use MPS `expectation_value(state, action_operator)` as a zero-LLM leaf evaluator — the MPS encodes the physiological trajectory and can score actions without an LLM call. This replaces the expensive "LLM at each leaf" plan with an O(χ²) tensor operation. Benchmark vs. random rollout: does it improve goal rate? |
+| MCTS2 | Fix Mtrunc — replace one-hot with true SVD guidance | 🟠 | [ ] | Current `_build_M_trunc()` constructs a path matrix from visit counts, which is nearly rank-1. The SVD then trivially recovers the best action. Fix: build the matrix from the *value estimates* Q(s,a) along the best K paths (not just the single best), so the top singular vectors encode genuine action trade-offs. This gives the LLM prompt a richer gradient ("prefer empathy over advice, but if stress drops to zone 2 then goal-setting is viable"). |
+| MCTS3 | Expand action space: panic-specific psychoeducation cluster | 🟠 | [ ] | Current action taxonomy has 51 actions with no panic-specific entry. The "breathe" response observed in panic scenarios comes from the generic `de_escalate` cluster. Add a `PANIC_PSYCHOEDUCATION` action type with sub-actions: `reassure_not_cardiac`, `reassure_not_hypoxic` (vasoconstriction ≠ hypoxia), `normalise_duration` ("this will pass in 5-15 min"), `grounding_5_4_3_2_1`, `support_available`. Wire into HPVOOT as a new cluster with zone-4 affinity boost (+0.45). Add to `action_bandit.py`, `arms.py` action taxonomy, and dashboard `EXP_META`. |
+| MCTS4 | Progressive lookahead depth tied to episode count | 🟡 | [ ] | Already partially implemented as `progressive_lookahead()` in `arms.py` but not fully activated. Confirm it ramps from depth 4 → 12 over first 500 episodes per arm. Log current depth per episode to DB (`mcts_depth` column in `htn_benchmark_episodes`). |
+| MCTS5 | HPVOOT prior quality fix (session context in prior call) | 🟠 | [ ] | Diagnosed in `A3C_COMPARISON_DESIGN.md §10`: Scout prior scores return near-uniform (~0.5±0.1) because the prior prompt lacks session context. Fix: pass last 2 patient turns + session goal into `_fetch_prior_scores()`. Also reduce `VOOT_C_VAR` from 0.8 → 0.4 after 50 arm episodes to reduce over-exploration at cluster level. |
+
+---
+
+
 
 | ID | Task | Priority | Status | Details |
 |----|------|----------|--------|---------|
@@ -213,7 +271,15 @@
 
 ---
 
-## 11. 🟡 Physiological Subspace (Track C/B)
+## 11. 🟡 Phase 3 — MCTS Latency
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| F5 | Latency test: MCTS background + generation foreground < 200 ms TTFT | 🟡 | [ ] | Current smoke test: 13.9 ms for 120 iterations / depth 4 — well within budget. Formal test still needed for paper. |
+
+---
+
+## 12. 🟡 Physiological Subspace (Track C/B)
 
 > **Benchmark C (open):** Validate decay curves against WESAD HRV recordings (needs P0.7 first).
 > **Benchmark E (open):** Scaling test — N ∈ {10, 50, 100, 500} turns, confirm O(Ndχ²) wall time.
@@ -229,7 +295,55 @@
 
 ---
 
-## 12. ⚪ Phase 0 — Data Sourcing
+## 13. 🟠 TensorRAG — Full Wiring
+
+> **Context (item 9 from Aug upgrade plan):**
+> TensorRAG index is built (`tensornets/data/rag/clinical_kb.*`, `episode_memory.*`).
+> The physio server has a `/rag/query` endpoint. But TensorRAG is not yet wired into any arm
+> or production path. The JS `queryTensorRAGContext()` call in `CompanionCoordinator` is the
+> reference implementation.
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| RAG1 | Confirm `/rag/query` accepts `use_physio` flag; add if missing | 🟠 | [ ] | Need flag to switch between physio-conditioned retrieval (TensorRAG) and text-only cosine (PlainRAG). Used by EXP-RAG arms and PA3. |
+| RAG2 | Wire TensorRAG into Python arms 1–7 (see PA3) | 🟠 | [ ] | `_query_rag_context(state, user_msg, k=4)` → inject as `{rag_context}`. Same as JS `queryTensorRAGContext()`. |
+| RAG3 | Evaluate retrieval quality: TensorRAG vs PlainRAG vs no-RAG | 🟠 | [ ] | Run K1 canonical scenarios through Exp 8 (PlainRAG), Exp 9 (TensorRAG), Exp 1 (no-RAG). Compare goal rate and reward. If TensorRAG ≤ PlainRAG, physio-conditioned retrieval adds no value — document honestly. |
+| RAG4 | PT5 integration: replace `bond_fingerprint()` with `ρ_semantic` eigenvectors as retrieval key | 🟡 | [ ] | Depends on PT1–PT2. Makes TensorRAG retrieval key invariant to physiological confounders. |
+
+---
+
+## 14. 🔴 Data Integrity & Logging Audit
+
+> **Context (item 12 from Aug upgrade plan):**
+> Several statistics and log entries in the thesis PDF were inferred from message histories
+> because structured logging had failed during early runs. The DB may contain gaps, inferred
+> values, or episodes whose metrics were backfilled rather than measured.
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| AUDIT1 | Identify runs/episodes with inferred vs. measured metrics | 🔴 | [ ] | Query `htn_benchmark_turns` for rows where `tokens_scout IS NULL OR tokens_scout = 0` — these were never properly logged. Separately check `htn_benchmark_episodes` for episodes with `llm_calls_total = 0`. Produce a table: arm → % of turns with missing token data, % with missing latency. |
+| AUDIT2 | Identify DB rows backfilled from JSONL episode files | 🔴 | [ ] | Compare episode counts in DB (`htn_benchmark_episodes`) vs JSONL files in `tensornets/runs/run_*/arm_*/episodes/`. If DB has fewer rows than JSONL for any arm, those episodes were never inserted. If DB has more, there may be synthetic/duplicated rows. |
+| AUDIT3 | Goal progress: delta vs current state | 🟠 | [ ] | **Item 10 from Aug plan.** Currently `goal_achieved` is binary (0/1 per episode). The reward function uses `goal_progress` as a turn-level scalar. Verify: is `goal_progress` measuring the *delta* in goal state this turn (correct — rewards incremental progress) or the *absolute* current goal state (wrong — rewards already-achieved goals, causes reward leakage)? Check `_synthetic_reward()` in `arms.py`. Document finding. |
+| AUDIT4 | Exp 0 / 0a / 0p data leakage check | 🟠 | [ ] | **Item 10 cont.** Exp 0p outperforms Exp 0 by injecting richer context. But does the context include the *goal itself* or *prior episode outcomes*? If the context hint includes "patient achieved medication adherence goal last session" and the judge evaluates "did patient achieve medication adherence this session?", the system is using future-session outcomes as input. Verify `_build_dpo_prompt_vars()` and `getLongitudinalHint()` do not leak the current-episode goal into the generation prompt. |
+
+---
+
+## 15. 🟡 Distillation — Llama 17B on Earned Data
+
+> **Context (item 11 from Aug upgrade plan):**
+> We now have ~28k episodes across 24 arms. This is a non-trivial dataset of clinical companion
+> interactions with associated reward signals, physiological trajectories, and judge scores.
+> The question is whether to distil a smaller/specialised model from this data.
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| DIST1 | Assess dataset quality for distillation | 🟡 | [ ] | Filter episodes: keep only `goal_achieved=True` OR `judge_safety > 0.7` OR `cumulative_reward > 8`. Estimate: how many high-quality `(prompt, response)` pairs do we have per arm? Target: ≥ 2000 pairs for meaningful SFT. Query DB and report per-arm counts. |
+| DIST2 | Define distillation objective | 🟡 | [ ] | Option A: supervised fine-tuning (SFT) on best-episode transcripts — teach a smaller model to generate therapeutic companion responses. Option B: reward-model distillation — fine-tune on `(prompt, reward)` pairs to produce a local judge. Option B is more valuable (reduces Bedrock judge dependency). Decide based on DIST1 counts. |
+| DIST3 | Distillation pipeline (see `TODO_DISTILLATION.md`) | 🟡 | [ ] | Blocked on P0.5 (Ollama/Mistral), P0.6 (405B access). This is the Track D pipeline. |
+
+---
+
+
 
 > **Decision needed before distillation** — see `TODO_DISTILLATION.md`.
 
@@ -319,6 +433,9 @@
 | Q2 | **Optimal χ?** Benchmark at χ ∈ {32, 64, 128, 256}. Run when E7 is done. | ⚪ |
 | Q3 | **Right Δt?** Start at Δt = 1 turn. Sub-turn steps if PK/PD models require it. | ⚪ |
 | Q4 | **Vocabulary mismatch Mistral vs Llama 3?** Decide before distillation. | ⚪ |
+| Q5 | **1a–7a: should privacy guard also be disabled?** Currently `NoCritGate` ablations remove the critical failure gate but not the privacy guard. For a clean ablation, should 1a–7a also disable privacy filtering? Or add separate 1b–7b "NoPrivacy" slots? Decision needed before starting next run. | 🟠 |
+| Q6 | **MPS leaf evaluator vs random rollout: is the value signal meaningful?** If `expectation_value(state, action_operator)` returns near-uniform scores (as Scout prior did), the MPS leaf evaluator provides no benefit over random rollout. Need a quick benchmark (MCTS1) before committing to this approach. | 🟠 |
+| Q7 | **Goal progress: delta or absolute?** `_synthetic_reward()` computes `goal_r` — does it reward the *change* in goal state this turn (correct) or the absolute current goal state (reward leakage)? If absolute, Exp 0p's advantage may be partly spurious. AUDIT3 will answer this. | 🔴 |
 
 ---
 
