@@ -1,9 +1,44 @@
-# A3C Comparison Design — HTN Framework
+# A3C Comparison Design — Physiologically-Grounded MCTS Framework
 *Eight-experiment trial comparing RL approaches for clinical companion optimisation*
 
-> **Note (2026-06-09):** The original 3-arm framing in this document has been superseded by the
-> actual experiment matrix in `tensornets/tensornets/a3c/arms.py`. All 8 experiments are live
-> and accumulating episodes. This document has been updated to reflect the real structure.
+> **Note (2026-06-09):** The original 3-arm framing has been superseded by the actual experiment
+> matrix in `tensornets/tensornets/a3c/arms.py`. All 8 experiments accumulated episodes across
+> runs 023–027 (May–June 2026).
+
+> **Honesty note (2026-08-03):** Several architectural claims in earlier versions of this document
+> were overstated or inaccurate. This version corrects them. Key corrections:
+>
+> 1. **No MPS performed in A3C.** The Actor and Critic networks are JSON dictionaries updated by
+>    log-bias EWA — not tensor networks. MPS compression is implemented in `tensornets/core/mps.py`
+>    and is called by the `/physio` endpoint for physiological state history, but the A3C *policy
+>    update* uses no tensor contraction.
+>
+> 2. **MCTS is standard flat MCTS, not a novel algorithm.** HPVOOT clusters actions into tiers for
+>    sample efficiency, but the underlying search is UCB1/UCB-V. The term "HTN" (Hysteretic Tensor
+>    Negotiation) was a project nickname; what was actually built is physiologically-conditioned
+>    action-space MCTS used for prompt engineering (injecting `[MCTS GUIDANCE]` into the LLM prompt).
+>    The MPS and MCTS components exist and function, but they are not as deeply coupled as the name
+>    implies.
+>
+> 3. **VOOT in HPVOOT is not true VOOT.** The implementation uses UCB-V (variance-aware UCB) at the
+>    cluster level, which is not the same as the Variable-Order Option Trees algorithm from the
+>    options framework literature. The "VOOT" label was borrowed loosely.
+>
+> 4. **Exp 1–7 vs Exp 0 mismatch.** Exp 0 (Oldschool JS) runs the full production CompanionCoordinator
+>    pipeline with TensorRAG, session facts, longitudinal hints, privacy guard, and care circle
+>    coordination. Exp 1–7 (Python arms) use a minimal Scout prompt with only physio context string.
+>    The reward function is identical across all arms, so Exp 0's advantage partly reflects richer
+>    generation inputs, not purely policy quality. This is a confound, not a clean ablation.
+>
+> 5. **DPO arms (1p–7p) did not improve Exp 1–7 meaningfully.** Despite DPO context enrichment,
+>    Python arms 1–7 showed poor goal rates (6–11%) throughout training. The primary bottleneck is
+>    the generation prompt gap vs JS, not the A3C policy.
+>
+> 6. **Social coupling (Vint) is currently static parameters.** The `V_ij` coupling weights in
+>    `SharedTensorBuffer` are initialised from fixed priors and are not updated during live sessions.
+>    Propagation works (if patient A's HRV drops, companion B receives a delta), but the coupling
+>    strength itself does not adapt. Dynamic co-regulation (e.g., anxious husband causing wife panic)
+>    is not implemented.
 
 ---
 
