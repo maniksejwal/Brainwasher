@@ -418,13 +418,13 @@ def _get_arm_classes():
             InertialHPVOOTPhysioLLMCoTMCTSWorker,
             # Safety-ablation arms (Exp 0a, 1a, 2a, 3a, 4a, 5a, 6a, 7a)
             OldschoolNoPrivacyWorker,
-            PhysioLLMNoGateWorker,
-            PhysioLLMCoTMCTSNoGateWorker,
-            PhysioMPSMCTSNoGateWorker,
-            InertialPhysioMPSMCTSNoGateWorker,
-            InertialPhysioLLMCoTMCTSNoGateWorker,
-            InertialHPVOOTPhysioMPSMCTSNoGateWorker,
-            InertialHPVOOTPhysioLLMCoTMCTSNoGateWorker,
+            PhysioLLMNoCritGateWorker,
+            PhysioLLMCoTMCTSNoCritGateWorker,
+            PhysioMPSMCTSNoCritGateWorker,
+            InertialPhysioMPSMCTSNoCritGateWorker,
+            InertialPhysioLLMCoTMCTSNoCritGateWorker,
+            InertialHPVOOTPhysioMPSMCTSNoCritGateWorker,
+            InertialHPVOOTPhysioLLMCoTMCTSNoCritGateWorker,
             # DPO/RLAIF prompt-improved variants (Exp 0p–7p)
             OldschoolDPOWorker,
             PhysioLLMDPOWorker,
@@ -434,11 +434,24 @@ def _get_arm_classes():
             InertialPhysioLLMCoTMCTSDPOWorker,
             InertialHPVOOTPhysioMPSMCTSDPOWorker,
             InertialHPVOOTPhysioLLMCoTMCTSDPOWorker,
+            # RAG ablation set (Exp 8–11)
+            PlainRAGWorker,
+            ReasonRAGWorker,
+            ReasonRAGMPSMCTSWorker,
+            ReasonRAGInertialHPVOOTWorker,
+            # VOOT comparison arm (Exp 16)
+            InertialHPVOOTZoneWorker,
+            # MCTS9 (Exp 15)
+            MultiHorizonHPVOOTWorker,
+            # Exp 17: Graph-of-Thought HPVOOT
+            GoTHPVOOTWorker,
         )
         # Indices:
         #   1–8:   main experiments (Exp 0–7)
         #   9–16:  safety-ablation arms (Exp 0a–7a; 0a=no privacy guard, 1a–7a=no crit gate)
         #   17–24: DPO/RLAIF prompt-improved variants (Exp 0p–7p)
+        #   25–28: RAG ablation set (Exp 8–11)
+        #   29–31: New MCTS/reasoning arms (Exp 16, 15, 17)
         _ARM_CLASSES = [
             OldschoolWorker,                             # Exp 0  (idx 1):  oldschool
             PhysioLLMWorker,                             # Exp 1  (idx 2):  physio_llm
@@ -450,13 +463,13 @@ def _get_arm_classes():
             InertialHPVOOTPhysioLLMCoTMCTSWorker,        # Exp 7  (idx 8):  inertial_hpvoot_physio_llm_cot_mcts
             # Safety-ablation arms — share run dir with parent arm
             OldschoolNoPrivacyWorker,                    # Exp 0a (idx 9):  no privacy guard
-            PhysioLLMNoGateWorker,                       # Exp 1a (idx 10): no critical-failure gate
-            PhysioLLMCoTMCTSNoGateWorker,                # Exp 2a (idx 11): no critical-failure gate
-            PhysioMPSMCTSNoGateWorker,                   # Exp 3a (idx 12): no critical-failure gate
-            InertialPhysioMPSMCTSNoGateWorker,           # Exp 4a (idx 13): no critical-failure gate
-            InertialPhysioLLMCoTMCTSNoGateWorker,        # Exp 5a (idx 14): no critical-failure gate
-            InertialHPVOOTPhysioMPSMCTSNoGateWorker,     # Exp 6a (idx 15): no critical-failure gate
-            InertialHPVOOTPhysioLLMCoTMCTSNoGateWorker,  # Exp 7a (idx 16): no critical-failure gate
+            PhysioLLMNoCritGateWorker,                   # Exp 1a (idx 10): no critical-failure gate
+            PhysioLLMCoTMCTSNoCritGateWorker,            # Exp 2a (idx 11): no critical-failure gate
+            PhysioMPSMCTSNoCritGateWorker,               # Exp 3a (idx 12): no critical-failure gate
+            InertialPhysioMPSMCTSNoCritGateWorker,       # Exp 4a (idx 13): no critical-failure gate
+            InertialPhysioLLMCoTMCTSNoCritGateWorker,    # Exp 5a (idx 14): no critical-failure gate
+            InertialHPVOOTPhysioMPSMCTSNoCritGateWorker, # Exp 6a (idx 15): no critical-failure gate
+            InertialHPVOOTPhysioLLMCoTMCTSNoCritGateWorker, # Exp 7a (idx 16): no critical-failure gate
             # DPO/RLAIF prompt-improved variants — cold-start weights (fair comparison)
             OldschoolDPOWorker,                          # Exp 0p (idx 17): oldschool + DPO context injection
             PhysioLLMDPOWorker,                          # Exp 1p (idx 18): physio_llm_dpo
@@ -466,6 +479,14 @@ def _get_arm_classes():
             InertialPhysioLLMCoTMCTSDPOWorker,           # Exp 5p (idx 22): inertial_physio_llm_cot_mcts_dpo
             InertialHPVOOTPhysioMPSMCTSDPOWorker,        # Exp 6p (idx 23): inertial_hpvoot_physio_mps_mcts_dpo
             InertialHPVOOTPhysioLLMCoTMCTSDPOWorker,     # Exp 7p (idx 24): inertial_hpvoot_physio_llm_cot_mcts_dpo
+            # RAG ablation set
+            PlainRAGWorker,                              # Exp 8  (idx 25): plain_rag (text-similarity, no reasoning)
+            ReasonRAGWorker,                             # Exp 9  (idx 26): reason_rag (reasoning-filtered retrieval)
+            ReasonRAGMPSMCTSWorker,                      # Exp 10 (idx 27): reason_rag + mps_mcts
+            ReasonRAGInertialHPVOOTWorker,               # Exp 11 (idx 28): reason_rag + inertial hpvoot
+            InertialHPVOOTZoneWorker,                    # Exp 16 (idx 29): hpvoot_zone (discrete affinity ablation vs Exp 6)
+            MultiHorizonHPVOOTWorker,                    # Exp 15 (idx 30): multi_horizon_hpvoot (MCTS9 + anticipatory anxiety)
+            GoTHPVOOTWorker,                             # Exp 17 (idx 31): got_hpvoot (Graph-of-Thought prior + batch leaf)
         ]
     return _ARM_CLASSES
 
@@ -1308,7 +1329,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--prior",            default=None,          help="Path to bandit_actor_prior.json (I4 output)")
     p.add_argument("--scenario-url",     default=None,          help="Override tensornets server URL for /api/scenarios")
     p.add_argument("--patient-mode",     default="llm", choices=["llm", "scripted"], help="Patient generation mode")
-    p.add_argument("--arms",             type=int, nargs="+", default=[1, 2, 3], choices=list(range(1, 25)),
+    p.add_argument("--arms",             type=int, nargs="+", default=[1, 2, 3], choices=list(range(1, 29)),
                    help="Which experiments to run by number (1=Exp0/Oldschool … 8=Exp7/HPVOOT-CoT)")
     p.add_argument("--workers",          type=int, default=8,
                    help="Pool size: number of shared worker slots across all experiments (default 8). "

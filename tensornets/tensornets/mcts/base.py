@@ -271,14 +271,21 @@ class BaseMCTS(ABC):
         root = self.search(initial_state)
         if not root.children:
             return {'action': None, 'q_value': 0.0, 'tree_stats': self._last_tree_stats,
-                    'M_trunc': None}
+                    'M_trunc': None, 'top5': []}
         best = root.best_action_child()
         M_trunc = self._build_M_trunc(root)
+        # top5: sorted children by q_value descending — used by GoTHPVOOTWorker for batch leaf re-rank
+        top5 = sorted(
+            [(c.action, round(c.q_value, 4)) for c in root.children.values() if c.action],
+            key=lambda t: t[1],
+            reverse=True,
+        )[:5]
         return {
             'action': best.action,
             'q_value': round(best.q_value, 4),
             'tree_stats': self._last_tree_stats,
             'M_trunc': M_trunc,
+            'top5': top5,
         }
 
     def _build_M_trunc(self, root: 'MCTSNode', chi_trunc: int = 4) -> 'list[list[float]] | None':

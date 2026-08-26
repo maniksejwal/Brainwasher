@@ -57,6 +57,21 @@ ACTION_TAXONOMY: list[str] = [
     "probing_question",       # drill down on something mentioned
     "socratic_probe",         # surfaces contradiction in patient's own statements
     "topic_from_stack",       # reintroduce a prior topic patient didn't finish
+    # CONSIST1 — truth/consistency actions
+    # These two actions address the fact that stressed patients often describe
+    # their experience differently from their calm-state baseline — not because
+    # they are lying, but because emotion changes salience.  The companion's job
+    # is NOT to expose the inconsistency as a flaw; it is to gently hold space
+    # for both versions to coexist and invite the patient to reconcile them.
+    "seek_probe_consent",     # Ask permission before revisiting a stressful past event:
+                              # "I remember you mentioned [X] before. Would it be okay to
+                              # spend a moment on that today?" — gated on stress < HIGH.
+                              # If patient declines, companion MUST select defer_and_schedule.
+    "normalise_discrepancy",  # When a patient's current description contradicts an earlier
+                              # one, normalise both without confrontation:
+                              # "It makes sense that things can feel very different depending
+                              # on where you are emotionally."  Does NOT demand reconciliation.
+                              # Keeps the door open; a socratic_probe may follow in a later turn.
     # ── Answer / tell actions (production) ────────────────────────────────────
     "give_facts",             # share relevant clinical / practical information
     "give_options",           # present 2-3 alternatives (FRAMES: Advice + Menu)
@@ -76,6 +91,14 @@ ACTION_TAXONOMY: list[str] = [
     "change_topic",           # pivot (use when high stress OR repetition)
     "introduce_new_angle",    # stay on topic but shift perspective
     "acknowledge_only",       # brief ack, invite patient to continue
+    # ── DISTRACTION — intentional redirection away from current stimulus ──────
+    # Distinct from change_topic (which is a pivot driven by stress or repetition).
+    # Distraction is a deliberate short-term interruption of rumination or panic
+    # spiralling — used when the patient is cognitively stuck or escalating and
+    # a direct response would reinforce the loop.
+    "distraction_technique",  # brief absorbing re-focus (e.g. counting, sensory grounding)
+    "humour_deflection",      # light humour to break tension (use sparingly; rapport ≥ 0.5)
+    "curiosity_pivot",        # redirect to something the patient expressed interest in
     # ── Mode-gated technique-specific (production) ────────────────────────────
     "flooding_hold",          # [flooding] hold at exposure, prevent escape
     "flooding_deepen",        # [flooding] intensify stimulus
@@ -91,9 +114,73 @@ ACTION_TAXONOMY: list[str] = [
     "direct_advice",          # brief clear recommendation (FRAMES: Advice; post-insight only)
     "schedule_commitment",    # collaboratively set a concrete next-step/date
     "future_planning",        # explore patient's vision of life after change
+    "goal_reassess",          # MCTS6: re-establish the session goal after a long gap (≥7 days).
+                              # Opens with "Last time we talked about X — how has that been for
+                              # you?" before resuming any therapeutic arc.  Suppresses all
+                              # deep therapeutic actions on the same turn.
     # ── Cross-circle information relay ────────────────────────────────────────
     "companion_handoff",      # summarise the session to the patient (end-of-session brief)
     "share_circle_insight",   # relay privacy-filtered information from another circle member
+    # ── Intervention queue (multi-companion coordination) ─────────────────────
+    "surface_intervention",   # introduce a concern queued by another companion
+    "consent_acknowledgement",# seek explicit buy-in before continuing a cross-user topic
+    "defer_intervention",     # skip pending item this turn (stress too high / wrong moment)
+    # ── De-escalation / urgency removal cluster ────────────────────────────────
+    # Used when high or critical stress makes productive conversation impossible.
+    # The goal is NOT to solve the problem now — it is to safely exit the topic,
+    # remove the urgency, and create a future space for it.
+    # This is the correct alternative to distraction at HIGH stress when the
+    # patient needs more than a topic pivot — they need permission to stop.
+    "defer_and_schedule",     # "Let's not push this now. We can come back to it when you're ready."
+                              # Pairs with schedule_future_interaction if a date is possible.
+    "remove_urgency_signal",  # Explicitly name that there is no emergency here: "This doesn't
+                              # need to be resolved today. Take the pressure off yourself."
+                              # Use when patient is catastrophising the timeline.
+    "acknowledge_and_pause",  # Acknowledge the difficulty, then offer a natural stopping point.
+                              # "I can hear how hard this is. It's okay to take a breath."
+                              # Lighter than defer_and_schedule — for moderate stress.
+    # ── Future interaction orchestration ──────────────────────────────────────
+    # Companions can proactively plan and scaffold future conversations — not just
+    # close a current one. This is a form of care coordination across time.
+    "schedule_future_interaction",  # Propose a concrete future moment for a deferred topic:
+                                    # "How about we revisit this on Saturday, maybe over dinner?"
+                                    # Companions can coordinate this across care circle members.
+    "coordinate_companion_handoff", # Signal to peer companions that a topic is deferred and
+                                    # should be re-raised at a scheduled time. Different from
+                                    # companion_handoff (within-session brief) — this is
+                                    # cross-session scheduling across the care circle.
+    # ── PANIC PSYCHOEDUCATION cluster (zone 4 / acute distress) ───────────────
+    # These are intent-based instructions to the LLM planner.
+    # Generated language must match the audience (patient, caregiver, bystander)
+    # and the situation (clinical panic attack vs decision inertia vs overwhelm).
+    # Never hardcode clinical jargon into responses — use plain, grounded language.
+    "panic_reassure_not_cardiac",   # remove catastrophic cardiac interpretation
+    "panic_reassure_not_hypoxic",   # correct the suffocation catastrophisation
+    "panic_normalise_duration",     # "this will pass" — time-limit the threat
+    "panic_grounding_54321",        # sensory anchor (adapt length to urgency)
+    "panic_support_available",      # social safety signal; "you're not alone"
+    "panic_safety_assess_faint",    # assess faint/collapse risk; mobilise help if needed
+    # ── Emergency response (acute medical / physical threat) ──────────────────
+    # Triggered when patient/carer describes a life-threatening event.
+    # These suspend ALL therapeutic goals until the acute crisis resolves.
+    "emergency_mobilise",          # directive: "Call 999/112 now. I'll stay on." Blocks therapy.
+    "witness_grief",               # companion exits clinical mode; pure presence, no goals.
+    "safety_exit_protocol",        # help patient/carer physically exit a threat situation.
+    # ── Social coordination (multi-user / care-circle) ────────────────────────
+    # Actions that manage the social fabric: conflict, authority, confidentiality,
+    # mobilising help. Absent from Exp 1–7; present in Exp 0 via JS pipeline.
+    "request_presence",    # invite someone physically to be with the patient
+    "call_for_help",       # suggest/initiate contact with person or emergency services
+    "delegate_to_human",   # hand off to named human role (not crisis-driven)
+    "mediate_conflict",    # de-escalate conflict between circle members (never take sides)
+    "confidentiality_hold",# decline to share info disclosed in confidence
+    "check_on_caregiver",  # shift focus to caregiver's own wellbeing
+    "coordinate_care",     # initiate multi-party care plan coordination
+    "normalise_role",      # clarify what companion can/cannot do
+    "await_co_regulation", # SA2.3: pause therapeutic action; invite mutual physiological
+                           # settling before continuing. "Let's both take a breath here."
+                           # Used when V_int shows BOTH participants are in zone 3+.
+                           # Companion does not speak next — yields the floor for silence.
     # ── Abstract MI / CBT actions (retained from original taxonomy) ───────────
     "validate_emotion",       # empathic reflection / validation (MI)
     "explore_ambivalence",    # MI ambivalence surfacing
@@ -110,6 +197,31 @@ ACTION_TAXONOMY: list[str] = [
     # ── Specific technique actions (from original discrete taxonomy) ──────────
     "breathing_exercise",     # guided diaphragmatic / box breathing intervention
     "mindfulness_prompt",     # brief grounding / mindfulness check-in
+    # ── Anticipatory anxiety cluster (MCTS9 — time-varying / future-threat) ──
+    # Anxiety is often driven not by the present moment but by an upcoming event
+    # whose outcome is uncertain.  Standard de-escalation (breathing, validation)
+    # is necessary but insufficient.  These four actions address the temporal
+    # structure of anticipatory anxiety: separating "now" from "then", reducing
+    # the subjective probability of the worst case, and building tolerance for
+    # not knowing.
+    "time_bracketing",            # Contain the worry to the present interval:
+                                  # "Right now, in this moment, you are safe. The exam
+                                  # is on Thursday. Let's just be here now." Separates
+                                  # present state from a future that hasn't arrived.
+                                  # Strongest when days_until_event > 1.
+    "uncertainty_tolerance",      # Normalise that uncertainty is an inherent feature
+                                  # of the situation, not a flaw to be solved:
+                                  # "Not knowing the result is genuinely hard — and
+                                  # also, you've coped with uncertainty before." Pairs
+                                  # with affirmation of the patient's resilience.
+    "probability_reframe",        # Gently examine catastrophic probability estimates:
+                                  # "What's the most likely outcome if you think
+                                  # honestly?" Not confrontational — follows a validate.
+                                  # Never use when patient is at HIGH/CRITICAL stress.
+    "graded_imagery",             # Graduated mental rehearsal of the feared event:
+                                  # Walk through the best-case, likely, and worst-case
+                                  # scenario in sequence. Reduces avoidance and builds
+                                  # coping confidence. Use in MODERATE stress only.
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -160,6 +272,7 @@ CALMING_WEIGHT: dict[str, float] = {
     "give_facts":            0.30,
     "psychoeducation":       0.30,
     "specific_question":     0.35,
+    "probing_question":      0.35,
     "reframe_perspective":   0.40,
     "socratic_reframe":      0.38,
     # Potentially escalating — gated by stress level in production
@@ -171,9 +284,53 @@ CALMING_WEIGHT: dict[str, float] = {
     "spike_step":            0.25,   # SPIKE exposure — mild stress maintained
     "direct_advice":         0.35,   # brief directive; calming only in post-insight
     "schedule_commitment":   0.50,   # future focus reduces present tension slightly
+    "goal_reassess":         0.60,   # re-establishing the goal is grounding and rapport-building
     "future_planning":       0.55,   # envisioning positive future — mild de-stress
     "companion_handoff":     0.60,   # session summary — grounding, reduces uncertainty
     "share_circle_insight":  0.50,   # sharing circle context — trust-building if done well
+    # Intervention queue
+    "surface_intervention":  0.45,   # introducing a concern — neutral; framing determines stress
+    "consent_acknowledgement": 0.55, # seeking buy-in — slightly de-escalating (patient feels consulted)
+    "defer_intervention":    0.60,   # backing off from a topic — calming
+    # CONSIST1 — consistency / truth
+    "seek_probe_consent":    0.60,   # asking permission is itself calming — patient retains agency
+    "normalise_discrepancy": 0.65,   # validating both versions removes shame; gently de-escalating
+    # De-escalation / urgency removal cluster
+    "defer_and_schedule":       0.82,  # strong de-escalator: removes time pressure, creates safety
+    "remove_urgency_signal":    0.85,  # explicitly naming "no emergency" is highly calming
+    "acknowledge_and_pause":    0.80,  # permission to stop is calming
+    # Future interaction orchestration
+    "schedule_future_interaction":  0.75,  # concrete future plan reduces present-moment anxiety
+    "coordinate_companion_handoff": 0.65,  # background coordination; patient may not notice it directly
+    # Distraction cluster — high calming in the short term
+    "distraction_technique": 0.78,   # absorbing stimulus interrupts rumination loop
+    "humour_deflection":     0.65,   # depends heavily on rapport; only use ≥ 0.5 rapport
+    "curiosity_pivot":       0.60,   # mild positive redirect
+    # Panic psychoeducation cluster — critical zone actions
+    "panic_reassure_not_cardiac": 0.88,  # removes the catastrophic cardiac interpretation
+    "panic_reassure_not_hypoxic": 0.82,  # removes the hypoxia catastrophisation
+    "panic_normalise_duration":   0.80,  # time-limits the perceived threat
+    "panic_grounding_54321":      0.85,  # sensory anchor; highly effective for acute panic
+    "panic_support_available":    0.90,  # social safety signal; strongest de-escalator in crisis
+    "panic_safety_assess_faint":  0.75,  # assessing faint risk is calming through action, not waiting
+    "emergency_mobilise":          0.50,  # mobilisation itself is alarming but reduces helplessness
+    "witness_grief":               0.60,  # presence without agenda reduces isolation distress
+    "safety_exit_protocol":        0.55,  # exiting threat is activating but protective
+    # Social coordination cluster
+    "request_presence":     0.82,  # summoning human presence is a strong de-escalator
+    "call_for_help":        0.78,  # mobilising help reduces isolation stress
+    "delegate_to_human":    0.70,  # clarity about who handles what reduces anxiety
+    "mediate_conflict":     0.55,  # conflict acknowledgement may raise tension before lowering it
+    "confidentiality_hold": 0.65,  # clear boundary setting; slightly de-escalating
+    "check_on_caregiver":   0.72,  # caregiver acknowledgement improves circle stability
+    "coordinate_care":      0.60,  # care coordination is neutral-positive for stress
+    "normalise_role":       0.68,  # role clarity reduces misaligned expectations and frustration
+    "await_co_regulation":  0.80,  # joint pause/silence is highly calming for both parties
+    # Anticipatory anxiety cluster
+    "time_bracketing":          0.72,  # present-moment anchoring reduces future-threat stress
+    "uncertainty_tolerance":    0.68,  # normalising uncertainty is calming but doesn't resolve it
+    "probability_reframe":      0.40,  # gentle reality check — risky at high stress
+    "graded_imagery":           0.35,  # graduated exposure — calming only at moderate stress
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -240,10 +397,142 @@ ACTION_INTENT_GROUP: dict[str, str] = {
     # Commitment / future-focus
     "direct_advice":           "inform",
     "schedule_commitment":     "commitment",
+    "goal_reassess":           "commitment",  # re-entry after gap; behavioural goal maintenance
     "future_planning":         "commitment",
     # Cross-circle relay
     "companion_handoff":       "summarise",
     "share_circle_insight":    "inform",
+    # Intervention queue
+    "surface_intervention":    "direction",
+    "consent_acknowledgement": "validate",
+    "defer_intervention":      "direction",
+    "seek_probe_consent":      "validate",      # asking permission = trust + patient agency
+    "normalise_discrepancy":   "validate",      # both versions are valid; no confrontation
+    # De-escalation cluster
+    "defer_and_schedule":           "deescalate",
+    "remove_urgency_signal":        "deescalate",
+    "acknowledge_and_pause":        "deescalate",
+    # Future interaction orchestration
+    "schedule_future_interaction":  "commitment",
+    "coordinate_companion_handoff": "meta",
+    # Distraction cluster
+    "distraction_technique":   "distraction",
+    "humour_deflection":       "distraction",
+    "curiosity_pivot":         "distraction",
+    # Panic psychoeducation cluster
+    "panic_reassure_not_cardiac": "panic",
+    "panic_reassure_not_hypoxic": "panic",
+    "panic_normalise_duration":   "panic",
+    "panic_grounding_54321":      "panic",
+    "panic_support_available":    "panic",
+    "panic_safety_assess_faint":  "safety",   # may escalate to physical response; safety group
+    "emergency_mobilise":         "emergency", # acute emergency — suspends all therapeutic actions
+    "witness_grief":              "emergency", # grief accompaniment — no therapeutic goals
+    "safety_exit_protocol":       "emergency", # physical threat exit — safety first
+    # Social coordination cluster
+    "request_presence":    "social",
+    "call_for_help":       "safety",
+    "delegate_to_human":   "meta",
+    "mediate_conflict":    "social",
+    "confidentiality_hold":"meta",
+    "check_on_caregiver":  "social",
+    "coordinate_care":     "social",
+    "normalise_role":      "meta",
+    "await_co_regulation": "deescalate",  # physiological pause → deescalate group
+    # Anticipatory anxiety cluster
+    "time_bracketing":         "deescalate",   # present-moment anchor = de-escalation
+    "uncertainty_tolerance":   "validate",     # normalise the experience = validation
+    "probability_reframe":     "challenge",    # mild cognitive challenge of probability estimate
+    "graded_imagery":          "explore",      # graduated rehearsal = exploration cluster
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTION_HORIZON: temporal scope of each action's intended effect
+# ─────────────────────────────────────────────────────────────────────────────
+# Used by MCTS9 multi-horizon discounting: MCTS backpropagation scales
+# the value by a horizon-specific gamma so that the tree can correctly
+# trade off immediate relief vs. session-arc goals vs. long-term TTM change.
+#
+#   MICRO       — effect within this turn or the very next turn
+#                 gamma=0.95 (reward now; don't wait)
+#   SESSION     — effect visible over 3–5 turns within this session
+#                 gamma=0.70 (accept some delay for a better arc)
+#   LONGITUDINAL — effect measured in sessions or weeks (TTM stage change)
+#                 gamma=0.40 (high delay, high value; don't rush)
+#
+# Default (unlisted actions): MICRO.
+import enum as _enum
+
+class ActionHorizon(_enum.Enum):
+    MICRO       = "micro"
+    SESSION     = "session"
+    LONGITUDINAL = "longitudinal"
+
+ACTION_HORIZON: dict[str, ActionHorizon] = {
+    # Micro-horizon: immediate stress modulation
+    "validate":                 ActionHorizon.MICRO,
+    "empathic_reflection":      ActionHorizon.MICRO,
+    "unconditional_regard":     ActionHorizon.MICRO,
+    "breathing_exercise":       ActionHorizon.MICRO,
+    "mindfulness_prompt":       ActionHorizon.MICRO,
+    "validate_emotion":         ActionHorizon.MICRO,
+    "acknowledge_only":         ActionHorizon.MICRO,
+    "affirmation":              ActionHorizon.MICRO,
+    "distraction_technique":    ActionHorizon.MICRO,
+    "humour_deflection":        ActionHorizon.MICRO,
+    "time_bracketing":          ActionHorizon.MICRO,     # anchors the present moment
+    "acknowledge_and_pause":    ActionHorizon.MICRO,
+    "panic_reassure_not_cardiac":  ActionHorizon.MICRO,
+    "panic_reassure_not_hypoxic":  ActionHorizon.MICRO,
+    "panic_normalise_duration":    ActionHorizon.MICRO,
+    "panic_grounding_54321":       ActionHorizon.MICRO,
+    "panic_support_available":     ActionHorizon.MICRO,
+    "emergency_mobilise":          ActionHorizon.MICRO,
+    "witness_grief":               ActionHorizon.MICRO,
+    "safety_exit_protocol":        ActionHorizon.MICRO,
+    "await_co_regulation":         ActionHorizon.MICRO,
+    # Session-horizon: goal arc visible across 3–5 turns
+    "open_question":            ActionHorizon.SESSION,
+    "specific_question":        ActionHorizon.SESSION,
+    "probing_question":         ActionHorizon.SESSION,
+    "socratic_probe":           ActionHorizon.SESSION,
+    "give_facts":               ActionHorizon.SESSION,
+    "give_options":             ActionHorizon.SESSION,
+    "psychoeducation":          ActionHorizon.SESSION,
+    "summarise":                ActionHorizon.SESSION,
+    "direct_advice":            ActionHorizon.SESSION,
+    "negotiate_compromise":     ActionHorizon.SESSION,
+    "information_prescription": ActionHorizon.SESSION,
+    "defer_and_schedule":       ActionHorizon.SESSION,
+    "schedule_future_interaction": ActionHorizon.SESSION,
+    "uncertainty_tolerance":    ActionHorizon.SESSION,
+    "probability_reframe":      ActionHorizon.SESSION,
+    "graded_imagery":           ActionHorizon.SESSION,
+    "seek_probe_consent":       ActionHorizon.SESSION,
+    "goal_reassess":            ActionHorizon.SESSION,
+    "summarise_session":        ActionHorizon.SESSION,
+    "normalise_discrepancy":    ActionHorizon.SESSION,
+    # Longitudinal-horizon: TTM stage change, trust repair, identity shift
+    "develop_discrepancy":      ActionHorizon.LONGITUDINAL,
+    "loss_frame":               ActionHorizon.LONGITUDINAL,
+    "gain_frame":               ActionHorizon.LONGITUDINAL,
+    "motivational_frame":       ActionHorizon.LONGITUDINAL,
+    "challenger_insight":       ActionHorizon.LONGITUDINAL,
+    "stage_transition_motivate":ActionHorizon.LONGITUDINAL,
+    "flooding_introduce":       ActionHorizon.LONGITUDINAL,
+    "flooding_deepen":          ActionHorizon.LONGITUDINAL,
+    "flooding_hold":            ActionHorizon.LONGITUDINAL,
+    "flooding_exit":            ActionHorizon.LONGITUDINAL,
+    "socratic_reframe":         ActionHorizon.LONGITUDINAL,
+    "direct_confrontation":     ActionHorizon.LONGITUDINAL,
+    "rupture_repair":           ActionHorizon.LONGITUDINAL,
+}
+
+# Gamma values per horizon — used by MCTS9 MultiHorizonHPVOOTMCTS
+ACTION_HORIZON_GAMMA: dict[ActionHorizon, float] = {
+    ActionHorizon.MICRO:        0.95,
+    ActionHorizon.SESSION:      0.70,
+    ActionHorizon.LONGITUDINAL: 0.40,
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

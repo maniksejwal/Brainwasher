@@ -186,7 +186,7 @@ ENTROPY_COEF: float   = 0.01        # entropy bonus weight (prevents collapse)
 MAX_TURNS: int        = 50          # episode truncation; individual scenarios may override
 
 
-def progressive_lookahead(ep_count: int) -> int:
+def progressive_lookahead(ep_count: int, session_boundary: bool = False) -> int:
     """
     Return the MCTS lookahead depth for the given episode count.
 
@@ -196,12 +196,55 @@ def progressive_lookahead(ep_count: int) -> int:
       ep <  100  →  4  (fast iterations, policy is random — no point looking far)
       ep < 1000  → 10  (policy has some signal, moderate tree depth)
       ep >= 1000 → 20  (trained policy, full lookahead for quality decisions)
+
+    MCTS6: reduce depth at the start of a new session.  On session_boundary=True
+    the first 1–2 turns are rapport re-establishment — deep lookahead over a cold
+    state is wasteful and can select premature deep therapeutic actions.
+    Depth is halved at session boundary and ramps back to normal after turn 1.
     """
     if ep_count < 100:
-        return 4
-    if ep_count < 1000:
-        return 10
-    return 20
+        base = 4
+    elif ep_count < 1000:
+        base = 10
+    else:
+        base = 20
+    return max(2, base // 2) if session_boundary else base
+
+
+def drift_physio_for_gap(physio: dict, gap_days: float, baseline_stress: float = 0.40) -> dict:
+    """
+    Apply inter-session physiological drift to a physio snapshot.
+
+    Over a gap of `gap_days` days, the patient's physio state partially relaxes
+    back toward population baseline.  This models the reality that a patient who
+    was highly stressed at session end is not necessarily at the same stress level
+    when the next session begins days later.
+
+    Drift model: exponential decay toward baseline.
+        stress_new = baseline + (stress_last - baseline) × exp(-λ × gap_days)
+
+    λ = 0.20 (half-life ≈ 3.5 days — consistent with HRV recovery literature).
+    For gap_days = 0 (same session / no gap) the function is a no-op.
+
+    Only numeric physio fields are drifted.  Sentinel values (-1, None) are
+    passed through unchanged.
+    """
+    if gap_days <= 0:
+        return physio
+    import math
+    _LAMBDA = 0.20  # per-day decay constant
+    decay = math.exp(-_LAMBDA * gap_days)
+    drifted = dict(physio)
+    for field, baseline in (
+        ("stress_index",  baseline_stress),
+        ("hrv_ms",        55.0),    # population median resting HRV (ms)
+        ("eda_us",        2.0),     # population median resting EDA (µS)
+        ("sleep_deficit", 0.0),     # assume sleep recovered across gap
+    ):
+        val = drifted.get(field)
+        if val is not None and val >= 0:
+            drifted[field] = round(baseline + (val - baseline) * decay, 4)
+    return drifted
 
 
 # ── Per-turn LLM cost estimator ───────────────────────────────────────────────
@@ -468,6 +511,61 @@ class TurnState:
     future_plans_summary:   str   = ""    # cross-session intent from future_plans table
     recent_n_gram_overlap:  float = 0.0   # JS-historyAnalyzer proxy
 
+    # ── Temporal-gap fields (MCTS6) ───────────────────────────────────────────
+    # These three fields let MCTS and the inertia model understand that different
+    # turns are separated by very different real-time intervals.
+    #
+    # session_gap_days: days elapsed between the previous session and the start of
+    #   this one.  0.0 = first session or same-session turn.  The inter-session
+    #   physio drift model uses this to reset the stress trajectory.
+    #
+    # session_boundary: True only on the very first turn of a session that follows
+    #   a previous session.  Used to gate session-start actions (goal_reassess,
+    #   summarise_session) and suppress premature deep therapeutic actions
+    #   (flooding_deepen, socratic_probe, develop_discrepancy).
+    #
+    # elapsed_since_last_s: wall-clock seconds since the last turn in the same
+    #   session.  0 at turn 0.  Within a session this is typically 30–120 s.
+    #   Used to scale HPVOOT inertia γ: long between-turn pauses (phone put down)
+    #   reduce γ slightly even within-session.
+    session_gap_days:       float = 0.0   # days since previous session
+    session_boundary:       bool  = False  # first turn of a new session
+    elapsed_since_last_s:   float = 0.0   # seconds since last turn (within session)
+
+    # ── Social alliance fields (SA2.1) ────────────────────────────────────────
+    # alliance_score: composite alliance quality [0,1] from AllianceGraph.
+    #   0.5 = neutral; > 0.5 = good alliance (stress recovery faster);
+    #   < 0.5 = rupture risk (stress recovery harder).
+    #   Populated by arms that have access to AllianceGraph; 0.5 = unknown.
+    #
+    # companion_stress: the companion/caregiver's own stress estimate [0,1].
+    #   Used by social_Gamma_modifier to scale the speaker influence factor —
+    #   a panicked speaker cannot effectively co-regulate even with good alliance.
+    alliance_score:         float = 0.5   # composite working alliance [0,1]
+    companion_stress:       float = 0.5   # speaker/companion stress estimate
+
+    # ── Physio availability (no-watch scenario) ───────────────────────────────
+    # physio_available: True if a wearable or validated physio source is present.
+    # When False, stress_index is inferred entirely from conversation_stress
+    # (the scorer's estimate of the patient's emotional state from language cues).
+    # All physio-gated MCTS features (hysteresis_zone, HRV, EDA) fall back to
+    # their neutral defaults so the system degrades gracefully rather than crashing.
+    # The MCTS exploration constant is widened by _NO_PHYSIO_C_BOOST when physio
+    # is unavailable, because uncertainty is higher.
+    physio_available:       bool  = True  # set False when no watch is worn
+
+    # ── Anticipatory anxiety (MCTS9) ─────────────────────────────────────────
+    # pending_event: describes an upcoming feared event driving the patient's
+    # current anxiety.  When populated, MultiHorizonHPVOOTMCTS applies the
+    # _anticipatory_anxiety_bonus to route the tree toward time_bracketing,
+    # uncertainty_tolerance, probability_reframe, or graded_imagery.
+    # Keys:
+    #   days_until   (float) — time remaining until the event
+    #   threat_level (float, 0–1) — patient's subjective worst-case probability
+    #   event_type   (str) — label ("exam", "diagnosis", "procedure", "job_decision", ...)
+    # Empty dict = no anticipatory context (standard scenario).
+    pending_event:          dict  = field(default_factory=dict)
+
     @staticmethod
     def bucket_from_stress(stress_index: float) -> str:
         """Map stress_index [0,1] to the bandit bucket keys used by ActionBandit."""
@@ -558,6 +656,16 @@ class TurnState:
                         if k not in ("_sensor_present", "_physio_narrative")}
         # For "none" source, keep the physio dict (arms use it for context/logging)
         # but arms check physio_source before injecting it into LLM prompts.
+
+        # MCTS6: apply inter-session physio drift when a session gap is present.
+        # This ensures that a patient who was highly stressed at the end of session k
+        # has partially recovered by the start of session k+1.
+        gap_days = float(scenario.get("session_gap_days", 0.0))
+        if gap_days > 0 and physio_source != "none":
+            baseline = scenario.get("baseline_stress", 0.40)
+            clean_physio = drift_physio_for_gap(clean_physio, gap_days, baseline)
+            stress = clean_physio.get("stress_index", stress)
+
         return cls(
             turn_idx=0,
             stress_index=stress,
@@ -583,6 +691,17 @@ class TurnState:
             session_id=scenario.get("session_id", str(uuid.uuid4())),
             subject_id=scenario.get("subject_id", "synthetic"),
             future_plans_summary=scenario.get("future_plans_summary", ""),
+            # MCTS6: temporal gap fields — populated by multi-session episode runners.
+            # For a fresh (no prior session) episode these default to zero/False.
+            session_gap_days=float(scenario.get("session_gap_days", 0.0)),
+            session_boundary=bool(scenario.get("session_boundary", False)),
+            elapsed_since_last_s=0.0,
+            # No-watch: physio_available=False when scenario flags no wearable data.
+            # Also infer from physio_source: "none" means no sensor.
+            physio_available=physio_source not in ("none",)
+                             and bool(scenario.get("physio_available", True)),
+            # MCTS9: anticipatory anxiety context — carries forward for the whole episode.
+            pending_event=scenario.get("pending_event", {}),
         )
 
 
@@ -600,6 +719,98 @@ def _ngram_overlap(text_a: str, text_b: str, n: int = 3) -> float:
     a, b = ngrams(text_a), ngrams(text_b)
     union = a | b
     return len(a & b) / len(union) if union else 0.0
+
+
+def _qualitative_feedback_pass(
+    episode_log: "list[EpisodeTurn]",
+    scenario_goal: str,
+    arm: str,
+) -> "dict | None":
+    """
+    FB1: post-episode qualitative feedback from Scout.
+
+    Sends the 6 most diagnostic turns to Scout with the prompt:
+    "What 2 specific things went wrong and what 1 thing worked well?"
+
+    Returns a dict with:
+      ``insights``   list[str] — 2–3 actionable plain-English observations
+      ``penalty``    float — suggested additional reward deduction (0–0.15)
+      ``arm``        str
+      ``goal``       str
+
+    Returns None on any LLM or parsing failure so the episode is never blocked.
+    """
+    if not episode_log:
+        return None
+
+    # Select the 6 most diagnostic turns: 2 lowest scoring + 2 highest + 2 most recent.
+    sorted_turns = sorted(
+        episode_log,
+        key=lambda t: float(t.judge.get("scorer_continuous", 0.5) or 0.5),
+    )
+    selected = (
+        sorted_turns[:2]           # 2 worst
+        + sorted_turns[-2:]        # 2 best
+        + episode_log[-2:]         # 2 most recent
+    )
+    seen = set()
+    unique_turns = [t for t in selected if id(t) not in seen and not seen.add(id(t))]
+
+    # Build compact transcript
+    lines: list[str] = []
+    for t in unique_turns:
+        action  = t.action
+        patient = (t.judge.get("patient_message") or "")[:120]
+        agent   = (t.response or "")[:120]
+        score   = round(float(t.judge.get("scorer_continuous", 0.5) or 0.5), 2)
+        lines.append(f"[turn {t.turn_idx} | {action} | score={score}]\n  P: {patient}\n  A: {agent}")
+    transcript_snippet = "\n".join(lines)
+
+    prompt = f"""You are reviewing a therapeutic companion training episode.
+
+Session goal: {scenario_goal}
+Arm: {arm}
+
+Selected turns (worst + best + most recent):
+{transcript_snippet}
+
+Respond with ONLY valid JSON — no prose outside the JSON:
+{{
+  "what_went_wrong": ["<1-sentence specific observation>", "<second observation>"],
+  "what_worked":     ["<1 thing that was effective>"],
+  "penalty_score":   <float 0.0–0.15; 0.15 = major strategic failure, 0 = minor issues>
+}}"""
+
+    try:
+        from tensornets.a3c.node_client import _http_post_attempt
+        resp = _http_post_attempt(
+            "/companion/scout",
+            {
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 300,
+                "temperature": 0.2,
+            },
+            timeout=15.0,
+        )
+        raw = resp.get("content", "") if isinstance(resp, dict) else ""
+        # Strip markdown code fences if present
+        raw = raw.strip()
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:])
+        if raw.endswith("```"):
+            raw = raw[: raw.rfind("```")]
+        import json as _json
+        data = _json.loads(raw.strip())
+        return {
+            "insights":       data.get("what_went_wrong", []) + data.get("what_worked", []),
+            "what_went_wrong":data.get("what_went_wrong", []),
+            "what_worked":    data.get("what_worked",     []),
+            "penalty":        min(0.15, max(0.0, float(data.get("penalty_score", 0.0)))),
+            "arm":            arm,
+            "goal":           scenario_goal,
+        }
+    except Exception:
+        return None
 
 
 def _compute_repetition(history: list[dict], new_response: str, window: int = 3) -> tuple[bool, float]:
@@ -1173,6 +1384,15 @@ class A3CWorker:
             subject_id=prev_state.subject_id,
             future_plans_summary=prev_state.future_plans_summary,
             recent_n_gram_overlap=_overlap_score,
+            # MCTS6: session boundary fields — clear after turn 0;
+            # elapsed_since_last_s can be set by the episode runner via response_dict.
+            session_gap_days=prev_state.session_gap_days,
+            session_boundary=False,   # only True on the very first turn of a new session
+            elapsed_since_last_s=float(response_dict.get("elapsed_since_last_s", 0.0)),
+            # No-watch: physio_available is constant for the episode — carry forward.
+            physio_available=prev_state.physio_available,
+            # MCTS9: pending_event is episode-scoped — carry forward unchanged.
+            pending_event=prev_state.pending_event,
         )
 
     # ── Episode runner ───────────────────────────────────────────────────────
@@ -2022,6 +2242,26 @@ class A3CWorker:
                     break
 
             last_user_msg = patient_msg
+
+            # ── Adversarial physio deterioration ─────────────────────────────
+            # Some scenarios (health_deterioration, inverse_hrv) specify physio
+            # deltas that are applied every turn independent of the companion's
+            # actions.  This simulates a physiological trend the companion cannot
+            # directly reverse — MCTS must *detect* it and escalate appropriately.
+            _detn = scenario.get("physio_deterioration_per_turn")
+            if _detn and next_state.physio:
+                _p = dict(next_state.physio)
+                for _k, _dv in _detn.items():
+                    if _k in _p:
+                        _p[_k] = round(float(_p[_k]) + float(_dv), 4)
+                # Recompute stress_bucket for the dashboard
+                _p["stress_index"] = round(max(0.0, min(1.0, _p.get("stress_index", 0.5))), 4)
+                next_state = next_state.__class__(
+                    **{**next_state.__dict__, "physio": _p,
+                       "stress_index":  _p["stress_index"],
+                       "stress_bucket": TurnState.bucket_from_stress(_p["stress_index"])}
+                )
+
             state = next_state
 
         # ── Terminal reward signal ────────────────────────────────────────────
@@ -2268,6 +2508,48 @@ class A3CWorker:
                 _rag.add_episode(summary)
         except Exception:
             pass
+
+        # ── FB1: Post-episode qualitative feedback pass ────────────────────────
+        # Every K episodes (default: every 5th), run a brief Scout pass over
+        # the episode transcript to extract "what went wrong / what worked".
+        # This produces a qualitative_feedback dict stored in the episode summary
+        # and a per-arm scalar qualitative_penalty that is subtracted from the
+        # cumulative reward to enrich the A3C gradient signal.
+        #
+        # Only fires when goal_achieved=False (failure episodes are most diagnostic)
+        # or when a critical_failure was recorded.  On success episodes it fires
+        # 1-in-3 to keep feedback diversity without doubling cost.
+        _FB1_EVERY_K = 5
+        _ep_count = getattr(self, "_episode_counter", 0) + 1
+        self._episode_counter = _ep_count
+        _goal_achieved_fb = genuine_metrics.get("goal_achieved", False)
+        _had_crit_fail = any(
+            t.judge.get("critical_failure", False)
+            for t in self._episode_log
+        )
+        _should_run_fb1 = (
+            (_ep_count % _FB1_EVERY_K == 0)
+            and (not _goal_achieved_fb or _had_crit_fail or (_ep_count % 15 == 0))
+        )
+        if _should_run_fb1:
+            try:
+                fb_result = _qualitative_feedback_pass(
+                    episode_log   = self._episode_log,
+                    scenario_goal = state.session_goal,
+                    arm           = self.ARM,
+                )
+                if fb_result:
+                    summary["qualitative_feedback"] = fb_result
+                    # Apply the feedback penalty: a small negative scalar added to
+                    # the returned summary's cumulative_reward so the curriculum
+                    # scheduler can down-weight failure episodes more strongly.
+                    q_penalty = fb_result.get("penalty", 0.0)
+                    summary["cumulative_reward"] = round(
+                        summary.get("cumulative_reward", cumulative_reward)
+                        - q_penalty, 5
+                    )
+            except Exception:
+                pass   # qualitative feedback is always non-fatal
 
         return summary
 

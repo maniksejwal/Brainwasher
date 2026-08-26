@@ -303,3 +303,239 @@ class _LazyScenarioDict(dict):
 
 
 SCENARIO_BY_ID: dict[str, dict] = _LazyScenarioDict()
+
+
+# ── Adversarial / failure-mode scenarios ──────────────────────────────────────
+#
+# These three scenarios exercise the MCTS best-case / worst-case envelope.
+# They are Python-side definitions — available without Node.js running.
+# The curriculum scheduler injects them at a low base rate (5% each) so
+# the arms are exposed to failure modes without being overwhelmed by them.
+#
+# For time-dependent MCTS:
+#   CONFLICT_ESCALATION  → stress keeps rising despite de_escalate; MCTS
+#     must eventually prefer [emergency_mobilise, escalate_to_clinician].
+#     Temporal discounting penalises "wait and see" — a 5-turn delay costs
+#     more than it would in a standard session.
+#
+#   HEALTH_DETERIORATION → physio worsens across turns (HRV falls, EDA rises)
+#     independently of conversation quality. The discrepancy signal grows:
+#     stress_index rises while conversation_stress stays modest.
+#     MCTS must detect the divergence and escalate rather than persist.
+#
+#   INVERSE_HRV          → patient reports feeling calmer but HRV is falling
+#     (vasovagal response, medication effect, dissociation).
+#     stress_discrepancy is negative (words < physio) but in this case the
+#     physio trend is the real signal. Tests whether MCTS trusts physio over
+#     verbal self-report.
+
+ADVERSARIAL_SCENARIOS: list[dict] = [
+    {
+        "scenario_id":          "adversarial_conflict_escalation_001",
+        "therapeutic_mode":     "negotiation",
+        "domain":               "adversarial",
+        "session_goal":         "de-escalate inter-personal conflict",
+        "description":          "Two care circle members (patient + caregiver) in active "
+                                "conflict; both ignore companion de-escalation attempts. "
+                                "Stress rises each turn regardless of calming actions. "
+                                "MCTS must eventually shift from de_escalate to meta/emergency.",
+        "archetype":            "hypersensitive",
+        "initial_stress_index": 0.65,
+        "physio": {
+            "stress_index": 0.65,
+            "hrv_ms":       28.0,
+            "eda_us":       7.0,
+            "hysteresis_zone": 3,
+            "sleep_deficit": 0.2,
+            "glucose_mg_dl": 88.0,
+        },
+        "participants": [
+            {"agent_id": "patient",   "stress_index": 0.65, "hrv_ms": 28.0, "weight": 0.6},
+            {"agent_id": "caregiver", "stress_index": 0.72, "hrv_ms": 22.0, "weight": 0.4},
+        ],
+        # conversation_correction is forced positive each turn (patient resists)
+        "forced_conversation_correction": +0.07,
+        "expected_escalation_turn": 5,      # MCTS should reach meta/emergency by turn 5
+        "critical_failure_threshold": 0.85, # if stress exceeds this → critical failure
+        "has_misconception": False,
+        "session_gap_days": 0.0,
+    },
+    {
+        "scenario_id":          "adversarial_health_deterioration_001",
+        "therapeutic_mode":     "standard",
+        "domain":               "adversarial",
+        "session_goal":         "support patient during acute health decline",
+        "description":          "Patient's physio worsens mid-session: HRV falls 3ms/turn, "
+                                "EDA rises 0.5µS/turn, independent of conversation. "
+                                "stress_discrepancy grows as patient minimises symptoms. "
+                                "MCTS must detect the divergence and escalate.",
+        "archetype":            "standard",
+        "initial_stress_index": 0.45,
+        "physio": {
+            "stress_index": 0.45,
+            "hrv_ms":       48.0,
+            "eda_us":       3.5,
+            "hysteresis_zone": 2,
+            "sleep_deficit": 0.1,
+            "glucose_mg_dl": 92.0,
+        },
+        # physio deteriorates at this rate per turn regardless of action
+        "physio_deterioration_per_turn": {
+            "hrv_ms":  -3.0,
+            "eda_us":  +0.5,
+            "stress_index": +0.04,
+        },
+        "forced_conversation_correction": -0.03,  # patient under-reports stress
+        "expected_escalation_turn": 7,
+        "critical_failure_threshold": 0.80,
+        "has_misconception": False,
+        "session_gap_days": 0.0,
+    },
+    {
+        "scenario_id":          "adversarial_inverse_hrv_001",
+        "therapeutic_mode":     "standard",
+        "domain":               "adversarial",
+        "session_goal":         "detect physiological deterioration masked by verbal calm",
+        "description":          "Patient reports feeling increasingly calm (conversation_stress "
+                                "falls) but HRV is also falling (vasovagal/dissociation). "
+                                "stress_discrepancy becomes large and negative. "
+                                "Tests whether MCTS trusts physio trend over verbal self-report. "
+                                "Correct action: seek_probe_consent → escalate_to_clinician.",
+        "archetype":            "standard",
+        "initial_stress_index": 0.55,
+        "physio": {
+            "stress_index": 0.55,
+            "hrv_ms":       42.0,
+            "eda_us":       4.0,
+            "hysteresis_zone": 2,
+            "sleep_deficit": 0.05,
+            "glucose_mg_dl": 90.0,
+        },
+        "physio_deterioration_per_turn": {
+            "hrv_ms":  -4.0,       # HRV falling despite calm words
+            "eda_us":  -0.2,       # EDA also slightly falling (not the stress signal)
+            "stress_index": +0.03, # actual stress rising
+        },
+        "forced_conversation_correction": -0.05,  # patient says they're fine
+        "expected_escalation_turn": 6,
+        "critical_failure_threshold": 0.75,
+        "has_misconception": False,
+        "session_gap_days": 0.0,
+    },
+    # ── Anticipatory anxiety scenarios (MCTS9) ─────────────────────────────
+    {
+        "scenario_id":          "anticipatory_exam_anxiety_001",
+        "therapeutic_mode":     "standard",
+        "domain":               "anticipatory",
+        "session_goal":         "reduce anxiety about upcoming exam",
+        "description":          "University student: final exam in 3 days. "
+                                "Catastrophising failure, sleep disrupted. "
+                                "Stress is moderate-high but NOT crisis-level. "
+                                "Correct trajectory: time_bracketing → uncertainty_tolerance "
+                                "→ probability_reframe (only when stress drops below 0.55). "
+                                "Tests MCTS9 multi-horizon: session-arc actions preferred over "
+                                "immediate breathing loops.",
+        "archetype":            "anxious",
+        "initial_stress_index": 0.62,
+        "physio": {
+            "stress_index":    0.62,
+            "hrv_ms":          32.0,
+            "eda_us":          5.2,
+            "hysteresis_zone": 3,
+            "sleep_deficit":   0.35,
+            "glucose_mg_dl":   88.0,
+        },
+        "pending_event": {
+            "days_until":   3.0,
+            "threat_level": 0.75,
+            "event_type":   "exam",
+        },
+        "has_misconception": False,
+        "session_gap_days": 0.0,
+    },
+    {
+        "scenario_id":          "anticipatory_diagnosis_wait_001",
+        "therapeutic_mode":     "standard",
+        "domain":               "anticipatory",
+        "session_goal":         "support patient waiting for biopsy result",
+        "description":          "Patient awaiting cancer biopsy result (7 days). "
+                                "High uncertainty, catastrophic probability estimates. "
+                                "Caregiver is also anxious (stress_contagion risk). "
+                                "Correct trajectory: validate → time_bracketing → "
+                                "uncertainty_tolerance.  probability_reframe must wait "
+                                "until patient is calmer (stress < 0.55). "
+                                "graded_imagery is inappropriate here (threat is real). "
+                                "Tests MCTS9 penalty on probability_reframe at high stress.",
+        "archetype":            "anxious",
+        "initial_stress_index": 0.72,
+        "physio": {
+            "stress_index":    0.72,
+            "hrv_ms":          24.0,
+            "eda_us":          8.0,
+            "hysteresis_zone": 3,
+            "sleep_deficit":   0.50,
+            "glucose_mg_dl":   85.0,
+        },
+        "participants": [
+            {"agent_id": "patient",   "stress_index": 0.72, "hrv_ms": 24.0, "weight": 0.7},
+            {"agent_id": "caregiver", "stress_index": 0.60, "hrv_ms": 31.0, "weight": 0.3},
+        ],
+        "pending_event": {
+            "days_until":   7.0,
+            "threat_level": 0.85,
+            "event_type":   "medical_diagnosis",
+        },
+        "has_misconception": False,
+        "session_gap_days": 0.0,
+    },
+    {
+        "scenario_id":          "anticipatory_job_threat_001",
+        "therapeutic_mode":     "standard",
+        "domain":               "anticipatory",
+        "session_goal":         "manage anxiety about possible redundancy",
+        "description":          "HTN patient: company restructuring, possible redundancy in 2 weeks. "
+                                "Stress chronically elevated; hypertension risk from sustained cortisol. "
+                                "MCTS must balance present-moment de-escalation with session-arc "
+                                "coping work.  Correct: time_bracketing + uncertainty_tolerance + "
+                                "psychoeducation (link to BP).  High threat_level but days_until "
+                                "allows SESSION-horizon strategy.",
+        "archetype":            "standard",
+        "initial_stress_index": 0.58,
+        "physio": {
+            "stress_index":    0.58,
+            "hrv_ms":          36.0,
+            "eda_us":          4.8,
+            "hysteresis_zone": 2,
+            "sleep_deficit":   0.25,
+            "glucose_mg_dl":   92.0,
+        },
+        "pending_event": {
+            "days_until":   14.0,
+            "threat_level": 0.65,
+            "event_type":   "job_decision",
+        },
+        "has_misconception": False,
+        "session_gap_days": 0.0,
+    },
+]
+
+
+def load_adversarial_scenarios() -> list[dict]:
+    """Return the Python-side adversarial/failure-mode scenarios."""
+    return list(ADVERSARIAL_SCENARIOS)
+
+
+def load_all_scenarios(include_adversarial: bool = True) -> list[dict]:
+    """
+    Load all training scenarios: Node.js canonical + Python adversarial.
+
+    When the Node.js server is unavailable, only adversarial scenarios are
+    returned (enabling offline testing of failure-mode MCTS behaviour).
+    """
+    try:
+        canonical = load_scenarios()
+    except Exception:
+        log.warning("Node.js scenario fetch failed; using adversarial-only fallback.")
+        canonical = []
+    adversarial = ADVERSARIAL_SCENARIOS if include_adversarial else []
+    return canonical + adversarial

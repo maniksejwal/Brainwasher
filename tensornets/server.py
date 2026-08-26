@@ -905,6 +905,32 @@ class MCTSActionIn(BaseModel):
     # candidate_actions.  Required when mcts_mode="hpvoot".  Length must match
     # candidate_actions.  If omitted for hpvoot, CALMING_WEIGHT heuristic is used.
     llm_prior_scores:        list[float] = []
+    # MCTS6: temporal inertia fields — sent by InertialHPVOOT arms
+    # gamma_eff: scaled inertia γ from _temporal_gamma() — 0..1; 0 = no inertia
+    # session_boundary: True → first turn of a new session; halves depth + lifts gate
+    gamma_eff:               float = 0.85
+    session_boundary:        bool  = False
+    # No-watch: physio_available=False → widen exploration_c to handle higher uncertainty.
+    # When the watch is absent, the physio state in `physio_state` is inferred from
+    # conversation rather than measured, so the MCTS should explore more broadly.
+    physio_available:        bool  = True
+    # AUDIT1-3: conversation-layer stress fields, now passed to MCTS.
+    # conversation_stress: scorer-inferred estimate of patient's emotional state [0,1].
+    #   Derived from acceptance/resistance signals in the A3C scorer, NOT from physio.
+    # stress_discrepancy: stress_index - conversation_stress.
+    #   > 0: physio says stressed but patient appears calm → possible minimisation.
+    #   < 0: patient expresses high distress but physio is low → verbal catastrophising.
+    #   ≈ 0: physio and conversation agree.
+    # These are injected into the MCTS initial_state so _rollout_action and
+    # _continuous_cluster_affinity can factor in the discrepancy.
+    conversation_stress:     float = 0.5
+    stress_discrepancy:      float = 0.0
+    # MCTS9: anticipatory anxiety fields — set when patient is waiting for an event.
+    # pending_event: dict with keys:
+    #   days_until   (float) — time until the feared event (0 = happening today)
+    #   threat_level (float, 0–1) — patient's subjective worst-case probability
+    #   event_type   (str)  — label for logging ("exam", "diagnosis", "procedure", ...)
+    pending_event:           dict  = {}
 
 
 @app.post("/mcts/best-action")
@@ -951,10 +977,20 @@ def mcts_best_action(req: MCTSActionIn):
         'candidate_actions':         req.candidate_actions,
         'context':                   req.context,
         'flooding_target_stress':    req.flooding_target_stress,
+        'session_boundary':          req.session_boundary,  # MCTS6
+        'gamma_eff':                 req.gamma_eff,         # MCTS6
+        # AUDIT1-3: conversation-layer stress — now visible to MCTS rollout
+        'conversation_stress':       req.conversation_stress,
+        'stress_discrepancy':        req.stress_discrepancy,
+        'physio_available':          req.physio_available,
+        # MCTS9: anticipatory anxiety context — zero/empty = no pending event
+        'pending_event':             req.pending_event,
     }
 
-    if req.mcts_mode == "hpvoot":
-        from tensornets.mcts.hierarchical_pw_voot import HierarchicalPWVOOTMCTS
+    if req.mcts_mode in ("hpvoot", "hpvoot_zone"):
+        from tensornets.mcts.hierarchical_pw_voot import (
+            HierarchicalPWVOOTMCTS, HierarchicalPWZoneMCTS,
+        )
         from tensornets.a3c.action_bandit import CALMING_WEIGHT
 
         # Build llm_prior_fn: use caller-supplied scores if provided, else
@@ -975,11 +1011,30 @@ def mcts_best_action(req: MCTSActionIn):
                     scores.append(score)
                 return scores
 
-        mcts = HierarchicalPWVOOTMCTS(
+        # Route to correct class: hpvoot = continuous affinity, hpvoot_zone = discrete, multi_horizon = MCTS9
+        if req.mcts_mode == "hpvoot_zone":
+            MCTSClass = HierarchicalPWZoneMCTS
+        elif req.mcts_mode == "multi_horizon":
+            from tensornets.mcts.hierarchical_pw_voot import MultiHorizonHPVOOTMCTS
+            MCTSClass = MultiHorizonHPVOOTMCTS
+        else:
+            MCTSClass = HierarchicalPWVOOTMCTS
+        mcts = MCTSClass(
             llm_prior_fn=llm_prior_fn,
             mode=req.mode,
             iterations=req.iterations,
             max_depth=effective_depth,
+            # MCTS6: scale exploration constant inversely with inertia.
+            # High gamma_eff (within-session) → prefer exploitation (trust the prior).
+            # Low gamma_eff (post-long-gap) → explore more (patient may have changed).
+            # exploration_c range: [1.0 (full inertia) → 2.0 (no inertia)]
+            # No-watch: add 0.4 to exploration_c when physio is unavailable —
+            # the system is less certain of the patient's state so it explores more.
+            exploration_c=round(
+                1.0 + (1.0 - req.gamma_eff)
+                + (0.4 if not req.physio_available else 0.0),
+                3,
+            ),
         )
     else:
         mcts = DialogMCTS(

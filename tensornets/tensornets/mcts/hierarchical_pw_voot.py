@@ -132,15 +132,84 @@ _ACTION_TO_CLUSTER: dict[str, str] = {
     for action in actions
 }
 
-# Zone → cluster affinity boosts (additive to cluster Q prior)
-# Higher value = stronger initial preference for this cluster at this zone.
-_ZONE_CLUSTER_AFFINITY: dict[int, dict[str, float]] = {
+# Zone → cluster affinity boosts — REPLACED by continuous stress function below.
+# The discrete table was a placeholder; the continuous version is used instead.
+# Kept for reference only; no longer imported by _init_clusters.
+_ZONE_CLUSTER_AFFINITY_DISCRETE: dict[int, dict[str, float]] = {
     0: {"explore":    0.20, "challenge":   0.10, "inform":      0.10},
     1: {"challenge":  0.15, "explore":     0.10, "inform":      0.10},
     2: {"challenge":  0.12, "inform":      0.12, "de_escalate": 0.08},
     3: {"de_escalate": 0.25, "structure":  0.05},
     4: {"de_escalate": 0.40, "meta":       0.10},
 }
+
+
+def _continuous_cluster_affinity(
+    stress: float,
+    hrv_ms: float | None = None,
+    eda_us: float | None = None,
+) -> dict[str, float]:
+    """
+    Compute a continuous cluster-affinity bias dict from raw physio signals.
+
+    Replaces _ZONE_CLUSTER_AFFINITY (discrete 0-4 zone lookup) with a smooth
+    function of stress_index [0,1], optionally modulated by HRV and EDA.
+
+    Design
+    ------
+    Each cluster has a peak contribution at a specific stress level and decays
+    smoothly away from that peak.  Uses a Gaussian bump:
+
+        affinity(cluster, s) = A_peak * exp(-0.5 * ((s - s_peak) / sigma)^2)
+
+    Cluster peaks:
+      explore     → s_peak = 0.20  (patient is calm, safe to explore)
+      challenge   → s_peak = 0.40  (moderate engagement; neither too calm nor too stressed)
+      inform      → s_peak = 0.35  (receptive window; not overloaded)
+      de_escalate → s_peak = 0.70  (activated; needs calming)
+      structure   → s_peak = 0.50  (neutral; session management is always available)
+      meta        → s_peak = 0.90  (critical; escalation threshold)
+
+    HRV modulation (optional):
+      Low HRV (< 30ms) → boost de_escalate by +0.05, reduce challenge by 0.04
+      High HRV (> 60ms) → boost explore by +0.05
+
+    EDA modulation (optional):
+      High EDA (> 6µS) → additional de_escalate boost +0.04
+
+    Returns dict of {cluster_name: float bias} where all values ≥ 0.
+    All biases are additive to q_bias in _ClusterState.
+    """
+    import math as _m
+
+    CLUSTER_PEAKS: dict[str, tuple[float, float, float]] = {
+        # (s_peak, sigma, A_peak)
+        "explore":     (0.20, 0.18, 0.25),
+        "challenge":   (0.40, 0.15, 0.20),
+        "inform":      (0.35, 0.18, 0.18),
+        "de_escalate": (0.70, 0.20, 0.35),
+        "structure":   (0.50, 0.30, 0.10),  # wide: always somewhat relevant
+        "meta":        (0.90, 0.10, 0.30),
+    }
+
+    result: dict[str, float] = {}
+    for cluster, (s_peak, sigma, A_peak) in CLUSTER_PEAKS.items():
+        z = (stress - s_peak) / sigma
+        result[cluster] = round(A_peak * _m.exp(-0.5 * z * z), 4)
+
+    # HRV modulation
+    if hrv_ms is not None:
+        if hrv_ms < 30:
+            result["de_escalate"] = round(result["de_escalate"] + 0.05, 4)
+            result["challenge"]   = round(max(0.0, result["challenge"] - 0.04), 4)
+        elif hrv_ms > 60:
+            result["explore"] = round(result["explore"] + 0.05, 4)
+
+    # EDA modulation
+    if eda_us is not None and eda_us > 6.0:
+        result["de_escalate"] = round(result["de_escalate"] + 0.04, 4)
+
+    return result
 
 # ── PW parameters ─────────────────────────────────────────────────────────────
 PW_ALPHA:  float = 0.5    # expansion rate: admit new action when n^alpha changes
@@ -470,9 +539,20 @@ class HierarchicalPWVOOTMCTS(BaseMCTS):
             )
         score_map: dict[str, float] = dict(zip(unique_actions, prior_scores))
 
-        # Zone-affinity bias
-        hz = state.get("physio", {}).get("hysteresis_zone")
-        zone_affinity: dict[str, float] = _ZONE_CLUSTER_AFFINITY.get(hz, {}) if hz is not None else {}
+        # Continuous cluster-affinity bias from raw physio signals.
+        # Uses stress_index, HRV, and EDA directly — no discrete zone mapping.
+        # Falls back to flat (all-zero) bias if physio is absent (no-watch scenario).
+        physio  = state.get("physio", {})
+        stress  = state.get("stress_index", physio.get("stress_index", 0.5))
+        hrv_ms  = physio.get("hrv_ms", None)
+        eda_us  = physio.get("eda_us", None)
+        # Only compute affinity when physio is actually available.
+        # physio_available=False means hrv/eda are neutral placeholders — skip modulation.
+        if state.get("physio_available", True):
+            cluster_affinity = _continuous_cluster_affinity(stress, hrv_ms, eda_us)
+        else:
+            # No physio: use stress-only affinity (no HRV/EDA modulation)
+            cluster_affinity = _continuous_cluster_affinity(stress)
 
         clusters: dict[str, _ClusterState] = {}
         for cluster_name, actions in ACTION_CLUSTERS.items():
@@ -481,7 +561,7 @@ class HierarchicalPWVOOTMCTS(BaseMCTS):
             clusters[cluster_name] = _ClusterState(
                 name=cluster_name,
                 all_actions=ranked,
-                q_bias=zone_affinity.get(cluster_name, 0.0),
+                q_bias=cluster_affinity.get(cluster_name, 0.0),
             )
         return clusters
 
@@ -501,38 +581,62 @@ class HierarchicalPWVOOTMCTS(BaseMCTS):
         from tensornets.mcts.base import DialogMCTS
         prior = DialogMCTS.ACTION_REWARD_PRIORS.get(action, {})
 
-        stress      = state.get("stress_index", 0.5)
-        mode        = state.get("mode", "standard")
-        hz          = state.get("physio", {}).get("hysteresis_zone")
-        cluster     = _ACTION_TO_CLUSTER.get(action, "structure")
+        stress   = state.get("stress_index", 0.5)
+        mode     = state.get("mode", "standard")
+        cluster  = _ACTION_TO_CLUSTER.get(action, "structure")
+        physio   = state.get("physio", {})
+        hrv_ms   = physio.get("hrv_ms", None)
 
         # Base reward components
         stress_delta = prior.get("stress", 0.0)
         goal_delta   = prior.get("goal",   0.0)
         trust_delta  = prior.get("trust",  0.0)
 
-        # Penalise de-escalation actions in calm zone (low stress → wasteful)
-        if cluster == "de_escalate" and stress < 0.25:
-            goal_delta  -= 0.08
-            trust_delta -= 0.03
+        # AUDIT1-3: stress_discrepancy signal.
+        # discrepancy > 0: physio stressed but patient appears calm (minimising).
+        #   → challenge and inform actions are LESS trustworthy this turn.
+        #   → de_escalate cluster gets a boost (act on physio, not words).
+        # discrepancy < 0: patient extremely vocal but physio is calm (catastrophising).
+        #   → de_escalate less critical; explore/challenge more appropriate.
+        stress_discrepancy = state.get("stress_discrepancy", 0.0)
+        if abs(stress_discrepancy) > 0.10:
+            import math as _m
+            disc_magnitude = _m.tanh(abs(stress_discrepancy) * 4)
+            if stress_discrepancy > 0:   # minimising: physio > words
+                if cluster == "de_escalate":
+                    goal_delta  += 0.08 * disc_magnitude   # correct to act on physio
+                    trust_delta += 0.04 * disc_magnitude
+                elif cluster in ("challenge", "inform"):
+                    goal_delta  -= 0.06 * disc_magnitude   # risky to push when physio is high
+            else:                        # catastrophising: words > physio
+                if cluster == "explore":
+                    goal_delta  += 0.05 * disc_magnitude   # safe to explore — physio is calm
+                elif cluster == "de_escalate":
+                    goal_delta  -= 0.04 * disc_magnitude   # less urgent to de-escalate
 
-        # Penalise challenge actions in critical zone (high stress → harmful)
-        if cluster == "challenge" and stress > 0.65:
-            goal_delta  -= 0.15
-            trust_delta -= 0.10
+        # Continuous mismatch penalty:
+        # de_escalate actions are wasteful below stress threshold; harmful if
+        # challenge actions are used when stress is too high.
+        # Uses smooth sigmoid rather than hard cut to avoid discontinuities.
+        import math as _m
+        if cluster == "de_escalate":
+            # penalty grows as stress falls below 0.30
+            below = max(0.0, 0.30 - stress)
+            goal_delta  -= 0.10 * _m.tanh(below * 8)
+            trust_delta -= 0.04 * _m.tanh(below * 8)
+        if cluster == "challenge":
+            # penalty grows as stress rises above 0.60
+            above = max(0.0, stress - 0.60)
+            goal_delta  -= 0.18 * _m.tanh(above * 8)
+            trust_delta -= 0.12 * _m.tanh(above * 8)
 
-        # Hysteresis zone bonus: reward correctly zone-matched actions
-        if hz is not None:
-            preferred_clusters = {
-                0: {"explore", "challenge"},
-                1: {"challenge", "explore", "inform"},
-                2: {"challenge", "inform", "de_escalate"},
-                3: {"de_escalate", "structure"},
-                4: {"de_escalate", "meta"},
-            }
-            if cluster in preferred_clusters.get(hz, set()):
-                goal_delta  += 0.06
-                trust_delta += 0.03
+        # Continuous cluster-affinity bonus: reward actions whose cluster is
+        # strongly preferred at the current stress level.
+        affinity = _continuous_cluster_affinity(stress, hrv_ms)
+        cluster_match = affinity.get(cluster, 0.0)
+        # Scale: max affinity ~0.35 → at most +0.035 goal / +0.015 trust
+        goal_delta  += 0.10 * cluster_match
+        trust_delta += 0.04 * cluster_match
 
         # Mode-specific weight lookup
         weights = self.reward_weights
@@ -546,3 +650,214 @@ class HierarchicalPWVOOTMCTS(BaseMCTS):
 
         # Clip to [0, 1]
         return max(0.0, min(1.0, score))
+
+
+# ── Discrete-zone comparison variant ──────────────────────────────────────────
+
+class HierarchicalPWZoneMCTS(HierarchicalPWVOOTMCTS):
+    """
+    Discrete-zone HPPWVOOT — uses the original 5-bucket hysteresis zone lookup
+    for cluster affinity instead of the continuous Gaussian function.
+
+    Kept as a separate class to enable ablation comparison:
+        HierarchicalPWVOOTMCTS  (continuous affinity) → new default
+        HierarchicalPWZoneMCTS  (discrete zone)       → ablation baseline
+
+    This answers: "Does continuous stress-based affinity outperform discrete
+    zone-based affinity in practice?"
+
+    The `physio_state` dict must include `hysteresis_zone` (0–4) for zone-matching
+    to apply; if absent, all cluster biases are zero (flat prior).
+    """
+
+    _ZONE_AFFINITY: dict[int, dict[str, float]] = {
+        0: {"explore":    0.20, "challenge":   0.10, "inform":      0.10},
+        1: {"challenge":  0.15, "explore":     0.10, "inform":      0.10},
+        2: {"challenge":  0.12, "inform":      0.12, "de_escalate": 0.08},
+        3: {"de_escalate": 0.25, "structure":  0.05},
+        4: {"de_escalate": 0.40, "meta":       0.10},
+    }
+
+    def _init_clusters(self, state: dict) -> dict[str, "_ClusterState"]:
+        """Override to use discrete zone affinity instead of continuous."""
+        all_actions: list[str] = []
+        for actions in ACTION_CLUSTERS.values():
+            all_actions.extend(actions)
+        seen: set[str] = set()
+        unique_actions = [a for a in all_actions if not (a in seen or seen.add(a))]  # type: ignore
+
+        prior_scores = self._llm_prior_fn(unique_actions, state)
+        if len(prior_scores) != len(unique_actions):
+            raise RuntimeError(
+                f"HierarchicalPWZoneMCTS._init_clusters: llm_prior_fn returned "
+                f"{len(prior_scores)} scores for {len(unique_actions)} actions."
+            )
+        score_map = dict(zip(unique_actions, prior_scores))
+
+        hz = state.get("physio", {}).get("hysteresis_zone")
+        zone_affinity = self._ZONE_AFFINITY.get(hz, {}) if hz is not None else {}
+
+        clusters = {}
+        for cluster_name, actions in ACTION_CLUSTERS.items():
+            ranked = sorted(actions, key=lambda a: score_map.get(a, 0.0), reverse=True)
+            clusters[cluster_name] = _ClusterState(
+                name=cluster_name,
+                all_actions=ranked,
+                q_bias=zone_affinity.get(cluster_name, 0.0),
+            )
+        return clusters
+
+    def _rollout_action(self, state: dict, action: str) -> float:
+        """Override to use discrete zone-matching bonus."""
+        from tensornets.mcts.base import DialogMCTS
+        prior = DialogMCTS.ACTION_REWARD_PRIORS.get(action, {})
+
+        stress  = state.get("stress_index", 0.5)
+        cluster = _ACTION_TO_CLUSTER.get(action, "structure")
+        hz      = state.get("physio", {}).get("hysteresis_zone")
+
+        stress_delta = prior.get("stress", 0.0)
+        goal_delta   = prior.get("goal",   0.0)
+        trust_delta  = prior.get("trust",  0.0)
+
+        if cluster == "de_escalate" and stress < 0.25:
+            goal_delta -= 0.08;  trust_delta -= 0.03
+        if cluster == "challenge" and stress > 0.65:
+            goal_delta -= 0.15;  trust_delta -= 0.10
+
+        if hz is not None:
+            preferred = {
+                0: {"explore", "challenge"},
+                1: {"challenge", "explore", "inform"},
+                2: {"challenge", "inform", "de_escalate"},
+                3: {"de_escalate", "structure"},
+                4: {"de_escalate", "meta"},
+            }
+            if cluster in preferred.get(hz, set()):
+                goal_delta += 0.06;  trust_delta += 0.03
+
+        components = {
+            "stress": max(-1.0, min(1.0, -stress_delta)),
+            "goal":   goal_delta,
+            "trust":  trust_delta,
+            "info":   0.05 if cluster == "inform" else 0.0,
+        }
+        return max(0.0, min(1.0, self.compute_reward(components)))
+
+
+# ── MCTS9: MultiHorizonHPVOOTMCTS ─────────────────────────────────────────────
+#
+# Extends HierarchicalPWVOOTMCTS (continuous affinity) with two additions:
+#
+# 1. Multi-horizon discount: each action's backpropagated value is scaled by
+#    a horizon-specific gamma (MICRO=0.95, SESSION=0.70, LONGITUDINAL=0.40).
+#    This corrects for the bias where the search prefers safe immediate actions
+#    (breathing, validate) over session-arc investments (psychoeducation, reframe)
+#    because both are evaluated at the same temporal discount.
+#
+# 2. Anticipatory-anxiety bonus: when the state carries a `pending_event` dict
+#    (exam, medical result, appointment), the time_bracketing,
+#    uncertainty_tolerance, probability_reframe, and graded_imagery actions
+#    receive cluster-level affinity boosts calibrated to days_until_event and
+#    threat_level.  All other actions are unaffected.
+
+def _anticipatory_anxiety_bonus(
+    state: dict,
+    action: str,
+) -> float:
+    """
+    Return an additive goal_delta bonus for anticipatory-anxiety-specific actions.
+
+    Zero for all other actions or when no `pending_event` is present.
+
+    Args:
+        state:  MCTS state dict; may contain ``pending_event`` with keys
+                ``days_until`` (float ≥ 0) and ``threat_level`` (0–1 float).
+        action: candidate action string.
+
+    Returns:
+        float in [0, 0.25] — bonus goal_delta to add to the rollout reward.
+    """
+    import math as _m
+
+    ev = state.get("pending_event")
+    if not ev:
+        return 0.0
+
+    days    = max(0.0, float(ev.get("days_until",  3.0)))
+    threat  = min(1.0, max(0.0, float(ev.get("threat_level", 0.5))))
+    stress  = state.get("stress_index", 0.5)
+
+    # Urgency proxy: higher threat and fewer days = more urgent
+    urgency = threat * _m.exp(-days / 7.0)
+
+    if action == "time_bracketing":
+        # Best when days_until is close (urgent) and stress is high
+        return round(0.20 * urgency * stress, 4)
+
+    if action == "uncertainty_tolerance":
+        # Broadly applicable; peaks when days=3–7 (medium urgency) and mid-stress
+        peak_urgency = threat * _m.exp(-abs(days - 4.0) / 3.0)
+        return round(0.15 * peak_urgency, 4)
+
+    if action == "probability_reframe":
+        # Only appropriate at low–moderate stress (patient can reason)
+        if stress > 0.60:
+            return -0.10   # penalty: cognitive challenge is backfire territory
+        return round(0.12 * (1.0 - stress) * urgency, 4)
+
+    if action == "graded_imagery":
+        # Only appropriate at moderate stress (0.30–0.55) with days > 1
+        if stress > 0.60 or days < 1.0:
+            return -0.08
+        in_window = 1.0 - abs(stress - 0.42) / 0.20   # bell around 0.42
+        return round(0.10 * max(0.0, in_window) * min(1.0, days / 3.0), 4)
+
+    return 0.0
+
+
+class MultiHorizonHPVOOTMCTS(HierarchicalPWVOOTMCTS):
+    """
+    MCTS9 — Multi-horizon discounting + anticipatory anxiety routing.
+
+    Two extensions over ``HierarchicalPWVOOTMCTS``:
+
+    1. **Multi-horizon discount** (``ACTION_HORIZON_GAMMA``):
+       Each action's backpropagated reward is scaled by a horizon-specific
+       gamma so the search correctly weighs immediate relief vs session-arc
+       investment vs longitudinal TTM change.
+
+    2. **Anticipatory anxiety bonus** (``_anticipatory_anxiety_bonus``):
+       When the MCTS state includes a ``pending_event`` dict with
+       ``days_until`` and ``threat_level``, the four anticipatory-anxiety
+       actions receive context-sensitive bonus/penalty adjustments that guide
+       the tree toward the temporally appropriate strategy.
+
+    The arm for this class is Exp 15: ``MultiHorizonHPVOOTWorker``.
+    """
+
+    def _rollout_action(self, state: dict, action: str) -> float:
+        # 1. Get the base reward from the parent (continuous VOOT + discrepancy logic)
+        base_score = super()._rollout_action(state, action)
+
+        # 2. Convert back to delta space for horizon scaling
+        #    base_score is in [0, 1]; centre it around 0.5 to get a delta
+        delta = base_score - 0.5
+
+        # 3. Apply horizon-specific gamma:
+        #    MICRO actions retain full delta; SESSION/LONGITUDINAL are scaled down
+        #    to represent "this value accrues over time, not right now".
+        #    The effect is that the tree will explore more patient session-arc
+        #    strategies rather than always picking the safest immediate action.
+        from tensornets.a3c.action_bandit import ACTION_HORIZON, ACTION_HORIZON_GAMMA, ActionHorizon
+        horizon = ACTION_HORIZON.get(action, ActionHorizon.MICRO)
+        gamma   = ACTION_HORIZON_GAMMA[horizon]
+        # Scale delta by (gamma / MICRO_gamma) so MICRO actions are unchanged
+        gamma_ratio = gamma / ACTION_HORIZON_GAMMA[ActionHorizon.MICRO]   # ≤ 1.0
+        delta *= gamma_ratio
+
+        # 4. Add anticipatory-anxiety bonus (zero unless pending_event in state)
+        delta += _anticipatory_anxiety_bonus(state, action)
+
+        # 5. Re-centre and clip
+        return max(0.0, min(1.0, delta + 0.5))

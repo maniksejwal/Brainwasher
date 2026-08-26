@@ -90,13 +90,13 @@ const EXP_META = {
     inertial_hpvoot_physio_llm_cot_mcts:          { label: 'Exp 7 \u2014 Inertial HPVOOT CoT',            shortLabel: 'Exp 7',  color: '#FF9800', bg: 'rgba(255,152,0,0.18)',    group: 'base'      },    // ── Safety ablations (Exp 0a–7a) ────────────────────────────────────────
     // Dashed / muted tones: same hue family as parent, lighter saturation
     oldschool_no_privacy:                         { label: 'Exp 0a \u2014 Oldschool (no privacy)',         shortLabel: 'Exp 0a', color: '#81C784', bg: 'rgba(129,199,132,0.14)', group: 'ablation'  },
-    physio_llm_no_gate:                           { label: 'Exp 1a \u2014 PhysioLLM (no gate)',            shortLabel: 'Exp 1a', color: '#EF9A9A', bg: 'rgba(239,154,154,0.14)', group: 'ablation'  },
-    physio_llm_cot_mcts_no_gate:                  { label: 'Exp 2a \u2014 PhysioLLM CoT-MCTS (no gate)',  shortLabel: 'Exp 2a', color: '#FFAB91', bg: 'rgba(255,171,145,0.14)', group: 'ablation'  },
-    physio_mps_mcts_no_gate:                      { label: 'Exp 3a \u2014 PhysioMPS-MCTS (no gate)',      shortLabel: 'Exp 3a', color: '#90CAF9', bg: 'rgba(144,202,249,0.14)', group: 'ablation'  },
-    inertial_physio_mps_mcts_no_gate:             { label: 'Exp 4a \u2014 Inertial MPS-MCTS (no gate)',   shortLabel: 'Exp 4a', color: '#CE93D8', bg: 'rgba(206,147,216,0.14)', group: 'ablation'  },
-    inertial_physio_llm_cot_mcts_no_gate:         { label: 'Exp 5a \u2014 Inertial CoT (no gate)',        shortLabel: 'Exp 5a', color: '#80CBC4', bg: 'rgba(128,203,196,0.14)', group: 'ablation'  },
-    inertial_hpvoot_physio_mps_mcts_no_gate:      { label: 'Exp 6a \u2014 Inertial HPVOOT MPS (no gate)', shortLabel: 'Exp 6a', color: '#F48FB1', bg: 'rgba(244,143,177,0.14)', group: 'ablation'  },
-    inertial_hpvoot_physio_llm_cot_mcts_no_gate:  { label: 'Exp 7a \u2014 Inertial HPVOOT CoT (no gate)', shortLabel: 'Exp 7a', color: '#FFCC80', bg: 'rgba(255,204,128,0.14)', group: 'ablation'  },
+    physio_llm_no_crit_gate:                           { label: 'Exp 1a \u2014 PhysioLLM (no crit gate)',            shortLabel: 'Exp 1a', color: '#EF9A9A', bg: 'rgba(239,154,154,0.14)', group: 'ablation'  },
+    physio_llm_cot_mcts_no_crit_gate:                  { label: 'Exp 2a \u2014 PhysioLLM CoT-MCTS (no crit gate)',  shortLabel: 'Exp 2a', color: '#FFAB91', bg: 'rgba(255,171,145,0.14)', group: 'ablation'  },
+    physio_mps_mcts_no_crit_gate:                      { label: 'Exp 3a \u2014 PhysioMPS-MCTS (no crit gate)',      shortLabel: 'Exp 3a', color: '#90CAF9', bg: 'rgba(144,202,249,0.14)', group: 'ablation'  },
+    inertial_physio_mps_mcts_no_crit_gate:             { label: 'Exp 4a \u2014 Inertial MPS-MCTS (no crit gate)',   shortLabel: 'Exp 4a', color: '#CE93D8', bg: 'rgba(206,147,216,0.14)', group: 'ablation'  },
+    inertial_physio_llm_cot_mcts_no_crit_gate:         { label: 'Exp 5a \u2014 Inertial CoT (no crit gate)',        shortLabel: 'Exp 5a', color: '#80CBC4', bg: 'rgba(128,203,196,0.14)', group: 'ablation'  },
+    inertial_hpvoot_physio_mps_mcts_no_crit_gate:      { label: 'Exp 6a \u2014 Inertial HPVOOT MPS (no crit gate)', shortLabel: 'Exp 6a', color: '#F48FB1', bg: 'rgba(244,143,177,0.14)', group: 'ablation'  },
+    inertial_hpvoot_physio_llm_cot_mcts_no_crit_gate:  { label: 'Exp 7a \u2014 Inertial HPVOOT CoT (no crit gate)', shortLabel: 'Exp 7a', color: '#FFCC80', bg: 'rgba(255,204,128,0.14)', group: 'ablation'  },
     // ── DPO/RLAIF variants (Exp 0p–7p) ─────────────────────────────────────
     // Dotted / bold tones: same hue family as parent, deeper/darker
     oldschool_dpo:                                { label: 'Exp 0p \u2014 Oldschool + DPO',               shortLabel: 'Exp 0p', color: '#1B5E20', bg: 'rgba(27,94,32,0.18)',    group: 'dpo'       },
@@ -107,6 +107,17 @@ const EXP_META = {
     inertial_physio_llm_cot_mcts_dpo:             { label: 'Exp 5p \u2014 Inertial PhysioLLM CoT DPO',    shortLabel: 'Exp 5p', color: '#004D40', bg: 'rgba(0,77,64,0.18)',     group: 'dpo'       },
     inertial_hpvoot_physio_mps_mcts_dpo:          { label: 'Exp 6p \u2014 Inertial HPVOOT MPS DPO',      shortLabel: 'Exp 6p', color: '#880E4F', bg: 'rgba(136,14,79,0.18)',   group: 'dpo'       },
     inertial_hpvoot_physio_llm_cot_mcts_dpo:      { label: 'Exp 7p \u2014 Inertial HPVOOT CoT DPO',      shortLabel: 'Exp 7p', color: '#E65100', bg: 'rgba(230,81,0,0.18)',    group: 'dpo'       },
+    // ── RAG ablation set (Exp 8–11) ─────────────────────────────────────────
+    plain_rag:                                    { label: 'Exp 8 \u2014 PlainRAG (text-similarity)',  shortLabel: 'Exp 8',  color: '#0277BD', bg: 'rgba(2,119,189,0.18)',    group: 'rag'       },
+    reason_rag:                                   { label: 'Exp 9 \u2014 ReasonRAG (LLM re-ranked)',   shortLabel: 'Exp 9',  color: '#00838F', bg: 'rgba(0,131,143,0.18)',    group: 'rag'       },
+    reason_rag_mps_mcts:                          { label: 'Exp 10 \u2014 ReasonRAG + MPS-MCTS',       shortLabel: 'Exp 10', color: '#558B2F', bg: 'rgba(85,139,47,0.18)',    group: 'rag'       },
+    reason_rag_inertial_hpvoot:                   { label: 'Exp 11 \u2014 ReasonRAG + Inertial HPVOOT',shortLabel: 'Exp 11', color: '#6A1B9A', bg: 'rgba(106,27,154,0.18)',   group: 'rag'       },
+    // ── VOOT comparison arm (Exp 16) ────────────────────────────────────────
+    inertial_hpvoot_zone:                         { label: 'Exp 16 \u2014 HPVOOT Zone (discrete affinity)', shortLabel: 'Exp 16', color: '#795548', bg: 'rgba(121,85,72,0.18)', group: 'voot'      },
+    // ── MCTS9: multi-horizon + anticipatory anxiety (Exp 15) ─────────────────
+    multi_horizon_hpvoot:                         { label: 'Exp 15 \u2014 MultiHorizon HPVOOT (MCTS9)',      shortLabel: 'Exp 15', color: '#00695C', bg: 'rgba(0,105,92,0.18)',  group: 'mcts9'     },
+    // ── Exp 17: Graph-of-Thought HPVOOT ──────────────────────────────────────
+    got_hpvoot:                                   { label: 'Exp 17 \u2014 GoT-HPVOOT (Graph-of-Thought)',   shortLabel: 'Exp 17', color: '#AD1457', bg: 'rgba(173,20,87,0.18)',  group: 'got'       },
 };
 const EXP_KEYS = Object.keys(EXP_META);
 
@@ -116,6 +127,14 @@ const EXP_KEYS = Object.keys(EXP_META);
 const LEGACY_ALIAS = {
     htn_mcts:          'physio_mps_mcts',
     hysteresis_prompt: 'physio_llm',
+    // 1a–7a renamed from "no_gate" → "no_crit_gate" — keeps historical runs visible
+    physio_llm_no_gate:                          'physio_llm_no_crit_gate',
+    physio_llm_cot_mcts_no_gate:                 'physio_llm_cot_mcts_no_crit_gate',
+    physio_mps_mcts_no_gate:                     'physio_mps_mcts_no_crit_gate',
+    inertial_physio_mps_mcts_no_gate:            'inertial_physio_mps_mcts_no_crit_gate',
+    inertial_physio_llm_cot_mcts_no_gate:        'inertial_physio_llm_cot_mcts_no_crit_gate',
+    inertial_hpvoot_physio_mps_mcts_no_gate:     'inertial_hpvoot_physio_mps_mcts_no_crit_gate',
+    inertial_hpvoot_physio_llm_cot_mcts_no_gate: 'inertial_hpvoot_physio_llm_cot_mcts_no_crit_gate',
 };
 
 let _state = {
@@ -343,7 +362,7 @@ function _attachToolbar() {
     });
 
     // ── Group show/hide buttons: toggle all arms in this group on/off ────────
-    ['base', 'ablation', 'dpo'].forEach(group => {
+    ['base', 'ablation', 'dpo', 'rag'].forEach(group => {
         const btn = document.getElementById(`group-toggle-${group}`);
         if (!btn) return;
         btn.addEventListener('click', () => {

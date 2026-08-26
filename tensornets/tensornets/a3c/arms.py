@@ -1,4 +1,4 @@
-"""
+﻿"""
 tensornets.a3c.arms -- Eight independent A3C training experiments.
 
 Experiment index
@@ -61,6 +61,7 @@ from tensornets.a3c.worker import (
     TurnState,
     _build_reactivity_profile,   # C6.1: ReactivityProfile wiring
     progressive_lookahead,       # progressive MCTS depth by episode count
+    drift_physio_for_gap,        # MCTS6: inter-session physio decay
 )
 from tensornets.therapy.mcts_reward import (
     WEIGHTS as MCTS_WEIGHTS,
@@ -253,7 +254,7 @@ class PhysioMPSMCTSWorker(A3CWorker):
                     "physio_state":      mcts_physio,
                     "candidate_actions": [action],
                     "mode":              state.therapeutic_mode or "standard",
-                    "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0)),
+                    "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0), session_boundary=getattr(state, "session_boundary", False)),
                 },
                 timeout=5.0,
             )
@@ -448,6 +449,10 @@ class OldschoolWorker(A3CWorker):
         next_stress = _stress_after_response(
             state.stress_index, action, state.archetype, state.drug_regimen,
             conversation_correction=conversation_correction,
+            alliance_score=getattr(state, "alliance_score", 0.5),
+            speaker_stress=getattr(state, "companion_stress", 0.5),
+            physio_available=getattr(state, "physio_available", True),
+            conversation_stress=getattr(state, "conversation_stress", 0.5),
         )
 
         reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
@@ -490,12 +495,34 @@ class PhysioLLMWorker(A3CWorker):
 
     ARM = "physio_llm"
 
-    # Default system prompt template.
-    # Template vars: {hysteresis_ctx}, {action}.
+    # System prompt template — mirrors the JS PROMPT_ACTION_SELECTOR context structure.
+    # Template vars (all optional via _safe_fmt):
+    #   {hysteresis_ctx}    — physio + HRV + hysteresis context block
+    #   {action}            — selected action type
+    #   {stress_bucket}     — low/medium/high/critical
+    #   {therapeutic_mode}  — standard/flooding/deaddiction/negotiation
+    #   {session_goal}      — current session goal string
+    #   {turns_completed}   — int: turns done this session
+    #   {info_coverage}     — float 0–1
+    #   {last_action}       — previous action taken
+    #   {repetition_flag}   — "true"/"false"
+    #   {longitudinal_hint} — cross-session memory block (empty on first session)
+    #   {known_context}     — patient facts from facts_v2 / known context RAG block
+    #   {available_actions} — comma-separated list of actions available at this stress level
     _DEFAULT_SYSTEM_PROMPT = (
-        "You are a clinical companion.\n"
-        "Physiological context:\n{hysteresis_ctx}\n"
-        "Recommended action strategy: {action}.\n"
+        "You are a clinical companion.\n\n"
+        "PHYSIOLOGICAL CONTEXT:\n{hysteresis_ctx}\n\n"
+        "SESSION CONTEXT:\n"
+        "- Therapeutic mode: {therapeutic_mode}\n"
+        "- Session goal: {session_goal}\n"
+        "- Turns completed: {turns_completed}\n"
+        "- Info collected: {info_coverage}\n"
+        "- Last action: {last_action}\n"
+        "- Repetition detected: {repetition_flag}\n"
+        "{longitudinal_hint}"
+        "{known_context}\n\n"
+        "SELECTED ACTION: {action}\n"
+        "Available at current stress: {available_actions}\n\n"
         "Respond with one empathetic, concise message (2–3 sentences)."
     )
 
@@ -517,13 +544,26 @@ class PhysioLLMWorker(A3CWorker):
         t_start = time.perf_counter()
         user_msg = _last_user_message(state)
 
-        hysteresis_ctx = _build_hysteresis_context(state, scenario)
+        hysteresis_ctx   = _build_hysteresis_context(state, scenario)
+        longitudinal     = _build_longitudinal_hint(state)
+        known_ctx        = _build_known_context_block(state)
+        available, _     = _build_available_actions(state)
+
         system_prompt = _safe_fmt(
             self._system_prompt,
-            hysteresis_ctx=hysteresis_ctx,
-            action=action,
-            stress_index=state.stress_index,
-            stress_bucket=state.stress_bucket,
+            hysteresis_ctx    = hysteresis_ctx,
+            action            = action,
+            stress_index      = state.stress_index,
+            stress_bucket     = state.stress_bucket,
+            therapeutic_mode  = state.therapeutic_mode or "standard",
+            session_goal      = scenario.get("session_goal", state.session_goal or ""),
+            turns_completed   = state.turn_count,
+            info_coverage     = f"{state.info_coverage:.0%}",
+            last_action       = state.last_action or "none",
+            repetition_flag   = "true" if state.repetition_detected else "false",
+            longitudinal_hint = longitudinal,
+            known_context     = known_ctx,
+            available_actions = available,
         )
         history_text = "\n".join(
             f"{t['role'].upper()}: {t['content']}"
@@ -576,12 +616,101 @@ class PhysioLLMWorker(A3CWorker):
 
 # ── Shared utilities ──────────────────────────────────────────────────────────
 
+import math as _math
+
+# ── No-physio (no-watch) constants ────────────────────────────────────────────
+# When a patient is not wearing a wearable, physio-based signals (HRV, EDA,
+# hysteresis_zone) are unavailable.  The system falls back to conversation_stress
+# (scorer-inferred estimate) and widens MCTS exploration to account for uncertainty.
+
+_NO_PHYSIO_STRESS_BLEND = 0.8   # weight on conversation_stress when physio unavailable
+_NO_PHYSIO_C_BOOST      = 0.4   # added to MCTS exploration_c (wider exploration)
+_NO_PHYSIO_NEUTRAL_HRV  = 55.0  # neutral HRV to use in place of measured value
+_NO_PHYSIO_NEUTRAL_EDA  = 3.0   # neutral EDA
+_NO_PHYSIO_NEUTRAL_ZONE = None  # hysteresis_zone left unknown (disables zone bonus)
+
+
+def _effective_physio_state(state: "TurnState") -> dict:
+    """
+    Return the physio dict to use for MCTS, with graceful no-watch degradation.
+
+    When physio is available: return state.physio unchanged.
+    When physio is unavailable: return a neutral physio dict whose stress_index
+    is blended from conversation_stress (80%) and the last known physio stress (20%).
+    All sensor fields (HRV, EDA, hysteresis_zone) are set to neutral values so
+    MCTS zone-matching bonuses don't fire on stale data.
+
+    This ensures the system always has a usable physio-like dict regardless of
+    whether a wearable is present.
+    """
+    if getattr(state, "physio_available", True):
+        return state.physio
+
+    conv_stress   = getattr(state, "conversation_stress", 0.5)
+    last_physio_s = state.physio.get("stress_index", 0.5)
+    blended_stress = round(
+        _NO_PHYSIO_STRESS_BLEND * conv_stress
+        + (1.0 - _NO_PHYSIO_STRESS_BLEND) * last_physio_s,
+        4,
+    )
+    return {
+        "stress_index":   blended_stress,
+        "hrv_ms":         _NO_PHYSIO_NEUTRAL_HRV,
+        "eda_us":         _NO_PHYSIO_NEUTRAL_EDA,
+        "sleep_deficit":  state.physio.get("sleep_deficit", 0.0),
+        "glucose_mg_dl":  state.physio.get("glucose_mg_dl", 90.0),
+        # hysteresis_zone intentionally absent — disables zone-matching bonuses
+    }
+
+def _temporal_gamma(session_gap_days: float, gamma_base: float = 0.85, tau: float = 5.0) -> float:
+    """
+    MCTS6: Scale HPVOOT inertia γ by the inter-session time gap.
+
+    γ_eff = γ_base × exp(−gap_days / τ)
+
+    Within-session (gap=0): γ_eff = γ_base  → full inertia (strategy doesn't flip)
+    After 5 days (tau):     γ_eff ≈ 0.31    → low inertia (patient may have changed)
+    After 2 weeks:          γ_eff ≈ 0.06    → near-zero (treat as new patient context)
+
+    The MCTS bridge uses γ_eff as the UCB exploration-vs-exploitation balance:
+    low γ_eff → more exploration (consider more actions) because inertia is weak.
+    """
+    if session_gap_days <= 0:
+        return gamma_base
+    return round(gamma_base * _math.exp(-session_gap_days / tau), 4)
+
+
+def _session_boundary_gate(action: str, session_boundary: bool) -> bool:
+    """
+    MCTS6: Return True if this action should be suppressed at session boundary.
+
+    Deep therapeutic actions (flooding, socratic challenge, discrepancy) are
+    counter-productive on the first turn of a session — rapport must be
+    re-established first.  The gate is a one-turn suppression only
+    (session_boundary=True exclusively on the first turn of a new session).
+    """
+    if not session_boundary:
+        return False
+    _SUPPRESS_AT_BOUNDARY = {
+        "flooding_deepen", "flooding_hold",
+        "socratic_probe", "socratic_reframe",
+        "develop_discrepancy", "loss_frame", "direct_confrontation",
+        "challenger_insight",
+        "seek_probe_consent",      # too soon — patient hasn't re-established rapport
+        "normalise_discrepancy",   # no contradiction context available on first turn yet
+    }
+    return action in _SUPPRESS_AT_BOUNDARY
+
 def _stress_after_response(
     current_stress: float,
     action: str,
     archetype: str = "standard",
     drug_regimen_dict: "dict | None" = None,
     conversation_correction: float = 0.0,
+    alliance_score: float = 0.5,
+    speaker_stress: float = 0.5,
+    physio_available: bool = True,
+    conversation_stress: float = 0.5,
 ) -> float:
     """
     Continuous stress transition using CALMING_WEIGHT per action.
@@ -604,6 +733,12 @@ def _stress_after_response(
     DrugRegimen.gamma_modifier() is applied. Beta-blockers dampen stress rise;
     benzodiazepines reduce Γ sharply; naltrexone attenuates craving Γ spikes.
 
+    SA2.1 — social_Gamma_modifier:
+    Alliance quality and speaker stress modulate the effective reversion speed θ.
+    High alliance (alliance_score > 0.5): calming actions are more effective.
+    Rupture (alliance_score < 0.5) or panicked speaker: stress is harder to reduce.
+    See social_alliance.social_Gamma_modifier() for the full formulation.
+
     conversation_correction:
     A real-time discrepancy signal derived from the scorer's assessment of the
     patient's actual response vs. the expected response for the chosen action.
@@ -614,7 +749,22 @@ def _stress_after_response(
     Max magnitude is capped at ±0.05 per turn to prevent instability.
 
     Falls back to 0.5 (neutral, zero delta) for unknown actions.
+
+    No-watch (physio_available=False):
+    When the patient is not wearing a wearable, current_stress is replaced with a
+    blend of conversation_stress (80%) and the caller-supplied current_stress (20%).
+    The conversation_correction magnitude is also widened by 1.5× to compensate for
+    the missing physio signal, giving language cues more weight.
     """
+    # ── No-watch blending ─────────────────────────────────────────────────────
+    if not physio_available:
+        current_stress = round(
+            _NO_PHYSIO_STRESS_BLEND * conversation_stress
+            + (1.0 - _NO_PHYSIO_STRESS_BLEND) * current_stress,
+            4,
+        )
+        conversation_correction *= 1.5   # language cues carry more weight
+
     try:
         from tensornets.a3c.action_bandit import CALMING_WEIGHT
     except ImportError:
@@ -624,7 +774,21 @@ def _stress_after_response(
     cw    = CALMING_WEIGHT.get(action, 0.5)
     delta = -(cw - 0.5) * 2.0 * DELTA_SCALE
 
-    # ── C6.1: scale delta by ReactivityProfile gamma_modifier ────────────────
+    # ── SA2.1: social alliance modifier ──────────────────────────────────────
+    # The alliance modifier adjusts the effective reversion speed, not the
+    # action delta directly. High alliance → faster recovery (subtract from delta
+    # on calming actions). Rupture/panic → slower recovery (add to delta).
+    try:
+        from tensornets.agents.social_alliance import social_Gamma_modifier
+        social_mod = social_Gamma_modifier(alliance_score, speaker_stress)
+        # social_mod < 0 (high alliance): calming is more effective.
+        #   Adding social_mod * abs(delta) to a negative delta makes it more negative.
+        # social_mod > 0 (rupture/panic): calming is less effective.
+        #   Adding positive social_mod * abs(delta) to a negative delta pushes it toward 0.
+        # Scale by 0.5 so the social modifier is secondary to the action CW.
+        delta += social_mod * 0.5 * abs(delta)
+    except ImportError:
+        pass  # social_alliance module not available — no-op
     profile = _build_reactivity_profile("_arm_tmp", archetype)
     if profile is not None:
         # gamma_modifier returns a multiplier > 1 for reactive types (amplifies delta)
@@ -755,11 +919,117 @@ def _synthetic_reward(
 
     # ── CRITICAL stress gate enforcement ─────────────────────────────────────
     # Mirrors action_selector.js rule #1 and #2.
-    if state.stress_index >= 0.85 and action not in {
+    # Panic psychoeducation cluster is explicitly allowed at critical stress —
+    # these are the medically correct responses to acute panic, not generic calming.
+    from tensornets.a3c.action_bandit import ACTION_INTENT_GROUP  # lazy; cached after first call
+    _critical_allowed = {
         "validate", "empathic_reflection", "safety_protocol", "acknowledge_only",
         "escalate", "flooding_hold", "flooding_deepen", "spike_step",
-    }:
+        # Panic cluster — only correct actions for zone 4 / acute distress
+        "panic_reassure_not_cardiac", "panic_reassure_not_hypoxic",
+        "panic_normalise_duration",   "panic_grounding_54321",
+        "panic_support_available",    "panic_safety_assess_faint",
+        # Social coordination — mobilising help IS valid at critical stress
+        "request_presence", "call_for_help",
+        # Distraction is conditionally allowed at CRITICAL — only for rumination spirals,
+        # not when the patient expresses cardiac fear or acute medical symptoms.
+        # The reward penalty is NOT applied here; context-sensitivity is the LLM's job.
+        # We do NOT blanket-permit distraction at CRITICAL to avoid rewarding it
+        # over the panic cluster when panic language is present.
+    }
+    # At CRITICAL stress: if a distraction action is chosen instead of panic cluster,
+    # apply a smaller reward penalty — it's not as wrong as challenging_insight, but
+    # it's not the right first choice when cardiac/panic language is present.
+    _distraction_at_critical = {
+        a for a in ACTION_INTENT_GROUP
+        if ACTION_INTENT_GROUP.get(a) == "distraction"
+    }
+    if state.stress_index >= 0.85 and action in _distraction_at_critical:
+        # Penalty only when panic cluster would have been more appropriate.
+        # Proxy: the response text contains language from the panic domain.
+        # Derived from what panic actions address — no hardcoded word list.
+        _panic_actions = {
+            a for a in ACTION_INTENT_GROUP
+            if ACTION_INTENT_GROUP.get(a) == "panic"
+        }
+        # If any panic action was available (stress is critical) AND the response
+        # itself contains words that suggest the patient needed reassurance, penalise.
+        if _panic_actions:
+            # Low-cost check: does the response use words that indicate the patient
+            # expressed cardiac/breathing distress (as opposed to rumination)?
+            # We derive this from the response, not a hardcoded medical dictionary.
+            words = set((response_text or "").lower().split())
+            cardiac_tokens = {"heart", "cardiac", "chest", "suffocating", "breath",
+                              "dying", "oxygen", "fainting", "collapse", "emergency"}
+            if words & cardiac_tokens:
+                stress_r = max(0.0, stress_r - 0.20)
+    if state.stress_index >= 0.85 and action not in _critical_allowed and action not in _distraction_at_critical:
         stress_r = max(0.0, stress_r - 0.40)   # hard penalty for violating CRITICAL gate
+
+    # ── Panic cluster: extra stress reward when zone ≥ 4 ─────────────────────
+    # These actions are specifically designed for acute panic — reward them
+    # generously when stress is critical to reinforce correct action selection.
+    _panic_actions = {
+        "panic_reassure_not_cardiac", "panic_reassure_not_hypoxic",
+        "panic_normalise_duration",   "panic_grounding_54321",
+        "panic_support_available",    "panic_safety_assess_faint",
+    }
+    if action in _panic_actions and state.stress_index >= 0.80:
+        # Bonus: these are the RIGHT actions here; other arms that select
+        # generic "breathing_exercise" at zone 4 will score lower.
+        stress_r = min(1.0, stress_r + 0.20)
+
+    # ── Emergency group: big bonus when acute-emergency keywords detected ──────
+    # emergency_mobilise / witness_grief / safety_exit_protocol are only correct
+    # when the patient describes a life-threatening event.  Reward them if the
+    # response text contains acute-emergency signals; penalise them otherwise
+    # (they are catastrophising if applied to non-emergencies).
+    _emergency_actions = {
+        a for a in ACTION_INTENT_GROUP
+        if ACTION_INTENT_GROUP.get(a) == "emergency"
+    }
+    if action in _emergency_actions:
+        words = set((response_text or "").lower().split())
+        acute_tokens = {
+            "stroke", "heart attack", "angina", "cardiac",
+            "accident", "bleeding", "unconscious", "not breathing",
+            "dead", "died", "death", "suicide", "threatening",
+            "fight", "weapon", "knife", "gun", "attacking",
+        }
+        if words & acute_tokens:
+            stress_r = min(1.0, stress_r + 0.30)
+        else:
+            stress_r = max(0.0, stress_r - 0.25)  # applied without cause
+
+    # ── MCTS6: session boundary reward gating ─────────────────────────────────
+    # goal_reassess on the first turn of a new session is correct behaviour —
+    # reward it.  Deep therapeutic actions at boundary get a penalty because
+    # rapport has not been re-established.
+    if getattr(state, "session_boundary", False):
+        if action == "goal_reassess":
+            stress_r = min(1.0, stress_r + 0.15)
+        elif _session_boundary_gate(action, session_boundary=True):
+            stress_r = max(0.0, stress_r - 0.20)
+
+    # ── CONSIST1: consistency / truth-seeking reward gating ───────────────────
+    # seek_probe_consent before a retroactive probe = correct trauma-informed
+    # practice; reward when stress is low (safe to revisit).  If used while
+    # stress is HIGH, it's poor timing — apply a small penalty.
+    # normalise_discrepancy used when conversation_correction is negative
+    # (patient responded less than expected) suggests they felt pushed or
+    # challenged — normalising is the right de-escalation; reward it.
+    if action == "seek_probe_consent":
+        if state.stress_index < 0.45:
+            stress_r = min(1.0, stress_r + 0.10)   # correct: low stress, safe probe
+        else:
+            stress_r = max(0.0, stress_r - 0.10)   # wrong timing — patient not ready
+    if action == "normalise_discrepancy":
+        # Reward when patient appears defensive (stress rising) — this is exactly
+        # when normalisation matters most.
+        if state.stress_index > 0.45:
+            stress_r = min(1.0, stress_r + 0.12)
+        else:
+            stress_r = min(1.0, stress_r + 0.05)   # small reward in calm states too
 
     # ── Dimension 2: Goal progress ────────────────────────────────────────────
     # NOTE: keyword scan removed. It was circular — any response containing
@@ -772,16 +1042,21 @@ def _synthetic_reward(
     # earn a smaller bonus (they move the conversation but don't deliver value);
     # holding actions are neutral; pure social/deflection penalises.
     #
-    # IMPORTANT: goal_r is NOT derived from state.info_coverage (a turn-count
-    # proxy) because that conflates verbosity with quality.  The baseline is
-    # instead a fixed mid-range value that the action type shifts up or down.
-    # The orchestrator's real coverage_fraction feeds into info_r (dim 4) and
-    # into the next-state's info_coverage, providing the longitudinal signal.
+    # IMPORTANT: goal_r measures the INCREMENTAL contribution of this action
+    # to goal progress — it is a per-turn delta, NOT an absolute state.
+    # Using absolute info_coverage here would cause reward leakage: actions
+    # early in a session that prime info coverage would inflate goal_r for
+    # all subsequent turns regardless of what those turns actually do.
     advancing = {
         "psychoeducation", "motivational_frame", "develop_discrepancy",
         "give_options", "summarise", "challenger_insight", "give_facts",
         "oars_summary", "loss_frame", "socratic_reframe",
         "share_circle_insight", "direct_advice", "future_planning",
+        "surface_intervention",   # surfacing a cross-circle concern advances goals
+        "schedule_commitment",    # commitment advances behavioural goal
+        # Panic cluster contributes to safety goal when stress is critical
+        "panic_reassure_not_cardiac", "panic_reassure_not_hypoxic",
+        "panic_normalise_duration",
     }
     # Questioning actions surface information but don't deliver value by themselves.
     questioning = {
@@ -791,8 +1066,6 @@ def _synthetic_reward(
     holding = {"validate", "empathic_reflection", "unconditional_regard", "acknowledge_only"}
     # Social/rapport actions — earn trust that makes the patient receptive.
     # Must match ACTION_TAXONOMY in action_bandit.py exactly.
-    # "build_rapport", "small_talk", "greet", "check_in" are NOT in the taxonomy
-    # — those JS-side labels fall through to _GOAL_R_OTHER unless aliased here.
     social = {
         "affirmation",          # OARS: genuine strength recognition
         "validate",             # normalise experience
@@ -801,12 +1074,49 @@ def _synthetic_reward(
         "companion_handoff",    # session brief (end-of-session rapport)
         "end_conversation",     # natural close (positive closure = rapport value)
     }
-    if action in advancing:
+    # Distraction / panic grounding: neutral for goal progress (they interrupt
+    # rumination but don't advance the session goal themselves).
+    distraction_or_grounding = {
+        "distraction_technique", "humour_deflection", "curiosity_pivot",
+        "panic_grounding_54321", "panic_support_available",
+        "breathing_exercise", "mindfulness_prompt",
+        "check_on_caregiver",   # shifts focus; neutral for primary session goal
+    }
+    # Social coordination that does advance goals (mobilising help, coordinating care)
+    # is counted as advancing.
+    _social_advancing = {
+        "coordinate_care",      # multi-party care plan = real goal progress
+        "request_presence",     # summoning support is a concrete positive step
+        "call_for_help",        # same
+        "delegate_to_human",    # clear handoff = goal progress (appropriate referral)
+        "schedule_future_interaction",  # concrete future plan = goal progress (session extends)
+        "coordinate_companion_handoff", # cross-session coordination = care continuity
+    }
+    # Social actions that hold or protect without advancing
+    _social_holding = {
+        "confidentiality_hold", # necessary protective action; neutral for goal
+        "normalise_role",       # boundary clarity; neutral
+        "mediate_conflict",     # can advance relationship goals but not session content goal
+    }
+    # De-escalation cluster: derived from intent group, not hardcoded list
+    _deescalate = {
+        a for a in ACTION_INTENT_GROUP
+        if ACTION_INTENT_GROUP.get(a) == "deescalate"
+    }
+    if action in advancing or action in _social_advancing:
         goal_r = _GOAL_R_ADVANCING
     elif action in questioning:
         goal_r = _GOAL_R_QUESTIONING
-    elif action in holding:
+    elif action in holding or action in distraction_or_grounding or action in _social_holding:
         goal_r = _GOAL_R_HOLDING
+    elif action in _deescalate:
+        # De-escalation actions hold goal progress at HIGH stress — they protect
+        # the therapeutic relationship, enabling future goal progress.
+        # At HIGH/CRITICAL stress they are the CORRECT choice and earn a bonus.
+        goal_r = _GOAL_R_HOLDING
+        if state.stress_index >= 0.65:
+            # Bonus: choosing de-escalation over advancing at high stress is correct.
+            goal_r = min(1.0, goal_r + 0.15)
     elif action in social:
         goal_r = _GOAL_R_SOCIAL
     else:
@@ -909,7 +1219,127 @@ def _safe_fmt(template: str, **kwargs) -> str:
     return template.format(**kwargs)
 
 
-def _build_hysteresis_context(state: TurnState, scenario: dict) -> str:
+def _build_longitudinal_hint(state: "TurnState") -> str:
+    """
+    Build the {{LONGITUDINAL_HINT}} block injected into the action selector prompt.
+
+    Mirrors JS getLongitudinalHint() in companions/utils/promptLoader.js.
+    Pulls from state.longitudinal_hint (already populated by worker.py from
+    the prior session summary), state.session_memory, and state.future_plans_summary.
+
+    Returns empty string if no cross-session data is available (first session).
+    """
+    parts: list[str] = []
+
+    hint = (getattr(state, "longitudinal_hint", None) or "").strip()
+    if hint:
+        parts.append(f"[Prior session] {hint}")
+
+    mem = getattr(state, "session_memory", None) or {}
+    if isinstance(mem, dict) and mem:
+        session_num  = mem.get("session_number", "")
+        last_outcome = mem.get("last_session_outcome", "")
+        flagged      = mem.get("flagged_topics", [])
+        goal_prog    = mem.get("goal_progress", "")
+        alliance     = mem.get("alliance_score", "")
+
+        if session_num:
+            parts.append(f"Session: {session_num}")
+        if last_outcome:
+            parts.append(f"Last outcome: {last_outcome}")
+        if goal_prog:
+            parts.append(f"Goal progress: {goal_prog}")
+        if alliance:
+            parts.append(f"Alliance: {alliance}")
+        if flagged:
+            topics = ", ".join(flagged) if isinstance(flagged, list) else str(flagged)
+            parts.append(f"Flagged topics (handle carefully): {topics}")
+
+    fp = (getattr(state, "future_plans_summary", None) or "").strip()
+    if fp:
+        parts.append(f"[Scheduled] {fp}")
+
+    if not parts:
+        return ""
+    return "\n[Longitudinal context]\n" + "\n".join(parts)
+
+
+def _build_available_actions(state: "TurnState") -> tuple[str, str]:
+    """
+    Compute the available and blocked action lists for the current stress level.
+
+    Mirrors JS CompanionCoordinator's action gate logic — derives everything
+    from ACTION_INTENT_GROUP and CALMING_WEIGHT; no hardcoded lists.
+
+    Returns
+    -------
+    available : str   — comma-separated allowed actions for current stress
+    blocked   : str   — comma-separated blocked actions for current stress
+    """
+    from tensornets.a3c.action_bandit import (
+        ACTION_TAXONOMY, ACTION_INTENT_GROUP, CALMING_WEIGHT,
+    )
+
+    stress = state.stress_index
+
+    # Groups that are always available regardless of stress
+    _always = {"safety", "meta", "deescalate"}
+
+    # At CRITICAL stress (≥ 0.85): only safety + panic + deescalate + validate
+    _critical_groups = {"safety", "panic", "deescalate", "validate", "meta"}
+    # At HIGH stress (≥ 0.65): add empathy, coping, distraction (non-medical)
+    _high_groups     = _critical_groups | {"coping", "distraction", "summarise"}
+    # At MODERATE (≥ 0.40): also allow ask, inform, explore
+    _moderate_groups = _high_groups | {"ask", "inform", "explore", "direction"}
+    # At LOW (<0.40): all groups available
+    _low_groups      = set(ACTION_INTENT_GROUP.values())
+
+    if stress >= 0.85:
+        allowed_groups = _critical_groups
+    elif stress >= 0.65:
+        allowed_groups = _high_groups
+    elif stress >= 0.40:
+        allowed_groups = _moderate_groups
+    else:
+        allowed_groups = _low_groups
+
+    available = [a for a in ACTION_TAXONOMY if ACTION_INTENT_GROUP.get(a) in allowed_groups]
+    blocked   = [a for a in ACTION_TAXONOMY if a not in available]
+
+    # MCTS6: at session boundary, suppress deep therapeutic actions and elevate
+    # goal_reassess to the front of the available list.
+    if getattr(state, "session_boundary", False):
+        _boundary_suppress = {
+            "flooding_deepen", "flooding_hold",
+            "socratic_probe", "socratic_reframe",
+            "develop_discrepancy", "loss_frame", "direct_confrontation",
+            "challenger_insight",
+        }
+        available = [a for a in available if a not in _boundary_suppress]
+        blocked   = list(set(blocked) | _boundary_suppress)
+        # Promote goal_reassess and summarise_session to front
+        for front_action in ("summarise_session", "goal_reassess"):
+            if front_action in available:
+                available.remove(front_action)
+                available.insert(0, front_action)
+
+    return ", ".join(available), ", ".join(blocked)
+
+
+def _build_known_context_block(state: "TurnState") -> str:
+    """
+    Return the {{KNOWN_CONTEXT}} block for injection into the action selector.
+
+    In JS this is populated via facts_v2 retrieval before the action selector call.
+    Here we use whatever is already in state.known_context (populated by worker.py
+    from the session_memory / AllianceGraph injection at episode start).
+    """
+    ctx = (getattr(state, "known_context", None) or "").strip()
+    if not ctx:
+        return ""
+    return f"\n[Known patient context]\n{ctx}"
+
+
     """
     Build the natural-language physio + hysteresis context string for Exp 1 (PhysioLLM).
 
@@ -1009,8 +1439,13 @@ class PhysioLLMCoTMCTSWorker(PhysioLLMWorker):
         "Physiological context:\n{physio_ctx}\n\n"
         "{zone_ctx}"
         "Session goal: {scenario_goal}\n"
+        "Therapeutic mode: {therapeutic_mode}  |  Stress: {stress_bucket}\n"
+        "Turns completed: {turns_completed}  |  Info coverage: {info_coverage}\n"
+        "Last action: {last_action}  |  Repetition: {repetition_flag}\n"
+        "{longitudinal_hint}"
+        "{known_context}"
         "Last patient message: {last_patient_message}\n\n"
-        "Available actions (choose exactly one):\n{actions_list}\n\n"
+        "Available actions at this stress level (choose exactly one):\n{actions_list}\n\n"
         "Reason step-by-step (3-5 sentences), then output your final answer as:\n"
         "CHOSEN_ACTION: <action_name>\n"
         "CONFIDENCE: <0.0-1.0>\n"
@@ -1023,56 +1458,64 @@ class PhysioLLMCoTMCTSWorker(PhysioLLMWorker):
         scenario: dict,
     ) -> tuple[str, dict]:
         """
-        Call Maverick to select the best action from ACTION_TAXONOMY via CoT.
+        Use Scout to select the best action via CoT, with full session context.
 
-        Returns
-        -------
-        action : str
-            The selected action name.
-        cot_meta : dict
-            Raw CoT output including confidence and reasoning, for logging.
-
-        Raises
-        ------
-        RuntimeError
-            If the Maverick call fails or returns no parseable CHOSEN_ACTION.
+        Uses _build_available_actions() to restrict the action list to stress-appropriate
+        choices — matches JS PROMPT_ACTION_SELECTOR gate logic.
         """
         from tensornets.a3c.action_bandit import ACTION_TAXONOMY
 
-        physio_ctx = _build_hysteresis_context(state, scenario)
-        actions_list = "\n".join(
-            f"  {i+1:2d}. {name}" for i, name in enumerate(ACTION_TAXONOMY)
+        physio_ctx      = _build_hysteresis_context(state, scenario)
+        longitudinal    = _build_longitudinal_hint(state)
+        known_ctx       = _build_known_context_block(state)
+        available, _    = _build_available_actions(state)
+
+        # Restrict to stress-gated actions only (mirrors JS AVAILABLE_ACTIONS)
+        available_set      = set(available.split(", ")) if available else set(ACTION_TAXONOMY)
+        available_taxonomy = [a for a in ACTION_TAXONOMY if a in available_set] or list(ACTION_TAXONOMY)
+
+        actions_list     = "\n".join(
+            f"  {i+1:2d}. {name}" for i, name in enumerate(available_taxonomy)
         )
         last_patient_msg = _last_user_message(state)
 
+        zone_ctx = ""  # overridden by InertialPhysioLLMCoTMCTSWorker
+
         prompt = self._COT_PROMPT_TEMPLATE.format(
-            physio_ctx=physio_ctx,
-            zone_ctx="",
-            scenario_goal=scenario.get("session_goal", ""),
-            last_patient_message=last_patient_msg,
-            actions_list=actions_list,
+            physio_ctx         = physio_ctx,
+            zone_ctx           = zone_ctx,
+            scenario_goal      = scenario.get("session_goal", ""),
+            therapeutic_mode   = state.therapeutic_mode or "standard",
+            stress_bucket      = state.stress_bucket,
+            turns_completed    = state.turn_count,
+            info_coverage      = f"{state.info_coverage:.0%}",
+            last_action        = state.last_action or "none",
+            repetition_flag    = "true" if state.repetition_detected else "false",
+            longitudinal_hint  = longitudinal,
+            known_context      = known_ctx,
+            last_patient_message = last_patient_msg,
+            actions_list       = actions_list,
         )
 
         try:
             resp = _http_post(
                 f"{_TENSORNETS_URL}/llm/scout",
-                {"system": "You are a clinical AI planner.", "prompt": prompt, "max_tokens": 512, "arm": self.ARM},
+                {"system": "You are a clinical AI planner.", "prompt": prompt,
+                 "max_tokens": 512, "arm": self.ARM},
                 timeout=40.0,
             )
         except Exception as exc:
             raise RuntimeError(
-                f"PhysioLLMCoTMCTSWorker: Scout CoT call failed: {exc}. "
+                f"{self.__class__.__name__}: Scout CoT call failed: {exc}. "
                 f"Check that the tensornets FastAPI server is running on {_TENSORNETS_URL}."
             ) from exc
 
         text = resp.get("text", "").strip()
         if not text:
             raise RuntimeError(
-                "PhysioLLMCoTMCTSWorker: Scout returned empty CoT response. "
-                "This is a server-side error — check FastAPI logs."
+                f"{self.__class__.__name__}: Scout returned empty CoT response."
             )
 
-        # Parse CHOSEN_ACTION from the structured response
         chosen_action = None
         for line in text.splitlines():
             if line.strip().startswith("CHOSEN_ACTION:"):
@@ -1083,7 +1526,7 @@ class PhysioLLMCoTMCTSWorker(PhysioLLMWorker):
 
         if chosen_action is None:
             raise RuntimeError(
-                f"PhysioLLMCoTMCTSWorker: CoT response did not contain a valid "
+                f"{self.__class__.__name__}: CoT response did not contain a valid "
                 f"CHOSEN_ACTION from ACTION_TAXONOMY.\nRaw response:\n{text[:400]}"
             )
 
@@ -1560,11 +2003,23 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
                     "physio_state":      mcts_physio,
                     "candidate_actions": all_hp_actions,
                     "mode":              scenario.get("mode", "standard"),
-                    "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0)),
+                    "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0), session_boundary=getattr(state, "session_boundary", False)),
                     "iterations":        150,
                     "context":           state.summary or "",
-                    "mcts_mode":         "hpvoot",
+                    "mcts_mode":         getattr(self, "_mcts_mode_override", "hpvoot"),
                     "llm_prior_scores":  prior_scores,
+                    # MCTS6: inertia decay by inter-session gap
+                    "gamma_eff":         _temporal_gamma(getattr(state, "session_gap_days", 0.0)),
+                    "session_boundary":  getattr(state, "session_boundary", False),
+                    "physio_available":  getattr(state, "physio_available", True),
+                    # AUDIT1-3: conversation stress signals now in MCTS payload
+                    "conversation_stress": getattr(state, "conversation_stress", 0.5),
+                    "stress_discrepancy":  round(
+                        getattr(state, "stress_index", 0.5)
+                        - getattr(state, "conversation_stress", 0.5), 4
+                    ),
+                    # MCTS9: anticipatory anxiety context
+                    "pending_event":       getattr(state, "pending_event", {}),
                 },
                 timeout=30.0,
             )
@@ -1582,6 +2037,10 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
         next_stress = _stress_after_response(
             state.stress_index, chosen_action, state.archetype, state.drug_regimen,
             conversation_correction=conversation_correction,
+            alliance_score=getattr(state, "alliance_score", 0.5),
+            speaker_stress=getattr(state, "companion_stress", 0.5),
+            physio_available=getattr(state, "physio_available", True),
+            conversation_stress=getattr(state, "conversation_stress", 0.5),
         )
         reward     = _synthetic_reward(state, chosen_action, next_stress,
                                        response_text=scout_result["text"])
@@ -1603,13 +2062,14 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
             "info_coverage":        reward["info_coverage"],
             "repetition_detected":  False,
             "discrepancy":          None,
-            "mcts_mode":            "hpvoot",
+            "mcts_mode":            getattr(self, "_mcts_mode_override", "hpvoot"),
             "mcts_tree_stats":      mcts_resp.get("tree_stats", {}),
             "hysteresis_zone":      zone,
             "hysteresis_zone_name": zone_name,
             "hysteresis_streak":    zone_streak,
             "hysteresis_changed":   zone_changed,
             "llm_calls":            2,
+            "_mcts_top5":           mcts_resp.get("top5", []),
         }
         if self._gate:
             result["hysteresis_gate"] = self._gate.to_dict()
@@ -1773,11 +2233,23 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
                     "physio_state":      mcts_physio,
                     "candidate_actions": all_hp_actions,
                     "mode":              scenario.get("mode", "standard"),
-                    "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0)),
+                    "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0), session_boundary=getattr(state, "session_boundary", False)),
                     "iterations":        150,
                     "context":           state.summary or "",
-                    "mcts_mode":         "hpvoot",
+                    "mcts_mode":         getattr(self, "_mcts_mode_override", "hpvoot"),
                     "llm_prior_scores":  prior_scores,
+                    # MCTS6: inertia decay by inter-session gap
+                    "gamma_eff":         _temporal_gamma(getattr(state, "session_gap_days", 0.0)),
+                    "session_boundary":  getattr(state, "session_boundary", False),
+                    "physio_available":  getattr(state, "physio_available", True),
+                    # AUDIT1-3: conversation stress signals now in MCTS payload
+                    "conversation_stress": getattr(state, "conversation_stress", 0.5),
+                    "stress_discrepancy":  round(
+                        getattr(state, "stress_index", 0.5)
+                        - getattr(state, "conversation_stress", 0.5), 4
+                    ),
+                    # MCTS9: anticipatory anxiety context
+                    "pending_event":       getattr(state, "pending_event", {}),
                 },
                 timeout=30.0,
             )
@@ -1825,7 +2297,7 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
             "info_coverage":        reward.get("info_coverage", 0.0),
             "repetition_detected":  False,
             "discrepancy":          None,
-            "mcts_mode":            "hpvoot",
+            "mcts_mode":            getattr(self, "_mcts_mode_override", "hpvoot"),
             "mcts_tree_stats":      mcts_resp.get("tree_stats", {}),
             "hysteresis_zone":      zone,
             "hysteresis_zone_name": zone_name,
@@ -1843,7 +2315,7 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
 # behaviour from their parent arm.  They measure each gate's independent
 # contribution to outcome metrics.
 
-class InertialPhysioMPSMCTSNoGateWorker(InertialPhysioMPSMCTSWorker):
+class InertialPhysioMPSMCTSNoCritGateWorker(InertialPhysioMPSMCTSWorker):
     """
     Exp 4a: InertialPhysioMPSMCTS without the critical-failure termination gate.
 
@@ -1851,11 +2323,11 @@ class InertialPhysioMPSMCTSNoGateWorker(InertialPhysioMPSMCTSWorker):
     The comparison between Exp 4 and Exp 4a isolates the gate's contribution:
     is Exp 4's goal rate driven by the learned policy or by cutting off bad episodes?
     """
-    ARM = "inertial_physio_mps_mcts_no_gate"
+    ARM = "inertial_physio_mps_mcts_no_crit_gate"
     DISABLE_CRITICAL_FAILURE_GATE = True
 
 
-class InertialHPVOOTPhysioMPSMCTSNoGateWorker(InertialHPVOOTPhysioMPSMCTSWorker):
+class InertialHPVOOTPhysioMPSMCTSNoCritGateWorker(InertialHPVOOTPhysioMPSMCTSWorker):
     """
     Exp 6a: HPVOOT+PW without the critical-failure episode-termination gate.
 
@@ -1863,11 +2335,11 @@ class InertialHPVOOTPhysioMPSMCTSNoGateWorker(InertialHPVOOTPhysioMPSMCTSWorker)
     Measures whether HPVOOT's goal rate improvement over flat MCTS is policy-driven
     or gate-driven.
     """
-    ARM = "inertial_hpvoot_physio_mps_mcts_no_gate"
+    ARM = "inertial_hpvoot_physio_mps_mcts_no_crit_gate"
     DISABLE_CRITICAL_FAILURE_GATE = True
 
 
-class PhysioLLMNoGateWorker(PhysioLLMWorker):
+class PhysioLLMNoCritGateWorker(PhysioLLMWorker):
     """
     Exp 1a: PhysioLLM without the critical-failure termination gate.
 
@@ -1876,11 +2348,11 @@ class PhysioLLMNoGateWorker(PhysioLLMWorker):
     gate.  Enables a complete cross-arm no-gate comparison tier (Exp 1a–7a) so
     every experiment has a matched ablation partner.
     """
-    ARM = "physio_llm_no_gate"
+    ARM = "physio_llm_no_crit_gate"
     DISABLE_CRITICAL_FAILURE_GATE = True
 
 
-class PhysioLLMCoTMCTSNoGateWorker(PhysioLLMCoTMCTSWorker):
+class PhysioLLMCoTMCTSNoCritGateWorker(PhysioLLMCoTMCTSWorker):
     """
     Exp 2a: PhysioLLM CoT-MCTS without the critical-failure gate.
 
@@ -1889,11 +2361,11 @@ class PhysioLLMCoTMCTSNoGateWorker(PhysioLLMCoTMCTSWorker):
     MCTS arms, enabling apples-to-apples gate contribution measurement at every
     capability level.
     """
-    ARM = "physio_llm_cot_mcts_no_gate"
+    ARM = "physio_llm_cot_mcts_no_crit_gate"
     DISABLE_CRITICAL_FAILURE_GATE = True
 
 
-class PhysioMPSMCTSNoGateWorker(PhysioMPSMCTSWorker):
+class PhysioMPSMCTSNoCritGateWorker(PhysioMPSMCTSWorker):
     """
     Exp 3a: PhysioMPS-MCTS without the critical-failure termination gate.
 
@@ -1902,22 +2374,22 @@ class PhysioMPSMCTSNoGateWorker(PhysioMPSMCTSWorker):
     tier: all three arms see the same raw episode trajectories regardless of
     catastrophic turns.
     """
-    ARM = "physio_mps_mcts_no_gate"
+    ARM = "physio_mps_mcts_no_crit_gate"
     DISABLE_CRITICAL_FAILURE_GATE = True
 
 
-class InertialPhysioLLMCoTMCTSNoGateWorker(InertialPhysioLLMCoTMCTSWorker):
+class InertialPhysioLLMCoTMCTSNoCritGateWorker(InertialPhysioLLMCoTMCTSWorker):
     """
     Exp 5a: Inertial PhysioLLM CoT-MCTS without the critical-failure gate.
 
     Identical to Exp 5 except the 2-strike rule does NOT end the episode early.
     Pairs with Exp 3a, 4a, and 6a to provide a complete cross-arm no-gate baseline.
     """
-    ARM = "inertial_physio_llm_cot_mcts_no_gate"
+    ARM = "inertial_physio_llm_cot_mcts_no_crit_gate"
     DISABLE_CRITICAL_FAILURE_GATE = True
 
 
-class InertialHPVOOTPhysioLLMCoTMCTSNoGateWorker(InertialHPVOOTPhysioLLMCoTMCTSWorker):
+class InertialHPVOOTPhysioLLMCoTMCTSNoCritGateWorker(InertialHPVOOTPhysioLLMCoTMCTSWorker):
     """
     Exp 7a: Inertial HPVOOT CoT-MCTS without the critical-failure gate.
 
@@ -1925,7 +2397,7 @@ class InertialHPVOOTPhysioLLMCoTMCTSNoGateWorker(InertialHPVOOTPhysioLLMCoTMCTSW
     Completes the full no-gate ablation tier across all MCTS-gated experiments
     (Exp 3a–7a), enabling clean apples-to-apples comparison.
     """
-    ARM = "inertial_hpvoot_physio_llm_cot_mcts_no_gate"
+    ARM = "inertial_hpvoot_physio_llm_cot_mcts_no_crit_gate"
     DISABLE_CRITICAL_FAILURE_GATE = True
 
 
@@ -2371,3 +2843,837 @@ class OldschoolDPOWorker(OldschoolWorker):
             "latency_ms":  latency_ms,
             "llm_calls":   1,
         }
+
+
+# ── Experiments 8–10: RAG ablation set ───────────────────────────────────────
+# Three new arms that isolate the contribution of retrieval-augmented generation
+# to therapeutic outcome quality.
+#
+#   Exp 8  PlainRAGWorker          — standard text-similarity RAG (no physio weighting)
+#   Exp 9  TensorRAGWorker         — physio-conditioned RAG (TensorRAG with MPS encoding)
+#   Exp 10 TensorRAGMPSMCTSWorker  — TensorRAG + MPS-MCTS action selection (full stack)
+#
+# All three arms use the same PhysioLLMWorker generation path (Scout LLM, same
+# system prompt), so the ONLY independent variable is how retrieval context is
+# constructed and injected.
+#
+# RAG context is fetched from the tensornets FastAPI server /rag/query endpoint
+# and injected as an EXTRA_CONTEXT block before the Scout generation call.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _query_rag_context(
+    state: "TurnState",
+    arm: str,
+    use_physio: bool,
+    k: int = 5,
+) -> str:
+    """
+    Call the local tensornets /rag/query endpoint and return a formatted
+    context string for injection into the generation prompt.
+
+    Parameters
+    ----------
+    state      Current TurnState (provides physio + conversation text).
+    arm        A3C arm string — used to restrict episode_memory retrieval
+               to episodes from the same experiment, preventing cross-arm
+               contamination.
+    use_physio If True, the query carries the full physio vector so TensorRAG
+               can re-rank by physiological state similarity.
+               If False, only text similarity is used (PlainRAG behaviour).
+    k          Number of retrieved chunks to include.
+
+    Returns
+    -------
+    Formatted context block string, or "" on failure.
+    """
+    try:
+        user_msg  = _last_user_message(state)
+        physio    = getattr(state, "physio", {}) or {}
+        query_body: dict = {
+            "text":              user_msg[:512],
+            "k":                 k,
+            "format":            "context_string",
+            "sources":           ["clinical_kb", "episode_memory"],
+            "arm_filter":        arm,
+        }
+        if use_physio:
+            query_body["hrv_rmssd_ms"]      = physio.get("hrv_ms", 35.0)
+            query_body["stress_index"]      = state.stress_index
+            query_body["sleep_quality"]     = max(0.0, 1.0 - physio.get("sleep_deficit", 1.0) / 8.0)
+            query_body["therapeutic_stage"] = getattr(state, "info_coverage", 0.0)
+        result = _http_post(f"{_TENSORNETS_URL}/rag/query", query_body, timeout=8.0)
+        return result.get("context_string", "") or ""
+    except Exception:
+        return ""
+
+
+def _reason_rag_context(
+    state: "TurnState",
+    arm: str,
+    k: int = 8,
+    keep: int = 3,
+) -> str:
+    """
+    Reasoning-based RAG: retrieve k candidates via text similarity, then use
+    Scout to judge which are actually relevant to the current situation and WHY.
+
+    This addresses the longitudinal data problem: cosine similarity alone ranks
+    temporally adjacent episodes highly even when they are clinically irrelevant
+    (same patient, different topic).  A lightweight LLM reasoning pass re-ranks
+    by genuine clinical utility.
+
+    Parameters
+    ----------
+    state   Current TurnState.
+    arm     A3C arm string for episode_memory filtering.
+    k       Number of candidates to retrieve before reasoning pass.
+    keep    Number of chunks to retain after reasoning re-ranking.
+
+    Returns
+    -------
+    Formatted context block string of the `keep` most relevant chunks, or "" on failure.
+
+    Design note
+    -----------
+    The reasoning prompt is deliberately minimal (~150 tokens) to stay within
+    the single Scout call budget.  It does NOT ask for explanations — just a
+    ranked list of indices.  The physio vector is NOT used for the initial
+    retrieval (avoiding the cosine-similarity-on-wrong-physio-state problem).
+    Instead, the reasoning pass considers the current therapeutic situation,
+    the patient's stated concern, and the session goal.
+    """
+    try:
+        user_msg = _last_user_message(state)
+
+        # Step 1: retrieve k candidates by text similarity only
+        query_body = {
+            "text":    user_msg[:512],
+            "k":       k,
+            "format":  "chunks",
+            "sources": ["clinical_kb", "episode_memory"],
+            "arm_filter": arm,
+        }
+        raw = _http_post(f"{_TENSORNETS_URL}/rag/query", query_body, timeout=8.0)
+        chunks = raw.get("results", [])
+        if not chunks:
+            return ""
+
+        # Step 2: build a reasoning prompt asking Scout to pick the most relevant
+        chunk_list = "\n".join(
+            f"[{i}] {c.get('text', '')[:200]}"
+            for i, c in enumerate(chunks)
+        )
+        scenario_ctx = (
+            f"Session goal: {getattr(state, 'session_goal', 'unclear')}. "
+            f"Patient concern this turn: {user_msg[:150]}. "
+            f"Therapeutic mode: {getattr(state, 'therapeutic_mode', 'standard')}. "
+            f"Stress: {state.stress_index:.2f}."
+        )
+        reason_prompt = (
+            f"You are selecting the most clinically relevant retrieved passages.\n"
+            f"Context: {scenario_ctx}\n\n"
+            f"Candidates:\n{chunk_list}\n\n"
+            f"Return ONLY a JSON array of the {keep} most useful indices, e.g. [2,0,5]. "
+            f"Prefer clinical knowledge over episode memory unless the episode directly "
+            f"addresses the patient's current concern. Do not include temporally adjacent "
+            f"episodes that share a patient ID but a different topic."
+        )
+
+        resp = _http_post(
+            f"{_TENSORNETS_URL}/llm/scout",
+            {"prompt": reason_prompt, "max_tokens": 40, "arm": arm},
+            timeout=15.0,
+        )
+        import json as _json
+        text = resp.get("text", "").strip()
+        # Parse the index array, robustly
+        import re as _re
+        arr_match = _re.search(r"\[[\d,\s]+\]", text)
+        if arr_match:
+            indices = _json.loads(arr_match.group())
+            selected = [chunks[i] for i in indices if i < len(chunks)][:keep]
+        else:
+            selected = chunks[:keep]   # fallback: take top-k by original text score
+
+        # Step 3: format selected chunks as a context string
+        if not selected:
+            return ""
+        lines = ["[Relevant context (reasoning-filtered)]"]
+        for c in selected:
+            src  = c.get("source", "unknown")
+            text = c.get("text", "").strip()
+            lines.append(f"[{src}] {text[:300]}")
+        return "\n".join(lines)
+
+    except Exception:
+        return ""
+
+
+class PlainRAGWorker(PhysioLLMWorker):
+    """
+    Exp 8: PhysioLLM with standard text-similarity RAG (no physio weighting).
+
+    Adds a RAG context block from the clinical knowledge base and episode
+    memory, retrieved by cosine similarity on sentence embeddings alone.
+    This is the 'PlainRAG' baseline for the TensorRAG ablation.
+
+    Independent variable vs Exp 1 (PhysioLLM):  RAG context injection.
+    Independent variable vs Exp 9 (TensorRAG):   physio weighting OFF.
+    """
+
+    ARM            = "plain_rag"
+    RELATIVE_SPEED = 0.65   # one extra /rag/query call adds ~30-50 ms
+
+    def generate_response(
+        self,
+        state: "TurnState",
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        import time as _time
+        t_start = _time.perf_counter()
+
+        rag_ctx = _query_rag_context(state, arm=self.ARM, use_physio=False, k=5)
+
+        # Reuse PhysioLLMWorker's prompt by temporarily extending the system prompt template.
+        # We append the RAG context block to the hysteresis context before handing off.
+        user_msg = _last_user_message(state)
+
+        hysteresis_ctx = _build_hysteresis_context(state, scenario)
+        if rag_ctx:
+            hysteresis_ctx = hysteresis_ctx + "\n[Retrieved context]\n" + rag_ctx
+
+        system_prompt = _safe_fmt(
+            self._system_prompt,
+            hysteresis_ctx=hysteresis_ctx,
+            action=action,
+            stress_index=state.stress_index,
+            stress_bucket=state.stress_bucket,
+        )
+        history_text = "\n".join(
+            f"{t['role'].upper()}: {t['content']}"
+            for t in state.conversation_history[-6:]
+        )
+        prompt = f"{history_text}\nUSER: {user_msg}\nASSISTANT:"
+
+        llm_calls = 1
+        try:
+            resp = _http_post(
+                f"{_TENSORNETS_URL}/llm/scout",
+                {"system": system_prompt, "prompt": prompt, "max_tokens": 300, "arm": self.ARM},
+                timeout=60.0,
+            )
+            response_text = resp.get("text", "").strip()
+            if not response_text:
+                raise ValueError("Empty Scout response (Exp 8 PlainRAG)")
+        except Exception as exc:
+            raise RuntimeError(f"Exp8: Scout generation failed: {exc}") from exc
+
+        latency_ms = (_time.perf_counter() - t_start) * 1000.0
+        next_stress = _stress_after_response(
+            state.stress_index, action, state.archetype, state.drug_regimen,
+            conversation_correction=conversation_correction,
+        )
+        reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
+        return {
+            "response":          response_text,
+            "reward":            reward,
+            "judge":             {},
+            "tokens":            {},
+            "latency_ms":        round(latency_ms, 1),
+            "next_stress_index": next_stress,
+            "next_physio":       {**state.physio, "stress_index": next_stress} if state.physio else {},
+            "action_taken":      action,
+            "frames_component":  None,
+            "info_coverage":     reward["info_coverage"],
+            "repetition_detected": False,
+            "discrepancy":       None,
+            "llm_calls":         llm_calls,
+        }
+
+
+class ReasonRAGWorker(PhysioLLMWorker):
+    """
+    Exp 9: Reasoning-based RAG (replaces naive physio-cosine TensorRAG).
+
+    PROBLEM with cosine-similarity RAG on longitudinal clinical data
+    ----------------------------------------------------------------
+    Cosine similarity alone is a poor relevance signal for longitudinal episode
+    memory.  Adjacent episodes from the same patient share patient ID, therapeutic
+    mode, and clinical vocabulary — they get high cosine similarity regardless of
+    whether they address the CURRENT concern.  A session about medication adherence
+    from last week will outscore a highly relevant clinical guideline about panic
+    simply because it shares more tokens with the current session.
+
+    SOLUTION: reasoning-based re-ranking
+    -------------------------------------
+    1. Retrieve k=8 candidates by text similarity (cheap embedding pass — no physio).
+    2. Send the candidates + current session context to Scout in a single short
+       prompt (~150 tokens).  Ask it to pick the 3 most clinically useful chunks,
+       explicitly penalising temporally adjacent but topically irrelevant episodes.
+    3. Inject the 3 selected chunks into the generation prompt.
+
+    The MPS/tensor component is intentionally NOT used for retrieval ranking here.
+    Physio state is encoded in the generation prompt (via hysteresis context) —
+    the retrieval stage should be driven by clinical content, not physiological
+    proximity.  This is the correct separation of concerns.
+
+    Independent variable vs Exp 1 (PhysioLLM):   reasoning-filtered RAG context.
+    Independent variable vs Exp 8 (PlainRAG):     reasoning re-ranking vs plain top-k.
+    Independent variable vs Exp 10 (ReasonRAG+MPS-MCTS): no MCTS action selection.
+
+    LLM calls per turn: 2 (reasoning pass + generation).
+    """
+
+    ARM            = "reason_rag"
+    RELATIVE_SPEED = 0.55   # two Scout calls; reasoning pass is short (~40 tokens out)
+
+    def generate_response(
+        self,
+        state: "TurnState",
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        import time as _time
+        t_start = _time.perf_counter()
+
+        rag_ctx = _reason_rag_context(state, arm=self.ARM, k=8, keep=3)
+
+        user_msg = _last_user_message(state)
+        hysteresis_ctx = _build_hysteresis_context(state, scenario)
+        if rag_ctx:
+            hysteresis_ctx = hysteresis_ctx + "\n" + rag_ctx
+
+        system_prompt = _safe_fmt(
+            self._system_prompt,
+            hysteresis_ctx=hysteresis_ctx,
+            action=action,
+            stress_index=state.stress_index,
+            stress_bucket=state.stress_bucket,
+        )
+        history_text = "\n".join(
+            f"{t['role'].upper()}: {t['content']}"
+            for t in state.conversation_history[-6:]
+        )
+        prompt = f"{history_text}\nUSER: {user_msg}\nASSISTANT:"
+
+        llm_calls = 2   # reasoning pass + generation
+        try:
+            resp = _http_post(
+                f"{_TENSORNETS_URL}/llm/scout",
+                {"system": system_prompt, "prompt": prompt, "max_tokens": 300, "arm": self.ARM},
+                timeout=60.0,
+            )
+            response_text = resp.get("text", "").strip()
+            if not response_text:
+                raise ValueError("Empty Scout response (Exp 9 ReasonRAG)")
+        except Exception as exc:
+            raise RuntimeError(f"Exp9: Scout generation failed: {exc}") from exc
+
+        latency_ms = (_time.perf_counter() - t_start) * 1000.0
+        next_stress = _stress_after_response(
+            state.stress_index, action, state.archetype, state.drug_regimen,
+            conversation_correction=conversation_correction,
+        )
+        reward = _synthetic_reward(state, action, next_stress, response_text=response_text)
+        return {
+            "response":          response_text,
+            "reward":            reward,
+            "judge":             {},
+            "tokens":            {},
+            "latency_ms":        round(latency_ms, 1),
+            "next_stress_index": next_stress,
+            "next_physio":       {**state.physio, "stress_index": next_stress} if state.physio else {},
+            "action_taken":      action,
+            "frames_component":  None,
+            "info_coverage":     reward["info_coverage"],
+            "repetition_detected": False,
+            "discrepancy":       None,
+            "llm_calls":         llm_calls,
+        }
+
+
+class ReasonRAGMPSMCTSWorker(PhysioMPSMCTSWorker):
+    """
+    Exp 10: ReasonRAG + MPS-MCTS — reasoning-filtered retrieval with physio-grounded planning.
+
+    Stacks:
+      1. Reasoning-based RAG (8 candidates → Scout re-ranks to 3 most relevant)
+      2. MPS-MCTS action selection (physio-state tensor-network planning)
+      3. Scout generation with the reasoning-filtered context in the prompt
+
+    Independent variable vs Exp 3 (MPS-MCTS):      adds reasoning RAG.
+    Independent variable vs Exp 9 (ReasonRAG):      adds MPS-MCTS planning.
+    Independent variable vs Exp 11 (ReasonRAG+HPVOOT): no hysteresis gate, no HPVOOT widening.
+
+    If Exp 10 outperforms both Exp 3 and Exp 9, reasoning RAG and physio planning
+    are synergistic.  Exp 11 tests whether HPVOOT adds further value on top.
+
+    LLM calls per turn: 2 (reasoning pass + generation); MCTS is local Python.
+    """
+
+    ARM            = "reason_rag_mps_mcts"
+    RELATIVE_SPEED = 0.40   # MCTS + reasoning RAG; both add latency
+
+    def generate_response(
+        self,
+        state: "TurnState",
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        rag_ctx = _reason_rag_context(state, arm=self.ARM, k=8, keep=3)
+
+        original_prompt = self._system_prompt
+        if rag_ctx:
+            self._system_prompt = original_prompt.rstrip() + "\n" + rag_ctx
+        try:
+            return super().generate_response(
+                state, action, scenario,
+                conversation_correction=conversation_correction,
+            )
+        finally:
+            self._system_prompt = original_prompt
+
+
+class ReasonRAGInertialHPVOOTWorker(InertialHPVOOTPhysioMPSMCTSWorker):
+    """
+    Exp 11: ReasonRAG + Inertial HPVOOT-MPS-MCTS — the full longitudinal reasoning stack.
+
+    Stacks all four components:
+      1. Reasoning-based RAG (re-ranked retrieval; no cosine-on-physio confusion)
+      2. HysteresisGate (zone-locked stress dead-band; prevents strategy flip-flopping)
+      3. HPVOOT progressive widening (explores novel MCTS branches when known actions fail)
+      4. MPS-MCTS action selection
+
+    This arm tests whether reasoning-quality retrieval and inertial physio planning
+    are jointly necessary for optimal multi-session performance.
+
+    Independent variable vs Exp 6 (Inertial HPVOOT MPS):  adds reasoning RAG.
+    Independent variable vs Exp 10 (ReasonRAG + MPS):     adds hysteresis + HPVOOT.
+
+    LLM calls per turn: 2 (reasoning pass + generation); MCTS + HPVOOT local Python.
+    """
+
+    ARM            = "reason_rag_inertial_hpvoot"
+    RELATIVE_SPEED = 0.30   # slowest: HPVOOT + reasoning RAG + MPS-MCTS
+
+    def generate_response(
+        self,
+        state: "TurnState",
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        rag_ctx = _reason_rag_context(state, arm=self.ARM, k=8, keep=3)
+
+        original_prompt = self._system_prompt
+        if rag_ctx:
+            self._system_prompt = original_prompt.rstrip() + "\n" + rag_ctx
+        try:
+            return super().generate_response(
+                state, action, scenario,
+                conversation_correction=conversation_correction,
+            )
+        finally:
+            self._system_prompt = original_prompt
+
+
+# ── Exp 16: InertialHPVOOTZoneWorker ─────────────────────────────────────────
+# Ablation vs Exp 6: same HPVOOT+MPS pipeline but uses the discrete
+# hysteresis-zone cluster-affinity (HierarchicalPWZoneMCTS, mcts_mode="hpvoot_zone")
+# instead of the continuous Gaussian-bump affinity (Exp 6, mcts_mode="hpvoot").
+# A statistically significant goal-rate difference confirms the continuous
+# affinity function adds measurable value.
+
+class InertialHPVOOTZoneWorker(InertialHPVOOTPhysioMPSMCTSWorker):
+    """
+    Exp 16: HPVOOT with discrete hysteresis-zone cluster affinity.
+
+    Identical to Exp 6 except the MCTS tree uses ``HierarchicalPWZoneMCTS``
+    (discrete zone → cluster mapping) instead of the continuous
+    ``_continuous_cluster_affinity`` function introduced in Exp 6.
+    """
+    ARM            = "inertial_hpvoot_zone"
+    RELATIVE_SPEED = 0.40   # same budget as Exp 6 — fair comparison
+
+    def generate_response(
+        self,
+        state: "TurnState",
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        # Patch mcts_mode on the instance so the parent's HTTP payload builder
+        # picks up "hpvoot_zone" instead of "hpvoot".  We use a temporary
+        # instance attribute and restore it in the finally block so that
+        # concurrent workers sharing the class are unaffected.
+        _saved = self.__dict__.get("_mcts_mode_override")
+        self._mcts_mode_override = "hpvoot_zone"
+        try:
+            return super().generate_response(state, action, scenario, conversation_correction)
+        finally:
+            if _saved is None:
+                self.__dict__.pop("_mcts_mode_override", None)
+            else:
+                self._mcts_mode_override = _saved
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NEW NAMING CONVENTION (Exp 15+)
+# Dropping the verbose "InertialHPVOOTPhysio*" prefix in favour of semantic names:
+#   MultiHorizonHPVOOT  → MCTS9: multi-horizon + anticipatory anxiety routing
+#   ZoneHPVOOT          → alias for InertialHPVOOTZoneWorker (discrete affinity)
+#   ReasonHPVOOT        → ReasonRAG + HPVOOT (already Exp 11)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Exp 15: MultiHorizonHPVOOTWorker ─────────────────────────────────────────
+
+class MultiHorizonHPVOOTWorker(InertialHPVOOTPhysioMPSMCTSWorker):
+    """
+    Exp 15 — MCTS9: Multi-horizon discounting + anticipatory anxiety routing.
+
+    Extends Exp 6 (InertialHPVOOT) with two complementary additions:
+
+    1. **Multi-horizon discount** (``MultiHorizonHPVOOTMCTS``):
+       The MCTS tree values MICRO, SESSION, and LONGITUDINAL actions with
+       different effective gammas (0.95 / 0.70 / 0.40).  Stops the tree from
+       always preferring immediate breathing/validate over a session-arc reframe.
+
+    2. **Anticipatory anxiety routing** (``_anticipatory_anxiety_bonus``):
+       When the scenario includes a ``pending_event`` dict (exam, diagnosis,
+       job decision, delayed procedure), MCTS boosts time_bracketing,
+       uncertainty_tolerance, probability_reframe, and graded_imagery and
+       penalises them when their stress-level preconditions are violated.
+
+    **Naming convention**: this is the first arm to use the semantic naming
+    scheme going forward (``MultiHorizonHPVOOTWorker`` rather than
+    ``InertialHPVOOTPhysioMPSMCTS*``).
+    """
+    ARM            = "multi_horizon_hpvoot"
+    RELATIVE_SPEED = 0.40   # same budget as Exp 6
+
+    def generate_response(  # type: ignore[override]
+        self,
+        state: "TurnState",
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        # Route to MultiHorizonHPVOOTMCTS instead of HierarchicalPWVOOTMCTS.
+        # Same mechanism as InertialHPVOOTZoneWorker: patch the instance-level
+        # override that the parent's payload builder reads via getattr.
+        _saved = self.__dict__.get("_mcts_mode_override")
+        self._mcts_mode_override = "multi_horizon"
+        try:
+            return super().generate_response(state, action, scenario, conversation_correction)
+        finally:
+            if _saved is None:
+                self.__dict__.pop("_mcts_mode_override", None)
+            else:
+                self._mcts_mode_override = _saved
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Exp 17: GoTHPVOOTWorker — Graph-of-Thought MCTS prior
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Problem with current CoT prior (Exp 6/7):
+#   The _fetch_prior_scores prompt asks Scout to "rate each action 0-1" in a
+#   single flat query.  Scout sees all context at once and tends to produce
+#   near-uniform scores unless the situation is extreme.  The linear chain of
+#   thought ("physio -> stress -> action") compresses too much into one step.
+#
+# Graph-of-Thought approach:
+#   The reasoning is structured as a directed 5-node graph executed in ONE
+#   LLM call.  Each node produces an intermediate conclusion that feeds into
+#   subsequent nodes — like a dependency graph, not a chain:
+#
+#   Node A (physio)     -> stress severity, HRV trend, EDA alert
+#   Node B (language)   -> emotional valence, disclosure level, topic
+#   Node C (temporal)   -> session gap, pending event, boundary
+#   Node D (synthesis)  -> cluster recommendation using A+B+C
+#   Node E (scoring)    -> per-action score using D + original action list
+#
+#   Forcing intermediate nodes prevents Scout from shortcutting to scores
+#   without reasoning, and makes the reasoning trace auditable.
+#
+# Batch leaf evaluation:
+#   After the GoT prior call, the MCTS runs 150 iterations with these richer
+#   priors.  For the top-5 actions after tree search, a second "batch leaf"
+#   Scout call re-scores them with the full GoT context, giving the final
+#   ranking a quality boost without 150 individual leaf calls.
+#   Net cost: 2 Scout calls (GoT prior + batch leaf) vs 1 Scout call (Exp 6).
+
+_GOT_PRIOR_SYSTEM = (
+    "You are a clinical reasoning assistant for a therapeutic companion. "
+    "Follow the EXACT structured graph format below. "
+    "Return ONLY valid JSON — no markdown, no prose outside the JSON object."
+)
+
+_GOT_PROMPT_TEMPLATE = """\
+Reason step-by-step through the following 5 nodes. Each node's output feeds into later nodes.
+Do NOT skip nodes. Do NOT collapse nodes. Each node must produce a distinct intermediate conclusion.
+
+=== NODE A: Physiological Assessment ===
+Stress index: {stress_index:.2f}  HRV: {hrv_ms}ms  EDA: {eda_us}uS  Zone: {zone}
+Session gap: {session_gap_days}d  Physio available: {physio_available}
+Conclude: stress severity [low/moderate/high/critical], HRV trend [stable/declining/recovering],
+  EDA urgency [low/elevated/alert], overall physiological recommendation [1 sentence]
+
+=== NODE B: Conversational & Relational Assessment ===
+Recent patient messages (last 2 turns):
+{excerpt}
+Conversation stress estimate: {conversation_stress:.2f}  Stress discrepancy: {stress_discrepancy:+.2f}
+Session goal: {session_goal}  Alliance score: {alliance_score:.2f}
+Conclude: patient emotional state [open/guarded/distressed/resistant/catastrophising],
+  disclosure level [none/surface/moderate/deep], relational climate [warm/neutral/ruptured],
+  conversational recommendation [1 sentence]
+
+=== NODE C: Temporal & Contextual Assessment ===
+Session boundary: {session_boundary}  Pending event: {pending_event}
+Therapeutic mode: {mode}  Turn: {turn}
+Conclude: temporal urgency [none/low/high], anticipatory anxiety factor [none/mild/strong],
+  session phase [opening/working/closing], temporal recommendation [1 sentence]
+
+=== NODE D: Cluster Synthesis ===
+Using conclusions from nodes A, B, C:
+Preferred action cluster [choose ONE]: explore / challenge / de_escalate / structure / inform / meta / panic / emergency
+Reasoning: [2 sentences combining physiological + conversational + temporal findings]
+
+=== NODE E: Action Scoring ===
+Rate each action 0.0 (counterproductive) to 1.0 (ideal) based on Node D cluster and patient state.
+Actions to score:
+{action_list}
+
+Return this EXACT JSON (no other text):
+{{"node_a":{{"severity":"...","hrv_trend":"...","eda_urgency":"...","physio_rec":"..."}},"node_b":{{"emotional_state":"...","disclosure":"...","climate":"...","conv_rec":"..."}},"node_c":{{"temporal_urgency":"...","anticipatory":"...","session_phase":"...","temporal_rec":"..."}},"node_d":{{"cluster":"...","reasoning":"..."}},"node_e":{{"action_name":score_float}}}}"""
+
+_GOT_BATCH_LEAF_SYSTEM = (
+    "You are evaluating the top candidate actions from a Monte Carlo tree search. "
+    "Return ONLY valid JSON — no markdown, no prose."
+)
+
+_GOT_BATCH_LEAF_TEMPLATE = """\
+After a 150-iteration MCTS with Graph-of-Thought priors, the top actions are:
+{top_actions}
+
+Patient context summary:
+- Physio: stress={stress:.2f}, HRV={hrv}ms, zone={zone}
+- Emotional state: {emotional_state}
+- Cluster recommended by GoT: {cluster}
+- Session phase: {session_phase}
+
+Re-score each action (0.0-1.0) incorporating MCTS tree values and GoT reasoning.
+Return ONLY: {{"rankings": [["action_name", score_float], ...]}} sorted best-first."""
+
+
+def _got_prior_call(
+    state: "TurnState",
+    actions: list,
+    arm: str = "",
+) -> "tuple[list[float], dict]":
+    """
+    Graph-of-Thought prior call: structured 5-node reasoning -> per-action scores.
+
+    Returns (scores_list, got_trace) where:
+      - scores_list: float per action in same order as ``actions``
+      - got_trace: the parsed GoT JSON for logging and batch-leaf reuse
+
+    Falls back to CALMING_WEIGHT heuristic on any failure (non-fatal).
+    """
+    import json as _json, re as _re
+    from tensornets.a3c.action_bandit import CALMING_WEIGHT
+
+    physio  = state.physio or {}
+    hrv_ms  = physio.get("hrv_ms", 35.0)
+    eda_us  = physio.get("eda_us", 3.5)
+    zone_v  = physio.get("hysteresis_zone", 2)
+
+    recent_turns = [m for m in state.conversation_history[-6:] if m.get("role") == "user"][-2:]
+    excerpt = "\n".join(f"  '{m['content'][:180]}'" for m in recent_turns) or "  (no turns yet)"
+
+    pending_ev  = getattr(state, "pending_event", {})
+    pending_str = (
+        f"{pending_ev.get('event_type','?')} in {pending_ev.get('days_until','?')}d "
+        f"(threat={pending_ev.get('threat_level',0):.0%})"
+        if pending_ev else "none"
+    )
+
+    action_list_str = "\n".join(f"  {a}" for a in actions)
+
+    prompt = _GOT_PROMPT_TEMPLATE.format(
+        stress_index        = state.stress_index,
+        hrv_ms              = f"{hrv_ms:.0f}",
+        eda_us              = f"{eda_us:.1f}",
+        zone                = zone_v,
+        session_gap_days    = getattr(state, "session_gap_days", 0.0),
+        physio_available    = getattr(state, "physio_available", True),
+        excerpt             = excerpt,
+        conversation_stress = getattr(state, "conversation_stress", 0.5),
+        stress_discrepancy  = (
+            state.stress_index - getattr(state, "conversation_stress", 0.5)
+        ),
+        session_goal        = state.session_goal or "general support",
+        alliance_score      = getattr(state, "alliance_score", 0.5),
+        session_boundary    = getattr(state, "session_boundary", False),
+        pending_event       = pending_str,
+        mode                = getattr(state, "therapeutic_mode", "standard"),
+        turn                = getattr(state, "turn_count", 0),
+        action_list         = action_list_str,
+    )
+
+    fallback_scores = [
+        CALMING_WEIGHT.get(a, 0.5) * state.stress_index
+        + (1.0 - CALMING_WEIGHT.get(a, 0.5)) * (1.0 - state.stress_index)
+        for a in actions
+    ]
+
+    try:
+        resp = _http_post(
+            f"{_TENSORNETS_URL}/llm/scout",
+            {
+                "system":     _GOT_PRIOR_SYSTEM,
+                "prompt":     prompt,
+                "max_tokens": 1200,
+                "arm":        arm,
+            },
+            timeout=35.0,
+        )
+        text = (resp.get("text") or "").strip()
+        if not text:
+            return fallback_scores, {}
+
+        m = _re.search(r'\{.*\}', text, _re.DOTALL)
+        if not m:
+            return fallback_scores, {}
+        data = _json.loads(m.group(0))
+
+        node_e = data.get("node_e", {})
+        scores = []
+        for i, a in enumerate(actions):
+            v = node_e.get(a)
+            try:
+                v = float(v)
+                v = min(1.0, max(0.0, v / 10.0 if v > 1.5 else v))
+            except (TypeError, ValueError):
+                v = fallback_scores[i]
+            scores.append(v)
+        return scores, data
+
+    except Exception:
+        return fallback_scores, {}
+
+
+def _got_batch_leaf_rerank(
+    state: "TurnState",
+    top_actions: list,
+    got_trace: dict,
+) -> list:
+    """
+    Batch leaf re-scorer: given top-5 MCTS actions, ask Scout to re-rank
+    them in ONE call using the GoT trace context.
+
+    Returns list of (action, score) sorted best-first.
+    Falls back to the MCTS ordering on any failure.
+    """
+    import json as _json, re as _re
+
+    if not top_actions or not got_trace:
+        return top_actions
+
+    physio = state.physio or {}
+    node_b = got_trace.get("node_b", {})
+    node_c = got_trace.get("node_c", {})
+    node_d = got_trace.get("node_d", {})
+
+    top_str = ", ".join(f"{a}({s:.2f})" for a, s in top_actions)
+
+    prompt = _GOT_BATCH_LEAF_TEMPLATE.format(
+        top_actions     = top_str,
+        stress          = state.stress_index,
+        hrv             = physio.get("hrv_ms", 35.0),
+        zone            = physio.get("hysteresis_zone", 2),
+        emotional_state = node_b.get("emotional_state", "unknown"),
+        cluster         = node_d.get("cluster", "de_escalate"),
+        session_phase   = node_c.get("session_phase", "working"),
+    )
+    try:
+        resp = _http_post(
+            f"{_TENSORNETS_URL}/llm/scout",
+            {
+                "system":     _GOT_BATCH_LEAF_SYSTEM,
+                "prompt":     prompt,
+                "max_tokens": 300,
+            },
+            timeout=20.0,
+        )
+        text = (resp.get("text") or "").strip()
+        m = _re.search(r'\{.*\}', text, _re.DOTALL)
+        if not m:
+            return top_actions
+        data = _json.loads(m.group(0))
+        rankings = data.get("rankings", [])
+        if not rankings:
+            return top_actions
+        return [(str(a), float(s)) for a, s in rankings]
+    except Exception:
+        return top_actions
+
+
+class GoTHPVOOTWorker(InertialHPVOOTPhysioMPSMCTSWorker):
+    """
+    Exp 17 — Graph-of-Thought MCTS (GoT-HPVOOT).
+
+    Replaces the flat "rate these actions 0-1" Scout prior call with a
+    structured 5-node Graph-of-Thought reasoning graph executed in a SINGLE
+    LLM call:
+
+        Node A  Physiological assessment  ->  stress severity, HRV trend
+        Node B  Conversational assessment ->  emotional state, relational climate
+        Node C  Temporal assessment       ->  session gap, pending event, phase
+        Node D  Synthesis                 ->  cluster recommendation (A+B+C)
+        Node E  Action scoring            ->  per-action scores (using D)
+
+    After MCTS runs with these richer priors, a second Scout call re-scores
+    the top-5 actions in a single batch using the GoT trace context.
+    Total: 2 Scout calls (GoT prior + batch leaf re-rank) vs 1 (Exp 6).
+
+    The GoT trace is stored in the response dict for dashboard auditing and
+    qualitative feedback (FB1).
+
+    Naming: semantic convention (GoTHPVOOTWorker), not verbose prefixes.
+    """
+    ARM            = "got_hpvoot"
+    RELATIVE_SPEED = 0.30   # 2 Scout calls per turn: slightly slower than Exp 6
+
+    def _fetch_prior_scores(self, state, zone_name, zone_streak, mode, actions):
+        """Override: use GoT structured reasoning instead of flat rating prompt."""
+        scores, self._last_got_trace = _got_prior_call(state, actions, arm=self.ARM)
+        return scores
+
+    def generate_response(
+        self,
+        state: "TurnState",
+        action: str,
+        scenario: dict,
+        conversation_correction: float = 0.0,
+    ) -> dict:
+        self._last_got_trace = {}
+        result = super().generate_response(state, action, scenario, conversation_correction)
+
+        top_5 = result.get("_mcts_top5", [])
+        if top_5 and self._last_got_trace:
+            reranked = _got_batch_leaf_rerank(state, top_5, self._last_got_trace)
+            if reranked:
+                reranked_best = reranked[0][0]
+                valid_names = {a for a, _ in top_5}
+                if reranked_best != result.get("action_taken") and reranked_best in valid_names:
+                    result = {**result, "action_taken": reranked_best}
+            result["got_trace"]    = self._last_got_trace
+            result["got_reranked"] = reranked
+            result["llm_calls"]    = result.get("llm_calls", 1) + 1
+
+        return result

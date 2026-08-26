@@ -45,6 +45,27 @@ ALLIANCE EDGE DIMENSIONS
   disclosure_level int [0,3]     how much tgt has shared with src (0=none)
   last_updated     float         unix timestamp
 
+DYNAMIC V_ij COUPLING
+----------------------
+V_int (inter-agent physio signal) is now updated DYNAMICALLY from episode
+outcomes: the coupling weight V_ij between two roles grows when alliance
+is strong and shrinks when ruptured.  This wires social alliance into the
+physiological co-regulation pathway:
+
+  V_ij(t+1) = V_ij(t) + ALPHA_V * (alliance_score_ij - V_TARGET) * Δt
+
+  where V_TARGET ≈ 0.5 (neutral coupling), ALPHA_V = 0.02 per episode.
+  High alliance → V_ij rises → calming signals spread faster across circle.
+  Rupture → V_ij falls → stress contagion becomes asymmetric (negative faster).
+
+EMOTION CONTAGION ASYMMETRY
+-----------------------------
+Negative emotional contagion (fear, panic) propagates at 1.5× the rate of
+positive (calm, relief).  This matches empirical literature (Hatfield et al.):
+the nervous system is more sensitive to distress signals than to calm ones.
+
+  Δstress_j_from_i = V_ij * Δstress_i * (1.5 if Δstress_i > 0 else 1.0)
+
 PERSISTENCE
 -----------
 AllianceGraph is serialised to JSON at session close and loaded at session
@@ -59,6 +80,7 @@ INTEGRATION POINTS
                                who speaks next / escalation routing
 4. arms.py companion prompts — alliance context injected into system prompt
 5. train.py reward           — alliance_score delta added as reward dimension
+6. PhysioSimulator.step()    — V_ij feeds into social Gamma modifier (SA2.1)
 """
 
 from __future__ import annotations
@@ -100,6 +122,67 @@ DEFAULT_RAPPORT        = 0.25
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Dynamic V_ij coupling parameters
+# ─────────────────────────────────────────────────────────────────────────────
+# V_ij is the inter-agent physiological coupling weight (feeds into PhysioSimulator).
+# It starts at V_TARGET (neutral) and drifts toward the current alliance score
+# at ALPHA_V per episode.
+
+V_TARGET   = 0.50   # neutral coupling (neither amplifying nor damping)
+ALPHA_V    = 0.02   # learning rate: V_ij moves ~2% toward alliance per episode
+V_MIN      = 0.05   # floor: even ruptured pairs have residual contagion
+V_MAX      = 0.90   # ceiling: trust never enables perfect stress absorption
+
+# Emotion contagion asymmetry: negative (panic/fear) spreads 1.5× faster
+# than positive (calm/relief) across alliance edges.
+CONTAGION_NEGATIVE_MULTIPLIER = 1.5
+CONTAGION_POSITIVE_MULTIPLIER = 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SA1.1 — DirectMessageEvent: a direct (non-companion-relayed) interaction
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class DirectMessageEvent:
+    """
+    Represents a direct communication between two care circle members that
+    bypassed the companion (e.g., patient and caregiver talking privately).
+
+    The companion cannot observe this event directly — it is inferred from
+    subsequent participant behaviour or explicitly logged by the orchestrator
+    during training.  In production, this would be populated when the platform
+    detects a direct channel message (family chat, phone call summary, etc.).
+
+    Attributes:
+        sender_role:    Role of the initiating participant (e.g., "patient").
+        receiver_role:  Role of the receiving participant (e.g., "caregiver").
+        topic:          Topic tag for no-go-zone tracking
+                        (e.g., "medication", "finances", "past_trauma").
+        valence:        Emotional tone of the exchange: range [-1, +1].
+                        +1 = deeply positive (reconciliation, gratitude)
+                        0  = neutral (logistics, scheduling)
+                        -1 = deeply negative (argument, blame, withdrawal)
+        sender_stress:  Estimated stress of sender at time of event [0, 1].
+        receiver_stress: Estimated stress of receiver [0, 1].
+        vent_occurred:  True if the sender shared private distress that was
+                        NOT also shared with the companion.  Triggers
+                        vent_delta tracking on the companion→sender edge.
+        timestamp:      Unix timestamp (defaults to now).
+        session_id:     Episode/session ID for audit logging.
+    """
+    sender_role:    str
+    receiver_role:  str
+    topic:          str   = "general"
+    valence:        float = 0.0      # [-1, +1]
+    sender_stress:  float = 0.5
+    receiver_stress: float = 0.5
+    vent_occurred:  bool  = False
+    timestamp:      float = field(default_factory=time.time)
+    session_id:     str   = ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # AllianceEdge: directed relationship src → tgt
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -121,11 +204,24 @@ class AllianceEdge:
     rupture_count:   int   = 0
     no_go_zones:     list  = field(default_factory=list)
     disclosure_level: int  = DISCLOSURE_NONE
+    # Dynamic V_ij coupling weight — starts neutral, drifts with alliance
+    v_ij:            float = V_TARGET
     # Last interaction outcome that influenced this edge
     last_outcome:    str   = ""   # "positive" | "neutral" | "rupture" | "repair"
     last_updated:    float = field(default_factory=time.time)
     # Session history: lightweight per-session summary for trend analysis
     session_history: list  = field(default_factory=list)
+    # SA1.2: Direct vs. relayed rapport split.
+    # direct_rapport: built through direct conversation between src and tgt.
+    # perceived_rapport: tgt's *perception* of the relationship, which may
+    #   differ when information is relayed through the companion.
+    # vent_delta: divergence = direct_rapport - perceived_rapport.
+    #   > 0: direct channel is warmer than tgt perceives (companion is under-relaying)
+    #   < 0: tgt perceives better relationship than direct interactions justify
+    #        (companion is over-reporting positivity to tgt)
+    direct_rapport:    float = DEFAULT_RAPPORT
+    perceived_rapport: float = DEFAULT_RAPPORT
+    vent_delta:        float = 0.0   # direct_rapport - perceived_rapport
 
     # ── Computed property ────────────────────────────────────────────────────
 
@@ -193,6 +289,38 @@ class AllianceEdge:
         self.rapport = max(0.0, self.rapport - decay * 2.0)
         self.trust   = max(0.0, self.trust   - decay * 0.8)
         self._recompute_alliance()
+
+    def update_v_ij(self) -> None:
+        """
+        Move V_ij one step toward current alliance_score at rate ALPHA_V.
+
+        Called once per episode after update_from_episode().
+        V_ij > V_TARGET → co-regulation is active (calming spreads efficiently).
+        V_ij < V_TARGET → stress contagion dominates (rupture state).
+        """
+        self.v_ij = max(V_MIN, min(V_MAX,
+            self.v_ij + ALPHA_V * (self.alliance_score - self.v_ij)
+        ))
+
+    def stress_contagion_delta(self, src_stress_delta: float) -> float:
+        """
+        Compute the stress delta that src's emotional state would propagate to tgt.
+
+        Negative emotion (panic/fear: Δstress > 0) spreads at 1.5× the rate
+        of positive emotion (calm: Δstress < 0), matching empirical contagion
+        asymmetry (Hatfield et al.).
+
+        Parameters
+        ----------
+        src_stress_delta : signed change in src's stress this turn (+ve = worse)
+
+        Returns
+        -------
+        float : suggested Δstress to add to tgt (can be positive or negative)
+        """
+        multiplier = (CONTAGION_NEGATIVE_MULTIPLIER if src_stress_delta > 0
+                      else CONTAGION_POSITIVE_MULTIPLIER)
+        return self.v_ij * src_stress_delta * multiplier
 
     def add_no_go_zone(self, topic: str) -> None:
         if topic not in self.no_go_zones:
@@ -356,6 +484,8 @@ class AllianceGraph:
             session_id=session_id,
         )
         self._last_seen[speaker_role] = time.time()
+        # Update dynamic V_ij coupling toward current alliance score
+        edge.update_v_ij()
 
     def apply_cross_session_decay(self) -> None:
         """
@@ -419,6 +549,34 @@ class AllianceGraph:
             if e.rupture_pending
         ]
 
+    def circle_stress_propagation(
+        self,
+        stressed_role:  str,
+        stress_delta:   float,
+    ) -> dict[str, float]:
+        """
+        Compute the stress delta that `stressed_role`'s change would propagate
+        to all OTHER roles in the circle, weighted by V_ij contagion.
+
+        Returns a dict {role: delta_stress} for all roles except stressed_role.
+        Call this from PhysioSimulator.step() when processing a multi-person turn.
+
+        Notes
+        -----
+        Negative emotional contagion (panic/fear: delta > 0) propagates at
+        1.5× the rate of calm (delta < 0).  V_ij is low when the relationship
+        is ruptured, attenuating contagion through strained alliances.
+        """
+        propagated: dict[str, float] = {}
+        for (src, tgt), edge in self._edges.items():
+            if src == stressed_role:
+                propagated[tgt] = edge.stress_contagion_delta(stress_delta)
+        return propagated
+
+    def v_ij_matrix(self) -> dict[tuple[str, str], float]:
+        """Return the full V_ij coupling matrix as {(src, tgt): v_ij}."""
+        return {(src, tgt): e.v_ij for (src, tgt), e in self._edges.items()}
+
     # ── Prompt context injection ──────────────────────────────────────────────
 
     def prompt_context_for(self, companion_role: str, patient_role: str = "patient") -> str:
@@ -428,6 +586,7 @@ class AllianceGraph:
         Covers:
           - companion→patient edge (primary therapeutic alliance)
           - patient→companion edge (how patient sees companion — inverse trust)
+          - dynamic V_ij coupling (physiological contagion risk)
           - any pending ruptures
           - no-go zones
           - negotiation hints if other companions are in the circle
@@ -445,6 +604,18 @@ class AllianceGraph:
             f"rapport: {pc_edge.rapport:.0%}"
         )
 
+        # Dynamic coupling hint
+        if cp_edge.v_ij >= 0.65:
+            lines.append(
+                f"Co-regulation active (V={cp_edge.v_ij:.2f}): your calm will "
+                f"reduce patient stress effectively this session."
+            )
+        elif cp_edge.v_ij <= 0.25:
+            lines.append(
+                f"Low coupling (V={cp_edge.v_ij:.2f}): emotional signals transfer "
+                f"poorly — prioritise rapport repair before attempting de-escalation."
+            )
+
         # Other circle members the companion should be aware of
         other_roles = [
             r for r in self.all_roles()
@@ -453,7 +624,7 @@ class AllianceGraph:
         for r in other_roles:
             e = self.get_edge(patient_role, r)
             lines.append(
-                f"{patient_role.capitalize()} → {r}: alliance {e.alliance_score:.0%}"
+                f"{patient_role.capitalize()} -> {r}: alliance {e.alliance_score:.0%}"
                 + (" [RUPTURED]" if e.rupture_pending else "")
             )
 
@@ -470,6 +641,29 @@ class AllianceGraph:
                     f"Note: {top_role} has higher circle trust ({top_w:.0%} vs yours "
                     f"{my_weight:.0%}). Defer to them on contested decisions."
                 )
+
+        # SA1.6: vent-delta hint — warn companion when direct-channel rapport
+        # diverges from perceived rapport.  Large vent_delta means patient may
+        # have shared distress directly with another member that they haven't
+        # disclosed to the companion.
+        pc_edge = self.get_edge(patient_role, companion_role)
+        if abs(pc_edge.vent_delta) > 0.15:
+            if pc_edge.vent_delta < 0:
+                lines.append(
+                    f"⚠ Vent-delta: {patient_role} appears warmer to you than their "
+                    f"direct interactions suggest (Δ={pc_edge.vent_delta:+.2f}). "
+                    f"They may have vented distress to another circle member. "
+                    f"Avoid assuming session-start rapport is accurate; probe gently."
+                )
+            else:
+                lines.append(
+                    f"Note: {patient_role}'s direct interactions with others are more "
+                    f"positive than their companion-mediated perception suggests "
+                    f"(Δ={pc_edge.vent_delta:+.2f}). They may be more open than expected."
+                )
+        if pc_edge.no_go_zones:
+            ngo = ", ".join(pc_edge.no_go_zones[:3])
+            lines.append(f"Direct-channel no-go zones: [{ngo}] — raised negative vent responses.")
 
         return "\n".join(lines)
 
@@ -490,7 +684,52 @@ class AllianceGraph:
             "no_go_zones":       list(cp.no_go_zones),
             "disclosure_level":  pc.disclosure_level,
             "patient_trust_in_companion": round(pc.trust, 4),
+            "v_ij":              round(cp.v_ij, 4),   # co-regulation coupling weight
+            "vent_delta":        round(cp.vent_delta, 4),   # SA1.2: direct vs perceived gap
         }
+
+    # ── SA1.2: Direct message channel ─────────────────────────────────────────
+
+    def update_from_direct_message(self, event: "DirectMessageEvent") -> None:
+        """
+        Update alliance graph from a direct (non-companion-relayed) message event.
+
+        When a patient and caregiver speak directly without the companion, their
+        ``direct_rapport`` evolves differently from their ``rapport`` (which only
+        moves through companion-mediated interactions).  This method records the
+        direct channel outcome and recomputes ``vent_delta`` for both directions.
+
+        Args:
+            event: A ``DirectMessageEvent`` describing the direct interaction.
+        """
+        for src, tgt, stress_proxy in [
+            (event.sender_role, event.receiver_role, event.sender_stress),
+            (event.receiver_role, event.sender_role, event.receiver_stress),
+        ]:
+            edge = self.get_edge(src, tgt)
+            # Positive valence → direct rapport builds; negative → erodes
+            if event.valence >= 0:
+                edge.direct_rapport = min(
+                    1.0, edge.direct_rapport + 0.04 * event.valence
+                )
+            else:
+                edge.direct_rapport = max(
+                    0.0, edge.direct_rapport + 0.06 * event.valence   # erodes faster
+                )
+
+            # vent_delta: gap between what happened directly and what tgt perceives
+            edge.vent_delta = round(edge.direct_rapport - edge.perceived_rapport, 4)
+
+            # If patient vented (high stress_proxy + negative valence → vent scenario)
+            if stress_proxy > 0.65 and event.valence < -0.2:
+                edge.vent_delta = max(-0.30, edge.vent_delta - 0.05)
+
+            # If vent_delta is large, flag a no-go-zone for the relayed topic
+            if abs(edge.vent_delta) > 0.20 and event.topic not in edge.no_go_zones:
+                edge.no_go_zones.append(event.topic)
+
+            edge.last_updated = time.time()
+            edge.last_outcome = "direct_msg_positive" if event.valence >= 0 else "direct_msg_negative"
 
     # ── Persistence ───────────────────────────────────────────────────────────
 
@@ -551,6 +790,61 @@ class AllianceGraph:
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: extract rupture / repair signals from A3C scorer output
 # ─────────────────────────────────────────────────────────────────────────────
+
+def social_Gamma_modifier(alliance_score: float, speaker_stress: float) -> float:
+    """
+    SA2.1: Compute the additive social-alliance stress-reactivity modifier (Δγ).
+
+    The modifier adjusts how quickly a patient's stress responds to therapeutic
+    actions, based on the quality of the working alliance AND the speaker's
+    current stress level.
+
+    Mathematical formulation
+    ------------------------
+    The base idea: a well-formed therapeutic alliance (high trust, good rapport)
+    acts as a physiological buffer — the patient's stress trajectory recovers
+    faster (γ_social < 0, dampening) because they feel safe and heard.
+
+    A ruptured or strained alliance (low trust, ongoing conflict) does the
+    opposite — the patient's stress rebounds more steeply even after calming
+    actions (γ_social > 0, amplification).
+
+    The speaker's own stress modulates this further: a panicked speaker cannot
+    effectively co-regulate, so even high alliance is worth less under mutual panic.
+
+        γ_social = GAMMA_SCALE * (NEUTRAL_ALLIANCE - alliance_score)
+                   * speaker_influence(speaker_stress)
+
+        speaker_influence(s) = 1.0 + max(0, s - 0.65) * 2.0
+            → 1.0 for calm speakers (s < 0.65)
+            → up to 1.70 when speaker is in crisis (s ≈ 1.0)
+
+    Return range: approximately [-0.15, +0.25]
+        Δγ < 0: dampening (high alliance → stress reduces faster)
+        Δγ > 0: amplification (rupture/panic → stress reduction is harder)
+
+    Parameters
+    ----------
+    alliance_score : float [0, 1]
+        Current composite alliance score (from AllianceEdge.composite_alliance).
+        0.5 is the neutral midpoint; > 0.5 is positive alliance.
+    speaker_stress : float [0, 1]
+        Companion's conversation stress estimate OR the caregiver's stress_index
+        when computing cross-person contagion.
+
+    Usage
+    -----
+    Called from:
+        - _stress_after_response()  via ReactivityProfile.gamma_modifier() chain
+        - PhysioSimulator.step()    via social_gamma kwarg (SA2.4)
+    """
+    GAMMA_SCALE      = 0.30   # maximum magnitude of the modifier
+    NEUTRAL_ALLIANCE = 0.50   # zero modifier at exactly neutral alliance
+
+    alliance_contribution = NEUTRAL_ALLIANCE - alliance_score  # range [-0.5, +0.5]
+    speaker_influence = 1.0 + max(0.0, speaker_stress - 0.65) * 2.0
+
+    return round(GAMMA_SCALE * alliance_contribution * speaker_influence, 4)
 
 def signals_from_score_result(score_result: object) -> tuple[bool, bool, list[str]]:
     """
@@ -671,6 +965,76 @@ OVERLAPPING_CIRCLES_SCENARIO = {
         "alliance_score_delta_companion_cardiac→patient",
         "negotiation_convergence_turns",   # how many turns to resolve the conflict
         "role_switch_handled_correctly",   # did daughter/companion handoff go smoothly?
+        "goal_achieved",
+    ],
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Panic contagion scenario (two-person physiological coupling)
+# ─────────────────────────────────────────────────────────────────────────────
+# This scenario tests: when one circle member has a panic attack, does the
+# companion use the correct psychoeducation cluster, and does the emotional
+# contagion from the panicking spouse reduce the caregiver's HRV/trust?
+#
+# Expected training outcome:
+#   - Companion selects panic_reassure_* actions (not just breathing_exercise)
+#   - V_ij(spouse→patient) drops during acute panic (low-trust crisis state)
+#   - After recovery, V_ij climbs again toward baseline
+#   - Caregiver's stress rises via contagion (V_ij * Δstress * 1.5x asymmetry)
+
+PANIC_CONTAGION_SCENARIO = {
+    "scenario_id": "panic_contagion_two_person_001",
+    "therapeutic_mode": "mental_health",
+    "description": (
+        "Ravi (42, mild hypertension) is speaking to his companion when his wife "
+        "Priya suddenly calls out from the next room saying she can't breathe and "
+        "feels her heart racing.  Priya has a history of panic disorder but no "
+        "cardiac disease.  The companion must (a) correctly identify this as likely "
+        "panic and NOT cardiac, (b) provide panic psychoeducation cluster actions, "
+        "(c) manage Ravi's secondary stress spike from witnessing Priya's distress."
+    ),
+    "participants": [
+        {
+            "role":       "patient",
+            "label":      "Ravi",
+            "age":        42,
+            "conditions": ["hypertension_mild"],
+            "present_in_conversation": True,
+        },
+        {
+            "role":       "spouse",
+            "label":      "Priya",
+            "age":        39,
+            "conditions": ["panic_disorder"],
+            "present_in_conversation": False,   # offscreen; reported by patient
+            "panic_trigger_at_turn": 5,         # Priya's distress reported at turn 5
+        },
+    ],
+    "alliance_initial_state": {
+        "patient→companion": {"alliance_score": 0.58, "trust": 0.60, "rapport": 0.55, "v_ij": 0.52},
+        "companion→patient": {"alliance_score": 0.55, "trust": 0.55, "rapport": 0.50, "v_ij": 0.52},
+        "patient→spouse":    {"alliance_score": 0.80, "trust": 0.85, "rapport": 0.75, "v_ij": 0.72},
+    },
+    "contagion_test": {
+        "event":          "panic_onset_spouse",
+        "expected_delta": "patient stress +0.25 to +0.40 via V_ij=0.72 * Δ=0.40 * 1.5x asymmetry",
+        "expected_companion_action_cluster": [
+            "panic_reassure_not_cardiac",
+            "panic_normalise_duration",
+            "panic_support_available",
+        ],
+        "failure_if": "companion selects only breathing_exercise without psychoeducation",
+    },
+    "session_goal": (
+        "Stabilise Ravi's secondary stress spike.  Guide Ravi to reassure Priya "
+        "using the correct (non-cardiac) framing.  End with both Ravi and Priya "
+        "at stress ≤ 0.40."
+    ),
+    "training_metrics": [
+        "panic_cluster_action_selected",   # at least one panic_reassure_* action
+        "patient_stress_post_event",       # should drop below 0.45 by turn 12
+        "v_ij_companion_patient_end",      # should be ≥ 0.50 (maintained despite crisis)
         "goal_achieved",
     ],
 }
