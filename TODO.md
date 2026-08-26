@@ -36,6 +36,11 @@
 | 21 | Product — Security & Deployment | 🟡 | 5 |
 | 22 | Product — Advanced Agent Capabilities | ⚪ | 2 |
 | 23 | Open Research Questions | ⚪ | 7 |
+| **NEW** | **Dynamic Coupling (V_int)** | 🔴 | 4 |
+| **NEW** | **Belief Graph** | 🔴 | 6 |
+| **NEW** | **Stress Calibration (eustress / action-enabling)** | 🟠 | 3 |
+| **NEW** | **Behavioural Defaults & Reflexes** | 🟠 | 4 |
+| **NEW** | **Action Space Axes (internal/external, logic, reflex, inaction)** | 🔴 | 4 |
 | 24 | Completed (recent) | — | — |
 
 ---
@@ -462,7 +467,110 @@
 
 ---
 
-## 20. ✅ Completed (recent)
+## NEW-A. 🔴 Dynamic Coupling (V_int / V_ij)
+
+> **Context**: `V_ij` coupling weights in `SharedTensorBuffer` are static priors set at startup.
+> Emotional coupling strength is not a constant — it is dynamic, context-dependent, and
+> bidirectional. The research literature shows that *both extremes are problematic*:
+> very high coupling (enmeshment) amplifies distress bidirectionally and locks both parties
+> into maladaptive patterns; very low coupling (detachment/isolation) means one party's
+> crisis cannot reach the companion caring for the other.
+> The companion's advice strategy must be *aware of and adaptive to* the current coupling level.
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| COUP1 | Make V_ij session-dynamic (already tracked in SA3.1; extend) | 🔴 | [ ] | **How**: at each session start, compute `coupling_estimate` from recent `vent_delta`, `stress_discrepancy`, and `conversation_stress` cross-correlation between the two parties (from `SharedTensorBuffer`). Store as `effective_V_ij` per pair per session. Decay toward prior between sessions (EWA with τ = 3 sessions). Update immediately when a `DirectMessageEvent` with `valence < -0.5` arrives (conflict signal). Wire `effective_V_ij` into `MCTSActionIn` payload as `coupling_strength: float`. |
+| COUP2 | Coupling level classifier → companion strategy switch | 🔴 | [ ] | **How**: add `CouplingRegime` enum: `ISOLATED` (V_ij < 0.2), `HEALTHY` (0.2–0.7), `ENMESHED` (> 0.7). In `generate_response`, detect regime. For `ENMESHED`: suppress `explore_past_trauma`, `flooding_deepen`, `emotional_validation` (risk of amplification); promote `differentiation_prompt`, `individual_space`, `boundary_assertion`. For `ISOLATED`: suppress `individual_coping`; promote `shared_goal_setting`, `mutual_acknowledgement`, `coordinate_companion_handoff`. Add 4 new actions: `differentiation_prompt`, `individual_space`, `boundary_assertion`, `mutual_acknowledgement`. |
+| COUP3 | Environment / belief remodelling when coupling is extreme | 🟠 | [ ] | **How**: if `ENMESHED` for ≥ 2 consecutive sessions, flag `belief_enmeshment_risk=True` in `AllianceEdge`. Companion should begin a structured differentiation sequence: (1) acknowledge shared bond, (2) surface one belief held by both that may be co-constructed rather than individual (belief_graph intersection), (3) introduce `probability_reframe` for that belief. If `ISOLATED` for ≥ 2 sessions, flag `isolation_risk=True`; recommend care-circle session or in-person check with `schedule_future_interaction`. A3CScorer: reward differentiation when `enmeshment_risk=True`; reward bridge-building when `isolation_risk=True`. |
+| COUP4 | Asymmetric coupling: panic contagion threshold | 🟠 | [ ] | **How**: SA2.2 already codes negative HRV delta at 1.5× propagation rate. Extend: add `panic_contagion_threshold` (V_ij × stress_sender). If threshold exceeded, companion receives `PANIC_CONTAGION_ALERT` in TurnState and must suspend current therapeutic arc to first ground the receiving party. New action: `ground_before_continue`. Scenario: add `two_person_panic` to scenario corpus (SA3.3 prerequisite). |
+
+---
+
+## NEW-B. 🔴 Belief Graph
+
+> **Context**: the companion currently operates on *disclosed facts* (from `facts_v2`) and
+> *physiological state*. But human behaviour is governed by *beliefs* — stable cognitive
+> structures that mediate between events and reactions. A belief graph maps beliefs as nodes
+> with directed dependency edges ("I can't cope → I am weak → I don't deserve help").
+> Foundational beliefs (high in-degree, identity-linked) are resistant to direct challenge
+> and can backfire catastrophically if targeted prematurely. Peripheral beliefs (low in-degree,
+> situation-specific) can be changed with less risk and can progressively destabilise
+> foundational ones through cascade effects.
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| BG1 | `BeliefGraph` data structure | 🔴 | [ ] | **How**: create `tensornets/agents/belief_graph.py`. `BeliefNode`: `{id, text, confidence: 0–1, valence: -1/0/+1, moral_weight: 0–1, identity_linked: bool, temporal_focus: ST/LT/BOTH, source: "stated/inferred/extrapolated"}`. `BeliefEdge`: `{from_id, to_id, relation: "supports/contradicts/requires/undermines", strength: 0–1}`. `BeliefGraph`: dict of nodes + adjacency list. Persist as JSON alongside `AllianceGraph` in `state/subjects/{id}/`. |
+| BG2 | Belief discovery pipeline from conversation | 🔴 | [ ] | **How**: after each turn, send the patient's utterance + last belief summary to Scout with prompt: "Extract any explicit or implied beliefs from this statement. Format: [{text, confidence, valence, identity_linked}]. Return [] if none." Parse and upsert into `BeliefGraph`. Run on Scout (not Maverick) — cost: 1 extra call every 3 turns (sampled). Conflicting beliefs are `BeliefEdge(relation="contradicts")`. Consistent re-assertions increment `confidence`. |
+| BG3 | Belief salience and risk classifier | 🔴 | [ ] | **How**: `BeliefGraph.foundational_beliefs()` — return nodes where `in_degree ≥ 3` OR `identity_linked=True` OR `moral_weight > 0.7`. `BeliefGraph.safe_to_challenge(node_id)` returns `True` when: `in_degree ≤ 1`, `identity_linked=False`, `confidence < 0.6`. Inject into Scout system prompt via `prompt_context_for()`: "SAFE TO EXPLORE: {safe_beliefs[:3]}. AVOID DIRECT CHALLENGE: {risky_beliefs[:2]}." |
+| BG4 | Belief interpolation — cascade via peripheral nodes | 🟠 | [ ] | **How**: when `normalise_discrepancy` or `probability_reframe` succeeds (A3CScorer marks `belief_shift=True`), identify all beliefs with an edge to the challenged belief. Reduce their `confidence` by `0.05 × edge_strength`. If a foundational belief's confidence drops below 0.4, flag `belief_ready_for_revisit=True` in next session's `longitudinal_hint`. This models therapeutic change as belief cascade, not direct assault. |
+| BG5 | Belief–action mapping: which action targets which belief layer | 🟠 | [ ] | **How**: in `action_bandit.py`, add `ACTION_BELIEF_TARGET: dict[str, str]` — maps actions to belief layers they primarily engage: `"peripheral"`, `"relational"`, `"foundational"`, `"none"`. MCTS prior call (`_fetch_prior_scores`) gets belief context: "Current safe-to-challenge beliefs: {safe_beliefs}. Preferred layer: peripheral." GoT Node D cluster synthesis now includes a `belief_layer` field. |
+| BG6 | BeliefGraph arm (new experiment) | 🟡 | [ ] | **How**: `BeliefGraphHPVOOTWorker` (Exp 19) — subclass of `GoTHPVOOTWorker`. Overrides `generate_response` to: (1) load `BeliefGraph` for subject, (2) inject safe/risky beliefs into GoT prompt Node B, (3) run GoT-HPVOOT as normal. Ablation vs Exp 17: does belief-aware prior improve goal rate? Requires BG1–BG3. |
+
+---
+
+## NEW-C. 🟠 Stress Calibration (eustress / action-enabling stress)
+
+> **Context**: the current reward function (`_synthetic_reward`) and MCTS heuristics always
+> treat stress reduction as the goal. But stress is not uniformly bad — moderate acute stress
+> (eustress) enables action, facilitates difficult decisions, creates memory consolidation, and
+> drives behaviour change. A companion that *always* de-escalates will produce passivity: the
+> patient never makes the hard phone call, never confronts the avoidance behaviour, never
+> crosses the uncomfortable threshold. The companion needs to *calibrate* stress — reducing
+> it when it's paralysing or harmful, and *preserving or mildly amplifying* it when it's
+> enabling.
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| SC1 | Optimal stress window per archetype/context | 🟠 | [ ] | **How**: define `OPTIMAL_STRESS_RANGE: dict[str, tuple[float,float]]` in `physio_simulator.py` — maps `(archetype, scenario_phase)` to `(min_stress, max_stress)`. Examples: `("avoidant", "action_taking") → (0.40, 0.65)`, `("catastrophiser", "any") → (0.10, 0.35)`. In `_synthetic_reward`, add `stress_calibration_r`: +0.05 bonus if final stress is within the window, -0.05 penalty if over-reduced (patient brought below minimum action threshold). |
+| SC2 | New action: `increase_salience` / `temporal_urgency` | 🟠 | [ ] | **How**: add 2 actions to `ACTION_TAXONOMY`: `increase_salience` (make the cost of inaction tangible — "what happens in 6 months if nothing changes?") and `temporal_urgency` (introduce time pressure — "you said the appointment is next week"). `CALMING_WEIGHT`: 0.0 (these raise stress). `ACTION_HORIZON`: SESSION. Gate: only available when `stress_index < OPTIMAL_STRESS_RANGE[archetype].min`. Add Rule 14 to `action_selector.js`: "If patient is below action threshold and goal requires decision, use increase_salience or temporal_urgency." |
+| SC3 | A3CScorer: reward deliberate action completion, not just stress reduction | 🟠 | [ ] | **How**: add `action_completion` dimension to scorer prompt: "Did the patient commit to or complete a specific action this turn (e.g. agreed to call the doctor, scheduled an appointment, set a boundary)? Score 0–1." Include alongside `goal_progress` in reward computation. Weight: 0.15 (same as `safety`). This prevents A3C from learning that the optimal policy is to always validate and calm. |
+
+---
+
+## NEW-D. 🟠 Behavioural Defaults, Habits & Reflexes
+
+> **Context**: under stress, people revert to automatic behaviours — habits, conditioned
+> reflexes, social defaults, and practiced responses — that bypass deliberate reasoning.
+> These override rational argument. A companion that reasons with a patient who is in
+> *reflex mode* is ineffective: the patient is not processing via System 2. The companion
+> needs to (1) detect when the patient is in reflex vs. deliberated mode, (2) match the
+> intervention to the mode (interrupt-and-ground for reflexes; explore-and-reason for
+> deliberation), and (3) pre-commit strategies that reroute reflexes before they fire.
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| BD1 | `BehaviorProfile`: catalog known reflexes, defaults, habits per user | 🟠 | [ ] | **How**: add `behavior_profile: dict` to `facts_v2`/scenario metadata. Schema: `{reflexes: ["flee", "fawn", "freeze", "fight"], defaults: ["minimise", "overexplain", "shut_down"], habits: [{cue, routine, reward}], practiced: ["deep_breathing", "prayer", "smoking"]}`. Populated by A3CScorer dimension `behavior_type_detected` ("reflex/default/deliberated/unknown"). Companion reads this from `_build_longitudinal_hint`. |
+| BD2 | Reflex detection in conversation | 🟠 | [ ] | **How**: add `reflex_detected: bool` to `TurnState`. Set when `stress_index > 0.7` AND (`stress_discrepancy > 0.25` OR last utterance matches reflex-language patterns: short sentences, repetition, past-tense self-reference like "I always do this", "I can't help it"). When `reflex_detected=True`, MCTS should suppress `challenge_belief`, `socratic_probe`, `flooding_deepen`; promote `ground_before_continue`, `acknowledge_and_pause`, `breathing_4_7_8`. |
+| BD3 | Pre-commitment actions for reflex override | 🟠 | [ ] | **How**: add `precommit_strategy` action (available only when stress is LOW and patient is in deliberated mode). Action intent: "establish a concrete if-then rule before the patient re-enters a triggering context." ("If you feel the urge to leave the conversation, you've agreed to say one thing first — what will that be?"). Reward bonus +0.10 when `precommit_strategy` is followed by successful avoidance of a known reflex in a subsequent turn. |
+| BD4 | Habit loop modeling: cue-routine-reward | 🟡 | [ ] | **How**: add `HabitLoop` to `BeliefGraph` (or separate structure) — `{cue: str, routine: str, reward_belief: str}`. Example: `{cue: "conflict at home", routine: "withdrawal", reward_belief: "I avoid more pain"}`. Companion can then target the `reward_belief` (peripheral, often malleable) rather than the routine directly. This links to BG3 (safe-to-challenge). New action: `reframe_habit_reward` — disputes the reward belief without attacking the cue or routine. |
+
+---
+
+## NEW-E. 🔴 Action Space Axes
+
+> **Context**: the current action taxonomy is a flat list of 76 actions grouped by intent
+> cluster. But the *axes of variation* that matter clinically are not captured as searchable
+> dimensions. Four axes are particularly important:
+>
+> 1. **Internal vs External** — is the action targeting the patient's internal state
+>    (belief, physio, affect) or the external world (relationships, events, environment)?
+> 2. **Logic vs Counterintuitive** — most actions are rational; but some situations call
+>    for paradoxical interventions (prescribe the symptom, reverse-validate, strategic
+>    ambiguity). Counterintuitive actions are high-risk/high-reward and need gating.
+> 3. **Deliberated vs Reflexive** — does the action engage slow/deliberate thinking or
+>    leverage fast/intuitive cognition? When a patient is in reflex mode, deliberated
+>    actions are wasted.
+> 4. **Inaction vs Action** — "wait", "hold space", "freeze-with-them" are valid
+>    therapeutic moves. The current taxonomy has no pure inaction actions. Inaction can
+>    prevent iatrogenic harm (a companion that "does something" during a grief moment
+>    is often worse than one that witnesses silently).
+
+| ID | Task | Priority | Status | Details |
+|----|------|----------|--------|---------|
+| AS1 | Internal/External axis: tag all actions | 🔴 | [ ] | **How**: add `ACTION_AXIS_IE: dict[str, str]` in `action_bandit.py` — maps each action to `"internal"`, `"external"`, or `"both"`. Examples: `breathing_4_7_8 → internal`, `coordinate_companion_handoff → external`, `schedule_future_interaction → external`, `reframe_situation → both`. In MCTS prior call, inject "Current axis needed: {axis}" derived from scenario `focus_axis` field (new). GoT Node D cluster synthesis emits a `focus_axis` field. Enables scenario-level ablations: internal-only vs external-only companion modes. |
+| AS2 | Logic/Counterintuitive axis: paradoxical interventions | 🔴 | [ ] | **How**: add 3 new actions: `prescribe_symptom` (intentionally tell patient to do the maladaptive thing for a controlled period — paradoxical intention, Frankl), `strategic_ambiguity` (deliberately withhold interpretation to allow the patient to fill in meaning), `reverse_validate` (validate the opposing belief to surface ambivalence). All tagged `logic_axis="counterintuitive"`. Gate: ONLY available when `stress_index < 0.40` (low stress = System 2 accessible) AND `session_count ≥ 3` (established alliance). Reward: +0.15 if `belief_shift` detected on next turn; -0.20 if `critical_failure` triggered. Rule 15 in `action_selector.js`: "Paradoxical interventions require low stress and established rapport. Never use in crisis." |
+| AS3 | Deliberated/Reflexive axis: mode-matched intervention selection | 🔴 | [ ] | **How**: wire `reflex_detected` (from BD2) into GoT Node B as `patient_mode: "reflex/deliberated"`. Add `ACTION_AXIS_DR: dict[str, str]` — maps actions to `"deliberated"`, `"reflexive"`, `"both"`. Deliberated actions (socratic, reframe, explore) are blocked when `reflex_detected=True`. Reflexive-compatible actions (ground_before_continue, acknowledge_and_pause, breathing_4_7_8, witness_grief) are promoted. This is the most important axis for crisis safety. |
+| AS4 | Inaction axis: silence, witnessing, holding space | 🔴 | [ ] | **How**: add 4 new actions: `hold_space` (pure witness — companion generates a minimal, non-directive acknowledgement: "I'm here with you"), `therapeutic_silence` (companion sends nothing — signals patient can take time), `await_readiness` (explicit "I'll wait until you feel ready to continue"), `pause_and_breathe_together` (shared physiological regulation without content). All tagged `action_axis="inaction"`. Reward: in grief/shock scenarios (`scenario_type in ["witness_grief", "health_deterioration"]`), inaction actions get +0.12 bonus (currently penalised by low `goal_progress`). A3CScorer new dimension `appropriate_inaction` — was silence clinically appropriate here? |
 
 | Item | Category | Date |
 |------|----------|------|
