@@ -45,26 +45,42 @@ ALLIANCE EDGE DIMENSIONS
   disclosure_level int [0,3]     how much tgt has shared with src (0=none)
   last_updated     float         unix timestamp
 
-DYNAMIC V_ij COUPLING
-----------------------
-V_int (inter-agent physio signal) is now updated DYNAMICALLY from episode
-outcomes: the coupling weight V_ij between two roles grows when alliance
-is strong and shrinks when ruptured.  This wires social alliance into the
-physiological co-regulation pathway:
+DYNAMIC V_ij COUPLING → RELATIONAL FIELD
+------------------------------------------
+Rename history:
+  V_int  (inter-agent physio signal buffer)  → RelationalField
+  V_ij   (scalar coupling weight on an edge) → v_coupling (field on AllianceEdge)
 
-  V_ij(t+1) = V_ij(t) + ALPHA_V * (alliance_score_ij - V_TARGET) * Δt
+"RelationalField" captures that coupling is multi-dimensional (per-topic),
+dynamic (evolves with belief alignment and interaction history), and directional.
 
-  where V_TARGET ≈ 0.5 (neutral coupling), ALPHA_V = 0.02 per episode.
-  High alliance → V_ij rises → calming signals spread faster across circle.
-  Rupture → V_ij falls → stress contagion becomes asymmetric (negative faster).
+  v_coupling(t+1) = v_coupling(t) + ALPHA_V * (alliance_score - v_coupling) * Δt
+  topic_coupling[topic] updated via belief divergence (ALPHA_BELIEF_COUPLING)
 
-EMOTION CONTAGION ASYMMETRY
------------------------------
-Negative emotional contagion (fear, panic) propagates at 1.5× the rate of
-positive (calm, relief).  This matches empirical literature (Hatfield et al.):
-the nervous system is more sensitive to distress signals than to calm ones.
+  High v_coupling → co-regulation active (calming spreads efficiently).
+  Rupture → v_coupling falls → stress contagion dominates.
 
-  Δstress_j_from_i = V_ij * Δstress_i * (1.5 if Δstress_i > 0 else 1.0)
+RELATIONSHIP TYPES
+-------------------
+Each edge carries a RelationshipType (spouse, boss, best_friend, toxic_partner,
+clinician, …) that seeds default v_coupling, CommunicationTemp, and power_asymmetry.
+
+COMMUNICATION TEMPERATURE
+--------------------------
+CommunicationTemp (COLD/COOL/NEUTRAL/WARM/HOT) describes the warmth/distance
+register of the relationship independently of stress.  Companion adapts its
+language register to match detected temperature.
+
+TOPIC-SPECIFIC COUPLING
+------------------------
+topic_coupling: dict[str, float] — coupling multiplied per topic cluster.
+"conflict" topics have ×1.5 amplification; "work/finances" are damped.
+Belief divergence on a topic reduces topic coupling; alignment strengthens it.
+
+BELIEF GRAPH ↔ COUPLING
+------------------------
+update_coupling_from_belief_graphs(): belief divergence reduces topic coupling.
+coupling_signal_for_belief_update(): belief shift propagates influence to peers.
 
 PERSISTENCE
 -----------
@@ -89,6 +105,7 @@ import json
 import math
 import time
 from dataclasses import dataclass, field, asdict
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
@@ -122,14 +139,154 @@ DEFAULT_RAPPORT        = 0.25
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Dynamic V_ij coupling parameters
+# RelationshipType — structural role the edge represents
 # ─────────────────────────────────────────────────────────────────────────────
-# V_ij is the inter-agent physiological coupling weight (feeds into PhysioSimulator).
-# It starts at V_TARGET (neutral) and drifts toward the current alliance score
-# at ALPHA_V per episode.
+# Each type carries behavioral priors: default coupling strength, communication
+# temperature, power asymmetry, and intimacy potential.  These seed the
+# AllianceEdge fields at creation and constrain how V_ij evolves.
+
+class RelationshipType(str, Enum):
+    UNKNOWN         = "unknown"          # default; use generic priors
+    SPOUSE          = "spouse"           # high coupling, symmetric, intimacy active
+    PARTNER         = "partner"          # like spouse; slightly lower baseline trust
+    PARENT          = "parent"           # asymmetric (parent→child), nurture default
+    CHILD           = "child"            # asymmetric (child→parent), dependency
+    SIBLING         = "sibling"          # peer, rivalry history, variable coupling
+    FRIEND          = "friend"           # peer, medium coupling, warm default
+    BEST_FRIEND     = "best_friend"      # high coupling, high disclosure potential
+    COLLEAGUE       = "colleague"        # professional, neutral temperature default
+    BOSS            = "boss"             # power-asymmetric, cold default, deferral
+    EMPLOYEE        = "employee"         # power-asymmetric, guarded default
+    CLINICIAN       = "clinician"        # authority + care, professional warmth
+    TOXIC_PARTNER   = "toxic_partner"    # high coupling but negative V; defensive
+    TOXIC_FRIEND    = "toxic_friend"     # social pressure, fear-based rapport
+    ESTRANGED       = "estranged"        # historically close, currently cold
+    CARER           = "carer"            # paid or informal care role
+
+# Coupling prior for each relationship type (seeds v_coupling at edge creation)
+_REL_COUPLING_PRIOR: dict[RelationshipType, float] = {
+    RelationshipType.UNKNOWN:       0.50,
+    RelationshipType.SPOUSE:        0.72,
+    RelationshipType.PARTNER:       0.68,
+    RelationshipType.PARENT:        0.65,   # parent→child direction
+    RelationshipType.CHILD:         0.55,   # child→parent direction
+    RelationshipType.SIBLING:       0.55,
+    RelationshipType.FRIEND:        0.45,
+    RelationshipType.BEST_FRIEND:   0.68,
+    RelationshipType.COLLEAGUE:     0.30,
+    RelationshipType.BOSS:          0.25,
+    RelationshipType.EMPLOYEE:      0.25,
+    RelationshipType.CLINICIAN:     0.40,
+    RelationshipType.TOXIC_PARTNER: 0.65,   # high coupling, negative valence handled separately
+    RelationshipType.TOXIC_FRIEND:  0.50,
+    RelationshipType.ESTRANGED:     0.20,
+    RelationshipType.CARER:         0.45,
+}
+
+# Power asymmetry: +ve means src has power over tgt (→ communication more directive)
+_REL_POWER_ASYMMETRY: dict[RelationshipType, float] = {
+    RelationshipType.BOSS:        +0.5,
+    RelationshipType.PARENT:      +0.4,
+    RelationshipType.CLINICIAN:   +0.3,
+    RelationshipType.CARER:       +0.2,
+    RelationshipType.EMPLOYEE:    -0.5,
+    RelationshipType.CHILD:       -0.4,
+    RelationshipType.TOXIC_PARTNER: +0.3,
+    RelationshipType.TOXIC_FRIEND:  +0.2,
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CommunicationTemp — warmth/distance axis of a relationship's default register
+# ─────────────────────────────────────────────────────────────────────────────
+# This is NOT the same as stress level.  Temperature is the *default register*
+# of how two people communicate even when calm:
+#   COLD  = professional distance, minimal disclosure, formal language
+#   WARM  = open, emotionally available, easy disclosure
+#   HOT   = emotionally flooded / enmeshed — reactive, over-disclosure risk
+#
+# Temperature shifts with conflict (cools or heats) and with session history.
+# The companion adapts its register to match the detected temperature.
+
+class CommunicationTemp(str, Enum):
+    COLD     = "cold"     # professional/guarded; needs formal acknowledgement
+    COOL     = "cool"     # polite but reserved; rapport-building required first
+    NEUTRAL  = "neutral"  # standard baseline
+    WARM     = "warm"     # open, trusting; therapeutic work can proceed
+    HOT      = "hot"      # flooded/enmeshed; companion must de-escalate register
+
+# Default temperature prior per relationship type
+_REL_TEMP_PRIOR: dict[RelationshipType, CommunicationTemp] = {
+    RelationshipType.UNKNOWN:       CommunicationTemp.NEUTRAL,
+    RelationshipType.SPOUSE:        CommunicationTemp.WARM,
+    RelationshipType.PARTNER:       CommunicationTemp.WARM,
+    RelationshipType.PARENT:        CommunicationTemp.WARM,
+    RelationshipType.CHILD:         CommunicationTemp.WARM,
+    RelationshipType.SIBLING:       CommunicationTemp.NEUTRAL,
+    RelationshipType.FRIEND:        CommunicationTemp.WARM,
+    RelationshipType.BEST_FRIEND:   CommunicationTemp.WARM,
+    RelationshipType.COLLEAGUE:     CommunicationTemp.COOL,
+    RelationshipType.BOSS:          CommunicationTemp.COLD,
+    RelationshipType.EMPLOYEE:      CommunicationTemp.COOL,
+    RelationshipType.CLINICIAN:     CommunicationTemp.COOL,
+    RelationshipType.TOXIC_PARTNER: CommunicationTemp.HOT,
+    RelationshipType.TOXIC_FRIEND:  CommunicationTemp.HOT,
+    RelationshipType.ESTRANGED:     CommunicationTemp.COLD,
+    RelationshipType.CARER:         CommunicationTemp.NEUTRAL,
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Topic clusters for per-topic coupling
+# ─────────────────────────────────────────────────────────────────────────────
+# Coupling is not uniform across topics.  A couple may be highly coupled on
+# health topics (stress contagion from medical news is fast) but nearly
+# uncoupled on finances (they handle money independently).  Topic-specific
+# coupling modulates both stress contagion and belief influence.
+
+TOPIC_CLUSTERS = [
+    "health",           # medical, medication, physical symptoms
+    "mental_health",    # depression, anxiety, therapy-related
+    "finances",         # money, debt, job security
+    "family",           # children, in-laws, family conflict
+    "work",             # career, workplace relationships
+    "intimacy",         # emotional and physical closeness
+    "conflict",         # active disagreement, resentment
+    "grief",            # loss, death, bereavement
+    "identity",         # values, beliefs, self-concept
+    "future",           # plans, uncertainty, anticipatory anxiety
+]
+
+# Default topic coupling multiplier relative to base v_coupling
+# 1.0 = same as base, >1.0 = amplified, <1.0 = damped
+_DEFAULT_TOPIC_COUPLING_MULTIPLIER: dict[str, float] = {
+    "health":        1.2,
+    "mental_health": 1.1,
+    "finances":      0.8,
+    "family":        1.0,
+    "work":          0.7,
+    "intimacy":      1.3,
+    "conflict":      1.5,   # conflict topics amplify coupling (negative contagion)
+    "grief":         1.2,
+    "identity":      0.9,
+    "future":        1.0,
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RelationalField coupling parameters (formerly V_ij / V_int)
+# ─────────────────────────────────────────────────────────────────────────────
+# Rename history:
+#   V_int  (inter-agent physio signal buffer)  → RelationalField
+#   V_ij   (scalar coupling weight on an edge) → v_coupling / topic_coupling
+#
+# "RelationalField" better captures that the coupling is:
+#   (a) multi-dimensional (per-topic, not a single scalar)
+#   (b) dynamic (evolves with belief alignment and interaction history)
+#   (c) directional (src→tgt coupling may differ from tgt→src)
 
 V_TARGET   = 0.50   # neutral coupling (neither amplifying nor damping)
-ALPHA_V    = 0.02   # learning rate: V_ij moves ~2% toward alliance per episode
+ALPHA_V    = 0.02   # learning rate: coupling moves ~2% toward alliance per episode
 V_MIN      = 0.05   # floor: even ruptured pairs have residual contagion
 V_MAX      = 0.90   # ceiling: trust never enables perfect stress absorption
 
@@ -137,6 +294,15 @@ V_MAX      = 0.90   # ceiling: trust never enables perfect stress absorption
 # than positive (calm/relief) across alliance edges.
 CONTAGION_NEGATIVE_MULTIPLIER = 1.5
 CONTAGION_POSITIVE_MULTIPLIER = 1.0
+
+# Belief alignment → coupling update rate
+# When two parties' beliefs diverge significantly on a topic, the topic-specific
+# coupling is reduced.  Conversely, belief alignment strengthens it.
+ALPHA_BELIEF_COUPLING = 0.03  # per turn when belief_divergence > 0.3
+
+# Backward-compatible alias so existing code referencing V_ij still imports
+V_ij = V_TARGET   # alias for constants; use v_coupling field on AllianceEdge
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -194,23 +360,53 @@ class AllianceEdge:
     Directional: patient→companion may differ from companion→patient.
     (Patient trusts companion more than companion "trusts" patient,
      because the patient is the vulnerable party.)
+
+    RelationalField dimensions (formerly V_ij / V_int):
+      v_coupling     scalar coupling (base, relationship-type seeded)
+      topic_coupling per-topic coupling multipliers (health, conflict, etc.)
+
+    Communication dimensions:
+      relationship_type  structural role (spouse, boss, clinician…)
+      comm_temp          current warmth/distance register (COLD→HOT)
+      power_asymmetry    +ve = src has power over tgt
+      negotiation_style  "direct" | "indirect" | "avoidant" | "aggressive"
+
+    Belief alignment:
+      belief_divergence  mean divergence across shared belief topics [0–1]
+                         updated when BeliefGraph comparison runs (BG4)
     """
-    src_role:        str
-    tgt_role:        str
-    alliance_score:  float = DEFAULT_ALLIANCE_SCORE
-    trust:           float = DEFAULT_TRUST
-    rapport:         float = DEFAULT_RAPPORT
-    rupture_pending: bool  = False
-    rupture_count:   int   = 0
-    no_go_zones:     list  = field(default_factory=list)
-    disclosure_level: int  = DISCLOSURE_NONE
-    # Dynamic V_ij coupling weight — starts neutral, drifts with alliance
-    v_ij:            float = V_TARGET
+    src_role:         str
+    tgt_role:         str
+    alliance_score:   float = DEFAULT_ALLIANCE_SCORE
+    trust:            float = DEFAULT_TRUST
+    rapport:          float = DEFAULT_RAPPORT
+    rupture_pending:  bool  = False
+    rupture_count:    int   = 0
+    no_go_zones:      list  = field(default_factory=list)
+    disclosure_level: int   = DISCLOSURE_NONE
+
+    # RelationalField: coupling (formerly V_ij)
+    v_coupling:       float = V_TARGET
+    # Per-topic coupling (multipliers relative to v_coupling)
+    # Keys: TOPIC_CLUSTERS items.  Seeded from relationship type defaults.
+    topic_coupling:   dict  = field(default_factory=dict)
+
+    # Relationship structure
+    relationship_type:   str   = RelationshipType.UNKNOWN.value
+    comm_temp:           str   = CommunicationTemp.NEUTRAL.value
+    power_asymmetry:     float = 0.0   # [-1, +1]; +ve = src has power over tgt
+    negotiation_style:   str   = "direct"  # "direct" | "indirect" | "avoidant" | "aggressive"
+
+    # Belief alignment (populated by BeliefGraph.compare; updated per-topic)
+    belief_divergence:   float = 0.0   # mean divergence [0–1] across shared beliefs
+    topic_belief_divergence: dict = field(default_factory=dict)  # per-topic
+
     # Last interaction outcome that influenced this edge
-    last_outcome:    str   = ""   # "positive" | "neutral" | "rupture" | "repair"
-    last_updated:    float = field(default_factory=time.time)
+    last_outcome:     str   = ""   # "positive" | "neutral" | "rupture" | "repair"
+    last_updated:     float = field(default_factory=time.time)
     # Session history: lightweight per-session summary for trend analysis
-    session_history: list  = field(default_factory=list)
+    session_history:  list  = field(default_factory=list)
+
     # SA1.2: Direct vs. relayed rapport split.
     # direct_rapport: built through direct conversation between src and tgt.
     # perceived_rapport: tgt's *perception* of the relationship, which may
@@ -223,7 +419,38 @@ class AllianceEdge:
     perceived_rapport: float = DEFAULT_RAPPORT
     vent_delta:        float = 0.0   # direct_rapport - perceived_rapport
 
-    # ── Computed property ────────────────────────────────────────────────────
+    def __post_init__(self) -> None:
+        """Seed coupling and communication fields from relationship_type priors."""
+        rel = RelationshipType(self.relationship_type) if isinstance(
+            self.relationship_type, str
+        ) else self.relationship_type
+        # Only seed if still at default (allows explicit overrides in tests/fixtures)
+        if self.v_coupling == V_TARGET:
+            self.v_coupling = _REL_COUPLING_PRIOR.get(rel, V_TARGET)
+        if self.comm_temp == CommunicationTemp.NEUTRAL.value:
+            self.comm_temp = _REL_TEMP_PRIOR.get(rel, CommunicationTemp.NEUTRAL).value
+        if self.power_asymmetry == 0.0:
+            self.power_asymmetry = _REL_POWER_ASYMMETRY.get(rel, 0.0)
+        # Seed topic_coupling from relationship defaults if empty
+        if not self.topic_coupling:
+            base = self.v_coupling
+            self.topic_coupling = {
+                t: round(base * _DEFAULT_TOPIC_COUPLING_MULTIPLIER.get(t, 1.0), 4)
+                for t in TOPIC_CLUSTERS
+            }
+
+    # ── Backward-compat property ─────────────────────────────────────────────
+
+    @property
+    def v_ij(self) -> float:
+        """Backward-compatible alias for v_coupling."""
+        return self.v_coupling
+
+    @v_ij.setter
+    def v_ij(self, value: float) -> None:
+        self.v_coupling = value
+
+    # ── Computed properties ───────────────────────────────────────────────────
 
     @property
     def composite_alliance(self) -> float:
@@ -292,19 +519,100 @@ class AllianceEdge:
 
     def update_v_ij(self) -> None:
         """
-        Move V_ij one step toward current alliance_score at rate ALPHA_V.
+        Move the RelationalField coupling one step toward current alliance_score.
+        (Formerly update_v_ij; coupling field is now v_coupling.)
 
         Called once per episode after update_from_episode().
-        V_ij > V_TARGET → co-regulation is active (calming spreads efficiently).
-        V_ij < V_TARGET → stress contagion dominates (rupture state).
+        v_coupling > V_TARGET → co-regulation is active (calming spreads efficiently).
+        v_coupling < V_TARGET → stress contagion dominates (rupture state).
+        Also updates topic_coupling proportionally.
         """
-        self.v_ij = max(V_MIN, min(V_MAX,
-            self.v_ij + ALPHA_V * (self.alliance_score - self.v_ij)
+        new_base = max(V_MIN, min(V_MAX,
+            self.v_coupling + ALPHA_V * (self.alliance_score - self.v_coupling)
         ))
+        # Scale topic couplings proportionally (preserve relative topic weights)
+        if self.v_coupling > 0:
+            scale = new_base / self.v_coupling
+            self.topic_coupling = {
+                t: round(max(V_MIN, min(V_MAX, v * scale)), 4)
+                for t, v in self.topic_coupling.items()
+            }
+        self.v_coupling = round(new_base, 4)
 
-    def stress_contagion_delta(self, src_stress_delta: float) -> float:
+    def update_coupling_from_belief_divergence(
+        self,
+        topic: str,
+        belief_divergence: float,
+    ) -> None:
         """
-        Compute the stress delta that src's emotional state would propagate to tgt.
+        Adjust topic-specific coupling based on belief alignment.
+
+        When two parties share aligned beliefs on a topic (divergence ≈ 0),
+        the topic coupling increases — shared worldview enables faster
+        co-regulation.  Divergence (e.g., on health beliefs after a new
+        diagnosis) reduces coupling for that topic — the companion must
+        work harder to bridge the gap.
+
+        Parameters
+        ----------
+        topic            : one of TOPIC_CLUSTERS
+        belief_divergence: mean divergence 0–1 for this topic pair
+
+        Updates
+        -------
+        self.topic_coupling[topic] and self.belief_divergence (mean)
+        """
+        if topic not in self.topic_coupling:
+            self.topic_coupling[topic] = self.v_coupling
+        # Alignment signal: +delta when aligned, −delta when divergent
+        alignment = 1.0 - belief_divergence
+        delta = ALPHA_BELIEF_COUPLING * (alignment - 0.5)
+        new_tc = max(V_MIN, min(V_MAX, self.topic_coupling[topic] + delta))
+        self.topic_coupling[topic] = round(new_tc, 4)
+        # Update topic belief divergence store
+        self.topic_belief_divergence[topic] = round(belief_divergence, 4)
+        # Recompute mean belief divergence across all tracked topics
+        if self.topic_belief_divergence:
+            self.belief_divergence = round(
+                sum(self.topic_belief_divergence.values()) / len(self.topic_belief_divergence), 4
+            )
+
+    def coupling_for_topic(self, topic: str) -> float:
+        """Return the effective coupling for a given topic (falls back to v_coupling)."""
+        return self.topic_coupling.get(topic, self.v_coupling)
+
+    def detect_communication_regime(self) -> str:
+        """
+        Infer the current communication regime from alliance + comm_temp + power.
+
+        Returns one of:
+          "cold_conflict"       — low alliance + cold/hot + negative valence
+          "warm_collaborative"  — high alliance + warm
+          "professional_distant" — cold temp, professional relationship
+          "enmeshed_flooded"    — hot temp + high coupling + high stress contagion
+          "guarded_negotiation" — rupture pending + indirect/avoidant style
+          "standard"            — default
+        """
+        if self.rupture_pending and self.negotiation_style in ("avoidant", "aggressive"):
+            return "guarded_negotiation"
+        if self.comm_temp == CommunicationTemp.HOT.value and self.v_coupling > 0.65:
+            return "enmeshed_flooded"
+        if self.comm_temp == CommunicationTemp.COLD.value and abs(self.power_asymmetry) > 0.3:
+            return "professional_distant"
+        if self.alliance_score < 0.25 and self.comm_temp in (
+            CommunicationTemp.COLD.value, CommunicationTemp.HOT.value
+        ):
+            return "cold_conflict"
+        if self.alliance_score >= 0.6 and self.comm_temp == CommunicationTemp.WARM.value:
+            return "warm_collaborative"
+        return "standard"
+
+    def stress_contagion_delta(self, src_stress_delta: float, topic: str = "") -> float:
+        """
+        Compute the stress delta that src's emotional state propagates to tgt.
+
+        If ``topic`` is provided, uses the per-topic coupling; otherwise uses
+        the base v_coupling.
 
         Negative emotion (panic/fear: Δstress > 0) spreads at 1.5× the rate
         of positive emotion (calm: Δstress < 0), matching empirical contagion
@@ -313,14 +621,16 @@ class AllianceEdge:
         Parameters
         ----------
         src_stress_delta : signed change in src's stress this turn (+ve = worse)
+        topic            : optional topic cluster (e.g. "health", "conflict")
 
         Returns
         -------
         float : suggested Δstress to add to tgt (can be positive or negative)
         """
+        coupling = self.coupling_for_topic(topic) if topic else self.v_coupling
         multiplier = (CONTAGION_NEGATIVE_MULTIPLIER if src_stress_delta > 0
                       else CONTAGION_POSITIVE_MULTIPLIER)
-        return self.v_ij * src_stress_delta * multiplier
+        return coupling * src_stress_delta * multiplier
 
     def add_no_go_zone(self, topic: str) -> None:
         if topic not in self.no_go_zones:
@@ -574,8 +884,102 @@ class AllianceGraph:
         return propagated
 
     def v_ij_matrix(self) -> dict[tuple[str, str], float]:
-        """Return the full V_ij coupling matrix as {(src, tgt): v_ij}."""
-        return {(src, tgt): e.v_ij for (src, tgt), e in self._edges.items()}
+        """Return the base coupling matrix as {(src, tgt): v_coupling}.
+        Alias kept for backward compatibility; prefer relational_field_matrix()."""
+        return self.relational_field_matrix()
+
+    def relational_field_matrix(
+        self,
+        topic: str = "",
+    ) -> dict[tuple[str, str], float]:
+        """
+        Return the RelationalField coupling matrix (formerly V_ij matrix).
+
+        If ``topic`` is provided, returns per-topic coupling for that topic
+        cluster rather than the base v_coupling.  This enables scenario-specific
+        contagion routing (e.g., health topic → use topic_coupling["health"]).
+        """
+        if topic:
+            return {
+                (src, tgt): e.coupling_for_topic(topic)
+                for (src, tgt), e in self._edges.items()
+            }
+        return {(src, tgt): e.v_coupling for (src, tgt), e in self._edges.items()}
+
+    def update_coupling_from_belief_graphs(
+        self,
+        src_role: str,
+        tgt_role: str,
+        topic: str,
+        src_belief_confidence: float,
+        tgt_belief_confidence: float,
+        belief_text: str = "",
+    ) -> float:
+        """
+        Bidirectional belief–coupling update (BG4 ↔ COUP1).
+
+        When two parties hold different confidence levels about the same belief
+        on a shared topic, the divergence reduces topic-specific coupling.
+        Conversely, when they are aligned, coupling strengthens.
+
+        How it works:
+          divergence = |src_confidence − tgt_confidence|
+          → edge(src→tgt).update_coupling_from_belief_divergence(topic, divergence)
+          → edge(tgt→src).update_coupling_from_belief_divergence(topic, divergence)
+          (Both directions updated symmetrically — belief misalignment affects
+           both parties' receptivity to co-regulation on this topic.)
+
+        Parameters
+        ----------
+        src_role, tgt_role       : care circle member roles
+        topic                    : TOPIC_CLUSTERS key (e.g. "health")
+        src_belief_confidence    : src's confidence in the belief [0–1]
+        tgt_belief_confidence    : tgt's confidence in the same belief [0–1]
+        belief_text              : optional for logging
+
+        Returns
+        -------
+        float : computed divergence
+        """
+        divergence = abs(src_belief_confidence - tgt_belief_confidence)
+        # Update both directed edges
+        for s, t in [(src_role, tgt_role), (tgt_role, src_role)]:
+            edge = self.get_edge(s, t)
+            edge.update_coupling_from_belief_divergence(topic, divergence)
+        return divergence
+
+    def coupling_signal_for_belief_update(
+        self,
+        updated_role: str,
+        topic: str,
+        belief_shift: float,
+    ) -> dict[str, float]:
+        """
+        When a belief update occurs in ``updated_role``, propagate a
+        coupling-weighted influence signal to all other roles.
+
+        This is the inverse direction: belief change → coupling-mediated
+        influence on others' receptivity.  Used to hint peer companions
+        that their user may be more (or less) open to topic discussion.
+
+        Parameters
+        ----------
+        updated_role : the role whose belief changed
+        topic        : TOPIC_CLUSTERS key
+        belief_shift : signed shift in belief confidence (+ve = strengthened,
+                       −ve = weakened/abandoned)
+
+        Returns
+        -------
+        dict {role: influence_signal} — positive = more open to topic,
+                                        negative = more resistant
+        """
+        signals: dict[str, float] = {}
+        for (src, tgt), edge in self._edges.items():
+            if src == updated_role:
+                tc = edge.coupling_for_topic(topic)
+                signals[tgt] = round(tc * belief_shift, 4)
+        return signals
 
     # ── Prompt context injection ──────────────────────────────────────────────
 
@@ -586,16 +990,39 @@ class AllianceGraph:
         Covers:
           - companion→patient edge (primary therapeutic alliance)
           - patient→companion edge (how patient sees companion — inverse trust)
-          - dynamic V_ij coupling (physiological contagion risk)
-          - any pending ruptures
-          - no-go zones
+          - RelationalField coupling (physiological contagion risk) with topic hotspots
+          - relationship type, communication temperature, communication regime
+          - any pending ruptures, no-go zones
           - negotiation hints if other companions are in the circle
+          - vent_delta warning (SA1.6)
+          - belief divergence hint if present (BG4)
         """
         lines = ["[Alliance Context]"]
 
         # Primary: companion → patient
         cp_edge = self.get_edge(companion_role, patient_role)
         lines.append(f"Your alliance with {patient_role}: {cp_edge.to_prompt_context()}")
+
+        # Relationship structure
+        rel_type = cp_edge.relationship_type
+        if rel_type != RelationshipType.UNKNOWN.value:
+            lines.append(
+                f"Relationship type: {rel_type}  "
+                f"Temperature: {cp_edge.comm_temp}  "
+                f"Power: {'companion has authority' if cp_edge.power_asymmetry > 0.2 else 'patient has power' if cp_edge.power_asymmetry < -0.2 else 'peer'}"
+            )
+
+        # Communication regime
+        regime = cp_edge.detect_communication_regime()
+        if regime != "standard":
+            regime_hints = {
+                "cold_conflict":        "REGIME: Cold conflict — establish safety before any therapeutic work.",
+                "warm_collaborative":   "REGIME: Warm collaborative — full therapeutic range available.",
+                "professional_distant": "REGIME: Professional distance — match formal register, avoid over-familiarity.",
+                "enmeshed_flooded":     "REGIME: Enmeshed/flooded — de-escalate register, avoid emotional amplification.",
+                "guarded_negotiation":  "REGIME: Guarded negotiation — repair rupture before any new goal-setting.",
+            }
+            lines.append(regime_hints.get(regime, ""))
 
         # Inverse: patient → companion (how patient perceives you)
         pc_edge = self.get_edge(patient_role, companion_role)
@@ -604,16 +1031,38 @@ class AllianceGraph:
             f"rapport: {pc_edge.rapport:.0%}"
         )
 
-        # Dynamic coupling hint
-        if cp_edge.v_ij >= 0.65:
+        # RelationalField coupling hint (formerly V_ij)
+        vc = cp_edge.v_coupling
+        if vc >= 0.65:
             lines.append(
-                f"Co-regulation active (V={cp_edge.v_ij:.2f}): your calm will "
+                f"Co-regulation active (coupling={vc:.2f}): your calm will "
                 f"reduce patient stress effectively this session."
             )
-        elif cp_edge.v_ij <= 0.25:
+        elif vc <= 0.25:
             lines.append(
-                f"Low coupling (V={cp_edge.v_ij:.2f}): emotional signals transfer "
+                f"Low coupling (coupling={vc:.2f}): emotional signals transfer "
                 f"poorly — prioritise rapport repair before attempting de-escalation."
+            )
+
+        # Topic coupling hotspots — flag topics where coupling is unusually high or low
+        topic_flags = []
+        for t, tc in cp_edge.topic_coupling.items():
+            if tc > vc * 1.3:
+                topic_flags.append(f"{t}(HIGH:{tc:.2f})")
+            elif tc < vc * 0.6:
+                topic_flags.append(f"{t}(LOW:{tc:.2f})")
+        if topic_flags:
+            lines.append(f"Topic coupling hotspots: {', '.join(topic_flags)}")
+
+        # Belief divergence hint
+        if cp_edge.belief_divergence > 0.30:
+            top_divergent = sorted(
+                cp_edge.topic_belief_divergence.items(), key=lambda x: x[1], reverse=True
+            )[:2]
+            div_str = ", ".join(f"{t}({d:.0%})" for t, d in top_divergent)
+            lines.append(
+                f"Belief divergence warning ({cp_edge.belief_divergence:.0%} mean): "
+                f"highest on {div_str} — normalise_discrepancy before challenging."
             )
 
         # Other circle members the companion should be aware of
