@@ -1,4 +1,4 @@
-"""
+﻿"""
 social_alliance.py — Social Alliance Persistence Across Sessions
 ================================================================
 
@@ -49,21 +49,21 @@ DYNAMIC V_ij COUPLING → RELATIONAL FIELD
 ------------------------------------------
 Rename history:
   V_int  (inter-agent physio signal buffer)  → RelationalField
-  V_ij   (scalar coupling weight on an edge) → v_coupling (field on AllianceEdge)
+  V_ij   (scalar coupling weight on an edge) → coupling_tensor (field on AllianceEdge)
 
 "RelationalField" captures that coupling is multi-dimensional (per-topic),
 dynamic (evolves with belief alignment and interaction history), and directional.
 
-  v_coupling(t+1) = v_coupling(t) + ALPHA_V * (alliance_score - v_coupling) * Δt
+  coupling_tensor(t+1) = coupling_tensor(t) + ALPHA_V * (alliance_score - coupling_tensor) * Δt
   topic_coupling[topic] updated via belief divergence (ALPHA_BELIEF_COUPLING)
 
-  High v_coupling → co-regulation active (calming spreads efficiently).
-  Rupture → v_coupling falls → stress contagion dominates.
+  High coupling_tensor → co-regulation active (calming spreads efficiently).
+  Rupture → coupling_tensor falls → stress contagion dominates.
 
 RELATIONSHIP TYPES
 -------------------
 Each edge carries a RelationshipType (spouse, boss, best_friend, toxic_partner,
-clinician, …) that seeds default v_coupling, CommunicationTemp, and power_asymmetry.
+clinician, …) that seeds default coupling_tensor, CommunicationTemp, and power_asymmetry.
 
 COMMUNICATION TEMPERATURE
 --------------------------
@@ -107,7 +107,10 @@ import time
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tensornets.agents.belief_graph import BeliefGraph
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -163,7 +166,7 @@ class RelationshipType(str, Enum):
     ESTRANGED       = "estranged"        # historically close, currently cold
     CARER           = "carer"            # paid or informal care role
 
-# Coupling prior for each relationship type (seeds v_coupling at edge creation)
+# Coupling prior for each relationship type (seeds coupling_tensor at edge creation)
 _REL_COUPLING_PRIOR: dict[RelationshipType, float] = {
     RelationshipType.UNKNOWN:       0.50,
     RelationshipType.SPOUSE:        0.72,
@@ -257,7 +260,7 @@ TOPIC_CLUSTERS = [
     "future",           # plans, uncertainty, anticipatory anxiety
 ]
 
-# Default topic coupling multiplier relative to base v_coupling
+# Default topic coupling multiplier relative to base coupling_tensor
 # 1.0 = same as base, >1.0 = amplified, <1.0 = damped
 _DEFAULT_TOPIC_COUPLING_MULTIPLIER: dict[str, float] = {
     "health":        1.2,
@@ -274,11 +277,66 @@ _DEFAULT_TOPIC_COUPLING_MULTIPLIER: dict[str, float] = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RelationalField coupling parameters (formerly V_ij / V_int)
+# Conversational topic classifier
 # ─────────────────────────────────────────────────────────────────────────────
+# Maps surface keyword patterns → TOPIC_CLUSTERS keys.
+# This is a lightweight keyword heuristic, not an LLM call.
+# It is used by AllianceGraph.update_coupling_from_conversation() to
+# dynamically raise topic coupling when a topic is being actively discussed.
+
+_TOPIC_KEYWORDS: dict[str, list[str]] = {
+    "health":        ["medication", "doctor", "pain", "hospital", "blood pressure",
+                      "hrv", "symptoms", "diagnosis", "treatment", "checkup", "pills",
+                      "surgery", "chest", "breathe", "fatigue", "glucose"],
+    "mental_health": ["anxious", "anxiety", "depressed", "depression", "therapy",
+                      "panic", "trauma", "ptsd", "stress", "mental", "counsellor",
+                      "psychiatrist", "mood", "breakdown", "overwhelmed", "suicidal"],
+    "finances":      ["money", "debt", "loan", "afford", "bills", "salary", "job loss",
+                      "rent", "mortgage", "savings", "financial", "income", "cost"],
+    "family":        ["children", "kids", "parents", "mother", "father", "in-laws",
+                      "sibling", "brother", "sister", "family", "son", "daughter"],
+    "work":          ["job", "work", "boss", "colleague", "office", "career",
+                      "fired", "promotion", "deadline", "workplace", "resign"],
+    "intimacy":      ["close", "intimate", "affection", "together", "physical",
+                      "lonely", "distant", "connected", "sex", "touch", "cuddle"],
+    "conflict":      ["argument", "fight", "disagree", "angry", "furious", "upset",
+                      "blame", "yell", "scream", "hurt", "ignored", "dismissed",
+                      "conflict", "resent", "resentment", "unfair"],
+    "grief":         ["died", "death", "loss", "passed away", "miss", "grief",
+                      "funeral", "mourning", "bereave", "gone", "dead"],
+    "identity":      ["who i am", "my values", "believe", "identity", "purpose",
+                      "meaning", "worthless", "failure", "deserve", "belong"],
+    "future":        ["future", "worried about", "what if", "uncertain", "plan",
+                      "afraid of", "fear", "anticipate", "nervous about", "dreading"],
+}
+
+# How much to boost topic coupling when that topic is actively discussed
+_TOPIC_SALIENCE_BOOST:    float = 0.04   # per detected mention
+_TOPIC_SALIENCE_MAX:      float = 0.20   # max single-turn boost
+# Conflict adds an extra multiplier on top (conflict amplifies coupling fastest)
+_CONFLICT_BOOST_FACTOR:   float = 1.60
+
+
+def detect_topic_from_text(text: str, language: str = "") -> dict[str, float]:
+    """Language-agnostic topic detection via LLM (observation_uncertainty.detect_topic_llm).
+
+    The keyword-based approach has been removed.  It was English-only, missed idioms,
+    failed on code-switching, and was unacceptable hardcoding for a multilingual product.
+
+    All detection is now done by a single lightweight Scout call that understands
+    all languages and scripts natively.  Falls back to empty dict on any error.
+    The ``language`` parameter is accepted for backward-compatibility but ignored
+    (the LLM handles multilingual text automatically without routing).
+    """
+    try:
+        from tensornets.agents.observation_uncertainty import detect_topic_llm
+        return detect_topic_llm(text)
+    except Exception:
+        return {}
+
 # Rename history:
 #   V_int  (inter-agent physio signal buffer)  → RelationalField
-#   V_ij   (scalar coupling weight on an edge) → v_coupling / topic_coupling
+#   V_ij   (scalar coupling weight on an edge) → coupling_tensor / topic_coupling
 #
 # "RelationalField" better captures that the coupling is:
 #   (a) multi-dimensional (per-topic, not a single scalar)
@@ -301,7 +359,7 @@ CONTAGION_POSITIVE_MULTIPLIER = 1.0
 ALPHA_BELIEF_COUPLING = 0.03  # per turn when belief_divergence > 0.3
 
 # Backward-compatible alias so existing code referencing V_ij still imports
-V_ij = V_TARGET   # alias for constants; use v_coupling field on AllianceEdge
+V_ij = V_TARGET   # alias for constants; use coupling_tensor field on AllianceEdge
 
 
 
@@ -362,7 +420,7 @@ class AllianceEdge:
      because the patient is the vulnerable party.)
 
     RelationalField dimensions (formerly V_ij / V_int):
-      v_coupling     scalar coupling (base, relationship-type seeded)
+      coupling_tensor    scalar coupling (base, relationship-type seeded)
       topic_coupling per-topic coupling multipliers (health, conflict, etc.)
 
     Communication dimensions:
@@ -385,9 +443,9 @@ class AllianceEdge:
     no_go_zones:      list  = field(default_factory=list)
     disclosure_level: int   = DISCLOSURE_NONE
 
-    # RelationalField: coupling (formerly V_ij)
-    v_coupling:       float = V_TARGET
-    # Per-topic coupling (multipliers relative to v_coupling)
+    # RelationalField: coupling_tensor (formerly V_ij / v_coupling)
+    coupling_tensor:      float = V_TARGET
+    # Per-topic coupling (multipliers relative to coupling_tensor)
     # Keys: TOPIC_CLUSTERS items.  Seeded from relationship type defaults.
     topic_coupling:   dict  = field(default_factory=dict)
 
@@ -419,21 +477,44 @@ class AllianceEdge:
     perceived_rapport: float = DEFAULT_RAPPORT
     vent_delta:        float = 0.0   # direct_rapport - perceived_rapport
 
+    # Topic salience model — two orthogonal dimensions:
+    #
+    # topic_engagement[topic]: how actively this topic has been discussed
+    #   recently (decays per session; rises when topic appears in conversation).
+    #   High engagement = topic is salient in the relationship right now.
+    #   This is conversational *frequency*, not agreement.
+    #
+    # topic_alignment[topic]: how much src and tgt AGREE on this topic.
+    #   Range [-1, +1].  +1 = full agreement, 0 = neutral/unknown, -1 = disagreement.
+    #   Updated by the A3CScorer "convergence" signal and BeliefGraph divergence.
+    #   High alignment on a topic → coupling rises for that topic.
+    #   Low alignment (disagreement) → coupling is maintained or reduced.
+    #
+    # Separation rationale:
+    #   Engagement alone (per-turn keyword match) is a poor proxy for coupling —
+    #   arguing *about* a topic is high engagement but should NOT raise coupling
+    #   in the cooperative sense.  The coupling update therefore combines both:
+    #     effective_coupling[topic] = base_coupling
+    #       × engagement_weight(topic_engagement[topic])
+    #       × alignment_weight(topic_alignment[topic])
+    topic_engagement:  dict = field(default_factory=dict)   # topic → float [0,1]
+    topic_alignment:   dict = field(default_factory=dict)   # topic → float [-1,+1]
+
     def __post_init__(self) -> None:
         """Seed coupling and communication fields from relationship_type priors."""
         rel = RelationshipType(self.relationship_type) if isinstance(
             self.relationship_type, str
         ) else self.relationship_type
         # Only seed if still at default (allows explicit overrides in tests/fixtures)
-        if self.v_coupling == V_TARGET:
-            self.v_coupling = _REL_COUPLING_PRIOR.get(rel, V_TARGET)
+        if self.coupling_tensor == V_TARGET:
+            self.coupling_tensor = _REL_COUPLING_PRIOR.get(rel, V_TARGET)
         if self.comm_temp == CommunicationTemp.NEUTRAL.value:
             self.comm_temp = _REL_TEMP_PRIOR.get(rel, CommunicationTemp.NEUTRAL).value
         if self.power_asymmetry == 0.0:
             self.power_asymmetry = _REL_POWER_ASYMMETRY.get(rel, 0.0)
         # Seed topic_coupling from relationship defaults if empty
         if not self.topic_coupling:
-            base = self.v_coupling
+            base = self.coupling_tensor
             self.topic_coupling = {
                 t: round(base * _DEFAULT_TOPIC_COUPLING_MULTIPLIER.get(t, 1.0), 4)
                 for t in TOPIC_CLUSTERS
@@ -443,12 +524,12 @@ class AllianceEdge:
 
     @property
     def v_ij(self) -> float:
-        """Backward-compatible alias for v_coupling."""
-        return self.v_coupling
+        """Backward-compatible alias for coupling_tensor (formerly V_ij → v_coupling → coupling_tensor)."""
+        return self.coupling_tensor
 
     @v_ij.setter
     def v_ij(self, value: float) -> None:
-        self.v_coupling = value
+        self.coupling_tensor = value
 
     # ── Computed properties ───────────────────────────────────────────────────
 
@@ -517,27 +598,40 @@ class AllianceEdge:
         self.trust   = max(0.0, self.trust   - decay * 0.8)
         self._recompute_alliance()
 
-    def update_v_ij(self) -> None:
+    def advance_relational_field(self) -> None:
         """
-        Move the RelationalField coupling one step toward current alliance_score.
-        (Formerly update_v_ij; coupling field is now v_coupling.)
+        Step the RelationalField coupling_tensor toward current alliance_score.
 
-        Called once per episode after update_from_episode().
-        v_coupling > V_TARGET → co-regulation is active (calming spreads efficiently).
-        v_coupling < V_TARGET → stress contagion dominates (rupture state).
-        Also updates topic_coupling proportionally.
+        This is the discrete-time update equation:
+            coupling_tensor(t+1) = coupling_tensor(t) + ALPHA_V * (alliance_score - coupling_tensor(t))
+
+        Called once per episode end, AFTER update_from_episode(), so alliance_score
+        already reflects the episode outcome.
+
+        - coupling_tensor > V_TARGET: co-regulation is active; calming propagates.
+        - coupling_tensor < V_TARGET: stress contagion dominates; rupture state.
+
+        Also scales all topic_coupling values proportionally so relative topic
+        weights are preserved across the update.
+
+        Formerly: update_v_ij() (V_ij -> v_coupling -> coupling_tensor rename chain).
         """
         new_base = max(V_MIN, min(V_MAX,
-            self.v_coupling + ALPHA_V * (self.alliance_score - self.v_coupling)
+            self.coupling_tensor + ALPHA_V * (self.alliance_score - self.coupling_tensor)
         ))
         # Scale topic couplings proportionally (preserve relative topic weights)
-        if self.v_coupling > 0:
-            scale = new_base / self.v_coupling
+        if self.coupling_tensor > 0:
+            scale = new_base / self.coupling_tensor
             self.topic_coupling = {
                 t: round(max(V_MIN, min(V_MAX, v * scale)), 4)
                 for t, v in self.topic_coupling.items()
             }
-        self.v_coupling = round(new_base, 4)
+        self.coupling_tensor = round(new_base, 4)
+
+    # Backward-compat alias
+    def update_v_ij(self) -> None:  # noqa: D102
+        """Backward-compatible alias for advance_relational_field()."""
+        return self.advance_relational_field()
 
     def update_coupling_from_belief_divergence(
         self,
@@ -563,7 +657,7 @@ class AllianceEdge:
         self.topic_coupling[topic] and self.belief_divergence (mean)
         """
         if topic not in self.topic_coupling:
-            self.topic_coupling[topic] = self.v_coupling
+            self.topic_coupling[topic] = self.coupling_tensor
         # Alignment signal: +delta when aligned, −delta when divergent
         alignment = 1.0 - belief_divergence
         delta = ALPHA_BELIEF_COUPLING * (alignment - 0.5)
@@ -578,8 +672,107 @@ class AllianceEdge:
             )
 
     def coupling_for_topic(self, topic: str) -> float:
-        """Return the effective coupling for a given topic (falls back to v_coupling)."""
-        return self.topic_coupling.get(topic, self.v_coupling)
+        """Return the effective coupling for a given topic (falls back to coupling_tensor)."""
+        return self.topic_coupling.get(topic, self.coupling_tensor)
+
+    def update_coupling_from_belief_turn(
+        self,
+        belief_nodes: list,
+        patient_text: str,
+        companion_response: str,
+        llm_fn,
+        alpha: float = 0.04,
+    ) -> dict:
+        """
+        LLM-driven belief-node topic coupling update (Exp 22).
+
+        Replaces the keyword → TOPIC_CLUSTERS heuristic with a single Scout
+        call that:
+          1. Identifies which of the patient's current belief nodes are *active*
+             in this turn (patient_text touches or implies the belief).
+          2. Scores the companion_response alignment for each active belief:
+               +1  reinforces / validates the belief
+                0  neutral / does not address it
+               -1  challenges / contradicts the belief
+          3. Updates topic_engagement[belief_id] and topic_alignment[belief_id]
+             (same EWA dynamics as the category-based path).
+
+        The belief node's ``text`` field (e.g. "I am a burden to my family")
+        is used directly as the topic key — no mapping to TOPIC_CLUSTERS needed.
+
+        Parameters
+        ----------
+        belief_nodes      : list of BeliefNode (from BeliefGraph.get_active_nodes())
+        patient_text      : latest patient utterance
+        companion_response: companion's reply this turn
+        llm_fn            : callable(prompt: str) → str (Scout synchronous wrapper)
+        alpha             : engagement salience boost per detected belief
+
+        Returns
+        -------
+        dict mapping belief_id → {"engaged": bool, "alignment": int}
+        """
+        if not belief_nodes:
+            return {}
+
+        # Build a compact belief list for the LLM
+        belief_lines = "\n".join(
+            f'  [{i+1}] id={b.id[:8]} conf={b.confidence:.2f} '
+            f'identity={"yes" if b.identity_linked else "no"}: "{b.text}"'
+            for i, b in enumerate(belief_nodes)
+        )
+
+        prompt = (
+            f"You are analysing a care conversation turn.\n\n"
+            f"PATIENT SAID: \"{patient_text}\"\n"
+            f"COMPANION REPLIED: \"{companion_response}\"\n\n"
+            f"PATIENT'S KNOWN BELIEFS:\n{belief_lines}\n\n"
+            f"For each belief, answer:\n"
+            f"  engaged: true if the patient's message touches or implies this belief, "
+            f"false if unrelated.\n"
+            f"  alignment: +1 if the companion's reply reinforces/validates the belief, "
+            f"-1 if it challenges/contradicts it, 0 if neutral or not addressed.\n\n"
+            f"Respond ONLY with a JSON array, one object per belief in the same order:\n"
+            f'[{{"id":"<first 8 chars>","engaged":true/false,"alignment":-1/0/+1}}, ...]\n'
+            f"No extra text."
+        )
+
+        result: dict = {}
+        try:
+            raw = llm_fn(prompt)
+            # Parse JSON array from LLM reply
+            import json as _json, re as _re
+            match = _re.search(r"\[[\s\S]*?\]", raw)
+            if match:
+                items = _json.loads(match.group(0))
+                for item, node in zip(items, belief_nodes):
+                    engaged   = bool(item.get("engaged", False))
+                    alignment = int(item.get("alignment", 0))
+                    bid       = node.id
+
+                    if engaged:
+                        old_eng = self.topic_engagement.get(bid, 0.0)
+                        self.topic_engagement[bid] = round(
+                            min(1.0, old_eng + alpha), 4
+                        )
+                        # Update topic_alignment with EWA toward new signal
+                        old_aln = self.topic_alignment.get(bid, 0.0)
+                        self.topic_alignment[bid] = round(
+                            0.85 * old_aln + 0.15 * alignment, 4
+                        )
+                        # topic_coupling for this belief key
+                        if bid not in self.topic_coupling:
+                            self.topic_coupling[bid] = self.coupling_tensor
+                        aln_frac = (alignment + 1) / 2.0   # map [-1,+1] → [0,1]
+                        delta = ALPHA_BELIEF_COUPLING * (aln_frac - 0.5) * 2
+                        self.topic_coupling[bid] = round(
+                            max(V_MIN, min(V_MAX, self.topic_coupling[bid] + delta)), 4
+                        )
+                    result[bid] = {"engaged": engaged, "alignment": alignment}
+        except Exception:
+            pass  # non-fatal — falls back to previous coupling values
+
+        return result
 
     def detect_communication_regime(self) -> str:
         """
@@ -595,7 +788,7 @@ class AllianceEdge:
         """
         if self.rupture_pending and self.negotiation_style in ("avoidant", "aggressive"):
             return "guarded_negotiation"
-        if self.comm_temp == CommunicationTemp.HOT.value and self.v_coupling > 0.65:
+        if self.comm_temp == CommunicationTemp.HOT.value and self.coupling_tensor > 0.65:
             return "enmeshed_flooded"
         if self.comm_temp == CommunicationTemp.COLD.value and abs(self.power_asymmetry) > 0.3:
             return "professional_distant"
@@ -612,7 +805,7 @@ class AllianceEdge:
         Compute the stress delta that src's emotional state propagates to tgt.
 
         If ``topic`` is provided, uses the per-topic coupling; otherwise uses
-        the base v_coupling.
+        the base coupling_tensor.
 
         Negative emotion (panic/fear: Δstress > 0) spreads at 1.5× the rate
         of positive emotion (calm: Δstress < 0), matching empirical contagion
@@ -627,13 +820,105 @@ class AllianceEdge:
         -------
         float : suggested Δstress to add to tgt (can be positive or negative)
         """
-        coupling = self.coupling_for_topic(topic) if topic else self.v_coupling
+        coupling = self.coupling_for_topic(topic) if topic else self.coupling_tensor
         multiplier = (CONTAGION_NEGATIVE_MULTIPLIER if src_stress_delta > 0
                       else CONTAGION_POSITIVE_MULTIPLIER)
         return coupling * src_stress_delta * multiplier
 
     def add_no_go_zone(self, topic: str) -> None:
         if topic not in self.no_go_zones:
+            self.no_go_zones.append(topic)
+
+    def update_coupling_from_conversation(
+        self,
+        topic_saliences: dict[str, float],
+        conflict_detected: bool = False,
+        alignment_signals: dict[str, float] | None = None,
+    ) -> None:
+        """Update topic engagement and recompute topic coupling from both axes.
+
+        Separates two orthogonal signals:
+
+        1. **Topic engagement** (``topic_saliences``):
+           How actively is the topic being *mentioned* this turn?
+           Rises when keywords appear; decays each session.
+           Does NOT directly raise coupling — it is a *salience weight* only.
+
+        2. **Topic alignment** (``alignment_signals``):
+           Do src and tgt *agree* on this topic? Range [-1, +1].
+           Positive alignment → coupling rises toward (base × engagement).
+           Negative alignment (disagreement/conflict) → coupling stays flat
+           or falls, even if engagement is high.
+
+        Parameters
+        ----------
+        topic_saliences   : output of detect_topic_from_text() — {topic: 0–0.20}
+        conflict_detected : True when A3C scorer flagged a rupture this turn.
+                            Forces alignment_signal["conflict"] = −0.30 if not set.
+        alignment_signals : optional override of alignment per topic {topic: -1..+1}.
+                            If omitted, existing topic_alignment values are used
+                            (suitable for within-session continuity).
+        """
+        # Merge explicit alignment overrides with conflict signal
+        alignment = dict(self.topic_alignment)
+        if alignment_signals:
+            alignment.update(alignment_signals)
+        if conflict_detected:
+            # Conflict in this turn degrades alignment on the conflict topic
+            current_ca = alignment.get("conflict", 0.0)
+            alignment["conflict"] = round(max(-1.0, current_ca - 0.25), 4)
+
+        # Update topic_engagement (salience: rises on mention, bounded [0,1])
+        _ENGAGEMENT_DECAY = 0.92   # applied per session, not per turn
+        for topic, boost in topic_saliences.items():
+            old_eng = self.topic_engagement.get(topic, 0.0)
+            self.topic_engagement[topic] = round(min(1.0, old_eng + boost), 4)
+
+        # Update topic_alignment from incoming signals
+        self.topic_alignment = {
+            t: round(max(-1.0, min(1.0, v)), 4)
+            for t, v in alignment.items()
+        }
+
+        # Recompute topic_coupling from engagement × alignment
+        # coupling(topic) = base_coupling_tensor
+        #     × (1 + engagement_weight × alignment_factor)
+        # alignment_factor: +1 fully cooperative → multiplier = 1 + 0.5×engagement
+        #                   0  neutral           → multiplier = 1.0
+        #                   -1 full conflict     → multiplier = max(0.5, 1 − 0.3×engagement)
+        for topic in set(list(self.topic_engagement.keys()) +
+                         list(self.topic_coupling.keys())):
+            eng  = self.topic_engagement.get(topic, 0.0)
+            aln  = self.topic_alignment.get(topic, 0.0)   # -1..+1
+            base = self.coupling_tensor
+            if aln >= 0:
+                # Agreement or neutral: engagement boosts coupling
+                factor = 1.0 + (0.50 * eng * aln)
+            else:
+                # Disagreement: engagement inflames but alignment suppresses
+                # Net effect: coupling may drop slightly under active conflict
+                factor = max(0.50, 1.0 + (0.30 * eng * aln))
+
+            # Apply relationship-type default multiplier on top
+            rel_mult = _DEFAULT_TOPIC_COUPLING_MULTIPLIER.get(topic, 1.0)
+            if conflict_detected and topic == "conflict":
+                rel_mult *= _CONFLICT_BOOST_FACTOR
+
+            self.topic_coupling[topic] = round(
+                min(V_MAX, max(V_MIN, base * factor * rel_mult)), 4
+            )
+
+        # Recompute base coupling_tensor as engagement-weighted mean of topic couplings
+        if self.topic_coupling:
+            weights = [self.topic_engagement.get(t, 0.1) for t in self.topic_coupling]
+            total_w = sum(weights) or 1.0
+            self.coupling_tensor = round(
+                min(V_MAX, sum(
+                    v * self.topic_engagement.get(t, 0.1)
+                    for t, v in self.topic_coupling.items()
+                ) / total_w),
+                4,
+            )
             self.no_go_zones.append(topic)
 
     def advance_disclosure(self) -> None:
@@ -850,6 +1135,177 @@ class AllianceGraph:
             return None
         return min(edges, key=lambda x: x[1].alliance_score)
 
+    # ── N-member network analysis ─────────────────────────────────────────────
+    # The graph supports any number of members, not just 2.
+    # These methods operate on the full directed graph and provide:
+    #   - Network-wide stress propagation (cascade, not just pairwise)
+    #   - Trust centrality (who is the hub of the care circle?)
+    #   - Topic alignment across all N parties simultaneously
+    #   - Coalition detection (subsets with high mutual alignment)
+
+    def trust_centrality(self) -> dict[str, float]:
+        """
+        Compute trust centrality for every role in the circle.
+
+        Centrality = mean trust ALL others place IN this role.
+        The most central role is the one whose views carry most weight
+        in multi-party decisions and who should be the primary escalation
+        point when the care circle disagrees.
+
+        Returns
+        -------
+        dict[str, float] : {role: centrality_score [0,1]}
+        """
+        roles = self.all_roles()
+        scores: dict[str, float] = {}
+        for role in roles:
+            incoming = [
+                e.trust
+                for (src, tgt), e in self._edges.items()
+                if tgt == role
+            ]
+            scores[role] = round(sum(incoming) / len(incoming), 4) if incoming else 0.0
+        return scores
+
+    def network_stress_cascade(
+        self,
+        stressed_role: str,
+        stress_delta:  float,
+        depth:         int = 2,
+    ) -> dict[str, float]:
+        """
+        Multi-hop stress propagation through the full care circle graph.
+
+        Unlike `circle_stress_propagation` (one hop), this follows stress
+        through the network up to `depth` hops.  With 3+ members:
+          patient → caregiver (hop 1)
+          caregiver → clinician (hop 2, attenuated by caregiver coupling)
+
+        This models the clinical reality that a patient's crisis can
+        exhaust the caregiver (hop 1), who then becomes less effective
+        as a support system for the patient (feedback loop — not modelled
+        here, but visible in the returned dict).
+
+        Parameters
+        ----------
+        stressed_role : the role whose stress changed
+        stress_delta  : signed change in stress (positive = more stressed)
+        depth         : maximum propagation hops (default 2; 3+ is rarely needed)
+
+        Returns
+        -------
+        dict[str, float] : {role: cumulative_stress_delta} for all affected roles
+        """
+        accumulated: dict[str, float] = {}
+        frontier: list[tuple[str, float]] = [(stressed_role, stress_delta)]
+        visited: set[str] = {stressed_role}
+
+        for _ in range(depth):
+            next_frontier: list[tuple[str, float]] = []
+            for src, delta in frontier:
+                for (s, tgt), edge in self._edges.items():
+                    if s != src or tgt in visited:
+                        continue
+                    propagated = edge.stress_contagion_delta(delta)
+                    if abs(propagated) < 0.005:   # below noise floor
+                        continue
+                    accumulated[tgt] = round(
+                        accumulated.get(tgt, 0.0) + propagated, 4
+                    )
+                    next_frontier.append((tgt, propagated))
+                    visited.add(tgt)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return accumulated
+
+    def topic_alignment_matrix(
+        self,
+        topic: str,
+    ) -> dict[tuple[str, str], float]:
+        """
+        Return pairwise topic alignment scores for all edges on a given topic.
+
+        A positive score means the two roles tend to *agree* when this topic
+        comes up.  Negative means they typically diverge or conflict.
+
+        This is the network-level view needed to detect:
+          - Coalitions: clusters of roles with high mutual alignment
+          - Fault lines: role pairs that consistently misalign on this topic
+          - Bridge roles: roles with positive alignment to both sides of a fault
+
+        Returns {(src, tgt): alignment_score [-1..+1]}
+        """
+        return {
+            (src, tgt): e.topic_alignment.get(topic, 0.0)
+            for (src, tgt), e in self._edges.items()
+        }
+
+    def detect_coalitions(
+        self,
+        topic: str,
+        alignment_threshold: float = 0.3,
+    ) -> list[frozenset[str]]:
+        """
+        Find clusters of roles with mutual positive alignment on a topic.
+
+        A coalition is a set of roles where every pair has topic_alignment ≥
+        threshold.  Coalitions matter because:
+          - Within a coalition: stress co-regulation is efficient (shared model)
+          - Across a fault line: the companion must bridge, not take sides
+
+        Uses a greedy clique-finding algorithm (adequate for care circles of 3–8).
+
+        Returns list of frozensets of role names.
+        """
+        roles = self.all_roles()
+        coalitions: list[frozenset[str]] = []
+
+        def _mutually_aligned(group: set[str]) -> bool:
+            for r1 in group:
+                for r2 in group:
+                    if r1 == r2:
+                        continue
+                    aln = self.get_edge(r1, r2).topic_alignment.get(topic, 0.0)
+                    if aln < alignment_threshold:
+                        return False
+            return True
+
+        # Try all subsets of size ≥ 2
+        from itertools import combinations
+        for size in range(len(roles), 1, -1):
+            for subset in combinations(roles, size):
+                candidate = set(subset)
+                if _mutually_aligned(candidate):
+                    fs = frozenset(candidate)
+                    if not any(fs <= c for c in coalitions):
+                        coalitions.append(fs)
+
+        return coalitions
+
+    def dominant_narrative(self, topic: str) -> str | None:
+        """
+        Which role has the highest trust centrality AND positive alignment on
+        this topic?  This role's framing of the topic is most likely to be
+        accepted by the rest of the circle.
+
+        The companion should align with this role's framing when introducing
+        the topic — it is the path of least resistance for change.
+        Returns None if no role is clearly dominant.
+        """
+        centrality = self.trust_centrality()
+        candidates = [
+            (role, score * (1 + self.get_edge(role, "patient")
+                             .topic_alignment.get(topic, 0.0)))
+            for role, score in centrality.items()
+            if role != "patient"
+        ]
+        if not candidates:
+            return None
+        best_role, best_score = max(candidates, key=lambda x: x[1])
+        return best_role if best_score > 0.3 else None
+
     def rupture_summary(self) -> list[dict]:
         """Return all pending ruptures with context."""
         return [
@@ -858,6 +1314,40 @@ class AllianceGraph:
             for (src, tgt), e in self._edges.items()
             if e.rupture_pending
         ]
+
+    def coupling_weighted_belief_boost(
+        self,
+        source_role:   str,
+        target_role:   str = "patient",
+        topic:         str = "",
+    ) -> float:
+        """BG5-COUPLING: Return a belief relevance boost for `source_role`'s beliefs
+        when selecting what to show in the target (patient) companion's context.
+
+        High coupling_tensor from source → patient means the source's beliefs
+        and emotional state influence the patient strongly.  Their stated beliefs
+        are therefore more relevant to the companion's strategy:
+          - If source is caregiver with high coupling_tensor, the companion should
+            know what the caregiver believes about the topic — it will shape the
+            patient's reaction.
+          - If source has low coupling_tensor, their beliefs have less influence
+            on the patient's state and can be deprioritised.
+
+        Returns a float in [0.0, 1.0]:
+          - 0.0  : source is not in the circle or has no edge to patient
+          - 0.5  : average coupling (V_TARGET)
+          - 1.0  : maximum coupling (V_MAX)
+        """
+        if source_role == target_role:
+            return 0.5   # self-reference is neutral
+        edge = self.get_edge(source_role, target_role)
+        if edge is None:
+            return 0.0
+        ct = edge.coupling_for_topic(topic) if topic else edge.coupling_tensor
+        # Normalise to [0, 1] using V_MIN/V_MAX
+        return round(
+            max(0.0, min(1.0, (ct - V_MIN) / max(V_MAX - V_MIN, 1e-6))), 4
+        )
 
     def circle_stress_propagation(
         self,
@@ -884,7 +1374,7 @@ class AllianceGraph:
         return propagated
 
     def v_ij_matrix(self) -> dict[tuple[str, str], float]:
-        """Return the base coupling matrix as {(src, tgt): v_coupling}.
+        """Return the base coupling_tensor matrix as {(src, tgt): coupling_tensor}.
         Alias kept for backward compatibility; prefer relational_field_matrix()."""
         return self.relational_field_matrix()
 
@@ -893,10 +1383,10 @@ class AllianceGraph:
         topic: str = "",
     ) -> dict[tuple[str, str], float]:
         """
-        Return the RelationalField coupling matrix (formerly V_ij matrix).
+        Return the RelationalField coupling_tensor matrix (formerly V_ij matrix).
 
         If ``topic`` is provided, returns per-topic coupling for that topic
-        cluster rather than the base v_coupling.  This enables scenario-specific
+        cluster rather than the base coupling_tensor.  This enables scenario-specific
         contagion routing (e.g., health topic → use topic_coupling["health"]).
         """
         if topic:
@@ -904,7 +1394,7 @@ class AllianceGraph:
                 (src, tgt): e.coupling_for_topic(topic)
                 for (src, tgt), e in self._edges.items()
             }
-        return {(src, tgt): e.v_coupling for (src, tgt), e in self._edges.items()}
+        return {(src, tgt): e.coupling_tensor for (src, tgt), e in self._edges.items()}
 
     def update_coupling_from_belief_graphs(
         self,
@@ -983,9 +1473,82 @@ class AllianceGraph:
 
     # ── Prompt context injection ──────────────────────────────────────────────
 
-    def prompt_context_for(self, companion_role: str, patient_role: str = "patient") -> str:
+    def update_topic_coupling_from_turn(
+        self,
+        speaker_role: str,
+        listener_role: str,
+        text: str,
+        conflict_detected: bool = False,
+        alignment_signals: dict[str, float] | None = None,
+    ) -> dict[str, float]:
+        """
+        Update topic coupling on the speaker→listener edge based on conversational
+        content and, optionally, explicit topic alignment signals.
+
+        Two-axis model:
+          engagement  — what topics are being talked about (from text keywords)
+          alignment   — are the parties agreeing or disagreeing on those topics
+
+        High engagement + positive alignment → coupling rises for that topic.
+        High engagement + negative alignment → coupling stays flat or falls
+        (arguing about health is not the same as co-regulating around health).
+
+        Parameters
+        ----------
+        speaker_role      : who produced this utterance
+        listener_role     : who received it
+        text              : the utterance text (used for keyword-based topic detection)
+        conflict_detected : True when scorer flagged rupture/critical_failure this turn
+        alignment_signals : optional {topic: -1..+1} — explicit agreement scores
+                            from A3CScorer "convergence" or BeliefGraph comparison.
+                            If None, per-edge accumulated topic_alignment is used.
+
+        Returns
+        -------
+        dict[str, float] : {topic: salience_score} for logging / debugging
+        """
+        saliences = detect_topic_from_text(text)
+        if not saliences and not conflict_detected:
+            return {}
+
+        # Primary direction: speaker → listener
+        fwd_edge = self.get_edge(speaker_role, listener_role)
+        fwd_edge.update_coupling_from_conversation(
+            topic_saliences   = saliences,
+            conflict_detected = conflict_detected,
+            alignment_signals = alignment_signals,
+        )
+
+        # Echo direction: listener → speaker at half engagement weight
+        # Alignment is shared (symmetric); engagement echo is 0.5×
+        echo_saliences = {t: round(s * 0.5, 4) for t, s in saliences.items()}
+        rev_edge = self.get_edge(listener_role, speaker_role)
+        rev_edge.update_coupling_from_conversation(
+            topic_saliences   = echo_saliences,
+            conflict_detected = conflict_detected,
+            alignment_signals = alignment_signals,   # same agreement signal
+        )
+
+        return saliences
+
+    # ── Prompt context injection ──────────────────────────────────────────────
+
+    def prompt_context_for(
+        self,
+        companion_role:  str,
+        patient_role:    str                     = "patient",
+        belief_graph:    "Optional[BeliefGraph]" = None,
+        current_action:  str                     = "",
+        stress_index:    float                   = 0.5,
+    ) -> str:
         """
         Generate the alliance context block to inject into a companion's system prompt.
+
+        When ``belief_graph`` is supplied, ``current_action`` and ``stress_index``
+        are forwarded to ``belief_graph.prompt_context()`` for BG4/BG5 context-aware
+        belief relevance selection (topic gating, action gating, contradiction hints).
+        At episode start these are empty/0.5 (no action chosen yet); at turn level
+        they can be passed in for richer, action-specific belief hints.
 
         Covers:
           - companion→patient edge (primary therapeutic alliance)
@@ -1031,8 +1594,8 @@ class AllianceGraph:
             f"rapport: {pc_edge.rapport:.0%}"
         )
 
-        # RelationalField coupling hint (formerly V_ij)
-        vc = cp_edge.v_coupling
+        # RelationalField coupling_tensor hint (formerly V_ij → v_coupling → coupling_tensor)
+        vc = cp_edge.coupling_tensor
         if vc >= 0.65:
             lines.append(
                 f"Co-regulation active (coupling={vc:.2f}): your calm will "
@@ -1064,6 +1627,62 @@ class AllianceGraph:
                 f"Belief divergence warning ({cp_edge.belief_divergence:.0%} mean): "
                 f"highest on {div_str} — normalise_discrepancy before challenging."
             )
+
+        # ── N-member circle analysis ───────────────────────────────────────────
+        # This block runs only when the circle has 3 or more members, providing
+        # coalition and centrality signals the companion needs for navigation.
+        all_roles = self.all_roles()
+        if len(all_roles) >= 3:
+            # Who is the most trusted hub in the circle? (potential anchor)
+            centrality = self.trust_centrality()
+            if centrality:
+                hub_role, hub_score = max(centrality.items(), key=lambda x: x[1])
+                if hub_role not in (companion_role, patient_role) and hub_score > 0.5:
+                    lines.append(
+                        f"Circle hub: {hub_role} (centrality={hub_score:.0%}) — "
+                        f"most likely to influence {patient_role}. "
+                        f"Enlist {hub_role} as co-regulator when facing resistance."
+                    )
+
+            # Coalition hints: are there aligned subsets on the most active topic?
+            # Find the topic with highest combined engagement across edges
+            topic_total_eng: dict[str, float] = {}
+            for (src, tgt), e in self._edges.items():
+                for t, eng in e.topic_engagement.items():
+                    topic_total_eng[t] = topic_total_eng.get(t, 0.0) + eng
+            if topic_total_eng:
+                hot_topic = max(topic_total_eng, key=lambda t: topic_total_eng[t])
+                coalitions = self.detect_coalitions(hot_topic)
+                if coalitions:
+                    for coalition in coalitions[:2]:
+                        members = sorted(coalition)
+                        if patient_role in coalition:
+                            lines.append(
+                                f"Coalition on '{hot_topic}': "
+                                f"{', '.join(members)} share aligned views — "
+                                f"leverage shared frame rather than individual persuasion."
+                            )
+                        elif companion_role not in coalition:
+                            lines.append(
+                                f"Possible faction on '{hot_topic}': "
+                                f"{', '.join(members)} hold aligned views that exclude you. "
+                                f"Bridge before challenging."
+                            )
+
+            # Network stress cascade warning: if patient is stressed, who else will be?
+            # Only warn when patient stress is likely elevated (proxied by alliance score)
+            if cp_edge.alliance_score < 0.40:
+                cascade = self.network_stress_cascade("patient", stress_delta=0.20)
+                at_risk = [(r, d) for r, d in cascade.items() if d > 0.06]
+                if at_risk:
+                    at_risk_str = ", ".join(
+                        f"{r}(+{d:.2f})" for r, d in sorted(at_risk, key=lambda x: -x[1])
+                    )
+                    lines.append(
+                        f"Stress cascade risk: if patient escalates, "
+                        f"these roles may be pulled in: {at_risk_str}. "
+                        f"Consider circle stabilisation before individual work."
+                    )
 
         # Other circle members the companion should be aware of
         other_roles = [
@@ -1113,6 +1732,16 @@ class AllianceGraph:
         if pc_edge.no_go_zones:
             ngo = ", ".join(pc_edge.no_go_zones[:3])
             lines.append(f"Direct-channel no-go zones: [{ngo}] — raised negative vent responses.")
+
+        # BG1-BG3: BeliefGraph integration — inject safe/risky belief hints
+        if belief_graph is not None and belief_graph.nodes:
+            bg_hint = belief_graph.prompt_context(
+                max_nodes      = 4,
+                current_action = current_action,
+                stress_index   = stress_index,
+            )
+            if bg_hint:
+                lines.append(bg_hint)
 
         return "\n".join(lines)
 

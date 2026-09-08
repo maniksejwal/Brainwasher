@@ -931,6 +931,27 @@ class MCTSActionIn(BaseModel):
     #   threat_level (float, 0–1) — patient's subjective worst-case probability
     #   event_type   (str)  — label for logging ("exam", "diagnosis", "procedure", ...)
     pending_event:           dict  = {}
+    # AS2 / AS3 axis gating — passed from worker alongside physio_state.
+    # session_count: number of sessions with this specific companion (not total sessions).
+    #   Used to gate paradoxical interventions (AS2): require ≥ 3 sessions.
+    # reflex_detected: True if patient's last utterance was classified as reflex/reactive.
+    #   Used to gate deliberated actions (AS3).
+    session_count:           int   = 0
+    reflex_detected:         bool  = False
+    # OBS1: observation credibility and MCTS exploration boost.
+    # obs_credibility: aggregate trustworthiness of current state [0.15, 1.0].
+    #   Used for action-specificity discounting in rollout scoring.
+    # obs_c_boost: additive boost to MCTS UCB constant when state is uncertain.
+    #   Widens tree exploration toward meta-actions (normalise_discrepancy, seek_probe_consent).
+    obs_credibility:         float = 1.0
+    obs_c_boost:             float = 0.0
+    # MA-MCTS3: coupling_tensor from companion→patient AllianceEdge [0, 1].
+    # Default 0.55 (neutral) when alliance graph is not loaded.
+    coupling_tensor:         float = 0.55
+    # MA-MCTS4: per-topic engagement + alignment from AllianceEdge.
+    # Keys: TOPIC_CLUSTERS strings (Exp 18–21) or BeliefNode IDs (Exp 22).
+    topic_engagement:        dict  = {}
+    topic_alignment:         dict  = {}
 
 
 @app.post("/mcts/best-action")
@@ -985,7 +1006,62 @@ def mcts_best_action(req: MCTSActionIn):
         'physio_available':          req.physio_available,
         # MCTS9: anticipatory anxiety context — zero/empty = no pending event
         'pending_event':             req.pending_event,
+        # OBS1: credibility signals — passed to MCTS for exploration and robustness
+        'obs_credibility':           req.obs_credibility,
+        'obs_c_boost':               req.obs_c_boost,
+        # MA-MCTS3: real coupling_tensor from AllianceEdge
+        'coupling_tensor':           req.coupling_tensor,
+        # MA-MCTS4: per-topic engagement + alignment from AllianceEdge
+        'topic_engagement':          req.topic_engagement,
+        'topic_alignment':           req.topic_alignment,
     }
+
+    # ── AS2 / AS3 axis gating ─────────────────────────────────────────────────
+    # Paradoxical interventions (AS2): ONLY when stress < 0.40 and session >= 3.
+    # Reflexive-incompatible actions (AS3): ONLY when reflex_detected=False.
+    # Salience actions (SC2): ONLY when stress < 0.40 (never escalate an already
+    # stressed patient).
+    # Coupling-regime actions (COUP2): ONLY when regime hint present in context.
+    # All gating is permissive (removes from candidate list; other actions fill in).
+    try:
+        from tensornets.a3c.action_bandit import (
+            ACTION_AXIS_DR, ACTION_AXIS_LOGIC,
+        )
+        _ctx_lower = req.context.lower() if req.context else ""
+        _session_count = req.session_count
+        _reflex_detected = req.reflex_detected
+        _coupling_regime_present = any(
+            k in _ctx_lower
+            for k in ("enmeshed", "cold_conflict", "guarded", "isolated")
+        )
+        _COUPLING_ACTIONS = {
+            "differentiation_prompt", "individual_space",
+            "boundary_assertion", "mutual_acknowledgement",
+        }
+        _SALIENCE_ACTIONS = {"increase_salience", "temporal_urgency"}
+
+        def _action_allowed(a: str) -> bool:
+            # AS2: paradoxical gate
+            if ACTION_AXIS_LOGIC.get(a) == "counterintuitive":
+                if stress_index >= 0.40 or _session_count < 3:
+                    return False
+            # AS3: reflex gate — deliberated actions blocked under reflex mode
+            if _reflex_detected and ACTION_AXIS_DR.get(a) == "deliberated":
+                return False
+            # SC2: salience actions — never at high stress
+            if a in _SALIENCE_ACTIONS and stress_index >= 0.40:
+                return False
+            # COUP2: coupling-regime actions — only when regime is relevant
+            if a in _COUPLING_ACTIONS and not _coupling_regime_present:
+                return False
+            return True
+
+        filtered = [a for a in req.candidate_actions if _action_allowed(a)]
+        # Always keep at least 4 actions to avoid degenerate MCTS
+        if len(filtered) >= 4:
+            initial_state['candidate_actions'] = filtered
+    except ImportError:
+        pass
 
     if req.mcts_mode in ("hpvoot", "hpvoot_zone"):
         from tensornets.mcts.hierarchical_pw_voot import (
@@ -1011,12 +1087,15 @@ def mcts_best_action(req: MCTSActionIn):
                     scores.append(score)
                 return scores
 
-        # Route to correct class: hpvoot = continuous affinity, hpvoot_zone = discrete, multi_horizon = MCTS9
+        # Route to correct class: hpvoot = continuous affinity, hpvoot_zone = discrete, multi_horizon = MCTS9, multi_agent = MCTS-MULTIAGENT
         if req.mcts_mode == "hpvoot_zone":
             MCTSClass = HierarchicalPWZoneMCTS
         elif req.mcts_mode == "multi_horizon":
             from tensornets.mcts.hierarchical_pw_voot import MultiHorizonHPVOOTMCTS
             MCTSClass = MultiHorizonHPVOOTMCTS
+        elif req.mcts_mode == "multi_agent":
+            from tensornets.mcts.hierarchical_pw_voot import MultiAgentHPVOOTMCTS
+            MCTSClass = MultiAgentHPVOOTMCTS
         else:
             MCTSClass = HierarchicalPWVOOTMCTS
         mcts = MCTSClass(

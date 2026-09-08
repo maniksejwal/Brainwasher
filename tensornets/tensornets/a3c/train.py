@@ -445,13 +445,23 @@ def _get_arm_classes():
             MultiHorizonHPVOOTWorker,
             # Exp 17: Graph-of-Thought HPVOOT
             GoTHPVOOTWorker,
+            # Exp 18 / PU4: Belief x Coupling x DPO context
+            BeliefCouplingDPOWorker,
+            # Exp 19/20: Belief-width ablation
+            BeliefCouplingDPONarrowWorker,
+            BeliefCouplingDPOWideWorker,
+            # Exp 21: Multi-agent shallow rollout (MCTS-MULTIAGENT)
+            MultiAgentMCTSWorker,
+            # Exp 22: LLM-driven belief-node topic coupling
+            BeliefTopicCouplingWorker,
         )
         # Indices:
         #   1–8:   main experiments (Exp 0–7)
         #   9–16:  safety-ablation arms (Exp 0a–7a; 0a=no privacy guard, 1a–7a=no crit gate)
         #   17–24: DPO/RLAIF prompt-improved variants (Exp 0p–7p)
         #   25–28: RAG ablation set (Exp 8–11)
-        #   29–31: New MCTS/reasoning arms (Exp 16, 15, 17)
+        #   29–32: New MCTS/reasoning/context arms (Exp 16, 15, 17, 18)
+        #   33–34: Belief-width ablation (Exp 19, 20)
         _ARM_CLASSES = [
             OldschoolWorker,                             # Exp 0  (idx 1):  oldschool
             PhysioLLMWorker,                             # Exp 1  (idx 2):  physio_llm
@@ -487,6 +497,11 @@ def _get_arm_classes():
             InertialHPVOOTZoneWorker,                    # Exp 16 (idx 29): hpvoot_zone (discrete affinity ablation vs Exp 6)
             MultiHorizonHPVOOTWorker,                    # Exp 15 (idx 30): multi_horizon_hpvoot (MCTS9 + anticipatory anxiety)
             GoTHPVOOTWorker,                             # Exp 17 (idx 31): got_hpvoot (Graph-of-Thought prior + batch leaf)
+            BeliefCouplingDPOWorker,                     # Exp 18 (idx 32): bc_dpo_hpvoot (PU4: belief + coupling_tensor + DPO context)
+            BeliefCouplingDPONarrowWorker,               # Exp 19 (idx 33): bc_dpo_narrow (2 belief nodes)
+            BeliefCouplingDPOWideWorker,                 # Exp 20 (idx 34): bc_dpo_wide   (8 belief nodes)
+            MultiAgentMCTSWorker,                        # Exp 21 (idx 35): multi_agent_mcts (MCTS-MULTIAGENT shallow care-circle rollout)
+            BeliefTopicCouplingWorker,                   # Exp 22 (idx 36): belief_topic_coupling (LLM-driven belief-node coupling)
         ]
     return _ARM_CLASSES
 

@@ -118,6 +118,11 @@ const EXP_META = {
     multi_horizon_hpvoot:                         { label: 'Exp 15 \u2014 MultiHorizon HPVOOT (MCTS9)',      shortLabel: 'Exp 15', color: '#00695C', bg: 'rgba(0,105,92,0.18)',  group: 'mcts9'     },
     // ── Exp 17: Graph-of-Thought HPVOOT ──────────────────────────────────────
     got_hpvoot:                                   { label: 'Exp 17 \u2014 GoT-HPVOOT (Graph-of-Thought)',   shortLabel: 'Exp 17', color: '#AD1457', bg: 'rgba(173,20,87,0.18)',  group: 'got'       },
+    bc_dpo_hpvoot:                                { label: 'Exp 18 \u2014 BC-DPO-HPVOOT (Belief\u00d7Coupling\u00d7DPO)', shortLabel: 'Exp 18', color: '#6A1B9A', bg: 'rgba(106,27,154,0.18)', group: 'context'   },
+    bc_dpo_narrow:                                { label: 'Exp 19 \u2014 BC-DPO Narrow (2 belief nodes)',               shortLabel: 'Exp 19', color: '#7B1FA2', bg: 'rgba(123,31,162,0.15)', group: 'context'   },
+    bc_dpo_wide:                                  { label: 'Exp 20 \u2014 BC-DPO Wide (8 belief nodes)',                 shortLabel: 'Exp 20', color: '#4A148C', bg: 'rgba(74,20,140,0.15)',  group: 'context'   },
+    multi_agent_mcts:                             { label: 'Exp 21 \u2014 Multi-Agent MCTS (care-circle rollout)',          shortLabel: 'Exp 21', color: '#006064', bg: 'rgba(0,96,100,0.15)',   group: 'mcts'      },
+    belief_topic_coupling:                        { label: 'Exp 22 \u2014 Belief-Topic Coupling (LLM-driven)',             shortLabel: 'Exp 22', color: '#1B5E20', bg: 'rgba(27,94,32,0.15)',   group: 'context'   },
 };
 const EXP_KEYS = Object.keys(EXP_META);
 

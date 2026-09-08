@@ -566,6 +566,44 @@ class TurnState:
     # Empty dict = no anticipatory context (standard scenario).
     pending_event:          dict  = field(default_factory=dict)
 
+    # AS2 / AS3 axis gating — updated per turn by scorer / conversation classifier.
+    # session_count: number of sessions with this specific companion instance.
+    #   Gates paradoxical interventions (AS2): require ≥ 3.
+    # reflex_detected: True when last patient utterance was classically reactive
+    #   (short, closed, fight/flight language). Gates deliberated actions (AS3).
+    # panic_mode: True when the patient has entered hypervigilant rejection state.
+    #   PAN1 (pending): set by panic classifier. When True, MCTS gates out
+    #   all deliberated, motivational, and advisory actions. PU3 also injects
+    #   a "[Patient Mode: PANIC]" block into Scout's known_context so the LLM
+    #   generates presence-only responses rather than advice.
+    session_count:          int   = 0
+    reflex_detected:        bool  = False
+    panic_mode:             bool  = False
+
+    # OBS1: Observation uncertainty — probability weights for 11 distortion modes.
+    # MULTI-ROLE: keyed by participant role for sessions with caregivers / clinicians.
+    # {"patient": {...modes...}, "caregiver": {...modes...}, ...}
+    # The "patient" key tracks patient self-report reliability (used by MCTS/action gating).
+    # Other roles are tracked for belief cross-validation and coupling updates.
+    # Caller code reads state.observation_uncertainty.get("patient", {}) for patient,
+    # or state.observation_uncertainty.get(role, {}) for any participant.
+    # Backward-compat: if the dict has mode keys directly (old format), treat as patient.
+    observation_uncertainty: dict = field(default_factory=dict)
+
+    # MA-MCTS3: coupling_tensor from the companion→patient AllianceEdge.
+    # Seeded from RelationalField; updated by advance_relational_field() each episode.
+    # Passed into MCTS payload so MultiAgentHPVOOTMCTS uses real coupling instead of
+    # the 0.55 default. Range [0, 1]; 0.55 = neutral/unknown.
+    coupling_tensor:        float = 0.55
+
+    # MA-MCTS4: per-topic engagement + alignment from the companion→patient AllianceEdge.
+    # topic_engagement: {topic_key: float[0,1]}   — how actively a topic has been discussed
+    # topic_alignment:  {topic_key: float[-1,+1]} — how much src and tgt agree on topic
+    # For Exp 22, keys are BeliefNode IDs; for other arms, TOPIC_CLUSTERS string keys.
+    # Passed into MCTS payload for semantic coupling-aware rollout evaluation.
+    topic_engagement:       dict = field(default_factory=dict)
+    topic_alignment:        dict = field(default_factory=dict)
+
     @staticmethod
     def bucket_from_stress(stress_index: float) -> str:
         """Map stress_index [0,1] to the bandit bucket keys used by ActionBandit."""
@@ -702,6 +740,9 @@ class TurnState:
                              and bool(scenario.get("physio_available", True)),
             # MCTS9: anticipatory anxiety context — carries forward for the whole episode.
             pending_event=scenario.get("pending_event", {}),
+            # AS2/AS3: session_count from scenario; reflex_detected starts False.
+            session_count=int(scenario.get("session_count", 0)),
+            reflex_detected=False,
         )
 
 
@@ -1393,9 +1434,138 @@ class A3CWorker:
             physio_available=prev_state.physio_available,
             # MCTS9: pending_event is episode-scoped — carry forward unchanged.
             pending_event=prev_state.pending_event,
+            # AS2/AS3: carry session_count; reflex_detected is updated below.
+            # PU3/PAN1: panic_mode updated from scorer; reflex_detected from LLM response.
+            # OBS1: observation_uncertainty carried and updated by update_from_scorer_signals.
+            session_count=prev_state.session_count,
+            reflex_detected=bool(response_dict.get("reflex_detected", False)),
+            panic_mode=bool(response_dict.get("panic_mode", prev_state.panic_mode)),
+            observation_uncertainty=prev_state.observation_uncertainty,   # updated post-score
         )
 
     # ── Episode runner ───────────────────────────────────────────────────────
+
+    # ── Hierarchical memory helpers ───────────────────────────────────────────
+
+    _HIERMEM_SCOUT_SYSTEM = (
+        "You are a clinical session analyst. "
+        "Output ONLY a raw JSON object (no markdown). Start with { and end with }."
+    )
+
+    _HIERMEM_PROMPT = (
+        "Session goal: {session_goal}\n"
+        "Turns so far: {turn_count}\n\n"
+        "Most recent {n_turns} turns:\n{recent_turns}\n\n"
+        "{prior_summary_block}"
+        "Produce a JSON object with EXACTLY these keys:\n"
+        '  "arc_summary": one sentence (≤25 words) capturing the key clinical '
+        "development this session so far,\n"
+        '  "open_threads": array of ≤3 strings — unresolved themes worth revisiting,\n'
+        '  "momentum": "positive" | "neutral" | "resistant" — patient engagement trend,\n'
+        '  "key_facts": array of ≤3 short strings — most clinically important facts '
+        "established this session.\n"
+        "Do not repeat the prior summary verbatim; synthesise it."
+    )
+
+    def _update_session_arc(self, state: "TurnState", scenario: dict) -> "TurnState":
+        """
+        MEMORY-LLM G2: Incrementally update the session-arc summary.
+
+        Called every 4 turns (or at session end).  Uses one Scout call to condense
+        the last N turns + prior arc into a compact clinical narrative stored in
+        state.summary.  This is the middle granularity between per-turn history
+        and cross-session longitudinal_hint.
+
+        Cost: 1 Scout call per 4 turns (≈ 25% overhead, acceptable for training).
+        Gracefully falls back to prior summary if Scout fails.
+        """
+        # Only update every 4 turns or on the last turn to control LLM cost.
+        if state.turn_count % 4 != 0 or state.turn_count == 0:
+            return state
+
+        try:
+            import os, urllib.request, json as _j
+            _url  = os.environ.get("TENSORNETS_URL", "http://localhost:8765")
+            n_recent = 6
+            recent = state.conversation_history[-n_recent:]
+            recent_text = "\n".join(
+                f"{m['role'].upper()}: {m['content'][:120]}"
+                for m in recent
+            )
+            prior_block = ""
+            if state.summary:
+                prior_block = f"Prior session arc (from earlier turns):\n{state.summary}\n\n"
+
+            prompt = self._HIERMEM_PROMPT.format(
+                session_goal     = state.session_goal or "general support",
+                turn_count       = state.turn_count,
+                n_turns          = len(recent),
+                recent_turns     = recent_text,
+                prior_summary_block = prior_block,
+            )
+            payload   = {"system": self._HIERMEM_SCOUT_SYSTEM, "prompt": prompt,
+                         "max_tokens": 200}
+            data      = _j.dumps(payload).encode()
+            req       = urllib.request.Request(
+                f"{_url}/llm/scout", data=data,
+                headers={"Content-Type": "application/json"}
+            )
+            with urllib.request.urlopen(req, timeout=15.0) as resp:
+                raw = _j.loads(resp.read().decode())
+            text = raw.get("text", "").strip()
+            bstart, bend = text.find("{"), text.rfind("}")
+            if bstart != -1 and bend != -1:
+                parsed = _j.loads(text[bstart: bend + 1])
+                arc    = parsed.get("arc_summary", "")
+                threads = parsed.get("open_threads", [])
+                facts   = parsed.get("key_facts",   [])
+                momentum = parsed.get("momentum",   "neutral")
+                summary = (
+                    f"[Arc] {arc} "
+                    f"[Momentum: {momentum}] "
+                )
+                if threads:
+                    summary += f"[Open: {'; '.join(threads[:3])}] "
+                if facts:
+                    summary += f"[Facts: {'; '.join(facts[:3])}]"
+                state = state.__class__(
+                    **{**state.__dict__, "summary": summary.strip()}
+                )
+        except Exception as exc:
+            log.debug("[HIERMEM] session arc update failed (non-fatal): %s", exc)
+        return state
+
+    def _build_hierarchical_memory_block(self, state: "TurnState") -> str:
+        """
+        MEMORY-LLM: Assemble the three-granularity memory block injected into
+        known_context at episode start and refreshed every 4 turns.
+
+        G1 — Turn-recent   : last 4 turns in conversation_history (raw)
+        G2 — Session-arc   : state.summary (LLM-condensed arc; updated every 4t)
+        G3 — Cross-session : longitudinal_hint + future_plans_summary + BeliefGraph hints
+
+        Only non-empty sections are included.  The block starts with a header so
+        the LLM understands the granularity hierarchy.
+        """
+        parts: list[str] = []
+
+        # G2: session arc
+        if state.summary:
+            parts.append(f"[Session arc] {state.summary}")
+
+        # G3: cross-session longitudinal hint
+        hint = (getattr(state, "longitudinal_hint", None) or "").strip()
+        if hint:
+            parts.append(f"[Prior sessions] {hint}")
+
+        # G3: future plans / commitments from prior sessions
+        fp = (getattr(state, "future_plans_summary", None) or "").strip()
+        if fp:
+            parts.append(f"[Future plans] {fp}")
+
+        if not parts:
+            return ""
+        return "[Clinical memory — three granularities]\n" + "\n".join(parts)
 
     def run_episode(
         self,
@@ -1584,10 +1754,37 @@ class A3CWorker:
 
         # ── Inject alliance context into known_context at episode start ──────────
         # The companion prompt gets a one-line summary of the current alliance state.
+        _belief_graph = None  # PU1: loaded below if available
         if _alliance_graph is not None:
             try:
+                # PU1: Load BeliefGraph for this subject and inject safe/risky hints.
+                # Cost: 0 extra LLM calls — belief_graph.prompt_context() is purely local.
+                # Effect: Scout knows which beliefs are foundational vs. peripheral
+                #         before generating any response this episode.
+                try:
+                    from tensornets.agents.belief_graph import load_belief_graph, BeliefGraph
+                    _belief_graph = load_belief_graph(state.subject_id)
+                    if _belief_graph is None:
+                        # Cold-start: no saved belief graph for this user.
+                        # Create an empty graph — beliefs will be populated by
+                        # extract_beliefs_from_turn() during the episode.
+                        _belief_graph = BeliefGraph(subject_id=state.subject_id)
+                    # FOR1: apply memory fade proportional to session gap before episode starts
+                    if state.session_gap_days > 0 and len(_belief_graph.nodes) > 0:
+                        _faded = _belief_graph.apply_memory_fade(state.session_gap_days)
+                        if _faded:
+                            import logging as _lg
+                            _lg.getLogger(__name__).debug(
+                                "[BG/FOR1] Applied memory fade (gap=%.1f days): %d beliefs faded",
+                                state.session_gap_days, len(_faded),
+                            )
+                except Exception:
+                    _belief_graph = None
+
                 _alliance_ctx = _alliance_graph.prompt_context_for(
-                    companion_role="companion", patient_role="patient"
+                    companion_role="companion",
+                    patient_role  ="patient",
+                    belief_graph  =_belief_graph,
                 )
                 existing_ctx = state.known_context or ""
                 state = state.__class__(
@@ -1597,11 +1794,99 @@ class A3CWorker:
             except Exception:
                 pass
 
+        # PU2: Inject CommunicationRegime + RelationshipType into known_context.
+        # This is separate from the alliance block so it can be injected even
+        # when the full AllianceGraph is not available (e.g., early training episodes).
+        try:
+            if _alliance_graph is not None:
+                _cp_edge = _alliance_graph.get_edge("companion", "patient")
+                _regime  = _cp_edge.detect_communication_regime()
+                _rel_type = _cp_edge.relationship_type
+                _comm_temp = _cp_edge.comm_temp
+
+                # MA-MCTS3: propagate coupling_tensor onto TurnState so generate_response
+                # can include it in the MCTS payload (real value instead of 0.55 default).
+                # MA-MCTS4: also propagate topic_engagement + topic_alignment dicts.
+                state = state.__class__(
+                    **{
+                        **state.__dict__,
+                        "coupling_tensor":  float(_cp_edge.coupling_tensor),
+                        "topic_engagement": dict(_cp_edge.topic_engagement),
+                        "topic_alignment":  dict(_cp_edge.topic_alignment),
+                    }
+                )
+                if _regime not in ("standard", "") or _rel_type not in ("unknown", ""):
+                    _pu2_block = (
+                        f"[Patient Relationship]\n"
+                        f"Type: {_rel_type}  |  Temp: {_comm_temp}  |  Regime: {_regime}\n"
+                        f"Adapt your language register: "
+                        + {
+                            "cold_conflict":       "establish safety first; no advice yet.",
+                            "warm_collaborative":  "full therapeutic range available.",
+                            "professional_distant":"formal register; avoid over-familiarity.",
+                            "enmeshed_flooded":    "calm, low-affect language; avoid emotional amplification.",
+                            "guarded_negotiation": "rupture is pending; repair before goal-setting.",
+                        }.get(_regime, "standard approach.")
+                    )
+                    existing_ctx = state.known_context or ""
+                    state = state.__class__(
+                        **{**state.__dict__,
+                           "known_context": (_pu2_block + "\n\n" + existing_ctx).strip()}
+                    )
+        except Exception:
+            pass
+
+        # PU3: Inject reflex_mode and panic_mode into known_context.
+        # Ensures Scout-generated language matches the action gate applied by MCTS.
+        # E.g. if reflex_detected=True, MCTS blocked deliberated actions — the text
+        # should also be short, concrete, not explanatory.
+        try:
+            _reflex = getattr(state, "reflex_detected", False)
+            _panic  = getattr(state, "panic_mode",      False)
+            if _reflex or _panic:
+                _mode_label = "panic" if _panic else "reflex"
+                _mode_hints = {
+                    "panic":  (
+                        "[Patient Mode: PANIC]\n"
+                        "Patient is hypervigilant and rejecting advice. "
+                        "Use presence only — no goals, no explanations, no solutions. "
+                        "Short sentences. Validate and wait."
+                    ),
+                    "reflex": (
+                        "[Patient Mode: REFLEX]\n"
+                        "Patient is in reactive mode (short, closed, fight/flight). "
+                        "Use concrete, 1–2 sentence responses. "
+                        "Avoid multi-step explanations or motivational prompts."
+                    ),
+                }
+                _pu3_block = _mode_hints[_mode_label]
+                existing_ctx = state.known_context or ""
+                state = state.__class__(
+                    **{**state.__dict__,
+                       "known_context": (_pu3_block + "\n\n" + existing_ctx).strip()}
+                )
+        except Exception:
+            pass
+
         # With only 10-15 turns per episode and a 0.75 info_coverage threshold
         # to achieve the goal, skipping odd turns cuts goal-coverage opportunities
         # nearly in half.  The extra Scout calls increase episode cost slightly
         # but are worth it for accurate gradient signal.
         _SCORE_EVERY_N = 1
+
+        # MEMORY-LLM G3: inject hierarchical cross-session memory into known_context
+        # at episode start (G3 layer — cross-session and prior arc from prior_session).
+        # Within-episode arc updates (G2) are applied every 4 turns in the turn loop.
+        try:
+            _hiermem_block = self._build_hierarchical_memory_block(state)
+            if _hiermem_block:
+                existing_ctx = state.known_context or ""
+                state = state.__class__(
+                    **{**state.__dict__,
+                       "known_context": (_hiermem_block + "\n\n" + existing_ctx).strip()}
+                )
+        except Exception as _hme:
+            log.debug("[HIERMEM] G3 episode-start injection failed (non-fatal): %s", _hme)
 
         for turn_idx in range(max_turns_ep):
             t_start = time.perf_counter()
@@ -1780,7 +2065,125 @@ class A3CWorker:
                 )
             score_history.append(score_result)
 
-            # ── Build reward_dict from scorer output + arm-specific reward ───
+            # ── OBS1: Update ObservationUncertainty from scorer signals ─────
+            # The scorer already detects contradictions, probing quality, etc.
+            # We extract those signals and update the observation uncertainty model.
+            # This updates state.observation_uncertainty in-place (dict carried forward).
+            try:
+                from tensornets.agents.observation_uncertainty import (
+                    ObservationUncertainty, update_from_scorer_signals,
+                )
+                # MULTI-ROLE: observation_uncertainty is now keyed by participant role.
+                # Backward-compat: if the top-level dict has mode keys directly (old format),
+                # treat the whole dict as the patient's obs.
+                _obs_all = state.observation_uncertainty or {}
+                _is_role_keyed = "patient" in _obs_all or "caregiver" in _obs_all
+                _obs_dict = _obs_all.get("patient", _obs_all) if _is_role_keyed else _obs_all
+                _obs = ObservationUncertainty.from_dict(_obs_dict) if _obs_dict else ObservationUncertainty()
+                # OBS1 / independence principle:
+                # obs_* fields target the PATIENT's self-report reliability.
+                # commitment_contradiction_score / consent_respect_score target the AGENT's quality.
+                # These two dimensions must NOT be mixed: agent contradicting itself is a training
+                # signal for A3C reward, not a signal that the patient is being deceptive.
+                # The dedicated obs_* fields were added to the A3CScorer prompt precisely to keep
+                # patient-reliability signals independent of agent-quality signals.
+                _scorer_signals = {
+                    # Patient-side: dedicated obs_* fields added to scorer JSON output.
+                    # These evaluate whether the PATIENT's message shows distortion signals.
+                    "obs_contradiction_score": score_result.dimensions.get("obs_contradiction_score", 0),
+                    "obs_avoidance_score":      score_result.dimensions.get("obs_avoidance_score", 0),
+                    "obs_confidence_mismatch":  float(score_result.dimensions.get("obs_confidence_mismatch", 0.0)),
+                    "obs_distortion_modes":     score_result.dimensions.get("obs_distortion_modes", []),
+                    # Common signals: these are neutral indicators (not agent vs patient)
+                    "probing_score":            score_result.dimensions.get("probing_score", 0),
+                    "info_novelty":             score_result.info_novelty,
+                }
+                _obs = update_from_scorer_signals(_obs, _scorer_signals, state.stress_index)
+                # Inject OBS hint into state for next turn's context
+                _obs_hint = _obs.prompt_context()
+                # Write back under role-keyed structure; merge with any existing caregiver obs
+                _new_obs_all = dict(_obs_all)  # preserve other roles (caregiver, clinician)
+                _new_obs_all["patient"] = _obs.to_dict()
+                state = state.__class__(
+                    **{**state.__dict__,
+                       "observation_uncertainty": _new_obs_all,
+                       "known_context": (
+                           (_obs_hint + "\n\n" + (state.known_context or "")).strip()
+                           if _obs_hint else state.known_context
+                       )}
+                )
+            except Exception:
+                pass
+
+            # ── BG2: Extract beliefs from patient turn (every 3 turns) ────────
+            # Uses Scout (1 LLM call) to parse beliefs from the patient's message.
+            # Gated to every 3rd turn to stay within Bedrock budget.
+            # Only runs when a _belief_graph is attached (arms that loaded one at
+            # episode start).  The extracted beliefs are merged into the graph and
+            # persisted at episode end alongside the alliance state.
+            try:
+                if (
+                    patient_msg
+                    and turn_number % 3 == 0   # every 3rd turn
+                    and _belief_graph is not None
+                ):
+                    from tensornets.agents.belief_graph import (
+                        extract_beliefs_from_turn, save_belief_graph,
+                    )
+                    raw_beliefs = extract_beliefs_from_turn(
+                        text    = patient_msg,
+                        role    = "patient",
+                        arm     = getattr(self, "ARM", "belief_graph"),
+                    )
+                    for b in raw_beliefs:
+                        _belief_graph.add_or_update({
+                            "id":             b.get("id", ""),
+                            "text":           b.get("text", ""),
+                            "confidence":     float(b.get("confidence", 0.5)),
+                            "valence":        int(b.get("valence", 0)),
+                            "identity_linked": bool(b.get("identity_linked", False)),
+                            # Provenance: stress and credibility at extraction time
+                            "patient_stress":  state.stress_index,
+                            "obs_credibility": (
+                                state.observation_uncertainty.get("_credibility", 1.0)
+                                if isinstance(state.observation_uncertainty, dict)
+                                else 1.0
+                            ),
+                            "speaker_role":    "patient",
+                        })
+            except Exception:
+                pass
+
+            # ── EXP-22: Belief-node topic coupling update (LLM-driven) ───────
+            # If this arm sets USE_BELIEF_TOPIC_COUPLING=True and both alliance
+            # graph and belief graph are loaded, update per-belief-node coupling
+            # scalars using a Scout call instead of keyword-heuristic topics.
+            # Gated to every other turn to save Bedrock budget.
+            try:
+                if (
+                    getattr(self, "USE_BELIEF_TOPIC_COUPLING", False)
+                    and _alliance_graph is not None
+                    and _belief_graph is not None
+                    and patient_msg
+                    and agent_reply
+                    and turn_number % 2 == 0
+                ):
+                    _cp_edge = _alliance_graph.get_edge("companion", "patient")
+                    _active_nodes = _belief_graph.get_active_nodes(top_n=6)
+                    if _active_nodes:
+                        from tensornets.agents.observation_uncertainty import (
+                            _scout_call_sync,
+                        )
+                        _cp_edge.update_coupling_from_belief_turn(
+                            belief_nodes       = _active_nodes,
+                            patient_text       = patient_msg,
+                            companion_response = agent_reply,
+                            llm_fn             = _scout_call_sync,
+                        )
+            except Exception:
+                pass
+
+
             scorer_reward_dims = map_scorer_to_reward_dims(score_result)
 
             # ── Info gain from scorer (no extra LLM call) ─────────────────────
@@ -2020,6 +2423,48 @@ class A3CWorker:
                 convergence_hit = any(c in combined_text for c in _CONVERGENCE_CUES)
                 if convergence_hit:
                     r += 0.10
+
+            # ── AS4 per-turn inaction appropriateness bonus ───────────────────
+            # Applied here (per turn) rather than at episode end, so the A3C
+            # TD(0) update sees the bonus signal on the correct turn.
+            try:
+                from tensornets.a3c.physio_simulator import inaction_appropriateness_bonus
+                _ia_bonus = inaction_appropriateness_bonus(
+                    action_taken  = action,
+                    scenario_type = scenario.get("scenario_type", "standard"),
+                    stress_index  = state.stress_index,
+                )
+                if _ia_bonus:
+                    r += _ia_bonus
+            except ImportError:
+                pass
+
+            # ── Dynamic topic coupling update ──────────────────────────────────
+            # After every turn, raise topic coupling on the patient→companion
+            # and companion→patient edges for whichever topics appeared in the
+            # patient's utterance.  Conflict in the current turn gets extra
+            # amplification (see _CONFLICT_BOOST_FACTOR in social_alliance.py).
+            # This is a fire-and-forget update; errors are silently ignored
+            # so they never disrupt training.
+            try:
+                from tensornets.agents.social_alliance import (
+                    AllianceGraph, detect_topic_from_text,
+                )
+                _ag: "AllianceGraph | None" = getattr(self, "_alliance_graph", None)
+                if _ag is not None and patient_msg:
+                    _conflict = score_result.critical_failure > 0 or (
+                        score_result.rupture_repair_score < -0.3
+                        if hasattr(score_result, "rupture_repair_score") else False
+                    )
+                    _ag.update_topic_coupling_from_turn(
+                        speaker_role    = "patient",
+                        listener_role   = "companion",
+                        text            = patient_msg,
+                        conflict_detected = _conflict,
+                    )
+            except Exception:
+                pass
+
             cumulative_reward += r
             latency_ms    = (time.perf_counter() - t_start) * 1000.0
 
@@ -2264,6 +2709,9 @@ class A3CWorker:
 
             state = next_state
 
+            # MEMORY-LLM G2: update session-arc summary every 4 turns
+            state = self._update_session_arc(state, scenario)
+
         # ── Terminal reward signal ────────────────────────────────────────────
         # Per-turn weights alone leave a sycophancy gap: a policy that soothes
         # without delivering earns ~0.46 max per-turn reward (stress=0.20 +
@@ -2341,7 +2789,52 @@ class A3CWorker:
                 log.debug("[%s] terminal -1.0 (missed escalation on escalation scenario)",
                           self.worker_id)
 
+        # ── SC1 + AS4 terminal modifiers ──────────────────────────────────────
+        # Stress-calibration bonus: was final stress in the optimal action window?
+        # Inaction appropriateness: did inaction actions help in grief/shock scenarios?
+        # Both are small nudges (+/-0.05 to +/-0.12) designed to break the A3C
+        # habit of always pushing toward zero-stress, and to reward clinical restraint.
+        try:
+            from tensornets.a3c.physio_simulator import (
+                stress_calibration_bonus,
+                inaction_appropriateness_bonus,
+            )
+            _sc_archetype = scenario.get("patient_archetype", "default")
+            _sc_phase     = scenario.get("episode_phase",     "any")
+            _sc_bonus     = stress_calibration_bonus(
+                state.stress_index, _sc_archetype, _sc_phase
+            )
+            if _sc_bonus:
+                cumulative_reward += _sc_bonus
+                log.debug("[%s] SC1 stress_calibration=%+.2f (arch=%s phase=%s stress=%.2f)",
+                          self.worker_id, _sc_bonus, _sc_archetype, _sc_phase, state.stress_index)
+
+            # Inaction appropriateness: score over the full episode action list.
+            # Aggregate the per-turn inaction bonuses rather than scoring once at the end,
+            # but we track the count here since we don't have per-turn action_taken in scope.
+            # Per-turn inaction rewards are applied in the turn loop (see below); this block
+            # checks for overuse: ≥3 consecutive inaction actions in late episode is a penalty.
+            _inaction_cluster = {
+                "hold_space", "therapeutic_silence",
+                "await_readiness", "pause_and_breathe_together",
+            }
+            _scenario_type = scenario.get("scenario_type", "standard")
+            _last_3_actions = [
+                t.action_taken
+                for t in episode_log[-3:]
+                if hasattr(t, "action_taken") and t.action_taken
+            ]
+            if (len(_last_3_actions) == 3
+                    and all(a in _inaction_cluster for a in _last_3_actions)
+                    and _scenario_type not in {"bereavement", "health_deterioration"}):
+                cumulative_reward -= 0.30
+                log.debug("[%s] AS4 overuse penalty -0.30 (3 consecutive inaction actions)",
+                          self.worker_id)
+        except ImportError:
+            pass
+
         summary = self._flush_episode(episode_id, scenario, cumulative_reward)
+
 
         # ── Genuine progress metrics ──────────────────────────────────────────
         # These are the methodologically independent measures that supplement the
@@ -2489,6 +2982,16 @@ class A3CWorker:
                     advance_disclosure = state.info_coverage >= 0.6,
                     session_id         = episode_id,
                 )
+                # AUDIT-FIX: coupling_tensor (RelationalField) was never updated after episodes.
+                # update_v_ij() advances coupling_tensor one step toward current alliance_score
+                # and proportionally scales all topic couplings.  Must be called AFTER
+                # update_from_episode() so alliance_score is already updated.
+                try:
+                    cp_edge = _alliance_graph.get_edge("companion", "patient")
+                    if cp_edge is not None:
+                        cp_edge.advance_relational_field()
+                except Exception:
+                    pass
                 # Persist to disk
                 _alliance_graph.persist(_alliance_state_dir)
                 # Embed compact alliance snapshot in session_memory
@@ -2498,6 +3001,14 @@ class A3CWorker:
                     )
                 )
                 summary["session_memory"]["alliance_circle_id"] = _alliance_circle_id
+
+                # BG2 persistence: save updated BeliefGraph (beliefs extracted per turn above)
+                if _belief_graph is not None:
+                    try:
+                        from tensornets.agents.belief_graph import save_belief_graph
+                        save_belief_graph(_belief_graph)
+                    except Exception:
+                        pass
             except Exception:
                 pass
 

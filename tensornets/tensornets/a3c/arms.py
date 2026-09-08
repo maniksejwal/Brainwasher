@@ -117,6 +117,38 @@ _BEDROCK_REGION  = os.environ.get("AWS_REGION", "us-east-1")
 _SCOUT_MODEL   = "us.meta.llama4-scout-17b-instruct-v1:0"
 _MAVERICK_MODEL = "us.meta.llama4-maverick-17b-instruct-v1:0"
 
+
+# ── OBS1: ObservationUncertainty helpers (used in MCTS payload) ───────────────
+# These two lightweight functions extract credibility and exploration boost
+# from state.observation_uncertainty (a dict).  They are module-level so all
+# arm subclasses can use them without duplication.
+
+def _obs_credibility_from_state(state: "TurnState") -> float:
+    """Return the aggregate credibility weight from state.observation_uncertainty (patient role)."""
+    try:
+        from tensornets.agents.observation_uncertainty import ObservationUncertainty
+        obs_all = getattr(state, "observation_uncertainty", {}) or {}
+        # Multi-role format: pick patient key; fall back to flat dict (old format)
+        obs_dict = obs_all.get("patient", obs_all) if "patient" in obs_all else obs_all
+        if not obs_dict:
+            return 1.0
+        return ObservationUncertainty.from_dict(obs_dict).credibility_weight()
+    except Exception:
+        return 1.0
+
+
+def _obs_c_boost_from_state(state: "TurnState") -> float:
+    """Return the MCTS UCB constant boost for low-credibility patient state."""
+    try:
+        from tensornets.agents.observation_uncertainty import ObservationUncertainty
+        obs_all = getattr(state, "observation_uncertainty", {}) or {}
+        obs_dict = obs_all.get("patient", obs_all) if "patient" in obs_all else obs_all
+        if not obs_dict:
+            return 0.0
+        return ObservationUncertainty.from_dict(obs_dict).mcts_uncertainty_modifier()
+    except Exception:
+        return 0.0
+
 # ── Goal-progress reward tiers ────────────────────────────────────────────────
 # Named constants so any change is explicit and tracked.
 # Values express the *per-turn* goal_progress reward [0, 1].
@@ -166,6 +198,7 @@ class PhysioMPSMCTSWorker(A3CWorker):
     _DEFAULT_SYSTEM_PROMPT = (
         "You are a clinical companion. Current action strategy: {action}. "
         "Patient stress level: {stress_index:.2f} ({stress_bucket}). "
+        "{physio_note}"
         "Respond with one empathetic, concise message (2–3 sentences)."
     )
 
@@ -357,6 +390,7 @@ class PhysioMPSMCTSWorker(A3CWorker):
             stress_index=state.stress_index,
             stress_bucket=state.stress_bucket,
             hysteresis_ctx="",
+            physio_note=_build_physio_note(state),
         )
 
         # Append M_trunc constraint to system prompt if available
@@ -511,7 +545,8 @@ class PhysioLLMWorker(A3CWorker):
     #   {available_actions} — comma-separated list of actions available at this stress level
     _DEFAULT_SYSTEM_PROMPT = (
         "You are a clinical companion.\n\n"
-        "PHYSIOLOGICAL CONTEXT:\n{hysteresis_ctx}\n\n"
+        "PHYSIOLOGICAL CONTEXT:\n{hysteresis_ctx}"
+        "{physio_note}\n\n"
         "SESSION CONTEXT:\n"
         "- Therapeutic mode: {therapeutic_mode}\n"
         "- Session goal: {session_goal}\n"
@@ -564,6 +599,7 @@ class PhysioLLMWorker(A3CWorker):
             longitudinal_hint = longitudinal,
             known_context     = known_ctx,
             available_actions = available,
+            physio_note       = _build_physio_note(state),
         )
         history_text = "\n".join(
             f"{t['role'].upper()}: {t['content']}"
@@ -1340,6 +1376,28 @@ def _build_known_context_block(state: "TurnState") -> str:
     return f"\n[Known patient context]\n{ctx}"
 
 
+def _build_physio_note(state: "TurnState") -> str:
+    """
+    PHYSIO-ABSENT: Return a plain-language note about physiological data availability.
+
+    When physio is available (wearable present): empty string — no note needed.
+    When physio is absent (physio_source == "none"): returns a short warning for Scout
+    so the LLM knows it is working from language-inferred stress rather than sensor data,
+    and should be more exploratory / less confident in physiological assessments.
+
+    This is injected as {physio_note} in all system prompts that carry physio context.
+    """
+    if getattr(state, "physio_available", True):
+        return ""
+    conv_stress = getattr(state, "conversation_stress", None)
+    stress_desc = f"{conv_stress:.2f}" if conv_stress is not None else "unknown"
+    return (
+        "\n[Physiological sensors unavailable — no wearable detected. "
+        f"Stress estimate ({stress_desc}) is inferred from conversation language only. "
+        "Be more exploratory and less directive; do not cite physiological readings.]"
+    )
+
+
     """
     Build the natural-language physio + hysteresis context string for Exp 1 (PhysioLLM).
 
@@ -1610,6 +1668,7 @@ class InertialPhysioMPSMCTSWorker(PhysioMPSMCTSWorker):
         "You are a clinical companion. Current action strategy: {action}. "
         "Patient stress: {stress_index:.2f} (zone: {stress_bucket}). "
         "{hysteresis_ctx}"
+        "{physio_note}"
         "Respond with one empathetic, concise message (2-3 sentences)."
     )
 
@@ -1865,6 +1924,7 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
         "You are a clinical companion. Current action strategy: {action}. "
         "Patient stress: {stress_index:.2f} (bucket: {stress_bucket}). "
         "{hysteresis_ctx}"
+        "{physio_note}"
         "Respond with one empathetic, concise message (2-3 sentences)."
     )
 
@@ -2004,7 +2064,7 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
                     "candidate_actions": all_hp_actions,
                     "mode":              scenario.get("mode", "standard"),
                     "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0), session_boundary=getattr(state, "session_boundary", False)),
-                    "iterations":        150,
+                    "iterations":        50,   # reduced: ensemble mode runs K trees x 50 instead of 1x150
                     "context":           state.summary or "",
                     "mcts_mode":         getattr(self, "_mcts_mode_override", "hpvoot"),
                     "llm_prior_scores":  prior_scores,
@@ -2020,6 +2080,20 @@ class InertialHPVOOTPhysioMPSMCTSWorker(InertialPhysioMPSMCTSWorker):
                     ),
                     # MCTS9: anticipatory anxiety context
                     "pending_event":       getattr(state, "pending_event", {}),
+                    # AS2 / AS3 axis gating
+                    "session_count":       getattr(state, "session_count", 0),
+                    "reflex_detected":     getattr(state, "reflex_detected", False),
+                    # OBS1: observation uncertainty — widens MCTS exploration when state is unreliable
+                    "obs_credibility":     _obs_credibility_from_state(state),
+                    "obs_c_boost":         _obs_c_boost_from_state(state),
+                    # MA-MCTS3: real coupling_tensor from AllianceEdge (default 0.55 if not loaded)
+                    "coupling_tensor":     getattr(state, "coupling_tensor", 0.55),
+                    # MA-MCTS4: per-topic engagement + alignment for semantic coupling in MCTS
+                    # topic_engagement: {topic_key: float[0,1]}  — how actively discussed
+                    # topic_alignment:  {topic_key: float[-1,+1]} — agreement signal
+                    # For Exp 22, keys are belief node IDs; for others, TOPIC_CLUSTERS keys.
+                    "topic_engagement":    getattr(state, "topic_engagement", {}),
+                    "topic_alignment":     getattr(state, "topic_alignment", {}),
                 },
                 timeout=30.0,
             )
@@ -2234,7 +2308,7 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
                     "candidate_actions": all_hp_actions,
                     "mode":              scenario.get("mode", "standard"),
                     "depth":             progressive_lookahead(scenario.get("_arm_ep_count", 0), session_boundary=getattr(state, "session_boundary", False)),
-                    "iterations":        150,
+                    "iterations":        50,   # reduced: ensemble mode runs K trees x 50 instead of 1x150
                     "context":           state.summary or "",
                     "mcts_mode":         getattr(self, "_mcts_mode_override", "hpvoot"),
                     "llm_prior_scores":  prior_scores,
@@ -2250,6 +2324,12 @@ class InertialHPVOOTPhysioLLMCoTMCTSWorker(InertialPhysioLLMCoTMCTSWorker):
                     ),
                     # MCTS9: anticipatory anxiety context
                     "pending_event":       getattr(state, "pending_event", {}),
+                    # AS2 / AS3 axis gating
+                    "session_count":       getattr(state, "session_count", 0),
+                    "reflex_detected":     getattr(state, "reflex_detected", False),
+                    # OBS1: observation uncertainty
+                    "obs_credibility":     _obs_credibility_from_state(state),
+                    "obs_c_boost":         _obs_c_boost_from_state(state),
                 },
                 timeout=30.0,
             )
@@ -2483,6 +2563,7 @@ _DPO_SYSTEM_PROMPT = (
     "Recommended action: {action}.\n"
     "Patient stress: {stress_index:.2f} (zone: {stress_bucket}).\n"
     "{hysteresis_ctx}"
+    "{physio_note}"
     "Session #{session_number} · {days_since_last} days since last session · "
     "Goal: {session_goal}.\n"
     "Goal status: {goal_status}. Medication adherence: {med_adherence}.\n"
@@ -2587,11 +2668,13 @@ class PhysioLLMDPOWorker(PhysioLLMWorker):
         # Patch in the DPO context vars if the base class used _DEFAULT_SYSTEM_PROMPT
         try:
             extra = _build_dpo_prompt_vars(state)
-            return self._DEFAULT_SYSTEM_PROMPT.format(
+            return _safe_fmt(
+                self._DEFAULT_SYSTEM_PROMPT,
                 action           = action,
                 stress_index     = state.stress_index,
                 stress_bucket    = state.stress_bucket or "unknown",
                 hysteresis_ctx   = kw.get("hysteresis_ctx", ""),
+                physio_note      = _build_physio_note(state),
                 session_number   = extra["session_number"],
                 days_since_last  = extra["days_since_last"],
                 session_goal     = extra["session_goal"],
@@ -3050,6 +3133,7 @@ class PlainRAGWorker(PhysioLLMWorker):
             action=action,
             stress_index=state.stress_index,
             stress_bucket=state.stress_bucket,
+            physio_note=_build_physio_note(state),
         )
         history_text = "\n".join(
             f"{t['role'].upper()}: {t['content']}"
@@ -3152,6 +3236,7 @@ class ReasonRAGWorker(PhysioLLMWorker):
             action=action,
             stress_index=state.stress_index,
             stress_bucket=state.stress_bucket,
+            physio_note=_build_physio_note(state),
         )
         history_text = "\n".join(
             f"{t['role'].upper()}: {t['content']}"
@@ -3424,12 +3509,16 @@ Conclude: stress severity [low/moderate/high/critical], HRV trend [stable/declin
   EDA urgency [low/elevated/alert], overall physiological recommendation [1 sentence]
 
 === NODE B: Conversational & Relational Assessment ===
-Recent patient messages (last 2 turns):
+Recent patient messages (last 4 turns, same window as action_selector):
 {excerpt}
+Session facts (known_context / RAG / belief hints):
+{known_context}
 Conversation stress estimate: {conversation_stress:.2f}  Stress discrepancy: {stress_discrepancy:+.2f}
-Session goal: {session_goal}  Alliance score: {alliance_score:.2f}
+Session goal: {session_goal}  Change stage: {change_stage}  Alliance score: {alliance_score:.2f}
+Relational field: {relational_field}
 Conclude: patient emotional state [open/guarded/distressed/resistant/catastrophising],
   disclosure level [none/surface/moderate/deep], relational climate [warm/neutral/ruptured],
+  change-stage readiness [pre-contemplation/contemplation/preparation/action/maintenance],
   conversational recommendation [1 sentence]
 
 === NODE C: Temporal & Contextual Assessment ===
@@ -3492,7 +3581,10 @@ def _got_prior_call(
     eda_us  = physio.get("eda_us", 3.5)
     zone_v  = physio.get("hysteresis_zone", 2)
 
-    recent_turns = [m for m in state.conversation_history[-6:] if m.get("role") == "user"][-2:]
+    # Node B: use the same conversational context depth as Exp 0/0p:
+    # last 4 patient turns (to match action_selector.js CONVERSATION_HISTORY window)
+    # PLUS session facts: known_context, session_goal, alliance score, change_stage.
+    recent_turns = [m for m in state.conversation_history[-8:] if m.get("role") == "user"][-4:]
     excerpt = "\n".join(f"  '{m['content'][:180]}'" for m in recent_turns) or "  (no turns yet)"
 
     pending_ev  = getattr(state, "pending_event", {})
@@ -3512,6 +3604,10 @@ def _got_prior_call(
         session_gap_days    = getattr(state, "session_gap_days", 0.0),
         physio_available    = getattr(state, "physio_available", True),
         excerpt             = excerpt,
+        # Node B extras — session facts matching Exp 0/0p context richness
+        known_context       = (state.known_context or "(none)")[:400],
+        change_stage        = getattr(state, "change_stage", "unknown"),
+        relational_field    = getattr(state, "alliance_score", 0.5),
         conversation_stress = getattr(state, "conversation_stress", 0.5),
         stress_discrepancy  = (
             state.stress_index - getattr(state, "conversation_stress", 0.5)
@@ -3677,3 +3773,290 @@ class GoTHPVOOTWorker(InertialHPVOOTPhysioMPSMCTSWorker):
             result["llm_calls"]    = result.get("llm_calls", 1) + 1
 
         return result
+
+
+# ── PU4 / Exp 18 — Belief × Coupling × DPO context ───────────────────────────
+
+_BC_DPO_SYSTEM_PROMPT = (
+    "You are a clinical companion assistant.\n"
+    "Recommended action: {action}.\n"
+    "Patient stress: {stress_index:.2f} (zone: {stress_bucket}).\n"
+    "{hysteresis_ctx}"
+    "{physio_note}"
+    "Session #{session_number} · {days_since_last} days since last session · "
+    "Goal: {session_goal}.\n"
+    "Goal status: {goal_status}. Medication adherence: {med_adherence}.\n"
+    "Flagged topics: {flagged_topics}. Patient recent sentiment: {last_sentiment}.\n"
+    "{belief_context}"
+    "{alliance_context}"
+    "Respond in 2-3 sentences. Be empathetic and specific to the patient's current state."
+)
+
+
+class BeliefCouplingDPOWorker(InertialHPVOOTPhysioMPSMCTSWorker):
+    """
+    Exp 18 — PU4: Belief x Coupling x DPO context injected into Scout system prompt.
+
+    Extends Exp 6 (InertialHPVOOTPhysioMPSMCTSWorker) by layering three additional
+    context blocks into the system prompt that Scout receives at generation time:
+
+        1. DPO session continuity (PU0-style):
+           Session number, days-since-last, goal, adherence, flagged topics, sentiment.
+           Same five fact categories as Exp 1p / Exp 0p, applied to a Python arm for
+           the first time.
+
+        2. BeliefGraph hints (PU1):
+           Up to 4 safe/risky belief nodes extracted from the patient's BeliefGraph.
+           Tells Scout which beliefs are foundational (avoid frontal challenge) and
+           which are peripheral (safe to explore).
+
+        3. Alliance coupling_tensor + communication regime (PU2):
+           The RelationalField coupling_tensor scalar and the inferred communication regime
+           (e.g. "enmeshed", "cold_conflict", "warm_collaborative") so Scout can adapt
+           its register -- not just its action, but how it says it.
+
+    MCTS is unchanged (HPVOOT, 150 iter, Scout prior). The upgrade is entirely at the
+    generation step: richer context -> better-calibrated responses.
+
+    Isolation value:
+        Exp 6  vs  Exp 18  isolates the contribution of belief + coupling + DPO context
+        to response quality, holding MCTS architecture constant.
+
+    Naming: BeliefCouplingDPOWorker follows the new semantic convention (no verbose
+    prefixes), paired with ARM="bc_dpo_hpvoot" for short dashboard label.
+    """
+
+    ARM            = "bc_dpo_hpvoot"
+    PROMPT_VARIANT = "dpo"
+    RELATIVE_SPEED = 0.35   # same MCTS cost as Exp 6; generation step is slightly richer
+    BELIEF_MAX_NODES: int  = 4   # number of BeliefGraph nodes injected; ablated by Exp 19/20
+
+    _DEFAULT_SYSTEM_PROMPT = _BC_DPO_SYSTEM_PROMPT
+    _PRIOR_SYSTEM          = _DPO_PRIOR_SYSTEM      # richer prior (session-aware)
+
+    def _build_system_prompt(
+        self,
+        state:   "TurnState",
+        action:  str,
+        **kw,
+    ) -> str:
+        """
+        Build system prompt by layering DPO vars + BeliefGraph hints + Alliance context.
+        Falls back gracefully if any component is unavailable (no DB, no alliance graph).
+        """
+        hysteresis_ctx = kw.get("hysteresis_ctx", "")
+
+        # ── 1. DPO session continuity vars ─────────────────────────────────────
+        try:
+            dpo = _build_dpo_prompt_vars(state)
+        except Exception:
+            dpo = {
+                "session_number":  "?",
+                "days_since_last": "unknown",
+                "session_goal":    "general wellbeing",
+                "goal_status":     "unknown",
+                "med_adherence":   "unknown",
+                "flagged_topics":  "none",
+                "last_sentiment":  "neutral",
+            }
+
+        # ── 2. BeliefGraph safe/risky hints (PU1) ──────────────────────────────
+        belief_context = ""
+        try:
+            from tensornets.agents.belief_graph import load_belief_graph
+            bg = load_belief_graph(state.subject_id)
+            if bg and bg.nodes:
+                # BG4/BG5: pass action + stress so prompt_context applies topic/stress gating
+                # and surfaces target_belief_id for language targeting (LS2).
+                bg_hint = bg.prompt_context(
+                    max_nodes      = self.BELIEF_MAX_NODES,
+                    current_action = action,
+                    stress_index   = state.stress_index,
+                )
+                if bg_hint:
+                    belief_context = bg_hint + "\n"
+        except Exception:
+            pass
+
+        # ── 3. Alliance coupling_tensor + communication regime (PU2) ───────────────
+        alliance_context = ""
+        try:
+            # _alliance_graph is set at episode start by run_episode() in worker.py.
+            # Accessing it here avoids a redundant DB load on every turn.
+            ag = getattr(self, "_alliance_graph", None)
+            if ag is not None:
+                edge = ag.get_edge("companion", "patient")
+                if edge is not None:
+                    regime   = edge.detect_communication_regime()
+                    cond_val = edge.coupling_tensor
+                    cond_lbl = (
+                        "high (co-regulation active)" if cond_val >= 0.65 else
+                        "moderate"                     if cond_val >= 0.45 else
+                        "low (stress-contagion dominant)"
+                    )
+                    temp_lbl = edge.comm_temp or "neutral"
+                    alliance_context = (
+                        f"Relational context: regime={regime}, "
+                        f"coupling_tensor={cond_lbl}, communication_temp={temp_lbl}.\n"
+                    )
+        except Exception:
+            pass
+
+        return _BC_DPO_SYSTEM_PROMPT.format(
+            action          = action,
+            stress_index    = state.stress_index,
+            stress_bucket   = state.stress_bucket or "unknown",
+            hysteresis_ctx  = hysteresis_ctx,
+            session_number  = dpo["session_number"],
+            days_since_last = dpo["days_since_last"],
+            session_goal    = dpo["session_goal"],
+            goal_status     = dpo["goal_status"],
+            med_adherence   = dpo["med_adherence"],
+            flagged_topics  = dpo["flagged_topics"],
+            last_sentiment  = dpo["last_sentiment"],
+            belief_context  = belief_context,
+            alliance_context= alliance_context,
+        )
+
+
+# ── Exp 19/20: Belief context width ablation ──────────────────────────────────
+# Isolates how many belief nodes in the companion's context is optimal.
+# Exp 18 (base BC-DPO) uses max_nodes=4.
+# Exp 19: max_nodes=2 — narrow context (less noise, may miss relevant beliefs)
+# Exp 20: max_nodes=8 — wide context  (more coverage, may overwhelm Scout)
+
+class BeliefCouplingDPONarrowWorker(BeliefCouplingDPOWorker):
+    """
+    Exp 19 — BC-DPO-HPVOOT with max_nodes=2 (narrow belief context).
+
+    Ablation of Exp 18: tests whether restricting the BeliefGraph hint to
+    the 2 most relevant nodes improves precision at the cost of coverage.
+
+    Isolation: Exp 18 (4 nodes) vs Exp 19 (2) vs Exp 20 (8) isolates
+    optimal belief context width, holding MCTS, DPO, alliance context constant.
+    """
+    ARM              = "bc_dpo_narrow"
+    BELIEF_MAX_NODES = 2
+
+
+class BeliefCouplingDPOWideWorker(BeliefCouplingDPOWorker):
+    """
+    Exp 20 — BC-DPO-HPVOOT with max_nodes=8 (wide belief context).
+
+    Ablation of Exp 18: tests whether wider BeliefGraph context allows Scout
+    to make richer, more nuanced responses by seeing more belief relationships.
+
+    Isolation: part of the 3-way belief width comparison (Exp 18/19/20).
+    """
+    ARM              = "bc_dpo_wide"
+    BELIEF_MAX_NODES = 8
+
+
+class MultiAgentMCTSWorker(InertialHPVOOTPhysioMPSMCTSWorker):
+    """
+    Exp 21 — Multi-Agent MCTS (MCTS-MULTIAGENT).
+
+    Uses the MultiAgentHPVOOTMCTS rollout which simulates a shallow 3-step
+    care-circle response (companion → caregiver → patient re-response) to
+    evaluate how companion actions propagate through the alliance graph.
+
+    Reduced iterations (30 per tree) to stay within Bedrock quota given the
+    slightly higher per-rollout complexity of the multi-agent simulation.
+
+    Key comparison: Exp 21 vs Exp 8 (same physio + MCTS base) isolates the
+    contribution of multi-participant rollout simulation.
+    """
+    ARM            = "multi_agent_mcts"
+    RELATIVE_SPEED = 0.30
+
+    def generate_response(self, state, action, scenario, conversation_correction=0.0):
+        from tensornets.mcts.hierarchical_pw_voot import MultiAgentHPVOOTMCTS
+        self._mcts_mode_override = "multi_agent"
+        try:
+            resp = super().generate_response(
+                state, action, scenario, conversation_correction
+            )
+        finally:
+            self._mcts_mode_override = None
+        return resp
+
+
+# ── Exp 22: LLM-driven belief-node topic coupling ─────────────────────────────
+# Problem: TOPIC_CLUSTERS is a flat list of 10 generic buckets (health, work,
+# conflict, …).  Topic detection was keyword-based — English-heavy, brittle,
+# and completely blind to the patient's actual beliefs.
+#
+# Solution: pull the patient's live BeliefGraph nodes (top-6 by salience) as
+# coupling topic anchors and use a Scout call each turn to:
+#   (a) detect which belief nodes the patient's message touches/implies
+#   (b) score whether the companion's reply reinforced, ignored, or challenged
+#       each active belief
+#   (c) update per-belief topic_coupling on the AllianceEdge using the same
+#       EWA dynamics as category coupling — but at belief granularity
+#
+# This means coupling becomes personal: a patient whose dominant belief is
+# "I am a burden to my family" will see strong coupling updates when that
+# belief is engaged, regardless of whether the surface topic matches any
+# hardcoded cluster.
+#
+# Ablation: Exp 22 vs Exp 18 (BC-DPO-HPVOOT with fixed max_nodes=4) isolates
+# the contribution of belief-node coupling vs. category coupling.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BeliefTopicCouplingWorker(BeliefCouplingDPOWorker):
+    """
+    Exp 22 — Belief-Node Topic Coupling (LLM-driven).
+
+    Inherits Exp 18's DPO session context, BeliefGraph hints, and Alliance
+    conductance injection.  Adds per-turn belief-node coupling updates via
+    Scout (USE_BELIEF_TOPIC_COUPLING = True), replacing the static
+    TOPIC_CLUSTERS keyword heuristic entirely.
+
+    Mechanism (worker.py EXP-22 block, every other turn):
+      1. BeliefGraph.get_active_nodes(top_n=6) → patient-specific belief topics
+      2. Single Scout call → {engaged, alignment} per belief node
+      3. AllianceEdge.update_coupling_from_belief_turn() updates:
+           - topic_engagement[belief_id]   (salience EWA)
+           - topic_alignment[belief_id]    (agreement EWA)
+           - topic_coupling[belief_id]     (scalar coupling for MCTS)
+
+    Cold-start (belief graph empty): silently falls back to Exp 18 behaviour
+    — no coupling update, no error.
+
+    Training budget: +1 Scout call every 2 turns (LLM-driven topic detection
+    replaces the free keyword scan; net cost ~1 extra call per 2 turns).
+
+    Key comparison: Exp 22 vs Exp 18 isolates belief-node coupling vs.
+    10-bucket category coupling with identical MCTS/DPO/physio base.
+    """
+    ARM                      = "belief_topic_coupling"
+    RELATIVE_SPEED           = 0.25          # slightly slower due to extra Scout call
+    USE_BELIEF_TOPIC_COUPLING = True         # enables EXP-22 block in worker.py
+    BELIEF_MAX_NODES: int    = 6             # active nodes passed to Scout each turn
+
+    """
+    Exp 21 — Multi-Agent MCTS (MCTS-MULTIAGENT).
+
+    Uses the MultiAgentHPVOOTMCTS rollout which simulates a shallow 3-step
+    care-circle response (companion → caregiver → patient re-response) to
+    evaluate how companion actions propagate through the alliance graph.
+
+    Reduced iterations (30 per tree) to stay within Bedrock quota given the
+    slightly higher per-rollout complexity of the multi-agent simulation.
+
+    Key comparison: Exp 21 vs Exp 8 (same physio + MCTS base) isolates the
+    contribution of multi-participant rollout simulation.
+    """
+    ARM            = "multi_agent_mcts"
+    RELATIVE_SPEED = 0.30
+
+    def generate_response(self, state, action, scenario, conversation_correction=0.0):
+        from tensornets.mcts.hierarchical_pw_voot import MultiAgentHPVOOTMCTS
+        self._mcts_mode_override = "multi_agent"
+        try:
+            resp = super().generate_response(
+                state, action, scenario, conversation_correction
+            )
+        finally:
+            self._mcts_mode_override = None
+        return resp
