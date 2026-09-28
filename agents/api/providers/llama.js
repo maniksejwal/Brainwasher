@@ -64,6 +64,7 @@ function getClient() {
     if (!_client) {
         _client = new BedrockRuntimeClient({
             region: config.AWS_REGION || 'us-east-1',
+            requestHandler: { requestTimeout: 30_000, connectionTimeout: 10_000 },
         });
     }
     return _client;

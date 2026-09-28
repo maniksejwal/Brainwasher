@@ -226,9 +226,15 @@ class BaseMCTS(ABC):
         t0 = time.perf_counter()
         root = MCTSNode(state=initial_state)
 
+        # OBS1: apply observation uncertainty exploration boost if present.
+        # When the patient's reported state is unreliable (obs_c_boost > 0),
+        # widen UCB exploration toward meta-actions that reduce uncertainty.
+        obs_c_boost = initial_state.get("obs_c_boost", 0.0) if isinstance(initial_state, dict) else 0.0
+        effective_c = self.c + float(obs_c_boost)
+
         for _ in range(self.iterations):
             # 1. SELECTION — traverse tree using UCB1
-            node, depth = self._select(root)
+            node, depth = self._select(root, c=effective_c)
 
             # 2. EXPANSION — if node is unexpanded and not terminal
             if not self.should_terminate(node, depth):
@@ -276,7 +282,7 @@ class BaseMCTS(ABC):
         M_trunc = self._build_M_trunc(root)
         # top5: sorted children by q_value descending — used by GoTHPVOOTWorker for batch leaf re-rank
         top5 = sorted(
-            [(c.action, round(c.q_value, 4)) for c in root.children.values() if c.action],
+            [(c.action, round(c.q_value, 4)) for c in root.children if c.action],
             key=lambda t: t[1],
             reverse=True,
         )[:5]
@@ -384,11 +390,12 @@ class BaseMCTS(ABC):
 
     # ── Private ─────────────────────────────────────────────────────────────
 
-    def _select(self, node: MCTSNode) -> tuple[MCTSNode, int]:
+    def _select(self, node: MCTSNode, c: float | None = None) -> tuple[MCTSNode, int]:
         """Traverse tree to a leaf using UCB1."""
+        effective_c = c if c is not None else self.c
         depth = 0
         while not node.is_leaf() and depth < self.max_depth:
-            node = node.best_child(self.c)
+            node = node.best_child(effective_c)
             depth += 1
         return node, depth
 

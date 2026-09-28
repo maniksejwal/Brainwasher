@@ -244,6 +244,10 @@ export class SimulationDriver {
 
         await migrateDatabase(this.db);
 
+        // Ensure intervention_queue exists — migrateDatabase does not create it
+        const { addInterventionQueueTable } = await import('../../db/queries_interventions.js');
+        await addInterventionQueueTable();
+
         // Suppress schema logs unless in debug mode
         if (process.env.SIMULATION_DEBUG === 'true') {
             console.log('[Simulator] Test database initialized');

@@ -50,7 +50,16 @@ from tensornets.a3c.action_bandit import (
     STRESS_BUCKETS,
     CALMING_WEIGHT,
     ACTION_INTENT_GROUP,
+    ACTION_HORIZON,
+    ACTION_HORIZON_GAMMA,
+    ActionHorizon,
+    ACTION_AXIS_IE,
+    ACTION_AXIS_DR,
+    ACTION_AXIS_LOGIC,
+    ACTION_RESPONSE_DEPTH,
+    ACTION_SECONDARY_COMPATIBLE,
 )
+from tensornets.a3c.physio_simulator import OPTIMAL_STRESS_RANGE
 from tensornets.a3c.worker import (
     Actor,
     Critic,

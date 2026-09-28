@@ -367,7 +367,8 @@ class PhysioSimulator:
 
     # ── Longitudinal step (within-episode dynamics) ──────────────────────────
 
-    def step(self, physio: dict, emotionally_loaded: bool = False) -> dict:
+    def step(self, physio: dict, emotionally_loaded: bool = False,
+             social_gamma: float = 0.0) -> dict:
         """
         Advance physiological state by one conversational turn.
 
@@ -382,6 +383,10 @@ class PhysioSimulator:
         ----------
         physio           : Current state dict (from prior turn or sample()).
         emotionally_loaded : True if the turn contains distress/crisis keywords.
+        social_gamma     : SA2.1 additive modifier from social_Gamma_modifier().
+                           Δγ < 0 → alliance buffers stress (faster recovery).
+                           Δγ > 0 → rupture/panic amplifies stress reactivity.
+                           Passed in by arms that have access to AllianceGraph.
 
         Returns
         -------
@@ -397,7 +402,11 @@ class PhysioSimulator:
         mean_stress = p.get("stress_index", 0.5)
         long_run_mean = 0.5   # physiological homeostasis
 
-        new_stress = mean_stress + theta * (long_run_mean - mean_stress) + \
+        # SA2.4: apply social_gamma to θ so alliance quality scales reversion speed.
+        # Positive social_gamma (rupture) slows recovery; negative (alliance) speeds it.
+        effective_theta = max(0.02, theta - social_gamma)
+
+        new_stress = mean_stress + effective_theta * (long_run_mean - mean_stress) + \
                      rng.gauss(0.0, sigma_stress)
         new_stress = round(max(0.05, min(0.95, new_stress)), 4)
 
@@ -526,3 +535,89 @@ def step_physio(
 ) -> dict:
     """One-shot stateless step. Creates a fresh simulator per call."""
     return PhysioSimulator(seed=seed).step(physio, emotionally_loaded=emotionally_loaded)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Stress Calibration helpers (SC1 — optimal stress window)
+# ─────────────────────────────────────────────────────────────────────────────
+# Each (archetype, phase) pair has an optimal stress range [min, max].
+# Stress within the window → +bonus (action is possible).
+# Stress below minimum → patient is avoidant; motivational nudge warranted.
+# Stress above maximum → patient is overwhelmed; de-escalation warranted.
+#
+# Archetypes: rough TTM-derived patient motivation profiles.
+# Phases: broad episode phase labels.
+
+OPTIMAL_STRESS_RANGE: dict[tuple[str, str], tuple[float, float]] = {
+    # (archetype, phase) → (min_stress, max_stress)
+    # Avoidant: needs some activation to act, but not much
+    ("avoidant",        "action_taking"):      (0.35, 0.60),
+    ("avoidant",        "contemplation"):      (0.25, 0.50),
+    ("avoidant",        "maintenance"):        (0.15, 0.40),
+    # Catastrophiser: stress escalates quickly; keep window narrow and low
+    ("catastrophiser",  "any"):                (0.10, 0.35),
+    # Achiever: high stress is productive; tolerates more
+    ("achiever",        "action_taking"):      (0.40, 0.70),
+    ("achiever",        "contemplation"):      (0.30, 0.60),
+    # Passive: requires significant activation to engage with change
+    ("passive",         "action_taking"):      (0.40, 0.65),
+    ("passive",         "contemplation"):      (0.30, 0.55),
+    # Default fallback — no archetype or phase known
+    ("default",         "any"):                (0.20, 0.55),
+}
+
+
+def stress_calibration_bonus(
+    stress_index: float,
+    archetype: str = "default",
+    phase: str = "any",
+) -> float:
+    """
+    SC1: Return a reward modifier based on whether final stress_index falls
+    within the optimal window for this archetype / episode phase.
+
+    Returns:
+        +0.05  — stress is within the optimal action window (patient can act)
+        -0.05  — stress is over-reduced (patient below minimum action threshold)
+         0.0   — stress is above max (no penalty here; de-escalation logic handles it)
+    """
+    key = (archetype, phase)
+    lo, hi = OPTIMAL_STRESS_RANGE.get(key) or OPTIMAL_STRESS_RANGE[("default", "any")]
+    if stress_index > hi:
+        return 0.0      # over-escalated — standard calming reward applies elsewhere
+    if stress_index < lo:
+        return -0.05    # over-reduced — penalise excessive de-escalation
+    return +0.05        # within window — bonus for reaching the action threshold
+
+
+def inaction_appropriateness_bonus(
+    action_taken: str,
+    scenario_type: str,
+    stress_index: float,
+) -> float:
+    """
+    AS4: Return a reward bonus when an inaction action is used correctly,
+    or a penalty when over-used in standard therapeutic contexts.
+
+    Inaction cluster: hold_space, therapeutic_silence, await_readiness,
+    pause_and_breathe_together.
+
+    Correct use: grief/shock/breakthrough scenarios OR stress ≥ 0.80.
+    Incorrect use: standard scenario at low/moderate stress → penalise.
+    """
+    _INACTION = {
+        "hold_space", "therapeutic_silence",
+        "await_readiness", "pause_and_breathe_together",
+    }
+    if action_taken not in _INACTION:
+        return 0.0
+    _INACTION_APPROPRIATE_SCENARIOS = {
+        "bereavement", "crisis",   # grief and shock
+        "witness_grief",           # active grief accompaniment
+        "health_deterioration",    # patient health deteriorating mid-session
+    }
+    if scenario_type in _INACTION_APPROPRIATE_SCENARIOS or stress_index >= 0.80:
+        return +0.12   # bonus: restraint is clinically appropriate here
+    if stress_index < 0.50:
+        return -0.08   # penalty: silence at low stress = disengagement
+    return 0.0         # neutral: moderate stress, ambiguous scenario

@@ -517,6 +517,141 @@ ADVERSARIAL_SCENARIOS: list[dict] = [
         "has_misconception": False,
         "session_gap_days": 0.0,
     },
+    # ── Forgiveness scenarios (BG / belief repair) ─────────────────────────
+    {
+        "scenario_id":          "forgiveness_rupture_repair_001",
+        "therapeutic_mode":     "standard",
+        "domain":               "relational",
+        "session_goal":         "process hurt and move toward forgiveness",
+        "description":          "Spouse cheated 6 months ago. Patient says 'I forgave them' "
+                                "but physiological stress spikes when topic arises. "
+                                "Core tension: stated forgiveness vs. unresolved hurt. "
+                                "BeliefGraph contains: identity belief 'I am not someone who holds grudges' "
+                                "(high conf) conflicting with 'They betrayed my trust' (negative valence). "
+                                "Correct trajectory: normalise_discrepancy → seek_probe_consent → "
+                                "validate partial forgiveness → NOT cognitive_restructuring until turn 6+. "
+                                "Tests: belief contradiction detection, coupling_tensor under rupture, "
+                                "forgiveness vs reconciliation distinction.",
+        "archetype":            "relational",
+        "patient_archetype":    "default",
+        "episode_phase":        "middle",
+        "session_count":        4,
+        "session_gap_days":     7.0,
+        "stress_baseline":      0.62,
+        "initial_physio": {
+            "stress_index": 0.62,
+            "hrv_ms":       42.0,
+            "eda_us":       8.5,
+        },
+        "simulated_patient_state": {
+            "mood":           "conflicted",
+            "medication_adherent": True,
+            "recent_events":  ["argument about trust last week", "couple's therapy session"],
+            "beliefs": [
+                {"text": "I am not someone who holds grudges",
+                 "confidence": 0.78, "valence": 1, "identity_linked": True},
+                {"text": "They betrayed my trust",
+                 "confidence": 0.70, "valence": -2, "identity_linked": False},
+                {"text": "I said I forgave them but part of me hasn't",
+                 "confidence": 0.55, "valence": -1, "identity_linked": False},
+            ],
+        },
+        "scenario_type":        "relational_rupture",
+        "circle_members":       ["patient", "companion"],
+        "relationship_type":    "spouse",
+        "expected_actions": ["normalise_discrepancy", "seek_probe_consent",
+                             "empathic_reflection", "validate"],
+        "forbidden_actions":    ["cognitive_restructuring", "challenge_belief",
+                                 "problem_solve"],  # too early, trust not rebuilt
+    },
+    {
+        "scenario_id":          "forgiveness_caregiver_guilt_001",
+        "therapeutic_mode":     "standard",
+        "domain":               "relational",
+        "session_goal":         "help caregiver process guilt over past neglect",
+        "description":          "Adult child caring for ailing parent. "
+                                "Years of distance before illness. "
+                                "Now primary caregiver but consumed by guilt. "
+                                "Belief: 'I abandoned them when they needed me' (foundational, high conf). "
+                                "Patient asking for forgiveness from parent — parent has mild dementia. "
+                                "Correct trajectory: witness_grief → validate partial progress → "
+                                "reframe (only after turn 5) — distinguish self-forgiveness from "
+                                "external validation. Tests multi-user OBS (caregiver reliability).",
+        "archetype":            "relational",
+        "patient_archetype":    "default",
+        "episode_phase":        "middle",
+        "session_count":        2,
+        "session_gap_days":     14.0,
+        "stress_baseline":      0.68,
+        "initial_physio": {
+            "stress_index": 0.68,
+            "hrv_ms":       38.0,
+            "eda_us":       10.0,
+        },
+        "simulated_patient_state": {
+            "mood":           "grief-guilt",
+            "medication_adherent": True,
+            "recent_events":  ["parent missed them at last visit", "flashback of leaving home at 22"],
+            "beliefs": [
+                {"text": "I abandoned them when they needed me",
+                 "confidence": 0.82, "valence": -2, "identity_linked": True},
+                {"text": "I cannot undo the past",
+                 "confidence": 0.75, "valence": -1, "identity_linked": False},
+                {"text": "Being here now counts for something",
+                 "confidence": 0.38, "valence": 1, "identity_linked": False},
+            ],
+        },
+        "scenario_type":        "caregiver_guilt",
+        "circle_members":       ["patient", "caregiver", "companion"],
+        "role":                 "caregiver",
+        "expected_actions": ["witness_grief", "validate", "empathic_reflection",
+                             "normalise_discrepancy"],
+        "forbidden_actions":    ["prescribe_symptom", "cognitive_restructuring",
+                                 "challenge_belief"],
+    },
+
+    # ── Cold-start multi-user: no prior beliefs, 3 care-circle members ────────
+    # Scenario for new users where no BeliefGraph exists yet.
+    # Companion must construct a relational picture purely from conversation.
+    # Tests: dynamic belief extraction, care-circle coordination (patient +
+    # caregiver companion both active), cold-start alliance graph.
+    {
+        "scenario_id":          "cold_start_multiuser_001",
+        "session_goal":         "establish rapport and understand presenting concerns",
+        "session_count":        1,
+        "session_gap_days":     0,
+        "patient_archetype":    "anxious_first_session",
+        "care_circle": [
+            {"role": "patient",   "name": "Alex",  "companion_arm": "bc_dpo_hpvoot"},
+            {"role": "caregiver", "name": "Morgan", "companion_arm": "hpvoot_inertial"},
+        ],
+        "stress_baseline":      0.55,
+        "initial_physio": {
+            "stress_index": 0.55,
+            "hrv_ms":       48.0,
+            "eda_us":       5.5,
+        },
+        "simulated_patient_state": {
+            "mood":           "uncertain",
+            "medication_adherent": True,
+            "recent_events":  ["referred by GP", "first contact with companion system"],
+            # No 'beliefs' key — cold start. BeliefGraph must be built from scratch
+            # via extract_beliefs_from_turn() during the session.
+        },
+        "coordinator_instructions": (
+            "This is Alex's first session. No prior context exists. "
+            "Companion for Alex should focus on open questions and rapport-building. "
+            "Companion for Morgan should help Morgan understand how to support Alex "
+            "without overloading the session. "
+            "Both companions should coordinate: if Alex discloses something significant, "
+            "Morgan's companion should acknowledge Morgan's role in supporting it."
+        ),
+        "physio_deterioration_per_turn": {},
+        "expected_actions": ["open_question", "validate", "empathic_reflection",
+                             "affirmation", "check_on_caregiver", "relay_to_companion"],
+        "forbidden_actions": ["challenge_belief", "cognitive_restructuring",
+                              "emergency_mobilise"],
+    },
 ]
 
 

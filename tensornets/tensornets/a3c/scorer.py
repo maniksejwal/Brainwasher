@@ -341,7 +341,12 @@ Score integers use this scale: -3 critical failure | -2 serious | -1 minor | 0 n
   "escalation_quality_score": 0,
   "escalation_quality_reason": "",
 
-  "covered_goals": []
+  "covered_goals": [],
+
+  "obs_contradiction_score": 0,
+  "obs_avoidance_score": 0,
+  "obs_confidence_mismatch": 0.0,
+  "obs_distortion_modes": []
 }}
 
 Replace ALL 0 / 0.5 values with your actual assessment for this specific turn.
@@ -352,6 +357,36 @@ For info_relevance (0.0–1.0): how clinically/therapeutically pertinent is the 
   1.0 = directly addresses a stated goal; 0.0 = off-topic social filler.
 For covered_goals: list any goal strings from SCENARIO GOAL that the agent's response explicitly and meaningfully addressed this turn.
   Use the exact wording from SCENARIO GOAL where possible.  Leave empty [] if no goals were addressed.
+
+OBSERVATION DISTORTION FIELDS (obs_*):
+These detect unreliable or distorted information in the PATIENT MESSAGE — not the agent's response.
+They update the system's model of how much to trust the patient's self-report this turn.
+
+obs_contradiction_score (int -2 to 0):
+  0  = no contradiction detected; patient's statement is internally consistent with prior history.
+  -1 = mild inconsistency — patient changed a claim slightly (may be forgetfulness or update).
+  -2 = clear contradiction — patient states something directly counter to what they said ≥2 turns ago.
+       Examples: "I've never drunk more than 2 units" when they described binge drinking 2 turns ago.
+
+obs_avoidance_score (int -2 to 0):
+  0  = patient answered fully or topic is not sensitive.
+  -1 = patient deflected, changed subject, or gave a minimal response to a direct probe.
+  -2 = patient explicitly refused to answer or abruptly changed topic when a sensitive area was raised.
+
+obs_confidence_mismatch (float 0.0–1.0):
+  0.0 = patient's expressed certainty matches the quality of their evidence/reasoning.
+  0.5 = mild mismatch (patient expressed certainty about an event they couldn't have verified).
+  1.0 = strong mismatch — patient stated absolute certainty about something vague, unverifiable,
+        or previously described with uncertainty (e.g., "I definitely did NOT drink last week"
+        when the prior turn showed they couldn't remember the evening clearly).
+
+obs_distortion_modes (list[str]):
+  Zero or more of: "forgetfulness", "misinterpretation", "incomplete_info", "false_confidence",
+  "self_uncertainty", "systematic_bias", "recall_distortion", "attention_failure",
+  "communication_fail", "strategic_concealment", "state_dependent".
+  Include a mode ONLY if there is clear conversational evidence for it this turn.
+  "self_uncertainty" is appropriate when the patient voluntarily hedges ("I think", "I'm not sure").
+  "strategic_concealment" requires clear evasion evidence — do not assume it without signal.
 """
 
 

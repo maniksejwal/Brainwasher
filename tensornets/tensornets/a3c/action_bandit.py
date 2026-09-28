@@ -222,6 +222,81 @@ ACTION_TAXONOMY: list[str] = [
                                   # Walk through the best-case, likely, and worst-case
                                   # scenario in sequence. Reduces avoidance and builds
                                   # coping confidence. Use in MODERATE stress only.
+    # ── COUPLING-REGIME actions (COUP2 — relationship type / enmeshment aware) ──
+    # These actions target the RELATIONAL STRUCTURE between circle members, not
+    # just the patient's internal state.  They are only surfaced when the
+    # detect_communication_regime() returns a non-standard regime.
+    "differentiation_prompt",     # [enmeshed_flooded] Gently surface that the two parties
+                                  # may have distinct emotional reactions that don't need
+                                  # to match: "It's okay for you to feel differently about
+                                  # this than [partner/parent] does."  Reduces enmeshment.
+    "individual_space",           # [enmeshed_flooded] Create conversational room for the
+                                  # patient to speak as themselves, not as part of a unit:
+                                  # "Just for a moment — setting aside what [partner] thinks,
+                                  # what does *you* want here?"  Promotes differentiation.
+    "boundary_assertion",         # [enmeshed/toxic] Support the patient in naming a limit:
+                                  # "It sounds like you need to be able to say [X] to them.
+                                  # What would make that feel safer?"  Not directive —
+                                  # companion scaffolds the patient's own boundary language.
+    "mutual_acknowledgement",     # [isolated/estranged] Bridge the gap when two parties
+                                  # have become emotionally distant: "I wonder if [partner]
+                                  # also finds it hard to know what you're going through.
+                                  # Would it help to let them know, even just a little?"
+                                  # Promotes re-connection without forcing disclosure.
+    # ── INACTION cluster (AS4 — silence, witnessing, holding space) ──────────────
+    # The absence of therapeutic action is itself a clinical tool.  When a patient
+    # is in grief, shock, or a moment of deep realisation, a companion that "does
+    # something" is often worse than one that simply stays present.  Inaction actions
+    # prevent iatrogenic harm from over-intervention.  They are rewarded in grief/shock
+    # scenarios and penalised if overused in standard therapeutic contexts.
+    "hold_space",                 # Pure witness — companion generates a minimal,
+                                  # non-directive acknowledgement: "I'm here with you."
+                                  # No questions, no reframes, no suggestions.
+                                  # Best in grief, shock, or moments of breakthrough.
+    "therapeutic_silence",        # Companion sends a brief filler signal ("take your time")
+                                  # and yields the turn — patient is not expected to respond
+                                  # immediately.  Signals that silence is safe here.
+    "await_readiness",            # Explicit invitation to take time: "I'll wait until
+                                  # you feel ready to continue."  Differs from
+                                  # therapeutic_silence in that the patient is reminded
+                                  # they're being waited for, not abandoned.
+    "pause_and_breathe_together", # Shared physiological regulation: companion leads a
+                                  # brief breath cycle without delivering content.
+                                  # Distinct from breathing_exercise (which is instructional).
+                                  # Both are co-regulating; this one is relational.
+    # ── PARADOXICAL INTERVENTIONS (AS2 — counterintuitive / logic-inverted) ──────
+    # Paradoxical interventions are ONLY available when:
+    #   (a) stress_index < 0.40 — patient must be in System 2 (deliberative) mode
+    #   (b) session_count ≥ 3   — established therapeutic alliance required
+    # They are HIGH RISK / HIGH REWARD: if they succeed, they produce more insight
+    # than any direct approach; if misapplied, they can produce critical failures.
+    # Rule 15 in action_selector.js gates these explicitly.
+    "prescribe_symptom",          # Frankl's paradoxical intention: intentionally instruct
+                                  # the patient to do the maladaptive thing for a controlled
+                                  # period, removing the struggle against it.
+                                  # Example: "For the next 10 minutes, try to feel as anxious
+                                  # as you possibly can." Reduces avoidance and cognitive fusion.
+    "strategic_ambiguity",        # Deliberately withhold your interpretation of what the
+                                  # patient just said, allowing them to fill the silence with
+                                  # their own meaning.  "What do you make of that?"  without
+                                  # preceding the question with any frame.  Surfaces self-insight.
+    "reverse_validate",           # Validate the OPPOSING belief to the one the patient is
+                                  # defending, in order to surface ambivalence.
+                                  # "I can also see why someone would feel the complete
+                                  # opposite — that [X] might actually be true."
+                                  # Not confrontational — opens a space for both to coexist.
+    # ── STRESS-CALIBRATION actions (SC2 — enabling appropriate stress) ────────────
+    # These actions are the OPPOSITE of de-escalation: they are used when the
+    # patient is BELOW their optimal action threshold and needs a motivational nudge
+    # to overcome avoidance or inertia.  NEVER use when stress_index > 0.40.
+    "increase_salience",          # Make the cost of inaction tangible and personal:
+                                  # "What happens in 6 months if nothing changes here?"
+                                  # Not threatening — it surfaces the patient's own stakes.
+                                  # Available only when stress < 0.35 and goal requires decision.
+    "temporal_urgency",           # Introduce a time anchor to break avoidance:
+                                  # "You mentioned the appointment is next week — shall we
+                                  # use this session to prepare you for it?"
+                                  # Uses an existing event rather than fabricating pressure.
 ]
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -331,6 +406,23 @@ CALMING_WEIGHT: dict[str, float] = {
     "uncertainty_tolerance":    0.68,  # normalising uncertainty is calming but doesn't resolve it
     "probability_reframe":      0.40,  # gentle reality check — risky at high stress
     "graded_imagery":           0.35,  # graduated exposure — calming only at moderate stress
+    # Coupling-regime cluster (COUP2)
+    "differentiation_prompt":   0.55,  # surfacing individual identity — mildly de-escalating
+    "individual_space":         0.60,  # creating room for self-expression — grounding
+    "boundary_assertion":       0.50,  # naming limits — activating but protective
+    "mutual_acknowledgement":   0.65,  # bridge-building — warms the relational field
+    # Inaction cluster (AS4)
+    "hold_space":               0.85,  # pure presence — one of the highest calming actions
+    "therapeutic_silence":      0.80,  # permission to be silent — very calming in grief/shock
+    "await_readiness":          0.78,  # "I'm waiting" — patient-led pacing is de-escalating
+    "pause_and_breathe_together": 0.88, # co-regulated breath — strongest inaction calmer
+    # Paradoxical interventions (AS2) — ONLY at low stress; higher value at low stress
+    "prescribe_symptom":        0.20,  # paradoxical; activating by design; only safe at low stress
+    "strategic_ambiguity":      0.45,  # withheld interpretation; mildly activating, allows reflection
+    "reverse_validate":         0.30,  # surfacing opposing belief; mild activation
+    # Stress-calibration / salience actions (SC2) — intentionally non-calming
+    "increase_salience":        0.05,  # deliberately raises motivational tension — NOT calming
+    "temporal_urgency":         0.10,  # time pressure — activating by intent
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -444,6 +536,23 @@ ACTION_INTENT_GROUP: dict[str, str] = {
     "uncertainty_tolerance":   "validate",     # normalise the experience = validation
     "probability_reframe":     "challenge",    # mild cognitive challenge of probability estimate
     "graded_imagery":          "explore",      # graduated rehearsal = exploration cluster
+    # Coupling-regime cluster (COUP2)
+    "differentiation_prompt":  "differentiate",  # relational — own group
+    "individual_space":        "differentiate",
+    "boundary_assertion":      "differentiate",
+    "mutual_acknowledgement":  "social",
+    # Inaction cluster (AS4)
+    "hold_space":               "inaction",
+    "therapeutic_silence":      "inaction",
+    "await_readiness":          "inaction",
+    "pause_and_breathe_together": "inaction",
+    # Paradoxical interventions (AS2)
+    "prescribe_symptom":       "paradoxical",
+    "strategic_ambiguity":     "paradoxical",
+    "reverse_validate":        "paradoxical",
+    # Stress-calibration / salience (SC2)
+    "increase_salience":       "motivate",    # motivational group (escalates stakes intentionally)
+    "temporal_urgency":        "motivate",
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -526,6 +635,23 @@ ACTION_HORIZON: dict[str, ActionHorizon] = {
     "socratic_reframe":         ActionHorizon.LONGITUDINAL,
     "direct_confrontation":     ActionHorizon.LONGITUDINAL,
     "rupture_repair":           ActionHorizon.LONGITUDINAL,
+    # Coupling-regime cluster (COUP2)
+    "differentiation_prompt":   ActionHorizon.SESSION,
+    "individual_space":         ActionHorizon.SESSION,
+    "boundary_assertion":       ActionHorizon.LONGITUDINAL,  # sustained change in relational structure
+    "mutual_acknowledgement":   ActionHorizon.SESSION,
+    # Inaction cluster (AS4) — all MICRO (immediate relational effect)
+    "hold_space":                ActionHorizon.MICRO,
+    "therapeutic_silence":       ActionHorizon.MICRO,
+    "await_readiness":           ActionHorizon.MICRO,
+    "pause_and_breathe_together":ActionHorizon.MICRO,
+    # Paradoxical interventions (AS2)
+    "prescribe_symptom":        ActionHorizon.SESSION,        # effect within this session
+    "strategic_ambiguity":      ActionHorizon.SESSION,
+    "reverse_validate":         ActionHorizon.SESSION,
+    # Stress-calibration / salience (SC2)
+    "increase_salience":        ActionHorizon.LONGITUDINAL,   # motivating lasting change
+    "temporal_urgency":         ActionHorizon.SESSION,
 }
 
 # Gamma values per horizon — used by MCTS9 MultiHorizonHPVOOTMCTS
@@ -533,6 +659,402 @@ ACTION_HORIZON_GAMMA: dict[ActionHorizon, float] = {
     ActionHorizon.MICRO:        0.95,
     ActionHorizon.SESSION:      0.70,
     ActionHorizon.LONGITUDINAL: 0.40,
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTION_AXIS_IE: Internal vs External target axis (AS1)
+# ─────────────────────────────────────────────────────────────────────────────
+# "internal" — action targets the patient's internal state: beliefs, physiology,
+#              affect, cognition.  Effect is within the patient.
+# "external" — action targets the environment: other people, events, situations.
+#              Effect is outside the patient.
+# "both"     — action bridges internal state and external context.
+#
+# Used by GoT Node D cluster synthesis to emit a `focus_axis` field, and by
+# scenario-level ablations (internal-only vs external-only companion modes).
+
+ACTION_AXIS_IE: dict[str, str] = {
+    # ── Internal ────────────────────────────────────────────────────────────
+    "validate":                 "internal",
+    "empathic_reflection":      "internal",
+    "affirmation":              "internal",
+    "unconditional_regard":     "internal",
+    "validate_emotion":         "internal",
+    "acknowledge_only":         "internal",
+    "breathing_exercise":       "internal",
+    "mindfulness_prompt":       "internal",
+    "flooding_hold":            "internal",
+    "flooding_deepen":          "internal",
+    "spike_step":               "internal",
+    "socratic_probe":           "internal",
+    "socratic_reframe":         "internal",
+    "explore_ambivalence":      "internal",
+    "elicit_change_talk":       "internal",
+    "challenger_insight":       "internal",
+    "develop_discrepancy":      "internal",
+    "loss_frame":               "internal",
+    "motivational_frame":       "internal",
+    "reframe_perspective":      "internal",
+    "probability_reframe":      "internal",
+    "graded_imagery":           "internal",
+    "time_bracketing":          "internal",
+    "uncertainty_tolerance":    "internal",
+    "normalise_discrepancy":    "internal",
+    "prescribe_symptom":        "internal",
+    "strategic_ambiguity":      "internal",
+    "reverse_validate":         "internal",
+    "panic_reassure_not_cardiac": "internal",
+    "panic_reassure_not_hypoxic": "internal",
+    "panic_normalise_duration": "internal",
+    "panic_grounding_54321":    "internal",
+    "distraction_technique":    "internal",
+    "curiosity_pivot":          "internal",
+    "humour_deflection":        "internal",
+    "hold_space":               "internal",
+    "therapeutic_silence":      "internal",
+    "await_readiness":          "internal",
+    "pause_and_breathe_together": "internal",
+    "individual_space":         "internal",
+    "address_resistance":       "internal",
+    # ── External ────────────────────────────────────────────────────────────
+    "emergency_mobilise":       "external",
+    "safety_exit_protocol":     "external",
+    "call_for_help":            "external",
+    "request_presence":         "external",
+    "delegate_to_human":        "external",
+    "coordinate_care":          "external",
+    "coordinate_companion_handoff": "external",
+    "schedule_future_interaction":  "external",
+    "schedule_commitment":      "external",
+    "surface_intervention":     "external",
+    "defer_intervention":       "external",
+    "confidentiality_hold":     "external",
+    # ── Both ────────────────────────────────────────────────────────────────
+    "open_question":            "both",
+    "specific_question":        "both",
+    "probing_question":         "both",
+    "give_facts":               "both",
+    "give_options":             "both",
+    "psychoeducation":          "both",
+    "summarise":                "both",
+    "summarise_session":        "both",
+    "direct_advice":            "both",
+    "goal_reassess":            "both",
+    "future_planning":          "both",
+    "mediate_conflict":         "both",
+    "check_on_caregiver":       "both",
+    "share_circle_insight":     "both",
+    "companion_handoff":        "both",
+    "consent_acknowledgement":  "both",
+    "normalise_role":           "both",
+    "escalate":                 "both",
+    "safety_protocol":          "both",
+    "defer_and_schedule":       "both",
+    "remove_urgency_signal":    "both",
+    "acknowledge_and_pause":    "both",
+    "await_co_regulation":      "both",
+    "panic_support_available":  "both",
+    "panic_safety_assess_faint":"both",
+    "witness_grief":            "both",
+    "differentiation_prompt":   "both",
+    "boundary_assertion":       "both",
+    "mutual_acknowledgement":   "both",
+    "seek_probe_consent":       "both",
+    "increase_salience":        "both",
+    "temporal_urgency":         "both",
+    "change_topic":             "both",
+    "introduce_new_angle":      "both",
+    "topic_from_stack":         "both",
+    "build_alliance":           "both",
+    "invite_reflection":        "both",
+    "check_understanding":      "both",
+    "suggest_coping_strategy":  "both",
+    "clarify_goal":             "both",
+    "end_conversation":         "both",
+    "oars_summary":             "both",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTION_AXIS_DR: Deliberated vs Reflexive mode compatibility (AS3)
+# ─────────────────────────────────────────────────────────────────────────────
+# "deliberated" — requires System 2 (slow, reflective) thinking.  BLOCKED when
+#                 reflex_detected=True (patient in automatic/reactive mode).
+# "reflexive"   — compatible with automatic/reactive mode.  Works when patient
+#                 is not fully cognitively available.
+# "both"        — works in either mode.
+#
+# When reflex_detected=True, only "reflexive" and "both" actions are available.
+# Deliberated actions under reflex mode waste cognitive load and backfire.
+
+ACTION_AXIS_DR: dict[str, str] = {
+    # ── Deliberated only (System 2 required) ────────────────────────────────
+    "socratic_probe":           "deliberated",
+    "socratic_reframe":         "deliberated",
+    "explore_ambivalence":      "deliberated",
+    "elicit_change_talk":       "deliberated",
+    "challenger_insight":       "deliberated",
+    "develop_discrepancy":      "deliberated",
+    "loss_frame":               "deliberated",
+    "motivational_frame":       "deliberated",
+    "reframe_perspective":      "deliberated",
+    "probability_reframe":      "deliberated",
+    "graded_imagery":           "deliberated",
+    "flooding_deepen":          "deliberated",
+    "flooding_hold":            "deliberated",
+    "spike_step":               "deliberated",
+    "prescribe_symptom":        "deliberated",
+    "strategic_ambiguity":      "deliberated",
+    "reverse_validate":         "deliberated",
+    "increase_salience":        "deliberated",
+    "future_planning":          "deliberated",
+    "goal_reassess":            "deliberated",
+    "schedule_commitment":      "deliberated",
+    "normalise_discrepancy":    "deliberated",
+    "differentiation_prompt":   "deliberated",
+    "boundary_assertion":       "deliberated",
+    "direct_advice":            "deliberated",
+    "give_options":             "deliberated",
+    "address_resistance":       "deliberated",
+    # ── Reflexive compatible (works in automatic mode) ───────────────────────
+    "breathing_exercise":       "reflexive",
+    "mindfulness_prompt":       "reflexive",
+    "distraction_technique":    "reflexive",
+    "humour_deflection":        "reflexive",
+    "hold_space":               "reflexive",
+    "therapeutic_silence":      "reflexive",
+    "await_readiness":          "reflexive",
+    "pause_and_breathe_together":"reflexive",
+    "acknowledge_and_pause":    "reflexive",
+    "panic_reassure_not_cardiac":"reflexive",
+    "panic_reassure_not_hypoxic":"reflexive",
+    "panic_normalise_duration": "reflexive",
+    "panic_grounding_54321":    "reflexive",
+    "panic_support_available":  "reflexive",
+    "emergency_mobilise":       "reflexive",
+    "safety_exit_protocol":     "reflexive",
+    "witness_grief":            "reflexive",
+    "await_co_regulation":      "reflexive",
+    "remove_urgency_signal":    "reflexive",
+    "defer_and_schedule":       "reflexive",
+    # ── Both ────────────────────────────────────────────────────────────────
+    "validate":                 "both",
+    "empathic_reflection":      "both",
+    "affirmation":              "both",
+    "unconditional_regard":     "both",
+    "validate_emotion":         "both",
+    "acknowledge_only":         "both",
+    "open_question":            "both",
+    "specific_question":        "both",
+    "probing_question":         "both",
+    "give_facts":               "both",
+    "psychoeducation":          "both",
+    "summarise":                "both",
+    "summarise_session":        "both",
+    "change_topic":             "both",
+    "introduce_new_angle":      "both",
+    "topic_from_stack":         "both",
+    "build_alliance":           "both",
+    "invite_reflection":        "both",
+    "check_understanding":      "both",
+    "suggest_coping_strategy":  "both",
+    "clarify_goal":             "both",
+    "check_on_caregiver":       "both",
+    "escalate":                 "both",
+    "safety_protocol":          "both",
+    "seek_probe_consent":       "both",
+    "time_bracketing":          "both",
+    "uncertainty_tolerance":    "both",
+    "mutual_acknowledgement":   "both",
+    "curiosity_pivot":          "both",
+    "individual_space":         "both",
+    "mediate_conflict":         "both",
+    "normalise_role":           "both",
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTION_AXIS_LOGIC: Standard vs Counterintuitive logic axis (AS2)
+# ─────────────────────────────────────────────────────────────────────────────
+# "standard"         — follows expected clinical logic; safe default.
+# "counterintuitive" — paradoxical, deliberately surprising.  ONLY available
+#                      when stress_index < 0.40 AND session_count >= 3.
+#                      High-risk/high-reward: if misapplied, causes critical failure.
+# Governs Rule 15 gating in action_selector.js.
+
+ACTION_AXIS_LOGIC: dict[str, str] = {
+    "prescribe_symptom":    "counterintuitive",
+    "strategic_ambiguity":  "counterintuitive",
+    "reverse_validate":     "counterintuitive",
+    "loss_frame":           "counterintuitive",   # mild; frames cost of not changing
+    "increase_salience":    "counterintuitive",   # deliberately raises tension
+}
+# All other actions default to "standard"; no need to enumerate them.
+_LOGIC_DEFAULT = "standard"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTION_RESPONSE_DEPTH: expected response complexity per action (AS-DEPTH)
+# ─────────────────────────────────────────────────────────────────────────────
+# A single action label controls INTENT, not verbosity.  The Scout LLM that
+# executes the action needs guidance on *how much* to say.  Injecting the
+# depth hint prevents both under-response (terse empathic_reflection when a
+# full psychoeducation was selected) and over-response (multi-paragraph
+# validate when a brief "hold_space" was selected).
+#
+# Depth tiers:
+#   "brief"    — 1-2 sentences. Presence signal. No content delivery.
+#   "moderate" — 3-5 sentences. Single idea, single question, or single reframe.
+#   "extended" — 6-10 sentences. Multi-part: context + content + check-in.
+#   "structured" — may use list/steps. Used for protocols with discrete phases.
+#
+# When MULTIPLE strategic intents are needed in one turn (e.g. validate + give_facts),
+# the action with the higher depth governs, and the Scout prompt should include:
+# "This turn combines {primary_action} (depth: {depth}) with {secondary_intent}."
+# See ACTION_SECONDARY_COMPATIBLE below.
+
+ACTION_RESPONSE_DEPTH: dict[str, str] = {
+    # ── Brief: presence, acknowledgement, de-escalation ──────────────────────
+    "validate":                     "brief",
+    "empathic_reflection":          "brief",
+    "unconditional_regard":         "brief",
+    "validate_emotion":             "brief",
+    "acknowledge_only":             "brief",
+    "hold_space":                   "brief",
+    "therapeutic_silence":          "brief",
+    "await_readiness":              "brief",
+    "pause_and_breathe_together":   "brief",
+    "affirmation":                  "brief",
+    "end_conversation":             "brief",
+    "defer_and_schedule":           "brief",
+    "remove_urgency_signal":        "brief",
+    "acknowledge_and_pause":        "brief",
+    "await_co_regulation":          "brief",
+    "seek_probe_consent":           "brief",
+    "normalise_discrepancy":        "brief",
+    "change_topic":                 "brief",
+    "curiosity_pivot":              "brief",
+    "humour_deflection":            "brief",
+    "emergency_mobilise":           "brief",   # urgent; short directive
+    "safety_protocol":              "brief",
+    # ── Moderate: single-idea responses ──────────────────────────────────────
+    "open_question":                "moderate",
+    "specific_question":            "moderate",
+    "probing_question":             "moderate",
+    "socratic_probe":               "moderate",
+    "topic_from_stack":             "moderate",
+    "give_options":                 "moderate",
+    "summarise":                    "moderate",
+    "summarise_session":            "moderate",
+    "motivational_frame":           "moderate",
+    "direct_advice":                "moderate",
+    "challenger_insight":           "moderate",
+    "reframe_perspective":          "moderate",
+    "explore_ambivalence":          "moderate",
+    "elicit_change_talk":           "moderate",
+    "invite_reflection":            "moderate",
+    "schedule_commitment":          "moderate",
+    "future_planning":              "moderate",
+    "goal_reassess":                "moderate",
+    "check_understanding":          "moderate",
+    "build_alliance":               "moderate",
+    "request_presence":             "moderate",
+    "call_for_help":                "moderate",
+    "delegate_to_human":            "moderate",
+    "mediate_conflict":             "moderate",
+    "check_on_caregiver":           "moderate",
+    "normalise_role":               "moderate",
+    "witness_grief":                "moderate",
+    "share_circle_insight":         "moderate",
+    "time_bracketing":              "moderate",
+    "uncertainty_tolerance":        "moderate",
+    "probability_reframe":          "moderate",
+    "differentiation_prompt":       "moderate",
+    "individual_space":             "moderate",
+    "mutual_acknowledgement":       "moderate",
+    "increase_salience":            "moderate",
+    "temporal_urgency":             "moderate",
+    "prescribe_symptom":            "moderate",
+    "strategic_ambiguity":          "moderate",
+    "reverse_validate":             "moderate",
+    "companion_handoff":            "moderate",
+    "surface_intervention":         "moderate",
+    "consent_acknowledgement":      "moderate",
+    "defer_intervention":           "moderate",
+    "confidentiality_hold":         "moderate",
+    "coordinate_care":              "moderate",
+    "schedule_future_interaction":  "moderate",
+    "coordinate_companion_handoff": "moderate",
+    # ── Extended: multi-part responses ───────────────────────────────────────
+    "psychoeducation":              "extended",
+    "give_facts":                   "extended",
+    "provide_information":          "extended",
+    "develop_discrepancy":          "extended",
+    "loss_frame":                   "extended",
+    "socratic_reframe":             "extended",
+    "address_resistance":           "extended",
+    "suggest_coping_strategy":      "extended",
+    "graded_imagery":               "extended",
+    "boundary_assertion":           "extended",
+    "oars_summary":                 "extended",
+    # ── Structured: protocol-following, phased ────────────────────────────────
+    "flooding_hold":                "structured",
+    "flooding_deepen":              "structured",
+    "spike_step":                   "structured",
+    "breathing_exercise":           "structured",  # count-guided: 4-7-8 or box
+    "mindfulness_prompt":           "structured",
+    "panic_grounding_54321":        "structured",
+    "panic_reassure_not_cardiac":   "structured",
+    "panic_reassure_not_hypoxic":   "structured",
+    "panic_normalise_duration":     "structured",
+    "panic_support_available":      "structured",
+    "panic_safety_assess_faint":    "structured",
+    "safety_exit_protocol":         "structured",
+}
+_DEPTH_DEFAULT = "moderate"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ACTION_SECONDARY_COMPATIBLE: which actions can be combined in one turn
+# ─────────────────────────────────────────────────────────────────────────────
+# When the strategic situation calls for two intents in one turn (e.g. validate
+# THEN ask a question), the primary action is selected by MCTS/bandit, and one
+# compatible secondary action can be appended.
+#
+# Rules:
+#   - Secondary must not contradict the primary's emotional register.
+#   - Secondary must not require a gate check beyond the primary's.
+#   - "extended" depth primary can accommodate a secondary freely.
+#   - "brief" depth primary can only accommodate another "brief" secondary.
+#   - NEVER combine two "structured" actions.
+#
+# This dict maps each primary action to a set of allowed secondaries.
+# Only the most common pairings are listed; unlisted = no secondary allowed.
+
+ACTION_SECONDARY_COMPATIBLE: dict[str, set[str]] = {
+    # Empathy + question is the most common therapeutic pairing
+    "empathic_reflection":   {"open_question", "probing_question", "acknowledge_only"},
+    "validate":              {"open_question", "invite_reflection", "time_bracketing"},
+    "validate_emotion":      {"open_question", "probing_question"},
+    "affirmation":           {"elicit_change_talk", "open_question"},
+    # Psychoeducation naturally followed by comprehension check
+    "psychoeducation":       {"check_understanding", "open_question", "give_options"},
+    "give_facts":            {"check_understanding", "open_question"},
+    # Summarise + forward plan
+    "summarise":             {"schedule_commitment", "open_question", "goal_reassess"},
+    "summarise_session":     {"schedule_commitment", "future_planning"},
+    # Reframe + reflection
+    "reframe_perspective":   {"invite_reflection", "open_question"},
+    "socratic_reframe":      {"invite_reflection"},
+    # Panic cluster: reassure + grounding
+    "panic_reassure_not_cardiac": {"panic_grounding_54321", "breathing_exercise"},
+    "panic_normalise_duration":   {"panic_grounding_54321", "panic_support_available"},
+    # Grief: witness + schedule
+    "witness_grief":         {"schedule_future_interaction", "await_readiness"},
+    # De-escalation: defer + schedule
+    "defer_and_schedule":    {"schedule_future_interaction"},
+    "remove_urgency_signal": {"acknowledge_and_pause"},
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

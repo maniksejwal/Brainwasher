@@ -240,6 +240,10 @@ export class WorldSimulator {
 
         // Existing DBs may predate columns like feedback.source; CREATE TABLE IF NOT EXISTS does not ALTER
         await migrateDatabase(this.db);
+
+        // Ensure intervention_queue exists — migrateDatabase does not create it
+        const { addInterventionQueueTable } = await import('../../db/queries_interventions.js');
+        await addInterventionQueueTable();
     }
 
     /**

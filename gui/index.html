@@ -279,6 +279,7 @@
                                 <button id="group-toggle-base"     class="secondary" style="font-size:11px;padding:3px 8px;">Base (0–7)</button>
                                 <button id="group-toggle-ablation" class="secondary" style="font-size:11px;padding:3px 8px;">Ablations (0a–7a)</button>
                                 <button id="group-toggle-dpo"      class="secondary" style="font-size:11px;padding:3px 8px;">DPO (0p–7p)</button>
+                                <button id="group-toggle-rag"      class="secondary" style="font-size:11px;padding:3px 8px;">RAG (8–11)</button>
                             </div>
                             <!-- Experiment filter toggles — Base (Exp 0–7) -->
                             <div style="display:flex;gap:4px;flex-wrap:wrap;" data-exp-group="base">
@@ -312,6 +313,13 @@
                                 <button class="secondary bench-exp-btn" data-exp-toggle="inertial_physio_llm_cot_mcts_dpo"         style="font-size:11px;padding:3px 8px;border-left:4px solid #004D40;">Exp 5p DPO</button>
                                 <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_mps_mcts_dpo"      style="font-size:11px;padding:3px 8px;border-left:4px solid #880E4F;">Exp 6p DPO</button>
                                 <button class="secondary bench-exp-btn" data-exp-toggle="inertial_hpvoot_physio_llm_cot_mcts_dpo"  style="font-size:11px;padding:3px 8px;border-left:4px solid #E65100;">Exp 7p DPO</button>
+                            </div>
+                            <!-- RAG ablation set (Exp 8–11) — hidden by default -->
+                            <div style="display:none;gap:4px;flex-wrap:wrap;" data-exp-group="rag">
+                                <button class="secondary bench-exp-btn" data-exp-toggle="plain_rag"                 style="font-size:11px;padding:3px 8px;border-left:4px solid #0277BD;">Exp 8 PlainRAG</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="reason_rag"               style="font-size:11px;padding:3px 8px;border-left:4px solid #00838F;">Exp 9 ReasonRAG</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="reason_rag_mps_mcts"      style="font-size:11px;padding:3px 8px;border-left:4px solid #558B2F;">Exp 10 ReasonRAG+MPS</button>
+                                <button class="secondary bench-exp-btn" data-exp-toggle="reason_rag_inertial_hpvoot" style="font-size:11px;padding:3px 8px;border-left:4px solid #6A1B9A;">Exp 11 ReasonRAG+HPVOOT</button>
                             </div>
                             <!-- Legacy arms (htn_mcts, hysteresis_prompt) are merged into Exp 1/3 at fetch time -->
                         </div>

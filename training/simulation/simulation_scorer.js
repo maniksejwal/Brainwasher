@@ -7,6 +7,7 @@ import { URGENCY_LEVELS, TIME_CONTEXTS, SYMPTOM_URGENCY, DENIAL_PATTERNS, GENERI
 import { SCORING_WEIGHTS } from './scoring_constants.js';
 import { smartUrgencyAssessor } from './smart_urgency_assessor.js';
 import { ConversationQualityAssessor } from './llm_scorer.js';
+import { makeApiCall } from '../../agents/api_client.js';
 
 export class SimulationScorer {
     constructor(dbConnection = null, scenarioContext = null) {
@@ -83,8 +84,9 @@ export class SimulationScorer {
             });
         }
 
-        // 5. Assess goal progress
-        const goalScores = await this._assessGoalProgress(userMessage, agentResponse);
+        // 5. Assess goal progress — pass already-computed scores so the probing
+        //    check knows whether a critical failure is already on the board
+        const goalScores = await this._assessGoalProgress(userMessage, agentResponse, conversationHistory, scores);
         scores.push(...goalScores);
 
         // 6. Scenario-specific evaluation (if available)
@@ -241,7 +243,7 @@ export class SimulationScorer {
     /**
      * Assess goal progress
      */
-    async _assessGoalProgress(userMessage, agentResponse) {
+    async _assessGoalProgress(userMessage, agentResponse, conversationHistory = [], priorScores = []) {
         const scores = [];
 
         // Adherence goal
@@ -256,8 +258,8 @@ export class SimulationScorer {
             scores.push({ score: historyScore, reason: 'History collection goal progress' });
         }
 
-        // Conversation quality goal
-        const qualityResult = this._assessQualityGoal(userMessage, agentResponse);
+        // Conversation quality goal — LLM-based probing check with consecutive-turn penalty
+        const qualityResult = await this._assessProbingQuality(userMessage, agentResponse, conversationHistory, priorScores);
         if (qualityResult.score !== 0) {
             scores.push({ score: qualityResult.score, reason: qualityResult.reason });
         }
@@ -299,33 +301,151 @@ export class SimulationScorer {
     }
 
     /**
-     * Assess conversation quality goal progress
-     * PRIMARY FOCUS: Probing questions are highest value
+     * Assess conversation quality goal progress using an LLM.
+     *
+     * Scoring rules:
+     *   +2  LLM confirms a strong open-ended probing question
+     *   +1  LLM confirms any question was asked
+     *    0  No question, companion is in a multi-message run AND no critical failure active
+     *   -1  No question, first miss (streak = 1)
+     *   -2  No question, streak ≥ 2 consecutive turns without a probe
+     *
+     * Multi-message exemption (score = 0) is BLOCKED when priorScores already
+     * contain a critical failure (≤ -2).  In those situations the companion
+     * must probe regardless of how many messages it has already sent.
+     *
+     * The LLM receives:
+     *   - Last 4 agent responses + consecutive-miss streak count
+     *   - A condensed chat arc (last 6 exchanges, patient lines only)
+     *   - Scenario name, persona, and care-circle summary from scenarioContext
+     *
+     * @param {string}   userMessage
+     * @param {string}   agentResponse
+     * @param {Array}    conversationHistory   — full history up to (not including) current turn
+     * @param {Array}    priorScores           — scores already computed this turn (steps 1-4)
      */
-    _assessQualityGoal(userMessage, agentResponse) {
-        const responseLower = agentResponse.toLowerCase();
+    async _assessProbingQuality(userMessage, agentResponse, conversationHistory = [], priorScores = []) {
+        const STREAK_WINDOW = 4;
 
-        // Check for repetitive responses (penalty)
-        if (this._isRepetitiveResponse(agentResponse)) {
-            return { score: -2, reason: 'Repetitive/pestering response' };
+        // ── Critical-failure gate ────────────────────────────────────────────────
+        const hasCriticalFailure = priorScores.some(s => s.score <= -2);
+
+        // ── Multi-message exemption ──────────────────────────────────────────────
+        const lastHistEntry = conversationHistory.length > 0
+            ? conversationHistory[conversationHistory.length - 1]
+            : null;
+        const isMultiMessageTurn = !hasCriticalFailure &&
+            lastHistEntry && lastHistEntry.role === 'agent';
+
+        // ── Consecutive-miss streak ──────────────────────────────────────────────
+        const recentAgentTurns = [];
+        for (let i = conversationHistory.length - 1; i >= 0 && recentAgentTurns.length < STREAK_WINDOW; i--) {
+            if (conversationHistory[i].role === 'agent') {
+                recentAgentTurns.push(conversationHistory[i].content || '');
+            }
+        }
+        let streak = 0;
+        for (const pastResponse of recentAgentTurns) {
+            if (pastResponse.includes('?')) break;
+            streak++;
         }
 
-        // PRIMARY: Check for specific questions (HIGH VALUE +2, or NO_QUESTION penalty -2)
-        const hasQuestion = responseLower.includes('?') && !responseLower.includes('yes') && !responseLower.includes('no');
-        const hasEmphaticQuestion = responseLower.includes('?') && (
-            responseLower.includes('how') || responseLower.includes('what') || 
-            responseLower.includes('when') || responseLower.includes('where') ||
-            responseLower.includes('why') || responseLower.includes('can you')
-        );
-        
-        if (hasEmphaticQuestion) {
-            return { score: 2, reason: 'Asks probing question' };  // HIGH VALUE
-        } else if (hasQuestion) {
-            return { score: 1, reason: 'Asks question' };
-        } else {
-            // No question = PENALTY (conversations should elicit information)
-            return { score: -2, reason: 'No probing question asked' };
+        // ── Context blocks for LLM ───────────────────────────────────────────────
+        // 1. Recent agent response snippet (oldest → newest, truncated)
+        const agentSnippet = recentAgentTurns
+            .slice(0, STREAK_WINDOW)
+            .reverse()
+            .map((r, i) => `  Turn -${recentAgentTurns.length - i}: "${r.slice(0, 120)}${r.length > 120 ? '…' : ''}"`)
+            .join('\n');
+
+        // 2. Chat arc: last 6 full exchanges condensed (user + agent lines)
+        const recentExchanges = [];
+        for (let i = conversationHistory.length - 1; i >= 0 && recentExchanges.length < 12; i--) {
+            recentExchanges.unshift(conversationHistory[i]);
         }
+        const chatArc = recentExchanges
+            .map(e => `  ${e.role === 'agent' ? 'Companion' : 'Patient'}: ${(e.content || '').slice(0, 100)}${(e.content || '').length > 100 ? '…' : ''}`)
+            .join('\n');
+
+        // 3. Scenario / care-circle summary from scenarioContext (instance-level)
+        const sc = this.scenarioContext || {};
+        const scenarioName   = sc.name || sc.scenarioName || '';
+        const personaName    = sc.personaName || sc.persona || '';
+        const careCircleDesc = sc.careCircle || sc.participants
+            ? `Care circle: ${JSON.stringify(sc.careCircle || sc.participants || {}).slice(0, 200)}`
+            : '';
+        const sessionGoal    = sc.agent?.goal || sc.goal || '';
+        const scenarioBlock  = [scenarioName, personaName, careCircleDesc, sessionGoal ? `Session goal: ${sessionGoal}` : '']
+            .filter(Boolean).join(' | ');
+
+        // ── LLM probe detection ──────────────────────────────────────────────────
+        let probed = false;
+        let probedStrong = false;
+        let llmReason = 'LLM assessment unavailable';
+
+        try {
+            const prompt = `You are evaluating a healthcare companion's information-gathering behaviour.
+
+${scenarioBlock ? `CONTEXT: ${scenarioBlock}\n` : ''}PATIENT MESSAGE: "${userMessage}"
+CURRENT COMPANION RESPONSE: "${agentResponse}"
+
+RECENT CHAT (last 6 exchanges):
+${chatArc || '  (start of conversation)'}
+
+RECENT COMPANION RESPONSES ONLY (oldest → newest):
+${agentSnippet || '  (no prior agent turns)'}
+CONSECUTIVE TURNS WITHOUT A QUESTION (before this turn): ${streak}
+
+Task: Does the CURRENT companion response contain a genuine open-ended probing question that invites the patient to share more?
+
+Open-ended probing examples: "Can you tell me more about…?", "What has that been like for you?", "How long has this been going on?", "What do you think might have caused…?"
+NOT probing: "Does that make sense?", "Okay?", "Would you like me to check with your doctor?", "Shall I help with that?"
+
+Consider the full conversation PATTERN above. If the companion recently probed well, a pure validation response now may be acceptable. If the companion has been avoiding probes for ${streak} turn(s), that is a concern.
+
+Respond in this exact JSON format only:
+{"probed": true/false, "strong": true/false, "reason": "one sentence"}
+
+"probed" = true if any open-ended question exists.
+"strong" = true if clearly an information-gathering probe (how/what/when/where/why/tell me about/can you describe).`;
+
+            const result = await makeApiCall(prompt, [], false, 0.1, 100);
+            if (result && result.reply) {
+                const jsonMatch = result.reply.match(/\{[\s\S]*?\}/);
+                if (jsonMatch) {
+                    const parsed = JSON.parse(
+                        jsonMatch[0].replace(/:\s*\+(\d+)/g, ': $1')
+                    );
+                    probed       = !!parsed.probed;
+                    probedStrong = !!parsed.strong;
+                    llmReason    = parsed.reason || 'LLM analysis';
+                }
+            }
+        } catch (err) {
+            // Fallback: lightweight heuristic when LLM is unavailable
+            const r = agentResponse.toLowerCase();
+            probedStrong = r.includes('?') && (
+                r.includes('how') || r.includes('what') || r.includes('when') ||
+                r.includes('where') || r.includes('why') || r.includes('can you tell') ||
+                r.includes('tell me about')
+            );
+            probed = r.includes('?');
+            llmReason = 'heuristic fallback (LLM unavailable)';
+        }
+
+        // ── Scoring ──────────────────────────────────────────────────────────────
+        if (probedStrong) return { score: 2, reason: `Asks probing question — ${llmReason}` };
+        if (probed)       return { score: 1, reason: `Asks question — ${llmReason}` };
+
+        if (isMultiMessageTurn) {
+            return { score: 0, reason: 'Multi-message companion turn; probe not required here' };
+        }
+
+        const totalStreak = streak + 1; // include current turn
+        if (totalStreak >= 2) {
+            return { score: -2, reason: `No probing question — ${totalStreak} consecutive turns without probe` };
+        }
+        return { score: -1, reason: `No probing question asked (first miss)` };
     }
 
     /**
@@ -561,10 +681,10 @@ export class SimulationScorer {
     }
 
     /**
-     * Assess conversation goal progress (alias for quality goal)
+     * Assess conversation goal progress (async alias for probing quality check)
      */
-    _assessConversationGoal(userMessage, agentResponse) {
-        return this._assessQualityGoal(userMessage, agentResponse);
+    async _assessConversationGoal(userMessage, agentResponse, conversationHistory = [], priorScores = []) {
+        return this._assessProbingQuality(userMessage, agentResponse, conversationHistory, priorScores);
     }
 
     /**
