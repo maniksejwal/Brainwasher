@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/test_basic.js && node tests/test_circles.js && node tests/test_conflict.js && node tests/test_consent.js && node tests/test_escalation.js"
+    "build": "node --check server.js && node --check config.js && node --check agents/api/index.js && node --check agents/api/balancer.js && node --check agents/api/providers/bedrock.js",
+    "test": "node --test tests/bedrock_provider.test.js && node tests/test_basic.js && node tests/test_circles.js && node tests/test_conflict.js && node tests/test_consent.js && node tests/test_escalation.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.975.0",

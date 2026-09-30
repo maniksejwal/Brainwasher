@@ -12,7 +12,7 @@ This project is a Node.js prototype of a multi-agent AI system designed to solve
 
 - **Multi-Layered Consent**: A sophisticated consent model manages information flow, including global commands (`/consent`), per-message requests, and implied consent.
 
-- **AI-Powered Agents**: The system's intelligence is driven by a suite of specialized AI agents using LLMs (Gemini or OpenAI).
+- **AI-Powered Agents**: The system's intelligence is driven by a suite of specialized AI agents using LLMs (Gemini, OpenAI, and Amazon Bedrock).
 
 - **State Management**: A robust session state machine tracks conversational context to handle multi-step interactions without losing track.
 
@@ -31,17 +31,24 @@ npm install
 ```
 
 ### Set Up API Keys
-Create a file named `.env` in the root of the project. Open it and add your API keys. The system now defaults to the hosted Ollama endpoint while still supporting OpenAI/Gemini keys when provided.
+Create a file named `.env` in the root of the project and add the credentials for the providers you use.
 
-```env
-# .env file
-OLLAMA_API_BASE_URL="http://10.6.0.62:8001"
-OLLAMA_DEFAULT_MODEL="mistral:latest"
-DEFAULT_MODEL="mistral:latest"
-FALLBACK_MODEL="mistral:latest"
-USE_ONLY_OPENAI=false
-CHAT_GPT_KEY="sk-..."
-GEMINI_API_KEY_1="YOUR_GEMINI_KEY_HERE"
+The [`.env.example`](.env.example) lists the current configuration options. For
+Amazon Bedrock, set `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION`, and
+`BEDROCK_MODEL_ID` in your private `.env`. The model ID must be available to
+your account in that Region. The server calls the [Bedrock Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
+using [Bearer API key authentication](https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-use.html).
+Do not use the Bedrock key as `LLAMA_API_KEY`; the Llama endpoint has a different
+request format and authentication header.
+
+For each AI request, the provider order is Llama, Bedrock, OpenAI, Gemini, then
+optional Ollama. Llama, Bedrock, OpenAI, and Gemini are skipped when their API
+keys are absent. A provider gets up to five attempts after transient failures before the
+next provider is tried; authentication failures move on immediately.
+`USE_ONLY_OPENAI=true` retains its explicit OpenAI-first preference.
+
+```bash
+cp .env.example .env
 ```
 
 ## How to Run

@@ -44,7 +44,8 @@ export function calculateCost(model, promptTokens, completionTokens) {
 
 export async function logUsage(providerType, model, useCase, usage) {
     if (usage.total_tokens > 0) {
-        const cost = calculateCost(model, usage.prompt_tokens, usage.completion_tokens);
+        // Bedrock pricing depends on the selected model; do not log a false OpenAI estimate.
+        const cost = providerType === 'bedrock' ? 0 : calculateCost(model, usage.prompt_tokens, usage.completion_tokens);
         try {
             await logApiUsage(
                 providerType,

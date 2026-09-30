@@ -21,6 +21,7 @@ import {
     getNextProvider,
     failedKeys,
     providerState,
+    recordRequest,
     setUseOnlyOpenAI,
     failedKeys as publicFailedKeys, // Re-export as read-only or setter
     resetFailedKeys
@@ -31,13 +32,14 @@ import { initializeOpenAI, callOpenAI } from './providers/openai.js';
 import { initializeGemini, callGemini, addGeminiKeys as providerAddGeminiKeys } from './providers/gemini.js';
 import { callOllama } from './providers/ollama.js';
 import { callLlama } from './providers/llama.js';
+import { callBedrock } from './providers/bedrock.js';
 
 // Initialization
 initializeOpenAI(failedKeys);
 initializeGemini(failedKeys);
 
-if (!config.CHAT_GPT_KEY && !config.GEMINI_API_KEYS?.length && !config.OLLAMA_API_BASE_URL) {
-    console.error("\n[Agent] FATAL ERROR: No valid API providers configured (Ollama, OpenAI, Gemini).");
+if (!getNextProvider()) {
+    console.error("\n[Agent] No AI provider configured with the required credentials.");
 }
 
 /* --- Control Exports --- */
@@ -53,8 +55,11 @@ export function addGeminiKeys(newKeys) {
 
 export async function makeApiCall(prompt, history = [], expectJson = false, temperature = 0.7, maxTokens = 100, useCase = 'basic_responses') {
     const fullPrompt = `${history.join('\n')}\n\n${prompt}`;
-    const maxRetries = 3;
+    const maxProviders = 5;
+    const maxRetries = 5;
     let lastError = null;
+    const attemptedProviders = new Set();
+    recordRequest();
 
     // Reset per-request state
     providerState.ollamaFailed = false;
@@ -64,14 +69,8 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
     const modelSelection = selectModelForUseCase(useCase, expectJson, prompt.length);
 
     try {
-        for (let attempt = 1; attempt <= maxRetries; attempt++) {
-            // Check for specific model forcing
-            let provider;
-            if (modelSelection.preferredModel === 'llama4') {
-                provider = { type: PROVIDERS.LLAMA };
-            } else {
-                provider = getNextProvider(useCase);
-            }
+        for (let providerAttempt = 1; providerAttempt <= maxProviders; providerAttempt++) {
+            const provider = getNextProvider(useCase, attemptedProviders);
 
             if (!provider) {
                 console.error('[Agent] No available API providers');
@@ -82,6 +81,7 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
             const baseModel = modelSelection.preferredModel || config.OLLAMA_DEFAULT_MODEL || config.DEFAULT_MODEL;
             const modelForAttempt = normalizeModelForProvider(providerType, baseModel);
 
+            for (let retry = 1; retry <= maxRetries; retry++) {
             try {
                 let text;
                 let usage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
@@ -92,32 +92,34 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
                         text = res.text;
                         usage = res.usage;
                         providerState.ollamaFailed = false;
-                        trackProviderOutcome(PROVIDERS.OLLAMA, modelForAttempt, 'success');
                         break;
                     }
                     case PROVIDERS.OPENAI: {
                         const res = await callOpenAI(provider.client, modelForAttempt, fullPrompt, temperature, maxTokens, expectJson);
                         text = res.text;
                         usage = res.usage;
-                        trackProviderOutcome(PROVIDERS.OPENAI, modelForAttempt, 'success');
                         break;
                     }
                     case PROVIDERS.GEMINI: {
                         const geminiClientsForAttempt = provider.clients || [];
                         if (geminiClientsForAttempt.length === 0) throw new Error('[Agent] No Gemini clients available');
 
-                        const geminiClient = geminiClientsForAttempt[attempt % geminiClientsForAttempt.length];
+                        const geminiClient = geminiClientsForAttempt[(retry - 1) % geminiClientsForAttempt.length];
                         const res = await callGemini(geminiClient, fullPrompt, temperature, maxTokens);
                         text = res.text;
                         usage = res.usage;
-                        trackProviderOutcome(`${PROVIDERS.GEMINI}#${geminiClient.index}`, modelForAttempt, 'success');
                         break;
                     }
                     case PROVIDERS.LLAMA: {
                         const res = await callLlama(fullPrompt, temperature, maxTokens);
                         text = res.text;
                         usage = res.usage;
-                        trackProviderOutcome(PROVIDERS.LLAMA, modelForAttempt, 'success');
+                        break;
+                    }
+                    case PROVIDERS.BEDROCK: {
+                        const res = await callBedrock(fullPrompt, temperature, maxTokens);
+                        text = res.text;
+                        usage = res.usage;
                         break;
                     }
                     default:
@@ -129,8 +131,9 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
 
                 // JSON Parsing
                 if (expectJson) {
-                    const parsedResponse = parseJsonResponse(text, attempt, maxRetries);
+                    const parsedResponse = parseJsonResponse(text, retry, maxRetries);
                     if (parsedResponse) {
+                        trackProviderOutcome(providerType, modelForAttempt, 'success');
                         logProviderSummary();
                         if (typeof parsedResponse === 'object' && parsedResponse !== null) {
                             parsedResponse.model_used = modelForAttempt;
@@ -139,18 +142,16 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
                         return parsedResponse;
                     }
 
-                    if (attempt < maxRetries) continue;
-
-                    console.warn('[Agent] All JSON parsing attempts failed, returning raw text');
-                    logProviderSummary();
-                    return {
-                        reply: text,
-                        modelUsed: modelForAttempt,
-                        modelProvider: providerType,
-                        _parsingFailed: true,
-                    };
+                    trackProviderOutcome(providerType, modelForAttempt, 'failure', 'invalid JSON response');
+                    if (retry < maxRetries) {
+                        await retryDelay(retry);
+                        continue;
+                    }
+                    attemptedProviders.add(providerType);
+                    break;
                 }
 
+                trackProviderOutcome(providerType, modelForAttempt, 'success');
                 logProviderSummary();
                 return {
                     reply: text,
@@ -163,16 +164,14 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
                 const briefMessage = (error.message || String(error)).split('\n')[0];
                 trackProviderOutcome(providerType, modelForAttempt, 'failure', briefMessage);
 
-                // Handle Specific Provider Errors
-                handleProviderError(error, providerType, provider, attempt);
-
-                if (shouldRetryError(error, attempt, maxRetries, providerType)) {
-                    const delay = calculateRetryDelay(attempt);
-                    console.warn(`[Agent] Retry ${attempt}/${maxRetries} in ${Math.round(delay / 1000)}s`);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                } else {
-                    break;
+                if (retry < maxRetries && shouldRetryError(error)) {
+                    await retryDelay(retry);
+                    continue;
                 }
+                handleProviderError(error, providerType, provider, retry);
+                attemptedProviders.add(providerType);
+                break;
+            }
             }
         }
 
@@ -182,6 +181,8 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
         return createFallbackResponse(RESPONSE_MESSAGES.GENERIC_FAILURE, lastError);
     } finally {
         providerState.ollamaFailed = false;
+        providerState.llamaFailed = false;
+        providerState.bedrockFailed = false;
     }
 }
 
@@ -200,7 +201,7 @@ function handleProviderError(error, providerType, provider, attempt) {
         case PROVIDERS.GEMINI:
             const geminiClients = provider.clients || [];
             if (geminiClients.length > 0) {
-                const client = geminiClients[attempt % geminiClients.length];
+                const client = geminiClients[(attempt - 1) % geminiClients.length];
                 if (isKeyFailureError(error)) failedKeys.add(client.apiKey);
             }
             break;
@@ -209,6 +210,9 @@ function handleProviderError(error, providerType, provider, attempt) {
             break;
         case PROVIDERS.LLAMA:
             providerState.llamaFailed = true;
+            break;
+        case PROVIDERS.BEDROCK:
+            providerState.bedrockFailed = true;
             break;
     }
 }
@@ -222,34 +226,16 @@ function isKeyFailureError(error) {
     return false;
 }
 
-function shouldRetryError(error, attempt, maxRetries, providerType) {
-    if (attempt >= maxRetries) return false;
-    const status = error.status || (error.response ? error.response.status : 500);
-    const msg = error.message?.toLowerCase() || '';
-
-    if (providerType === 'ollama') {
-        if (status >= 500 || status === 408) return true;
-        return msg.includes('timeout') || msg.includes('network');
-    }
-
-    if (providerType === 'llama') {
-        // Always retry Llama errors to trigger failover to backup providers
-        return true;
-    }
-
-    // Allow retry on key failure (so we can switch providers)
-    // if (isKeyFailureError(error)) return false; // Removed to enable failover
-
-    if ([503, 429, 502, 504].includes(status)) return true;
-    if (msg.includes('timeout') || msg.includes('network')) return true;
-
-    return false;
+function shouldRetryError(error) {
+    if (isKeyFailureError(error)) return false;
+    const status = error.status || error.response?.status;
+    const message = error.message?.toLowerCase() || '';
+    return status === 408 || status === 429 || status >= 500 ||
+        message.includes('timeout') || message.includes('network') || message.includes('fetch failed');
 }
 
-function calculateRetryDelay(attempt) {
-    const baseDelay = Math.pow(2, attempt) * 1000;
-    const jitter = Math.random() * 1000;
-    return baseDelay + jitter;
+async function retryDelay(retry) {
+    await new Promise(resolve => setTimeout(resolve, Math.min(500 * 2 ** (retry - 1), 2000)));
 }
 
 function createFallbackResponse(defaultReply, error = null) {

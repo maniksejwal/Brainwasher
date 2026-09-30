@@ -22,6 +22,7 @@ export const PROVIDERS = Object.freeze({
     OPENAI: 'openai',
     GEMINI: 'gemini',
     LLAMA: 'llama',
+    BEDROCK: 'bedrock',
 });
 
 export const RESPONSE_MESSAGES = Object.freeze({

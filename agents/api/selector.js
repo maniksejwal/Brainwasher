@@ -17,7 +17,7 @@ const OPENAI_MODELS = new Set(
 );
 
 export function selectModelForUseCase(useCase, expectJson, promptLength) {
-    // GLOBAL OVERRIDE: Migrate all agents to Llama 4
+    // This chooses prompt/model preferences; provider priority is set by the balancer.
     if (config.USE_LLAMA_FOR_ALL) {
         // TODO: Remove this global override and configure models individually in config.js
         return {
@@ -63,11 +63,13 @@ export function normalizeModelForProvider(providerType, desiredModel) {
                 ? desiredModel
                 : config.GEMINI_MODEL;
         case PROVIDERS.OLLAMA:
-            return desiredModel?.toLowerCase().startsWith('gpt-')
+            return desiredModel === 'llama4' || desiredModel?.toLowerCase().startsWith('gpt-')
                 ? (config.OLLAMA_DEFAULT_MODEL || config.DEFAULT_MODEL)
                 : desiredModel;
         case PROVIDERS.LLAMA:
             return 'llama4';
+        case PROVIDERS.BEDROCK:
+            return config.BEDROCK_MODEL_ID;
         default:
             return desiredModel;
     }

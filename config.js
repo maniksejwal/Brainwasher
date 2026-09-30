@@ -35,6 +35,9 @@ const envConfig = {
 const config = {
     GEMINI_API_KEYS: [process.env.GEMINI_API_KEY_0, process.env.GEMINI_API_KEY, process.env.GEMINI_API_KEY_1, process.env.GEMINI_API_KEY_2].filter(Boolean),
     CHAT_GPT_KEY: process.env.CHAT_GPT_KEY,
+    BEDROCK_API_KEY: sanitizeString(process.env.AWS_BEARER_TOKEN_BEDROCK),
+    BEDROCK_MODEL_ID: sanitizeString(process.env.BEDROCK_MODEL_ID),
+    BEDROCK_REGION: sanitizeString(process.env.AWS_REGION, 'ap-south-1'),
     OLLAMA_API_BASE_URL: envConfig.OLLAMA_API_BASE_URL,
     OLLAMA_DEFAULT_MODEL: envConfig.OLLAMA_DEFAULT_MODEL,
 
@@ -53,7 +56,7 @@ const config = {
     GEMINI_MODEL_PRO_VISION: 'gemini-pro-vision',    // Free tier
 
     // GLOBAL OVERRIDES
-    USE_LLAMA_FOR_ALL: true,                         // Set to true to force Llama 4 for ALL agents
+    USE_LLAMA_FOR_ALL: false,                        // Provider order is controlled by the balancer
     USE_FREE_TIER_ONLY: false,                       // Set to false to use paid models
     DEFAULT_MODEL: envConfig.DEFAULT_MODEL,                  // What to use when free tier only
     FALLBACK_MODEL: envConfig.FALLBACK_MODEL,                // Fallback when primary fails

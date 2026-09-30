@@ -11,71 +11,55 @@ import { getOpenAIClient } from './providers/openai.js';
 export let failedKeys = new Set();
 export let useOnlyOpenAI = config.USE_ONLY_OPENAI ?? false;
 let requestCounter = 0;
+export function recordRequest() { requestCounter++; }
 
 export const providerState = {
     ollamaFailed: false,
     llamaFailed: false,
+    bedrockFailed: false,
 };
 
 export function setUseOnlyOpenAI(val) {
     useOnlyOpenAI = val;
-    console.log(`[Agent] ${val ? 'Using OpenAI only' : 'Using proportional load balancing (Llama > Others)'}`);
+    console.log(`[Agent] ${val ? 'Using OpenAI preference' : 'Using provider fallback order'}`);
 }
 
 export function resetFailedKeys() {
     failedKeys.clear();
     providerState.ollamaFailed = false;
     providerState.llamaFailed = false;
+    providerState.bedrockFailed = false;
     console.log('[Agent] Failed keys reset - all providers available again');
 }
 
-export function getNextProvider(useCase = 'basic_responses') {
+export function getNextProvider(useCase = 'basic_responses', excluded = new Set()) {
     if (useOnlyOpenAI) {
         const client = getOpenAIClient();
-        if (client && !failedKeys.has(config.CHAT_GPT_KEY)) {
+        if (config.CHAT_GPT_KEY && client && !failedKeys.has(config.CHAT_GPT_KEY) && !excluded.has(PROVIDERS.OPENAI)) {
             return { type: PROVIDERS.OPENAI, client };
         }
-        // If OpenAI failed, FALL THROUGH to other providers instead of returning null
-        // This ensures resilience even if "OpenAI Only" mode was requested but is broken
     }
 
-    // PRIORITY 1: Llama 4 (AWS)
-    // If configured and not marked as failed, use it.
-    if (config.LLAMA_API_URL && !providerState.llamaFailed) {
-        // Simple return - no load balancing needed for single Llama endpoint yet 
-        // (unless we add multiple keys later)
+    // Skip remote providers without credentials; try each in priority order.
+    if (config.LLAMA_API_URL && config.LLAMA_API_KEY && !providerState.llamaFailed && !excluded.has(PROVIDERS.LLAMA)) {
         return { type: PROVIDERS.LLAMA };
     }
-
-    // FALLBACKS: Round-Robin between remaining healthy providers
-    const availableProviders = [];
-
-    if (isOllamaAvailable(providerState)) {
-        availableProviders.push({ type: PROVIDERS.OLLAMA });
+    if (config.BEDROCK_API_KEY && config.BEDROCK_MODEL_ID && !providerState.bedrockFailed && !excluded.has(PROVIDERS.BEDROCK)) {
+        return { type: PROVIDERS.BEDROCK };
     }
 
-    // Add Gemini clients that haven't failed
-    const geminiClients = getGeminiClients();
-    const workingGeminiClients = geminiClients.filter(gc => !failedKeys.has(gc.apiKey));
-    if (workingGeminiClients.length > 0) {
-        availableProviders.push({ type: PROVIDERS.GEMINI, clients: workingGeminiClients });
-    }
-
-    // Add OpenAI if available and not failed (and not already handled by useOnlyOpenAI block)
     const openAIClient = getOpenAIClient();
-    if (openAIClient && !failedKeys.has(config.CHAT_GPT_KEY) && !useOnlyOpenAI) {
-        availableProviders.push({ type: PROVIDERS.OPENAI, client: openAIClient });
+    if (config.CHAT_GPT_KEY && openAIClient && !failedKeys.has(config.CHAT_GPT_KEY) && !excluded.has(PROVIDERS.OPENAI)) {
+        return { type: PROVIDERS.OPENAI, client: openAIClient };
     }
-
-    if (availableProviders.length === 0) {
-        return null; // All providers exhausted
+    const workingGeminiClients = getGeminiClients().filter(gc => gc.apiKey && !failedKeys.has(gc.apiKey));
+    if (workingGeminiClients.length > 0 && !excluded.has(PROVIDERS.GEMINI)) {
+        return { type: PROVIDERS.GEMINI, clients: workingGeminiClients };
     }
-
-    // Round-robin for fallbacks
-    const provider = availableProviders[requestCounter % availableProviders.length];
-    requestCounter++;
-
-    return provider;
+    if (isOllamaAvailable(providerState) && !excluded.has(PROVIDERS.OLLAMA)) {
+        return { type: PROVIDERS.OLLAMA };
+    }
+    return null;
 }
 
 export function getStats() {
@@ -89,7 +73,6 @@ export function getStats() {
     const previewProvider = getNextProvider();
     if (previewProvider) {
         nextProviderType = previewProvider.type;
-        requestCounter = Math.max(0, requestCounter - 1); // undo increment from preview
     }
 
     return {
@@ -97,9 +80,11 @@ export function getStats() {
         workingProviders: {
             ollama: workingOllama,
             gemini: workingGeminiClients.length,
-            openai: workingOpenAI ? 1 : 0
+            openai: workingOpenAI ? 1 : 0,
+            bedrock: config.BEDROCK_API_KEY && config.BEDROCK_MODEL_ID && !providerState.bedrockFailed ? 1 : 0,
+            llama: config.LLAMA_API_URL && config.LLAMA_API_KEY && !providerState.llamaFailed ? 1 : 0
         },
-        failedKeys: Array.from(failedKeys),
+        failedKeyCount: failedKeys.size,
         nextProvider: nextProviderType
     };
 }
