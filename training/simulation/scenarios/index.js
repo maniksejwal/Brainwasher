@@ -4,6 +4,7 @@
  */
 
 import { BASIC_SCENARIOS } from './basic_scenarios.js';
+import { INCRETIN_SCENARIOS } from './incretin_scenarios.js';
 import { AVOIDANCE_SCENARIOS } from './avoidance_scenarios.js';
 import { FUTURE_PLANNING_SCENARIOS } from './future_planning_scenarios.js';
 import { CAREGIVER_SCENARIOS } from './caregiver_scenarios.js';
@@ -39,6 +40,7 @@ import { generateAllScenarios, getRandomGeneratedScenarios } from '../scenario_b
 // Use getScenarios({ includeGenerated: true }) to include them
 export const SCENARIOS = {
     ...BASIC_SCENARIOS,
+    ...INCRETIN_SCENARIOS,
     ...AVOIDANCE_SCENARIOS,
     ...FUTURE_PLANNING_SCENARIOS,
     ...CAREGIVER_SCENARIOS,
@@ -70,6 +72,7 @@ export const SCENARIOS = {
 
 // Export individual groups for selective import
 export { BASIC_SCENARIOS };
+export { INCRETIN_SCENARIOS };
 export { AVOIDANCE_SCENARIOS };
 export { FUTURE_PLANNING_SCENARIOS };
 export { CAREGIVER_SCENARIOS };
@@ -143,6 +146,7 @@ export function getRandomScenario(category = null) {
 export function getScenarioGroups() {
     return {
         basic: BASIC_SCENARIOS,
+        incretin: INCRETIN_SCENARIOS,
         avoidance: AVOIDANCE_SCENARIOS,
         future_planning: FUTURE_PLANNING_SCENARIOS,
         caregiver: CAREGIVER_SCENARIOS,

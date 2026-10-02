@@ -4,10 +4,13 @@
  * Each persona has distinct behavioral patterns and conversation goals.
  */
 
+import { INCRETIN_PATIENT_PERSONAS, INCRETIN_DOCTOR_PERSONAS } from './incretin_personas.js';
+
 /**
  * Patient Personas
  */
 export const PATIENT_PERSONAS = {
+    ...INCRETIN_PATIENT_PERSONAS,
     medication_nonadherent: {
         name: 'Robert Chen',
         description: 'Medication Non-Adherent Patient',
@@ -1108,6 +1111,7 @@ export const CAREGIVER_PERSONAS = {
  * Doctor Personas
  */
 export const DOCTOR_PERSONAS = {
+    ...INCRETIN_DOCTOR_PERSONAS,
     time_pressured: {
         name: 'Time-Pressured Specialist',
         description: 'Busy specialist with limited availability',
