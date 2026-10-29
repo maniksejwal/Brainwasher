@@ -44,7 +44,7 @@ export async function processCompanionHandlers(userId, role, message, circleId, 
     
     // Process handlers in stages: core handlers first, then dependent ones
     const coreHandlers = ['inputUnderstanding', 'historyAnalyzer', 'empathyHandler', 'stateTracker'];
-    const dependentHandlers = relevantComponents.filter(c => !coreHandlers.includes(c));
+    const dependentHandlers = relevantComponents.filter(c => !coreHandlers.includes(c) && c !== 'clinicalAgent');
     
     // Step 1: Process core handlers in parallel
     const corePromises = coreHandlers
@@ -74,7 +74,19 @@ export async function processCompanionHandlers(userId, role, message, circleId, 
         empathyHandler: componentResults.empathyHandler?.result || {},
         stateTracker: componentResults.stateTracker?.result || {}
     };
-    
+
+    // Step 2b: Run clinical analysis before its dependents (optimizers, escalation, future planning)
+    if (relevantComponents.includes('clinicalAgent')) {
+        try {
+            const clinical = await HANDLER_MAP.clinicalAgent(userId, role, message, circleId, enhancedContext);
+            componentResults.clinicalAgent = { result: clinical };
+            if (clinical) enhancedContext.clinicalAssessment = clinical;
+        } catch (error) {
+            console.error('[Companions] Error in clinicalAgent:', error.message);
+            componentResults.clinicalAgent = { result: null, error: error.message };
+        }
+    }
+
     // Step 3: Process dependent handlers with enhanced context
     const dependentPromises = dependentHandlers.map(componentName => {
         const componentFn = HANDLER_MAP[componentName];
