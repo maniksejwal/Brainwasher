@@ -20,14 +20,17 @@ export const URGENCY_LEVELS = {
     LOW: 'low'              // Routine monitoring
 };
 
-// Criticality Levels (for messages)
+// Criticality Levels (for messages) - the single canonical scale.
+// Model output is mapped onto it by utils/criticality.js (e.g. CRITICAL / URGENT_INTERVENTION -> HIGH).
 export const CRITICALITY_LEVELS = {
-    CRITICAL: 'CRITICAL',
-    HIGH: 'HIGH', 
+    HIGH: 'HIGH',
     MEDIUM: 'MEDIUM',
     LOW: 'LOW',
     NONE: 'NONE'
 };
+
+// Rank for comparing criticality levels
+export const CRITICALITY_ORDER = { NONE: 0, LOW: 1, MEDIUM: 2, HIGH: 3 };
 
 // Privacy Levels (for messages)
 export const PRIVACY_LEVELS = {

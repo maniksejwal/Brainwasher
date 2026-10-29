@@ -3,6 +3,7 @@
  * Medical assessment and symptom evaluation
  */
 
+import { normalizeCriticality } from '../../utils/criticality.js';
 import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { loadPrompt } from '../utils/promptLoader.js';
@@ -58,7 +59,7 @@ export async function processClinicalAnalysis(userId, role, message, circleId, c
             throw new Error('Failed to parse JSON response');
         }
         
-        let criticality = analysis.criticality || 'NONE';
+        let criticality = normalizeCriticality(analysis.criticality);
         
         // Apply critical safety rule: downgrade simple pain
         if (isSimplePain && !hasSevereIndicators && criticality === 'HIGH') {

@@ -5,6 +5,7 @@
  * the system's final analysis is safe and context-aware.
  */
 
+import { normalizeCriticality } from '../../utils/criticality.js';
 import {
     getCircleMembers,
     addMessage,
@@ -48,7 +49,7 @@ async function resolveEntitiesAndEnrichContext(userId, message, analysis, circle
 
             if (re_evaluation && re_evaluation.updated_criticality) {
                 console.log(`[ContextEnrichment] Criticality updated from ${analysis.criticality} to ${re_evaluation.updated_criticality}`);
-                enrichedAnalysis.criticality = re_evaluation.updated_criticality;
+                enrichedAnalysis.criticality = normalizeCriticality(re_evaluation.updated_criticality, analysis.criticality);
                 // We can also store the enriched summary for better escalation details later.
                 enrichedAnalysis.enriched_summary = re_evaluation.updated_summary;
             }
@@ -73,7 +74,7 @@ async function resolveEntitiesAndEnrichContext(userId, message, analysis, circle
 
                     if (re_evaluation && re_evaluation.updated_criticality) {
                         console.log(`[ContextEnrichment] (Bridged) Criticality updated from ${analysis.criticality} to ${re_evaluation.updated_criticality}`);
-                        enrichedAnalysis.criticality = re_evaluation.updated_criticality;
+                        enrichedAnalysis.criticality = normalizeCriticality(re_evaluation.updated_criticality, analysis.criticality);
                         enrichedAnalysis.enriched_summary = re_evaluation.updated_summary;
                     }
 
@@ -182,7 +183,7 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
             intent: companionResult.intent || 'ASKING_QUESTION',
             reply: companionResult.reply || 'I understand.',
             privacyLevel: companionResult.privacyLevel || 'PRIVATE',
-            criticality: companionResult.criticality || 'NONE',
+            criticality: normalizeCriticality(companionResult.criticality),
             facts: companionResult.facts || {},
             mentioned_usernames: companionResult.mentioned_usernames || [],
             sharingSuggestion: companionResult.sharingSuggestion || null,
@@ -286,6 +287,7 @@ export async function performAiAnalysis(userId, role, message, circleId) {
 
     let analysis = await processUserMessage(userId, role, message, memberUsernames, circleId, null, { userProfile, unreadSummary });
     analysis.system_used = 'unified'; // Track which system was used
+    analysis.criticality = normalizeCriticality(analysis.criticality);
     console.log(`[AIAnalysisHandler] Initial analysis complete. Mentioned entities: ${analysis.mentioned_usernames?.join(', ')}`);
 
     // Step 2: Entity Resolution and Context Enrichment
@@ -331,7 +333,7 @@ export async function performAiAnalysis(userId, role, message, circleId) {
     });
 
     // Check for escalation based on criticality
-    if (analysis.criticality === 'HIGH' || analysis.criticality === 'CRITICAL') {
+    if (analysis.criticality === 'HIGH') {
         console.log(`🚨 [AIAnalysisHandler] HIGH/CRITICAL escalation detected for user ${userId} in circle ${circleId}`);
 
         // Add escalation to database

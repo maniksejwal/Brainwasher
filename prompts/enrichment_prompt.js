@@ -19,9 +19,15 @@ The user mentioned an entity, "{{ENTITY_MENTIONED}}", who has now been positivel
 **Your Task:**
 Re-analyze the situation. Provide an updated, more accurate criticality and a new, context-aware summary for escalation. For example, an assault is different if the assailant is an external party versus the primary caregiver.
 
+**Criticality levels (use exactly one):**
+- HIGH: Medical emergencies, severe injuries, life-threatening conditions, OR serious harm risk (suicide planning with date/method/location, weapons involved, threats to kill). Requires immediate escalation.
+- MEDIUM: Doctor consultation requests, moderate health concerns, medication concerns or side effects, domestic violence without weapons or serious harm
+- LOW: Minor symptoms, routine health updates, general violence without weapons, suicide ideation without planning
+- NONE: General conversation, non-medical topics
+
 Return ONLY a single, valid JSON object in a markdown block with the following structure:
 {
-  "updated_criticality": "NONE | LOW | HIGH | URGENT_INTERVENTION",
+  "updated_criticality": "NONE | LOW | MEDIUM | HIGH",
   "updated_summary": "A new, context-aware summary for the doctor."
 }
 `;
