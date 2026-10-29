@@ -144,7 +144,7 @@ export async function processPrivacyDecision(userId, role, message, circleId, co
                 };
             }
         }
-    } else if (intent === 'REQUESTING_DOCTOR') {
+    } else if (String(intent || '').split('|').map(i => i.trim().toUpperCase()).includes('REQUESTING_DOCTOR')) {
         // User explicitly requests doctor
         sharingSuggestion = {
             target: 'doctor',

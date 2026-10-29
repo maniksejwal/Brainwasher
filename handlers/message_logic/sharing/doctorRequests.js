@@ -14,7 +14,9 @@ import { getAgentName } from '../../utils/agentIdentity.js';
  * @returns {boolean} - True if the doctor request was handled, otherwise false.
  */
 export async function handleDoctorRequest(userId, circleId, analysis) {
-    if (analysis.intent !== 'REQUESTING_DOCTOR') {
+    // Intent may be a pipe-separated list (e.g. "REPORTING_FACT|REQUESTING_DOCTOR")
+    const intents = String(analysis.intent || '').split('|').map(i => i.trim().toUpperCase());
+    if (!intents.includes('REQUESTING_DOCTOR')) {
         return false;
     }
 
