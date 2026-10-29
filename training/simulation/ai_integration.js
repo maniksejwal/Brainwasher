@@ -9,7 +9,39 @@ import { handleCommand } from '../../handlers/commandHandler.js';
 import { performAiAnalysis } from '../../handlers/message_logic/aiAnalysisHandler.js';
 import { ORCHESTRATOR_ACTIONS } from '../../constants.js';
 
-import { setGlobalDb } from '../../db/index.js';
+import { setGlobalDb, getDb } from '../../db/index.js';
+
+/**
+ * Derive the orchestrator action actually executed during a turn by inspecting
+ * escalations and pending actions written to the DB since `since`.
+ * Sharing handlers don't return action results, so the DB is the source of truth.
+ */
+export async function detectExecutedActions(circleId, since) {
+    const db = await getDb();
+    const escalations = await db.all(
+        'SELECT type, details FROM escalations WHERE circle_id = ? AND timestamp >= ?',
+        [circleId, since]
+    );
+    const pending = await db.all(
+        'SELECT action_type, user_id FROM pending_actions WHERE circle_id = ? AND created_at >= ?',
+        [circleId, since]
+    );
+
+    let type = ORCHESTRATOR_ACTIONS.NONE;
+    if (escalations.length > 0) {
+        type = ORCHESTRATOR_ACTIONS.ESCALATE;
+    } else if (pending.some(p => /permission|consent/i.test(p.action_type))) {
+        type = ORCHESTRATOR_ACTIONS.REQUEST_CONSENT;
+    } else if (pending.length > 0) {
+        type = ORCHESTRATOR_ACTIONS.SHARE;
+    }
+
+    return {
+        type,
+        escalations: escalations.map(e => e.type),
+        pending_actions: pending.map(p => p.action_type)
+    };
+}
 
 export class SimulationAI {
     constructor(simulationDb) {
@@ -124,6 +156,7 @@ export class SimulationAI {
             // 4. All orchestrator events and cross-messaging
             // Use dynamic import to avoid circular dependency with getRecentMessages
             const { handleMessage } = await import('../../handlers/messageHandler.js');
+            const turnStartedAt = Date.now();
             const analysis = await handleMessage(userId, circleId, message);
 
             if (!analysis || !analysis.reply) {
@@ -134,7 +167,7 @@ export class SimulationAI {
 
             return {
                 agent_response: analysis.reply,
-                orchestrator_action: { type: ORCHESTRATOR_ACTIONS.NONE },
+                orchestrator_action: await detectExecutedActions(circleId, turnStartedAt),
                 state_vector: {
                     intent: analysis.intent,
                     criticality: analysis.criticality,
