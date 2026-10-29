@@ -110,7 +110,8 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
         const { STAGES_OF_CHANGE, COPING_STYLES } = await import('../../behavioral_models.js');
 
         // Gather rich context (like unified agent does)
-        const history = await getRecentMessages(circleId, 20);
+        // DB returns newest-first; companions expect chronological order (slice(-N) = most recent)
+        const history = (await getRecentMessages(circleId, 20)).reverse();
         const members = await getCircleMembers(circleId);
         const currentState = await getUserState(userId, circleId);
         const factHistory = await getFactHistory(circleId, 'all', 10);
