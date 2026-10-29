@@ -73,7 +73,7 @@ export async function processPatientOptimization(userId, role, message, circleId
             console.log('[PatientOptimizer] Raw result:', JSON.stringify(result, null, 2));
         }
         
-        const analysis = parseCompanionResponse(result);
+        const analysis = parseCompanionResponse(result, 'PatientOptimizer');
         
         if (!analysis) {
             // If parsing failed, check if result is a fallback response

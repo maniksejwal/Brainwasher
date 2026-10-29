@@ -39,7 +39,7 @@ export async function processDoctorOptimization(userId, role, message, circleId,
 
     try {
         const result = await makeApiCall(prompt, [], true);
-        const analysis = parseCompanionResponse(result);
+        const analysis = parseCompanionResponse(result, 'DoctorOptimizer');
         
         if (!analysis) {
             throw new Error('Failed to parse JSON response');

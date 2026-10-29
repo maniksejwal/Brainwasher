@@ -130,3 +130,46 @@ test('a failed Bedrock request falls back to OpenAI', async () => {
         globalThis.fetch = originalFetch;
     }
 });
+
+function useBedrockOnly() {
+    resetFailedKeys();
+    config.LLAMA_API_KEY = '';
+    config.BEDROCK_API_KEY = 'example-bedrock-key';
+    config.BEDROCK_MODEL_ID = 'example.model-v1:0';
+    config.CHAT_GPT_KEY = '';
+    config.GEMINI_API_KEYS = [];
+    config.OLLAMA_API_BASE_URL = '';
+    initializeOpenAI(failedKeys);
+    initializeGemini(failedKeys);
+}
+
+test('JSON calls default to a larger token limit than plain replies', async () => {
+    useBedrockOnly();
+    const sentMaxTokens = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (url, options) => {
+        sentMaxTokens.push(JSON.parse(options.body).inferenceConfig.maxTokens);
+        return { ok: true, json: async () => ({ output: { message: { content: [{ text: '{"ok": true}' }] } } }) };
+    };
+    try {
+        await makeApiCall('Hello', [], true);
+        await makeApiCall('Hello', [], false);
+        await makeApiCall('Hello', [], true, 0.7, 300);
+        assert.deepEqual(sentMaxTokens, [1000, 100, 300]);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test('the response after all providers fail is flagged as a fallback', async () => {
+    useBedrockOnly();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: false, status: 401 });
+    try {
+        const result = await makeApiCall('Hello', [], true);
+        assert.equal(result.isFallback, true);
+        assert.equal(result.criticality, 'NONE');
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});

@@ -53,7 +53,12 @@ export function addGeminiKeys(newKeys) {
 
 /* --- Main Logic --- */
 
-export async function makeApiCall(prompt, history = [], expectJson = false, temperature = 0.7, maxTokens = 100, useCase = 'basic_responses') {
+// JSON responses (e.g. clinical assessment) run ~250+ tokens; 100 truncated them into invalid JSON
+const DEFAULT_MAX_TOKENS = 100;
+const DEFAULT_JSON_MAX_TOKENS = 1000;
+
+export async function makeApiCall(prompt, history = [], expectJson = false, temperature = 0.7, maxTokens = undefined, useCase = 'basic_responses') {
+    maxTokens ??= expectJson ? DEFAULT_JSON_MAX_TOKENS : DEFAULT_MAX_TOKENS;
     const fullPrompt = `${history.join('\n')}\n\n${prompt}`;
     const maxProviders = 5;
     const maxRetries = 5;
@@ -261,6 +266,8 @@ function createFallbackResponse(defaultReply, error = null) {
         criticality: 'NONE',
         facts: {},
         mentioned_usernames: [],
-        sharingSuggestion: null
+        sharingSuggestion: null,
+        // Lets callers tell a failed LLM call apart from a genuine NONE/default answer
+        isFallback: true
     };
 }

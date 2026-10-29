@@ -63,7 +63,7 @@ export async function generateFuturePlan(userId, role, message, circleId, contex
 
     try {
         const result = await makeApiCall(prompt, [], true);
-        const analysis = parseCompanionResponse(result);
+        const analysis = parseCompanionResponse(result, 'FuturePlanning');
         
         if (!analysis || !analysis.future_plan) {
             return null;

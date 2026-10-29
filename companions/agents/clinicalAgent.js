@@ -53,7 +53,7 @@ export async function processClinicalAnalysis(userId, role, message, circleId, c
 
     try {
         const result = await makeApiCall(prompt, [], true);
-        const analysis = parseCompanionResponse(result);
+        const analysis = parseCompanionResponse(result, 'ClinicalAgent');
         
         if (!analysis) {
             throw new Error('Failed to parse JSON response');
@@ -77,7 +77,9 @@ export async function processClinicalAnalysis(userId, role, message, circleId, c
             hasMisconception: analysis.has_misconception || false,
             misconceptionType: analysis.misconception_type || 'none',
             educationalApproach: analysis.educational_approach || null,
-            escalateMisconception: analysis.escalate_misconception || false
+            escalateMisconception: analysis.escalate_misconception || false,
+            // True when the LLM call failed and these values are defaults, not an assessment
+            llmFallback: Boolean(result?.isFallback)
         };
     } catch (error) {
         console.error('[ClinicalAgent] Error:', error.message);

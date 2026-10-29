@@ -34,7 +34,7 @@ export async function processStateTracking(userId, role, message, circleId, cont
     
     try {
         const result = await makeApiCall(prompt, [], true);
-        const analysis = parseCompanionResponse(result);
+        const analysis = parseCompanionResponse(result, 'StateTracker');
         
         if (!analysis) {
             return { state_update: null };

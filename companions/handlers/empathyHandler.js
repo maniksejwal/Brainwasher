@@ -31,7 +31,7 @@ export async function processEmpathyDecision(userId, role, message, circleId, co
             console.log('[EmpathyHandler] Raw result:', JSON.stringify(result, null, 2));
         }
         
-        const analysis = parseCompanionResponse(result);
+        const analysis = parseCompanionResponse(result, 'EmpathyHandler');
         
         if (!analysis) {
             // If parsing failed, check if result is a fallback response
