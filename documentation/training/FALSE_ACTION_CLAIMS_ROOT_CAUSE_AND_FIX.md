@@ -1,6 +1,6 @@
 # False Action Claims in Agent Replies: Root Cause and Fix
 
-*Revised 2026-10-30 after a review of the code. The revision corrects several claims, adds issues 8–12, moves some Phase 2 work into Phase 1 so that Phase 1 works on its own, and lists the decisions still needed before Phases 2 and 3.*
+*Revised 2026-10-30 after a review of the code. The revision corrects several claims, adds issues 8–12, and moves some Phase 2 work into Phase 1 so that Phase 1 works on its own. The decisions taken are recorded in Part 4.*
 
 ## Summary
 
@@ -13,7 +13,7 @@ No component of the system owns the record of what actions were actually taken:
 
 The fixed confirmation messages are also sent without checking that anyone received anything. In practice no one does: for doctors there is no live delivery path at all.
 
-Part 1 describes the issues. Part 2 describes the fix. Part 3 lists the changes file by file, in the order they should be made. Part 4 lists the decisions still open.
+Part 1 describes the issues. Part 2 describes the fix. Part 3 lists the changes file by file, in the order they should be made. Part 4 records the decisions taken and what was deferred.
 
 ---
 
@@ -89,7 +89,7 @@ Below 0.9 confidence, `criticalEvents` schedules a follow-up question tagged `ac
 
 When the confidence LLM call fails, `calculateEmergencyConfidence` returns 0.6. As a result, a model error also means no escalation.
 
-*Decided 2026-10-30:* the threshold rule stays (see Fix G). Only the failed-call case and the unused tag need changes.
+*Decided 2026-10-30:* both behaviours stay (see Fix G). Below the threshold there is no escalation, and a failed confidence call keeps returning 0.6. Only the unused tag is removed.
 
 ### Issue 9: Escalations are written from eight places
 
@@ -118,14 +118,14 @@ Before the criticality fixes, HIGH rarely reached the reply prompt, so emergency
 The principle: **act first, record the outcome, then reply using only recorded facts, and verify the reply before sending it.** Statements about actions come from code, not from the model.
 
 ### Fix A: One escalation service with a delivery record
-A new `services/escalationService.js` owns escalation. Which of the eight callers in Issue 9 must go through it is an open decision (Part 4, decision 1). The service:
+A new `services/escalationService.js` owns escalation. Patient-safety escalations go through it: HIGH emergencies, doctor requests and the escalation tiers. Routine inbox rows (INFO, FACT_REPORT, CONFLICT, CONSULT) do not (Part 4, decision 1). The service:
 - creates at most one escalation per message;
 - finds recipients from circle membership (doctors, then caregivers);
 - sends to each recipient through the notification service, waiting up to a bounded timeout;
 - records each delivery;
 - returns a structured action result with the escalation ID, each recipient's name, role, channel and status (delivered, failed or pending), and whether a doctor was reached.
 
-Twilio is out of scope for this repo, and SMS is not used. The console channel and simulated (stub) sends never count as delivered. In practice the in-app channel is the only real one; how it counts is decided in Part 4, decision 2.
+Twilio is out of scope for this repo, and SMS is not used. The console channel and simulated (stub) sends never count as delivered. In practice the in-app channel is the only real one. It reports "pending" when the escalation is stored in the doctor's unread list, and "delivered" when the doctor had the app open at the time it was sent (Part 4, decision 2).
 
 ### Fix B: Reorder the pipeline
 The message handler runs in this order:
@@ -171,12 +171,12 @@ The `escalate` event carries recipient user IDs and goes only to them. The `broa
 ### Fix F: Acknowledgement and re-notification
 - **Doctor acknowledgement:** a doctor acknowledges one specific escalation, which is recorded on their delivery row.
 - **Patient update:** the patient gets a truthful follow-up ("Dr. X has seen your message").
-- **Re-notification:** if a HIGH escalation is not acknowledged within a set time, the system re-notifies on the next channel, alerts caregivers, and tells the patient the true status. This needs a scheduler driven by the clock (Part 4, decision 4). `futurePlanningHandler` only runs when the user sends a message, so it can't do this.
+- **Re-notification (deferred, Part 4, decision 4):** if a HIGH escalation is not acknowledged within a set time, the system alerts caregivers and tells the patient the true status. This needs a scheduler driven by the clock. `futurePlanningHandler` only runs when the user sends a message, so it can't do this.
 
 ### Fix G: Every HIGH turn has a defined escalation outcome
-The existing rule stays (Part 4, decision 3): a HIGH turn escalates when its emergency confidence reaches the threshold (currently 0.9); below it, the agent asks a follow-up question and does not escalate. Two things change:
-- A failed confidence call must not silently land below the threshold. It currently returns 0.6.
-- The unused `escalate_after_response` tag is removed, so the code no longer suggests an escalation that never happens.
+The existing rule stays (Part 4, decision 3): a HIGH turn escalates when its emergency confidence reaches the threshold (currently 0.9); below it, the agent asks a follow-up question and does not escalate. A failed confidence call keeps today's behaviour: it returns 0.6, which is below the threshold, so it does not escalate.
+
+The only change is that the unused `escalate_after_response` tag is removed, so the code no longer suggests an escalation that never happens. Because replies describe only actions that were recorded, a HIGH turn without an escalation is never described as escalated.
 
 ### Fix H: Tests and metrics
 - **Unit tests:** the claim check, the fallback builder and the final-message builder.
@@ -191,7 +191,7 @@ The existing rule stays (Part 4, decision 3): a HIGH turn escalates when its eme
 
 ## Part 3: Order of changes, file by file
 
-Steps are grouped into phases. Each step is its own commit, and each phase can be shipped on its own. Phase 1 stops false claims, and Phase 1b tidies the confidence threshold. Phases 2 and 3 make the action record real and need the decisions in Part 4 first.
+Steps are grouped into phases. Each step is its own commit, and each phase can be shipped on its own. Phase 1 stops false claims, and Phase 1b tidies the confidence threshold. Phases 2 and 3 make the action record real.
 
 ### Phase 1: Stop false claims
 
@@ -278,10 +278,10 @@ Steps are grouped into phases. Each step is its own commit, and each phase can b
 **11. `handlers/message_logic/sharing/criticalEvents.js`**
 - Keep the rule: escalate when confidence ≥ the threshold; below it, ask the follow-up question without escalating.
 - Move the threshold (0.9) into a named constant so it is set in one place.
-- When the confidence call fails, escalate rather than return 0.6 (fail safe). This needs confirmation.
+- Keep today's behaviour when the confidence call fails (it returns 0.6, so there is no escalation).
 - Remove the unused `action: 'escalate_after_response'` tag from the scheduled follow-up.
 
-### Phase 2: A real action record and one reply per turn (needs Part 4, decisions 1 and 2)
+### Phase 2: A real action record and one reply per turn
 
 **12. Saving the patient's message (`aiAnalysisHandler.js` and `db/queries_messages.js`)**
 - Confirm where the companion path saves the patient's message. If it doesn't, save it.
@@ -298,7 +298,7 @@ Steps are grouped into phases. Each step is its own commit, and each phase can b
 
 **15. `notifications/NotificationService.js`, `lib/sse.js`**
 - Mark the `console` channel and simulated (stub) sends as non-delivering. Twilio is not used.
-- Add the in-app channel as chosen in decision 2.
+- Add the in-app channel: "pending" when the escalation is stored for the doctor's unread list, "delivered" when the doctor's SSE connection was open at send time.
 - Make `broadcast` return which users were connected.
 
 **16. `services/escalationService.js` (new)**
@@ -308,7 +308,8 @@ Steps are grouped into phases. Each step is its own commit, and each phase can b
   - send to each, waiting for the result with a timeout;
   - record each delivery;
   - return the action result.
-- Move the callers chosen in decision 1 onto the service.
+- Move the patient-safety callers onto the service: `criticalEvents`, `doctorRequests` and `escalationTiers`. The HIGH block in `aiAnalysisHandler` is removed in step 17.
+- The other `addEscalation` callers (`factReporting`, `conflictHandler`, `intentHandler`, `actionExecutor`, `orchestrator`) keep writing inbox rows directly, through one shared insert function so that every row gets `message_id` and `status`.
 
 **17. `handlers/message_logic/aiAnalysisHandler.js`**
 - Remove the HIGH escalation block (row insert, `escalate` event and per-member notifications). The function only analyzes and returns the analysis.
@@ -352,16 +353,9 @@ Steps are grouped into phases. Each step is its own commit, and each phase can b
 - Replace the circle-wide `markCircleEscalationsAsRead` with acknowledgement of a specific escalation by a specific doctor.
 - Update the summary command to acknowledge only the escalations it showed.
 - Base the unread list on delivery rows.
+- When a doctor acknowledges an escalation, send the patient a follow-up naming who acknowledged it. This runs on the acknowledgement itself and needs no scheduler.
 
-**26. Re-notification scheduler (new, per decision 4)**
-- When a HIGH escalation is created, schedule a check.
-- If it is not acknowledged by the deadline:
-  - re-notify on the next channel;
-  - alert caregivers;
-  - send the patient the true status.
-- When it is acknowledged, send the patient a follow-up naming who acknowledged it.
-
-**27. Simulation metric (`training/simulation/ai_integration.js`)**
+**26. Simulation metric (`training/simulation/ai_integration.js`)**
 - Add the false-claim rate, computed with the claim check against the recorded deliveries.
 - Re-run the Scout and Maverick suites and add the results to `AGENT_FIXES_SIMULATION_RESULTS.md`.
 
@@ -393,21 +387,26 @@ Decided 2026-10-30. Every HIGH reply opens with a fixed, approved emergency sent
 - Clinical review of the final wording of each sentence.
 - Confirmation of the numbers for each deployment region.
 
-### Open decisions
+### Other decisions (all 2026-10-30)
 
-1. **Scope of the escalation service (before Phase 2).** Choose between:
-   - every `addEscalation` caller (Issue 9) goes through the service; or
-   - only patient-safety escalations go through it (HIGH, doctor requests and tiers), and INFO, FACT_REPORT, CONFLICT and CONSULT rows stay as inbox entries with no delivery record.
-
-   Recommended: the second, with one shared insert function so all rows get `message_id` and `status`.
-2. **What counts as delivered for the in-app channel (before Phase 2).** Most users have no notification preferences, so without an in-app channel every HIGH reply will truthfully say nobody was reached. Proposed definition:
+1. **Scope of the escalation service.** Only patient-safety escalations go through the service: HIGH emergencies, doctor requests and the escalation tiers. The routine inbox rows (INFO, FACT_REPORT, CONFLICT, CONSULT) stay as they are, with no delivery record. They are written through one shared insert function so that every row gets `message_id` and `status`.
+   - *Reason:* no message to the patient depends on the inbox rows, so tracking their delivery adds work with no benefit.
+2. **Delivery states for the in-app channel:**
    - **pending:** the escalation is stored and will appear in the doctor's unread list;
    - **delivered:** the doctor's SSE connection was open when it was sent;
-   - **acknowledged:** the doctor acknowledged it (Phase 3).
-3. **HIGH turns below the confidence threshold. Decided 2026-10-30:** keep the existing rule. A HIGH turn escalates when confidence reaches the threshold (0.9); below it, the agent asks a follow-up and does not escalate. Still to confirm: escalate when the confidence call itself fails (Phase 1b).
-4. **Re-notification scheduler (before Phase 3).** Nothing in the codebase runs on a timer apart from the SSE heartbeat. Choose between:
-   - a timer inside the server process, which loses pending checks on restart unless they are reloaded from the database; or
+   - **acknowledged:** the doctor acknowledged that specific escalation (Phase 3).
+   - *Reason:* most users have no notification preferences and the SMS and WhatsApp providers are stubs, so the in-app channel is the only one that actually reaches anyone.
+3. **HIGH turns and the confidence threshold.** The existing rule stays:
+   - a HIGH turn escalates when confidence reaches the threshold (0.9);
+   - below it, the agent asks a follow-up and does not escalate;
+   - a failed confidence call keeps today's behaviour (0.6, so no escalation).
+
+   Replies only describe recorded actions, so a HIGH turn that was not escalated is never described as escalated.
+4. **Re-notification is deferred.** No timer-based re-notification is built in this plan. If a doctor does not acknowledge a HIGH escalation, nobody is reminded and the patient is not told. If it is picked up later, it needs a scheduler driven by the clock (nothing in the codebase runs on a timer apart from the SSE heartbeat). The choice is between:
+   - a timer inside the server process, which reloads pending checks from the database on restart; or
    - an external job.
-5. **Reply language. Decided 2026-10-30:** all replies are in English for now, so the claim check matches English only. Revisit if other languages are added.
+
+   The acknowledgement follow-up to the patient (Phase 3, step 25) does not depend on this and is still built.
+5. **Reply language.** All replies are in English for now, so the claim check matches English only. Revisit if other languages are added.
 
 **Out of scope:** Twilio and SMS are not used in this repo.
