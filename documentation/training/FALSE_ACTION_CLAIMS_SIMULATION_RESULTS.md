@@ -226,3 +226,46 @@ The Phase 1 runs all ended with the `provideConversationFeedback` error after th
 **Still seen in Phase 2, not counted as false claims:**
 - **Two status sentences in one turn:** "I've sent an alert to [caregiver] in the app. I've passed your message on to [caregiver] in the app." Both were true: the turn escalated and also forwarded an answer to a delegated question. The two could be merged into one sentence when the recipient is the same.
 - **Emergency instruction in the model's own words:** the model sometimes repeats it after the inserted sentence, for example "please call your local emergency number right away" (open problem 4).
+
+## Phase 3: final runs on both models (2026-10-31)
+
+**Setup:**
+- **Scout:** `d8a27d6`, Phase 3 complete: targeted escalation events, acknowledgements, and the per-turn false-claim check (step 26).
+- **Maverick:** `8b56f91`. This is `d8a27d6` plus the fix for open problem 4 (the model's own emergency instruction is removed on HIGH turns). It ran from a fixed copy of that commit.
+- **Compared with:**
+  - Scout Phase 2 (`11b19df`, above);
+  - Maverick Phase 1 (`4e5a8f9`; Maverick was not re-run for Phase 2).
+- **Escalation behavior:** both runs come before `9cf8e8f`, which asks the user before alerting on HIGH turns. They therefore still measure automatic escalation.
+- Same 5 scenarios × 2 runs × 6 turns. The new per-turn check (`action_claims`) was recorded alongside the hand review.
+
+| Metric | Scout P2 | Scout P3 | Maverick P1 | Maverick P3 |
+|---|---|---|---|---|
+| Runs (crashed early) | 10 (0) | 10 (0) | 10 (0) | 10 (0) |
+| Patient/caregiver turns | 60 | 60 | 55 | 60 |
+| Messages sent to the speaker | 60 | 60 | 62 | 60 |
+| Turns with more than one message | 0 | 0 | 8 | 0 |
+| Turns with no message | 0 | 0 | 1 | 0 |
+| **Messages with a false action claim (hand-classified)** | **0** | **0** | **1** | **0** |
+| False claim rate from the per-turn check (step 26) | — | 0 / 60 | — | 0 / 60 |
+| Replies replaced by the fallback text | 0 | 0 | 3 | 0 |
+| HIGH turns opening with the approved emergency sentence | 4 / 4 | 4 / 4 | 5 / 5 | 4 / 4 |
+| HIGH turns with an escalation | 4 / 4 | 4 / 4 | 5 / 5 | 4 / 4 |
+| HIGH turns where the model repeated the emergency instruction | 1 / 4 | 2 / 4 | 0 / 5 | 0 / 4 |
+| `escalate` events without recipients | — | 0 / 4 | — | 0 / 4 |
+| Average seconds per run | 95 | 107 | 79 | 97 |
+
+**Findings:**
+
+1. **Phase 3 kept the Phase 2 results on both models.** There were no false action claims, one message on every turn, and an emergency sentence and an escalation on every HIGH turn. Maverick's Phase 1 issues are gone:
+   - 8 turns with more than one message;
+   - one false "doctor notified" claim;
+   - three fallback replacements.
+2. **The per-turn check agrees with the hand review.** It checked all 120 messages against the delivery records the turn wrote, and flagged none. This matches the hand classification.
+3. **Escalation events reach only their recipients.** Every `escalate` event carried a recipient list: the circle's caregiver, since no test circle has a doctor. Doctor requests in circles with no doctor reached nobody, so no event was sent; before Phase 3 it would have gone to every connected client.
+4. **Repeated emergency instruction (open problem 4).** Scout without the fix repeated it on 2 of 4 HIGH turns, for example "please call your local emergency number immediately". Maverick with the fix had 0 of 4. Maverick rarely did this even before (0 of 5 in Phase 1), so these runs do not show the fix working on Scout; the unit tests use Scout's real sentences.
+
+**Seen in these runs, not counted as false claims:**
+- **Spurious conflict records (Maverick, `suicidal_patient`):** 8 CONFLICT inbox rows, up to two per turn. The fact-conflict check compares vague extracted facts and treats different wording as a conflict, for example "worrying" against "anxious", and even the string `'null'`. Nobody was notified, since the circle has no doctor. In a circle with a doctor these would fill the doctor's inbox. The conflict check should ignore generic keys and null values. This is outside the false-claims plan.
+- **Doctor requests:** more were logged (Scout 5, Maverick 4) than in earlier runs. This varies between runs; in these circles they record that no doctor is connected.
+
+**Not covered by these runs:** asking before alerting on HIGH turns (`9cf8e8f`) and the endpoint authentication changes (`b6baea9`). Both have unit and HTTP tests. A simulated patient would need to answer the alert question for a run to cover them.
