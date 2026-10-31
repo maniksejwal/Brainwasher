@@ -7,8 +7,8 @@
 import { getImpliedConsent, getCircleMembers, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
 import { generateSharingRequest, generateSharingSummaryOrProbe } from '../../../agents/index.js';
 import { createSharingConsentAction } from '../../../state_manager.js';
-import { events } from '../../../orchestrator.js';
-import { getAgentName } from '../../utils/agentIdentity.js';
+import { shareWithMembers } from '../../../services/memberMessaging.js';
+import { isHealthyMitraCircle } from '../../../lib/deliveryMode.js';
 import { recordInboxEscalation } from '../../../services/escalationService.js';
 
 /**
@@ -59,6 +59,7 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
 
     const actions = { membersMessaged: [] };
     let question = null;
+    let proposal = null;
 
     // For each fact about another person, decide on appropriate action
     for (const [factKey, fact] of factsAboutOthers) {
@@ -70,10 +71,25 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
         // Check if this is medically significant enough to escalate to doctor
         if (analysis.criticality === 'MEDIUM' || analysis.criticality === 'HIGH') {
             const escalationDetails = `User '${reporterUser.username}' reported about '${targetMember.username}': "${factKey}" - ${fact.value}`;
+            const doctorMembers = members.filter(m => m.role === 'doctor');
+            if (isHealthyMitraCircle(circleId)) {
+                // Proposed to the reporter; HealthyMitra sends it to the doctors once accepted
+                const shared = doctorMembers.length > 0
+                    ? await shareWithMembers({ userId: reporterUserId, circleId, members: doctorMembers, message: escalationDetails, patientUsername: patient.username })
+                    : { proposal: null, question: null };
+                return {
+                    action: 'FACT_REPORT',
+                    escalated: false,
+                    details: { escalation_type: 'FACT_REPORT', subject: targetMember.username },
+                    actions: { noDoctorConnected: doctorMembers.length === 0 },
+                    proposal: shared.proposal,
+                    question: shared.question
+                };
+            }
             await recordInboxEscalation({ circleId, type: 'FACT_REPORT', details: escalationDetails, messageId: analysis.message_id ?? null });
 
             // Doctors see FACT_REPORT rows in their unread list
-            const doctors = members.filter(m => m.role === 'doctor').map(m => m.username);
+            const doctors = doctorMembers.map(m => m.username);
             return {
                 action: 'FACT_REPORT',
                 escalated: true,
@@ -86,18 +102,17 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
         const topic = factKey;
         const implied = await getImpliedConsent(reporterUserId, circleId, topic);
 
-        if (implied || targetMember.consent_level === 'full') {
-            // Share directly with the target person
+        // In a HealthyMitra circle the proposal card is the consent question
+        if (implied || targetMember.consent_level === 'full' || isHealthyMitraCircle(circleId)) {
+            // Share directly with the target person (proposed in a HealthyMitra circle)
             const contextualMessage = await generateSharingSummaryOrProbe(currentUser.username, targetMember.username, `Information about ${factKey}: ${fact.value}`);
-            const agentName = await getAgentName(targetMember.user_id, circleId);
-            events.emit('broadcast', { 
-                targetUsers: [targetMember.user_id], 
-                message: contextualMessage, 
-                from: agentName, 
-                circleId, 
-                patientUsername: patient.username 
-            });
-            actions.membersMessaged.push(targetMember.username);
+            const shared = await shareWithMembers({ userId: reporterUserId, circleId, members: [targetMember], message: contextualMessage, patientUsername: patient.username });
+            actions.membersMessaged.push(...(shared.actions.membersMessaged || []));
+            // One card and question per reply
+            if (shared.proposal && !proposal) {
+                proposal = shared.proposal;
+                question = question || shared.question;
+            }
         } else {
             // Ask for consent to share - ALWAYS ask the original reporter, not the current user
             const suggestion = {
@@ -116,5 +131,5 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
     }
 
     // The fact report was handled.
-    return { action: 'FACT_REPORT', escalated: false, details: {}, actions, question };
+    return { action: 'FACT_REPORT', escalated: false, details: {}, actions, question, proposal };
 }

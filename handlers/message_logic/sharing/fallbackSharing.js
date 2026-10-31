@@ -7,8 +7,8 @@
 import { getCircleMembers, findUserById, findCircleByPatientId, getImpliedConsent } from '../../../db/index.js';
 import { generateSharingRequest, generateSharingSummaryOrProbe } from '../../../agents/index.js';
 import { createSharingConsentAction } from '../../../state_manager.js';
-import { events } from '../../../orchestrator.js';
-import { getAgentName } from '../../utils/agentIdentity.js';
+import { shareWithMembers } from '../../../services/memberMessaging.js';
+import { isHealthyMitraCircle } from '../../../lib/deliveryMode.js';
 import { handleTieredEscalation } from './escalationTiers.js';
 
 /**
@@ -87,16 +87,19 @@ export async function handleFallbackSharing(userId, circleId, analysis) {
     const topic = Object.keys(analysis.facts || {})[0] || 'general';
     const implied = await getImpliedConsent(userId, circleId, topic);
 
-    if (implied || targetMember.consent_level === 'full') {
-        console.log(`[FallbackSharing] Sharing with ${targetMember.username} based on implied or full consent.`);
-        const contextualMessage = await generateSharingSummaryOrProbe(userId, targetMember.username, analysis.sharingSuggestion.content_to_share);
-        const agentName = await getAgentName(targetMember.user_id, circleId);
-        events.emit('broadcast', { targetUsers: [targetMember.user_id], message: contextualMessage, from: agentName, circleId, patientUsername });
+    // In a HealthyMitra circle the proposal card is the consent question
+    if (implied || targetMember.consent_level === 'full' || isHealthyMitraCircle(circleId)) {
+        console.log(`[FallbackSharing] Sharing with ${targetMember.username} (implied or full consent, or proposed).`);
+        const currentUser = await findUserById(userId);
+        const contextualMessage = await generateSharingSummaryOrProbe(currentUser?.username ?? userId, targetMember.username, analysis.sharingSuggestion.content_to_share);
+        const { actions, proposal, question } = await shareWithMembers({ userId, circleId, members: [targetMember], message: contextualMessage, patientUsername });
         return {
             action: 'SHARING_SUGGESTION',
-            shared: true,
+            shared: !proposal,
             details: { target: targetMember.username },
-            actions: { membersMessaged: [targetMember.username] }
+            actions,
+            proposal,
+            question
         };
     }
 

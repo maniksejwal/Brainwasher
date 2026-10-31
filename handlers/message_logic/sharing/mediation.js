@@ -6,8 +6,7 @@
 
 import { getCircleMembers, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
 import { generateMediatedClarification } from '../../../agents/index.js';
-import { events } from '../../../orchestrator.js';
-import { getAgentName } from '../../utils/agentIdentity.js';
+import { shareWithMembers } from '../../../services/memberMessaging.js';
 
 /**
  * Handles the case where a user requests mediation to communicate with another person.
@@ -43,21 +42,22 @@ export async function handleMediationRequest(userId, circleId, analysis) {
     // Create a mediated message for the target person
     const mediatedMessage = await generateMediatedClarification(targetMember.username, analysis.sharingSuggestion.content_to_share);
     
-    // Send the mediated message to the target person
-    const agentName = await getAgentName(targetMember.user_id, circleId);
-    events.emit('broadcast', {
-        targetUsers: [targetMember.user_id],
-        message: mediatedMessage,
-        from: agentName,
+    // Send the mediated message to the target person (proposed in a HealthyMitra circle)
+    const { actions, proposal, question } = await shareWithMembers({
+        userId,
         circleId,
+        members: [targetMember],
+        message: mediatedMessage,
         patientUsername: patient.username
     });
 
     // The requesting user is not messaged here: messageHandler states what was done in its one reply.
     return {
         action: 'MEDIATION',
-        shared: true,
+        shared: !proposal,
         details: { target: targetMember.username },
-        actions: { membersMessaged: [targetMember.username] }
+        actions,
+        proposal,
+        question
     };
 }

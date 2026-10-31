@@ -27,10 +27,10 @@ import {
     addConversationJob,
     getConversationMessages,
     hasConversationMessagesBefore,
-    getOpenProposalsForUser,
-    hasUnfinishedConversationJobs
+    hasUnfinishedConversationJobs,
+    setEmergencyAutoAlertConsent
 } from '../db/index.js';
-import { toPublicProposal } from './escalationService.js';
+import { getOpenActionsForUser } from './integrationActions.js';
 
 export const PROVIDER = 'healthymitra';
 export const PROVISION_PURPOSE = 'conversation.provision';
@@ -43,6 +43,9 @@ export const HISTORY_PAGE_MAX = 100;
 const MAX_DISPLAY_NAME = 60;
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const MEMBER_ROLES = ['caregiver', 'doctor'];
+// The automatic-send waits HealthyMitra may grant for unanswered emergencies
+export const AUTO_ALERT_DELAY_MIN_MS = 60 * 1000;
+export const AUTO_ALERT_DELAY_MAX_MS = 60 * 60 * 1000;
 
 export class IntegrationError extends Error {
     constructor(status, code, message) {
@@ -149,12 +152,25 @@ export function contextProblem(context) {
         if (seen.has(member.userId)) return 'members must be unique and not include the patient';
         seen.add(member.userId);
     }
+    const { allowedActions } = context;
+    if (allowedActions !== undefined) {
+        if (!allowedActions || typeof allowedActions !== 'object') return 'context.allowedActions must be an object';
+        const autoAlert = allowedActions.emergencyAutoAlert;
+        if (autoAlert !== undefined && autoAlert !== null) {
+            const delay = autoAlert.delayMs;
+            if (!Number.isInteger(delay) || delay < AUTO_ALERT_DELAY_MIN_MS || delay > AUTO_ALERT_DELAY_MAX_MS) {
+                return `context.allowedActions.emergencyAutoAlert.delayMs must be ${AUTO_ALERT_DELAY_MIN_MS}-${AUTO_ALERT_DELAY_MAX_MS}`;
+            }
+        }
+    }
     return null;
 }
 
 /**
  * Update the cached circle from a snapshot: the patient, the members and their roles.
- * Members missing from the snapshot are removed.
+ * Members missing from the snapshot are removed. The patient's consent to unanswered
+ * emergency alerts comes from the snapshot too (allowedActions.emergencyAutoAlert): HealthyMitra
+ * settings are the source of truth, so a snapshot without it revokes it.
  * @param {string} requesterExternalId - The signed request's user
  * @param {object} context - A snapshot that passed contextProblem
  * @returns {Promise<{circleId: string, role: string}>} The circle and the requester's role in it
@@ -184,6 +200,8 @@ export async function syncCircleFromContext(requesterExternalId, context) {
         }
     }
     await removeCircleMembersExcept(circleId, keep);
+    const autoAlert = context.allowedActions?.emergencyAutoAlert;
+    await setEmergencyAutoAlertConsent(patient.userId, Boolean(autoAlert), autoAlert?.delayMs ?? null);
     return { circleId, role };
 }
 
@@ -254,7 +272,8 @@ function toPublicMessage(row) {
 }
 
 /**
- * One page of the user's conversation with the alert proposals waiting for an answer.
+ * One page of the user's conversation with the user's open actions: proposals waiting for
+ * an answer, and approved ones HealthyMitra has not reported a result for yet.
  * @param {object} params
  * @param {number|null} [params.after] - Messages after this cursor, oldest first (polling)
  * @param {number|null} [params.before] - Messages before this cursor (older history)
@@ -265,13 +284,9 @@ export async function getConversationHistory({ externalUserId, conversationId, a
     const rows = await getConversationMessages(conversationId, { after, before, limit });
     const first = rows[0]?.message_seq ?? null;
     const last = rows.at(-1)?.message_seq ?? null;
-    const now = Date.now();
-    const proposals = (await getOpenProposalsForUser(userId))
-        .filter(p => p.details.expiresAt > now)
-        .map(p => toPublicProposal(p.details));
     return {
         messages: rows.map(toPublicMessage),
-        openProposals: proposals,
+        openProposals: await getOpenActionsForUser(userId),
         processing: await hasUnfinishedConversationJobs(conversationId),
         cursor: {
             next: String(last ?? after ?? 0),

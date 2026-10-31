@@ -124,6 +124,9 @@ export function proposalReply(decision) {
                 }
             };
         }
+        case 'approved':
+            // A HealthyMitra action: HealthyMitra sends it, and its result is posted here
+            return { reply: "Okay. I'll tell you here as soon as it has gone out.", sharingResult: null };
         case 'rejected':
             return { reply: "Okay, I haven't sent it. If anything changes, tell me and I can alert them then.", sharingResult: null };
         case 'expired':

@@ -424,6 +424,27 @@ export async function migrateDatabase(db) {
                 response TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
+            -- Actions proposed to a HealthyMitra user. HealthyMitra executes approved ones and
+            -- reports the result: pending -> rejected | expired | approved -> completed | failed
+            CREATE TABLE IF NOT EXISTS integration_actions (
+                action_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                conversation_id TEXT,
+                circle_id TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                payload_hash TEXT NOT NULL,
+                version INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                decision TEXT,
+                expires_at INTEGER NOT NULL,
+                auto_send_at INTEGER,
+                results TEXT,
+                created_at INTEGER NOT NULL,
+                decided_at INTEGER,
+                finished_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_integration_actions_owner ON integration_actions(owner_user_id, status);
         `);
 
         // Migration for feedback table - add all missing columns
@@ -491,6 +512,7 @@ export async function clearDatabase() {
         DELETE FROM emergency_auto_alert_consent;
         DELETE FROM integration_request_ids;
         DELETE FROM integration_idempotency;
+        DELETE FROM integration_actions;
         DELETE FROM conversation_jobs;
         DELETE FROM conversation_messages;
         DELETE FROM conversations;

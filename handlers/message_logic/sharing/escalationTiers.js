@@ -8,12 +8,42 @@
  *
  * Tier handlers do not message the user who wrote in. Each returns a sharing result
  * ({ action, escalated, details, actions }); the reply states what was done.
+ *
+ * In a HealthyMitra circle tiers 2-4 propose the escalation instead (the result also has
+ * `proposal` and `question`), and there is no anonymous consultation: HealthyMitra sends
+ * accepted alerts as the user's own message, so tier 3 proposes a consultation the user
+ * sees and accepts.
  */
 
 import { getCircleMembers, findUserById, findCircleByPatientId, addPendingAction, removePendingAction } from '../../../db/index.js';
 import { randomUUID } from 'crypto';
-import { escalate } from '../../../services/escalationService.js';
+import { escalateOrPropose } from '../../../services/escalationService.js';
 import { buildActionStatus } from '../../../utils/actionClaimGuard.js';
+import { isHealthyMitraCircle } from '../../../lib/deliveryMode.js';
+
+/**
+ * The sharing result for an escalation that was sent or proposed (escalateOrPropose).
+ * @param {object} result - From escalateOrPropose
+ * @param {object} details - Sharing result details
+ */
+export function escalationSharingResult(result, details) {
+    if (result.proposed) {
+        return {
+            action: 'ESCALATION_PROPOSED',
+            escalated: false,
+            details: { ...details, proposal_id: result.proposal?.actionId ?? null },
+            actions: result.actions,
+            proposal: result.proposal,
+            question: result.question
+        };
+    }
+    return {
+        action: 'ESCALATE',
+        escalated: true,
+        details: { ...details, escalation_id: result.escalationId },
+        actions: result.actions
+    };
+}
 
 /**
  * Escalation tiers
@@ -107,7 +137,7 @@ export async function handleTier2Caregiver(userId, circleId, analysis) {
         return await handleTier3Anonymous(userId, circleId, analysis);
     }
 
-    const result = await escalate({
+    const result = await escalateOrPropose({
         circleId,
         userId,
         type: 'CAREGIVER_NOTIFICATION',
@@ -119,12 +149,7 @@ export async function handleTier2Caregiver(userId, circleId, analysis) {
         patientUsername
     });
 
-    return {
-        action: 'ESCALATE',
-        escalated: true,
-        details: { tier: ESCALATION_TIERS.CAREGIVER, escalation_type: 'CAREGIVER_NOTIFICATION', escalation_id: result.escalationId },
-        actions: result.actions
-    };
+    return escalationSharingResult(result, { tier: ESCALATION_TIERS.CAREGIVER, escalation_type: 'CAREGIVER_NOTIFICATION' });
 }
 
 /**
@@ -135,9 +160,12 @@ export async function handleTier2Caregiver(userId, circleId, analysis) {
  * @returns {Promise<object>} Sharing result with the request logged
  */
 export async function handleTier3Anonymous(userId, circleId, analysis) {
+    if (isHealthyMitraCircle(circleId)) {
+        return handleTier4Consultation(userId, circleId, analysis);
+    }
     // Create anonymous escalation (no patient identity)
     const anonymousDetails = `Anonymous consultation requested. Symptoms: ${analysis.sharingSuggestion?.content_to_share || 'Health concern'}. No patient identity shared.`;
-    const result = await escalate({
+    const result = await escalateOrPropose({
         circleId,
         userId,
         type: 'ANONYMOUS_CONSULTATION',
@@ -146,12 +174,7 @@ export async function handleTier3Anonymous(userId, circleId, analysis) {
         anonymous: true
     });
 
-    return {
-        action: 'ESCALATE',
-        escalated: true,
-        details: { tier: ESCALATION_TIERS.ANONYMOUS, escalation_type: 'ANONYMOUS_CONSULTATION', escalation_id: result.escalationId },
-        actions: result.actions
-    };
+    return escalationSharingResult(result, { tier: ESCALATION_TIERS.ANONYMOUS, escalation_type: 'ANONYMOUS_CONSULTATION' });
 }
 
 /**
@@ -163,8 +186,9 @@ export async function handleTier3Anonymous(userId, circleId, analysis) {
  */
 export async function handleTier4Consultation(userId, circleId, analysis) {
     // Full escalation with patient identity
-    const consultationDetails = `User '${userId}' consultation requested: ${analysis.sharingSuggestion?.content_to_share || 'Health concern'}`;
-    const result = await escalate({
+    const user = await findUserById(userId);
+    const consultationDetails = `User '${user?.username ?? userId}' consultation requested: ${analysis.sharingSuggestion?.content_to_share || 'Health concern'}`;
+    const result = await escalateOrPropose({
         circleId,
         userId,
         type: 'CONSULTATION',
@@ -172,12 +196,7 @@ export async function handleTier4Consultation(userId, circleId, analysis) {
         messageId: analysis.message_id ?? null
     });
 
-    return {
-        action: 'ESCALATE',
-        escalated: true,
-        details: { tier: ESCALATION_TIERS.CONSULTATION, escalation_type: 'CONSULTATION', escalation_id: result.escalationId },
-        actions: result.actions
-    };
+    return escalationSharingResult(result, { tier: ESCALATION_TIERS.CONSULTATION, escalation_type: 'CONSULTATION' });
 }
 
 /**
@@ -219,6 +238,14 @@ export async function handleTieredEscalation(userId, role, message, circleId, an
     }
 }
 
+/**
+ * The reply after a permission answer: what was done, or the question for a proposed alert.
+ */
+function permissionReply(sharingResult) {
+    const status = buildActionStatus(sharingResult.actions);
+    return [status, sharingResult.question].filter(Boolean).join(' ') || "I couldn't find anyone in your care circle to send this to.";
+}
+
 // Whole-word answers only: "I took my pills" is not an "ok", and "I don't know" is not a "no"
 export const YES_PATTERN = /\b(?:yes|yeah|yep|ok|okay|sure|please do|go ahead)\b/i;
 export const NO_PATTERN = /\b(?:no|nope|not now|rather not)\b|\b(?:don't|do not)\b(?!\s+know)/i;
@@ -255,7 +282,7 @@ export async function handleEscalationPermissionResponse(userId, circleId, respo
     if (answeredYes) {
         // Tier 2 (caregiver) first; it moves to tier 3 when there are no caregivers
         const sharingResult = await handleTier2Caregiver(userId, circleId, analysis);
-        return { reply: buildActionStatus(sharingResult.actions), sharingResult };
+        return { reply: permissionReply(sharingResult), sharingResult };
     }
 
     // User denied permission. Only proceed if confidence is high enough - otherwise respect denial
@@ -263,7 +290,7 @@ export async function handleEscalationPermissionResponse(userId, circleId, respo
     if (confidence >= 0.8 && analysis.criticality === 'MEDIUM') {
         // High confidence + medium criticality = proceed with anonymous consultation
         const sharingResult = await handleTier3Anonymous(userId, circleId, analysis);
-        return { reply: buildActionStatus(sharingResult.actions), sharingResult };
+        return { reply: permissionReply(sharingResult), sharingResult };
     }
 
     // Respect denial - don't escalate

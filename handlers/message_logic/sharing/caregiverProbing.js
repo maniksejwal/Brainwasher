@@ -8,6 +8,10 @@
 import { getCircleMembers, findUserById, findCircleByPatientId, getActivePendingActions } from '../../../db/index.js';
 import { generateCaregiverProbe, generatePatientProbeFromCaregiver } from '../../../agents/index.js';
 import { createScheduledMessage } from '../../../db/queries_future_plans.js';
+import { isHealthyMitraCircle } from '../../../lib/deliveryMode.js';
+
+// Probing sends unrequested questions to other members, so it is off in HealthyMitra
+// circles, where every message to another member needs the user's acceptance
 
 /**
  * Check if there's an active doctor command that we shouldn't interfere with
@@ -38,7 +42,7 @@ function verifyIdentity(circle, userId, targetUserId, role) {
  * Send probing question to caregiver when patient discusses health matters
  */
 export async function handleCaregiverProbing(userId, role, message, circleId, analysis, currentTurn = 1) {
-    if (role !== 'patient') return false;
+    if (role !== 'patient' || isHealthyMitraCircle(circleId)) return false;
     
     try {
         const circle = await findCircleByPatientId(circleId);
@@ -93,7 +97,7 @@ export async function handleCaregiverProbing(userId, role, message, circleId, an
  * Send probing question to patient when caregiver discusses them
  */
 export async function handlePatientProbingFromCaregiver(userId, role, message, circleId, analysis, currentTurn = 1) {
-    if (role !== 'caregiver') return false;
+    if (role !== 'caregiver' || isHealthyMitraCircle(circleId)) return false;
     
     try {
         const circle = await findCircleByPatientId(circleId);

@@ -21,6 +21,7 @@ import { getAgentName } from './utils/agentIdentity.js';
 import { privacyGuard } from '../security/privacy_guard.js';
 import { buildCheckedReply } from './message_logic/replyWriter.js';
 import { toPublicProposal } from '../services/escalationService.js';
+import { isHealthyMitraCircle } from '../lib/deliveryMode.js';
 
 // Lazy initialization of topic shift handler
 let topicShiftHandler = null;
@@ -65,8 +66,9 @@ export async function handleMessage(userId, circleId, message) {
     }
 
     // Step 1.5: Check if this is a question directed at another member (for non-doctors).
-    // Skipped for an answer that was just forwarded, so the answer is not sent on twice.
-    if (memberInfo.role !== 'doctor' && !priorActions) {
+    // Skipped for an answer that was just forwarded, so the answer is not sent on twice, and in
+    // a HealthyMitra circle, where asking another member is not sent without acceptance.
+    if (memberInfo.role !== 'doctor' && !priorActions && !isHealthyMitraCircle(circleId)) {
         const questionResult = await handleNonDoctorQuestion(userId, circleId, message, memberInfo.role);
         if (questionResult) {
             return questionResult;

@@ -14,6 +14,7 @@ import { getAgentName } from '../utils/agentIdentity.js';
 import { checkSharingPermission, prioritizeContent } from '../utils/sensitiveContentFilter.js';
 import { getMemberInfo } from '../../db/index.js';
 import { recordInboxEscalation } from '../../services/escalationService.js';
+import { isHealthyMitraCircle } from '../../lib/deliveryMode.js';
 
 /**
  * Execute a resolved pending action.
@@ -31,7 +32,11 @@ export async function executeResolvedAction(actionResult, userId, circleId, { se
     if (!currentCircle) return { forwardedTo }; // Should not happen
     const patientUsername = (await findUserById(currentCircle.primary_patient_id)).username;
 
-    if (actionResult.action === 'execute') {
+    // HealthyMitra circles create no consent or delegation actions that send to others
+    // (sharing is proposed there), so one found there is not executed
+    if (actionResult.action === 'execute' && isHealthyMitraCircle(circleId)) {
+        console.warn(`[ActionExecutor] Not executing ${actionResult.details?.action_type} in HealthyMitra circle ${circleId}`);
+    } else if (actionResult.action === 'execute') {
         const { details } = actionResult;
         
         if (details.action_type === 'implied_switch_consent') {

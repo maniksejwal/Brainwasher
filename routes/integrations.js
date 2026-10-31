@@ -20,10 +20,14 @@ import {
     HISTORY_PAGE_MAX
 } from '../services/integrationService.js';
 import { kickConversationWorker } from '../services/conversationJobs.js';
+import { decideFromCard, recordActionResult, ActionError, DECISION_PURPOSE, RESULT_PURPOSE } from '../services/integrationActions.js';
+import { findExternalIdentity } from '../db/index.js';
+import { PROVIDER } from '../services/integrationService.js';
 
 const router = express.Router();
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9_-]{8,128}$/;
 const REQUEST_ID_PATTERN = IDEMPOTENCY_KEY_PATTERN;
+const PAYLOAD_HASH_PATTERN = /^[0-9a-f]{64}$/;
 
 // Provision the user's identity and single private conversation
 router.post('/conversations', requireServiceRequest(PROVISION_PURPOSE), async (req, res) => {
@@ -104,8 +108,47 @@ router.get('/conversations/:conversationId/messages', requireServiceRequest(HIST
     }
 });
 
+// The local user a signed request acts for; unknown users own no actions
+async function actingUser(req) {
+    const identity = await findExternalIdentity(PROVIDER, req.serviceRequest.userId);
+    if (!identity) throw new ActionError(404, 'action_not_found', 'No such action for this user');
+    return identity.user_id;
+}
+
+// Accept or reject an action from HealthyMitra's card. It records the decision only:
+// HealthyMitra executes an approved action and reports the result. payloadHash is the hash
+// of the content the user saw; an action that changed since is not decided.
+router.post('/actions/:actionId/decision', requireServiceRequest(DECISION_PURPOSE), async (req, res) => {
+    const { decision, payloadHash } = req.body || {};
+    if (!['approve', 'reject'].includes(decision)) {
+        return integrationError(res, 400, 'invalid_request', 'decision must be "approve" or "reject"');
+    }
+    if (typeof payloadHash !== 'string' || !PAYLOAD_HASH_PATTERN.test(payloadHash)) {
+        return integrationError(res, 400, 'invalid_request', 'payloadHash (64 hex characters) is required');
+    }
+    try {
+        const ownerUserId = await actingUser(req);
+        const { action, changed } = await decideFromCard(req.params.actionId, ownerUserId, decision === 'approve', payloadHash);
+        res.status(200).json({ action, changed });
+    } catch (error) {
+        handleError(res, error, 'Could not record the decision');
+    }
+});
+
+// HealthyMitra's authoritative result for an approved action, per recipient. Recorded once;
+// the user is told what was done in their conversation.
+router.post('/actions/:actionId/result', requireServiceRequest(RESULT_PURPOSE), async (req, res) => {
+    try {
+        const ownerUserId = await actingUser(req);
+        const { action, changed } = await recordActionResult(req.params.actionId, ownerUserId, req.body);
+        res.status(200).json({ action, changed });
+    } catch (error) {
+        handleError(res, error, 'Could not record the result');
+    }
+});
+
 function handleError(res, error, message) {
-    if (error instanceof IntegrationError) return integrationError(res, error.status, error.code, error.message);
+    if (error instanceof IntegrationError || error instanceof ActionError) return integrationError(res, error.status, error.code, error.message);
     console.error(`[Integrations] ${message}:`, error.message);
     integrationError(res, 500, 'internal_error', message);
 }

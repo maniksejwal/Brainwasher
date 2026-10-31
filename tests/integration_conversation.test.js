@@ -65,7 +65,7 @@ after(() => {
 beforeEach(async () => {
     turns.length = 0;
     turnBehaviour = async () => {};
-    for (const table of ['conversation_jobs', 'conversation_messages', 'conversations', 'integration_idempotency', 'integration_request_ids', 'pending_actions', 'messages']) {
+    for (const table of ['conversation_jobs', 'conversation_messages', 'conversations', 'integration_idempotency', 'integration_request_ids', 'pending_actions', 'integration_actions', 'messages']) {
         await db.run(`DELETE FROM ${table}`);
     }
 });
@@ -230,10 +230,13 @@ test('history pages backwards and lists open alert proposals', async () => {
     assert.equal((await history(conversationId, PATIENT.userId, '?after=1&before=2')).status, 400);
 
     const patientLocal = (await db.get("SELECT user_id FROM external_identities WHERE external_user_id = 'hm-pat'")).user_id;
-    const proposal = { actionId: 'esc_1', type: 'CRITICAL', details: 'chest pain', recipients: [{ userId: 'x', username: 'Ravi', role: 'caregiver' }], notifyDoctors: false, notifyCaregivers: true, caregiverMessage: 'Please check on Asha.', expiresAt: Date.now() + 60000, autoSendAt: null };
-    await queries.addPendingAction('esc_1', `hmc_${patientLocal}`, patientLocal, 'escalation_proposal', proposal);
+    const { proposeEscalation } = await import('../services/escalationService.js');
+    const { proposal } = await proposeEscalation({
+        circleId: `hmc_${patientLocal}`, userId: patientLocal, type: 'CRITICAL', details: 'chest pain',
+        notifyDoctors: false, notifyCaregivers: true, caregiverMessage: 'Please check on Asha.', patientUsername: 'Asha'
+    });
     const withProposal = (await history(conversationId, PATIENT.userId)).body;
-    assert.deepEqual(withProposal.openProposals.map(p => [p.actionId, p.recipients[0].username]), [['esc_1', 'Ravi']]);
+    assert.deepEqual(withProposal.openProposals.map(p => [p.actionId, p.recipients[0].username, p.recipients[0].userId]), [[proposal.actionId, 'Ravi', CAREGIVER.userId]]);
 });
 
 test('jobs interrupted by a restart are retried once, then marked failed', async () => {

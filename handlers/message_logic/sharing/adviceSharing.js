@@ -6,8 +6,7 @@
 
 import { getCircleMembers, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
 import { generateSharingSummaryOrProbe } from '../../../agents/index.js';
-import { events } from '../../../orchestrator.js';
-import { getAgentName } from '../../utils/agentIdentity.js';
+import { shareWithMembers } from '../../../services/memberMessaging.js';
 
 /**
  * Handles the specific case where one user gives advice for another.
@@ -36,20 +35,21 @@ export async function handleAdviceSharing(userId, circleId, analysis) {
     // Generate a natural language message for the target user's agent to deliver.
     const contextualMessage = await generateSharingSummaryOrProbe(currentUser.username, targetMember.username, analysis.sharingSuggestion.content_to_share);
     
-    const agentName = await getAgentName(targetMember.user_id, circleId);
-    events.emit('broadcast', {
-        targetUsers: [targetMember.user_id],
-        message: contextualMessage,
-        from: agentName,
+    const { actions, proposal, question } = await shareWithMembers({
+        userId,
         circleId,
+        members: [targetMember],
+        message: contextualMessage,
         patientUsername: patient.username
     });
 
-    // The advice was mediated; the user who gave it is told in messageHandler's one reply
+    // The advice was mediated (or proposed); the user who gave it is told in messageHandler's one reply
     return {
         action: 'ADVICE_SHARING',
-        shared: true,
+        shared: !proposal,
         details: { target: targetMember.username },
-        actions: { membersMessaged: [targetMember.username] }
+        actions,
+        proposal,
+        question
     };
 }

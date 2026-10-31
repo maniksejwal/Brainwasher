@@ -20,6 +20,11 @@
  * The in-app channel is the only real one (no SMS). A delivery is "delivered" when the
  * recipient had the app open at send time, "pending" when it waits in their inbox, and
  * "failed" when it could not be stored.
+ *
+ * In a HealthyMitra circle (lib/deliveryMode.js) nothing is sent from here: escalations are
+ * proposed (`escalateOrPropose`), a proposal is also stored as a HealthyMitra action, and an
+ * accepted one is executed by HealthyMitra, which reports the result
+ * (services/integrationActions.js).
  */
 
 import {
@@ -43,6 +48,10 @@ import { events } from '../orchestrator.js';
 import { notificationService } from '../notifications/NotificationService.js';
 import { getAgentName } from '../handlers/utils/agentIdentity.js';
 import { joinNames, buildActionStatus } from '../utils/actionClaimGuard.js';
+import { isHealthyMitraCircle } from '../lib/deliveryMode.js';
+import { createAction, decideAction, supersedeAction, DECISIONS, AUTO_SEND_DECISION } from './integrationActions.js';
+
+export { AUTO_SEND_DECISION };
 
 // Escalation types created by this service. A message gets at most one of them.
 export const SAFETY_ESCALATION_TYPES = [
@@ -225,8 +234,6 @@ export const PROPOSAL_ACTION_TYPE = 'escalation_proposal';
 export const PROPOSAL_TTL_MS = 30 * 60 * 1000;
 // The wait a patient consents to before an unanswered emergency alert is sent for them
 export const EMERGENCY_AUTO_ALERT_DELAY_MS = 5 * 60 * 1000;
-// Recorded on an alert sent because the patient consented in advance and did not answer
-export const AUTO_SEND_DECISION = 'auto_by_prior_consent';
 
 const minutesText = (ms) => {
     const minutes = Math.max(1, Math.round(ms / 60000));
@@ -270,11 +277,16 @@ export async function proposeEscalation({
     }
 
     for (const open of await getActivePendingActions(userId, circleId)) {
-        if (open.action_type === PROPOSAL_ACTION_TYPE) await removePendingAction(open.action_id);
+        if (open.action_type === PROPOSAL_ACTION_TYPE) {
+            await removePendingAction(open.action_id);
+            // Its card can no longer be accepted either
+            if (isHealthyMitraCircle(circleId)) await supersedeAction(open.action_id);
+        }
     }
 
     const proposal = {
         actionId: `esc_${randomUUID()}`,
+        kind: 'escalation',
         type,
         details,
         messageId,
@@ -287,6 +299,22 @@ export async function proposeEscalation({
         autoSendAfterMs: autoSendAfterMs || null,
         autoSendAt: autoSendAfterMs ? Date.now() + autoSendAfterMs : null
     };
+    if (isHealthyMitraCircle(circleId)) {
+        // HealthyMitra executes it once accepted; the stored action fixes what it may send
+        const action = await createAction({
+            actionId: proposal.actionId,
+            kind: 'escalation',
+            ownerUserId: userId,
+            circleId,
+            recipients,
+            content: { doctors: notifyDoctors ? details : null, caregivers: notifyCaregivers ? caregiverMessage : null },
+            escalationType: type,
+            messageId,
+            expiresAt: proposal.expiresAt,
+            autoSendAt: proposal.autoSendAt
+        });
+        if (!action) return { proposal: null, question: null, actions };
+    }
     await addPendingAction(proposal.actionId, circleId, userId, PROPOSAL_ACTION_TYPE, proposal);
     let question = `Do you want me to alert ${joinNames(recipients.map(r => r.username))} now? Just reply yes.`;
     if (proposal.autoSendAt) {
@@ -305,6 +333,7 @@ export function toPublicProposal(proposal) {
     if (!proposal) return null;
     return {
         actionId: proposal.actionId,
+        kind: proposal.kind ?? 'escalation',
         type: proposal.type,
         recipients: proposal.recipients.map(({ username, role }) => ({ username, role })),
         content: {
@@ -338,7 +367,8 @@ export async function autoSendDelayFor(userId, role, circle) {
  * most once even if the patient answers at the same moment.
  * @param {object} [options]
  * @param {number} [options.now]
- * @returns {Promise<Array<{actionId: string, status: 'completed'|'skipped', result?: object}>>}
+ * @returns {Promise<Array<{actionId: string, status: 'completed'|'approved'|'skipped', result?: object}>>}
+ *   "approved" is a HealthyMitra action, which HealthyMitra sends
  */
 export async function runDueAutoAlerts({ now = Date.now() } = {}) {
     const outcomes = [];
@@ -351,6 +381,15 @@ export async function runDueAutoAlerts({ now = Date.now() } = {}) {
             continue;
         }
         if (!(await removePendingAction(proposal.actionId))) continue;
+
+        if (isHealthyMitraCircle(pending.circle_id)) {
+            // HealthyMitra sends it and reports the result, which tells the patient
+            const decided = await decideAction(proposal.actionId, pending.user_id, true, AUTO_SEND_DECISION, { now })
+                .catch(error => ({ status: 'skipped', error }));
+            console.log(`[EscalationService] Proposal ${proposal.actionId} approved (${AUTO_SEND_DECISION}) for HealthyMitra: ${decided.status}`);
+            outcomes.push({ actionId: proposal.actionId, status: decided.status === 'approved' ? 'approved' : 'skipped' });
+            continue;
+        }
 
         const waited = minutesText(proposal.autoSendAfterMs);
         const result = await escalate({
@@ -399,12 +438,17 @@ async function updateAutoSend(pending, autoSendAt) {
  * @param {string} actionId
  * @param {string} userId - The user deciding
  * @param {boolean} accept
- * @returns {Promise<{status: 'completed'|'rejected'|'expired'|'not_found', result?: object}>}
+ * @returns {Promise<{status: 'completed'|'approved'|'rejected'|'expired'|'not_found', result?: object}>}
+ *   "approved" is a HealthyMitra action: the decision is recorded and HealthyMitra sends it
  */
 export async function decideEscalationProposal(actionId, userId, accept) {
     const pending = await getPendingAction(actionId);
     if (!pending || pending.action_type !== PROPOSAL_ACTION_TYPE || pending.user_id !== userId) {
         return { status: 'not_found' };
+    }
+    if (isHealthyMitraCircle(pending.circle_id)) {
+        const decided = await decideAction(actionId, userId, accept, DECISIONS.chat).catch(() => null);
+        return { status: decided?.changed ? decided.status : 'not_found' };
     }
     // Removing it claims it: a second decision (another tab, a double click) finds nothing
     if (!(await removePendingAction(actionId))) return { status: 'not_found' };
@@ -426,6 +470,20 @@ export async function decideEscalationProposal(actionId, userId, accept) {
         onlyUserIds: proposal.recipients.map(r => r.userId)
     });
     return { status: 'completed', result };
+}
+
+/**
+ * Escalate, or in a HealthyMitra circle propose the same escalation for the user to accept.
+ * @param {object} params - As for `escalate`
+ * @returns {Promise<object>} `escalate`'s result with `proposed: false`, or
+ *   { proposed: true, proposal, question, actions } (proposal null when nobody can be alerted)
+ */
+export async function escalateOrPropose(params) {
+    if (!isHealthyMitraCircle(params.circleId)) {
+        return { ...(await escalate(params)), proposed: false };
+    }
+    const { anonymous, onlyUserIds, timeoutMs, ...proposalParams } = params;
+    return { ...(await proposeEscalation(proposalParams)), proposed: true };
 }
 
 // Conflicts are between two members' reports; nobody raised them, so nobody is told

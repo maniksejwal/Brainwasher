@@ -188,16 +188,71 @@ export async function removeCircleMembersExcept(circleId, keepUserIds) {
     );
 }
 
-/**
- * Alert proposals waiting for this user's answer, in every circle.
- */
-export async function getOpenProposalsForUser(userId) {
-    const db = await getDb();
-    const rows = await db.all("SELECT * FROM pending_actions WHERE user_id = ? AND action_type = 'escalation_proposal' ORDER BY created_at ASC", [userId]);
-    return rows.map(row => ({ ...row, details: JSON.parse(row.details) }));
-}
-
 export async function hasUnfinishedConversationJobs(conversationId) {
     const db = await getDb();
     return Boolean(await db.get("SELECT 1 FROM conversation_jobs WHERE conversation_id = ? AND status IN ('accepted', 'processing') LIMIT 1", [conversationId]));
+}
+
+export async function findExternalIdentityByUser(provider, userId) {
+    const db = await getDb();
+    return db.get('SELECT * FROM external_identities WHERE provider = ? AND user_id = ?', [provider, userId]);
+}
+
+function toActionRow(row) {
+    if (!row) return null;
+    return { ...row, payload: JSON.parse(row.payload), results: row.results ? JSON.parse(row.results) : null };
+}
+
+export async function addIntegrationAction({ actionId, kind, ownerUserId, conversationId, circleId, payload, payloadHash, version, expiresAt, autoSendAt = null }) {
+    const db = await getDb();
+    await db.run(
+        `INSERT INTO integration_actions (action_id, kind, owner_user_id, conversation_id, circle_id, payload, payload_hash, version, status, expires_at, auto_send_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        [actionId, kind, ownerUserId, conversationId, circleId, JSON.stringify(payload), payloadHash, version, expiresAt, autoSendAt, Date.now()]
+    );
+    return getIntegrationAction(actionId);
+}
+
+export async function getIntegrationAction(actionId) {
+    const db = await getDb();
+    return toActionRow(await db.get('SELECT * FROM integration_actions WHERE action_id = ?', [actionId]));
+}
+
+/**
+ * The user's actions in these statuses, oldest first.
+ */
+export async function getIntegrationActionsForUser(userId, statuses) {
+    const db = await getDb();
+    const placeholders = statuses.map(() => '?').join(', ');
+    const rows = await db.all(
+        `SELECT * FROM integration_actions WHERE owner_user_id = ? AND status IN (${placeholders}) ORDER BY created_at ASC`,
+        [userId, ...statuses]
+    );
+    return rows.map(toActionRow);
+}
+
+/**
+ * Move a pending action to a decided status.
+ * @returns {Promise<boolean>} True if this call decided it, so it is decided exactly once
+ */
+export async function decideIntegrationAction(actionId, status, decision, now = Date.now()) {
+    const db = await getDb();
+    const result = await db.run(
+        "UPDATE integration_actions SET status = ?, decision = ?, decided_at = ? WHERE action_id = ? AND status = 'pending'",
+        [status, decision, now, actionId]
+    );
+    return result.changes > 0;
+}
+
+/**
+ * Record the result of an approved action.
+ * @returns {Promise<boolean>} True if this call recorded it, so it is recorded exactly once
+ */
+export async function finishIntegrationAction(actionId, status, results, now = Date.now()) {
+    const db = await getDb();
+    const result = await db.run(
+        "UPDATE integration_actions SET status = ?, results = ?, finished_at = ? WHERE action_id = ? AND status IN ('approved', 'executing')",
+        [status, JSON.stringify(results), now, actionId]
+    );
+    return result.changes > 0;
 }

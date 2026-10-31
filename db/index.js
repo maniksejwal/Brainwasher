@@ -106,8 +106,13 @@ import {
     finishConversationJob,
     recoverInterruptedConversationJobs,
     removeCircleMembersExcept,
-    getOpenProposalsForUser,
-    hasUnfinishedConversationJobs
+    hasUnfinishedConversationJobs,
+    findExternalIdentityByUser,
+    addIntegrationAction,
+    getIntegrationAction,
+    getIntegrationActionsForUser,
+    decideIntegrationAction,
+    finishIntegrationAction
 } from './queries_integrations.js';
 
 export {
@@ -196,7 +201,12 @@ export {
     finishConversationJob,
     recoverInterruptedConversationJobs,
     removeCircleMembersExcept,
-    getOpenProposalsForUser,
-    hasUnfinishedConversationJobs
+    hasUnfinishedConversationJobs,
+    findExternalIdentityByUser,
+    addIntegrationAction,
+    getIntegrationAction,
+    getIntegrationActionsForUser,
+    decideIntegrationAction,
+    finishIntegrationAction
 };
 
