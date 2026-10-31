@@ -137,7 +137,19 @@ The guard caught and replaced one claim in Scout-after: "I've made a note of you
 3. **Future-plan descriptions reach the patient.** Executed future plans send their description as a message, for example "Check if caregiver is receiving alert" and "Assess the severity of the symptoms…". This happens on both versions. These messages bypass the claim check (known Phase 1 limit; Phase 2, step 21).
    **Status: fixed in Phase 2** (see "Phase 2: Scout before/after").
 4. **The model sometimes repeats the emergency sentence.** One Maverick reply repeated the general sentence after the inserted category sentence, despite the prompt rule. It is harmless but reads badly; the final-message builder could drop a repeated sentence.
+   **Status: fixed in `8b56f91`.** On HIGH turns the model's own emergency instructions are removed, so the approved sentence is the only one.
 5. **The model copies the status sentence.** On later turns, the model wrote "I've already sent an alert to [caregiver] in the app" itself. Here it was true, since the alert had gone out on an earlier turn. The guard cannot tell whether an alert from an earlier turn exists, so a claim like this could become false. Phase 2's action record should include recent escalations, not only this turn's.
+   **Status: fixed in `660b6d6`** for the turn's own actions: the model's copy of the status sentence is removed. A claim about an earlier turn's alert is still checked against this turn only.
+6. **Spurious fact conflicts.** Found in the Phase 3 Maverick runs (`suicidal_patient`): 8 CONFLICT inbox rows, up to two per turn, each also sending the other member an AI-written clarification question.
+   - **Cause:** fact keys are relative to the speaker. The extraction prompt uses `symptom_report` for the speaker's own symptom and `other_person_*` for anyone else. When the patient and the caregiver both used `symptom_report`, the check compared two different people's symptoms and recorded any difference in wording as a conflict, for example "feeling frustrated" against "anxious". It also compared against the string `'null'`.
+   - **Effect:** nobody was notified in the test circles, which have no doctor. In a real circle each one would add a doctor inbox item and message the other member.
+   - **Status: fixed in `b3b9bde`.** A conflict now needs:
+     - a different reporter;
+     - the same known subject;
+     - a single-valued fact, not a description such as a symptom or mood, where several can be true at once;
+     - two non-empty values that differ after normalizing case and punctuation.
+
+     The cases from this run are unit tests.
 
 ## Re-run after fixing open problems 1 and 2 (2026-10-31)
 
@@ -265,7 +277,7 @@ The Phase 1 runs all ended with the `provideConversationFeedback` error after th
 4. **Repeated emergency instruction (open problem 4).** Scout without the fix repeated it on 2 of 4 HIGH turns, for example "please call your local emergency number immediately". Maverick with the fix had 0 of 4. Maverick rarely did this even before (0 of 5 in Phase 1), so these runs do not show the fix working on Scout; the unit tests use Scout's real sentences.
 
 **Seen in these runs, not counted as false claims:**
-- **Spurious conflict records (Maverick, `suicidal_patient`):** 8 CONFLICT inbox rows, up to two per turn. The fact-conflict check compares vague extracted facts and treats different wording as a conflict, for example "worrying" against "anxious", and even the string `'null'`. Nobody was notified, since the circle has no doctor. In a circle with a doctor these would fill the doctor's inbox. The conflict check should ignore generic keys and null values. This is outside the false-claims plan.
+- **Spurious conflict records (Maverick, `suicidal_patient`):** 8 CONFLICT inbox rows, up to two per turn. The fact-conflict check compares vague extracted facts and treats different wording as a conflict, for example "worrying" against "anxious", and even the string `'null'`. Nobody was notified, since the circle has no doctor. In a circle with a doctor these would fill the doctor's inbox. See open problem 6; fixed in `b3b9bde`.
 - **Doctor requests:** more were logged (Scout 5, Maverick 4) than in earlier runs. This varies between runs; in these circles they record that no doctor is connected.
 
 **Not covered by these runs:** asking before alerting on HIGH turns (`9cf8e8f`) and the endpoint authentication changes (`b6baea9`). Both have unit and HTTP tests. A simulated patient would need to answer the alert question for a run to cover them.
