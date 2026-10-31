@@ -1,10 +1,11 @@
 import express from 'express';
+import { authenticate, authorize } from '../middleware/auth.js';
 import fs from 'fs/promises';
 
 const router = express.Router();
 
 // Generate analysis report
-router.post('/analyze', async (req, res) => {
+router.post('/analyze', authenticate, authorize('training:view'), async (req, res) => {
     try {
         // Read training log
         const logData = await fs.readFile('./training/training_log.jsonl', 'utf-8');

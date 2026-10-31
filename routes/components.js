@@ -1,4 +1,5 @@
 import express from 'express';
+import { authenticate, authorize } from '../middleware/auth.js';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -126,7 +127,7 @@ async function buildComponentManifest({ refresh = false } = {}) {
     return manifest;
 }
 
-router.get('/companion-components', async (req, res) => {
+router.get('/companion-components', authenticate, authorize('training:view'), async (req, res) => {
     try {
         const refresh = req.query.refresh === 'true' || req.query.refresh === '1';
         const manifest = await buildComponentManifest({ refresh });

@@ -4,6 +4,8 @@
  * Designed to avoid code duplication - runs actual CLI scripts
  */
 
+import { authFetch } from '../../shared/session.js';
+
 function sanitizeOutput(text = '') {
     if (!text) return '';
 
@@ -34,7 +36,7 @@ export class CommandExecutor {
      */
     async execute(command, args = {}, onOutput = null, onError = null) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/cli/${command}`, {
+            const response = await authFetch(`${this.baseUrl}/api/cli/${command}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(args)

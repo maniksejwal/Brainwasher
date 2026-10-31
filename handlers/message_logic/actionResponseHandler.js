@@ -10,7 +10,7 @@ import { executeResolvedAction } from './actionExecutor.js';
 import { handleEscalationPermissionResponse, YES_PATTERN, NO_PATTERN } from './sharing/escalationTiers.js';
 import { decideEscalationProposal, PROPOSAL_ACTION_TYPE } from '../../services/escalationService.js';
 import { buildActionStatus } from '../../utils/actionClaimGuard.js';
-import { getActivePendingActions, findCircleById, findUserById } from '../../db/index.js';
+import { getActivePendingActions, getPendingAction, findCircleById, findUserById } from '../../db/index.js';
 import { events } from '../../orchestrator.js';
 import { getAgentName } from '../utils/agentIdentity.js';
 
@@ -70,6 +70,24 @@ export async function handlePendingActionResponse(userId, circleId, message) {
     await executeResolvedAction(actionResult, userId, circleId);
 
     return actionResult; // Return the full result so messageHandler can use the reply
+}
+
+/**
+ * Decide a proposed alert from an Accept/Reject card instead of a chat reply. The user
+ * gets the same message in chat as if they had typed yes or no.
+ * @param {string} userId - The signed-in user
+ * @param {string} actionId - The proposal's action ID
+ * @param {boolean} accept
+ * @returns {Promise<{status: string, reply: string|null}>}
+ */
+export async function handleProposalDecision(userId, actionId, accept) {
+    const pending = await getPendingAction(actionId);
+    const decision = await decideEscalationProposal(actionId, userId, accept);
+    const handled = proposalReply(decision);
+    if (handled && pending) {
+        await sendReply(userId, pending.circle_id, handled.reply);
+    }
+    return { status: decision.status, reply: handled?.reply ?? null };
 }
 
 /**

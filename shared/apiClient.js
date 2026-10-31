@@ -8,6 +8,8 @@
 /**
  * Universal API Client for Care Circle System
  */
+import { authFetch, setSessionToken, withSessionToken } from './session.js';
+
 export class ApiClient {
     constructor(baseUrl) {
         this.baseUrl = baseUrl;
@@ -28,7 +30,9 @@ export class ApiClient {
                 throw new Error(`Login failed: ${response.status}`);
             }
 
-            return await response.json();
+            const data = await response.json();
+            setSessionToken(data.token);
+            return data;
         } catch (error) {
             console.error('[ApiClient] Login error:', error.message);
             throw error;
@@ -40,7 +44,7 @@ export class ApiClient {
      */
     async sendMessage(userId, circleId, message) {
         try {
-            const response = await fetch(`${this.baseUrl}/send`, {
+            const response = await authFetch(`${this.baseUrl}/send`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId, circleId, message })
@@ -62,7 +66,7 @@ export class ApiClient {
      */
     async sendCommand(userId, circleId, message) {
         try {
-            const response = await fetch(`${this.baseUrl}/command`, {
+            const response = await authFetch(`${this.baseUrl}/command`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ userId, circleId, message })
@@ -84,7 +88,7 @@ export class ApiClient {
      */
     async getUnreadEscalations(userId) {
         try {
-            const response = await fetch(`${this.baseUrl}/doctor/escalations/unread/${userId}`);
+            const response = await authFetch(`${this.baseUrl}/doctor/escalations/unread/${userId}`);
 
             if (!response.ok) {
                 throw new Error(`Fetch escalations failed: ${response.status}`);
@@ -102,7 +106,7 @@ export class ApiClient {
      */
     async getFeedback(userId) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/feedback/${userId}`);
+            const response = await authFetch(`${this.baseUrl}/api/feedback/${userId}`);
 
             if (!response.ok) {
                 throw new Error(`Fetch feedback failed: ${response.status}`);
@@ -120,7 +124,7 @@ export class ApiClient {
      */
     async getDetailedFeedback(userId) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/feedback/${userId}`);
+            const response = await authFetch(`${this.baseUrl}/api/feedback/${userId}`);
 
             if (!response.ok) {
                 throw new Error(`Fetch feedback failed: ${response.status}`);
@@ -135,7 +139,7 @@ export class ApiClient {
 
     async provideFeedback(userId, conversationId, score, comment) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/feedback`, {
+            const response = await authFetch(`${this.baseUrl}/api/feedback`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -164,7 +168,7 @@ export class ApiClient {
      */
     async getScenarios() {
         try {
-            const response = await fetch(`${this.baseUrl}/api/scenarios`);
+            const response = await authFetch(`${this.baseUrl}/api/scenarios`);
 
             if (!response.ok) {
                 throw new Error(`Failed to load scenarios: ${response.status}`);
@@ -181,7 +185,7 @@ export class ApiClient {
         const { refresh = false } = options;
         try {
             const query = refresh ? '?refresh=true' : '';
-            const response = await fetch(`${this.baseUrl}/api/companion-components${query}`);
+            const response = await authFetch(`${this.baseUrl}/api/companion-components${query}`);
 
             if (!response.ok) {
                 throw new Error(`Failed to load companion components: ${response.status}`);
@@ -196,7 +200,7 @@ export class ApiClient {
 
     async getPrompts(limit = 100) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/prompts?limit=${encodeURIComponent(limit)}`);
+            const response = await authFetch(`${this.baseUrl}/api/prompts?limit=${encodeURIComponent(limit)}`);
             if (!response.ok) {
                 throw new Error(`Failed to load prompts: ${response.status}`);
             }
@@ -212,7 +216,7 @@ export class ApiClient {
      */
     async runSimulation(runs = 5, scenarioKey = 'random_single', turns = 3) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/simulate`, {
+            const response = await authFetch(`${this.baseUrl}/api/simulate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ runs, scenario: scenarioKey, turns })
@@ -234,7 +238,7 @@ export class ApiClient {
      */
     async generateAnalysis() {
         try {
-            const response = await fetch(`${this.baseUrl}/api/analyze`, {
+            const response = await authFetch(`${this.baseUrl}/api/analyze`, {
                 method: 'POST'
             });
 
@@ -254,7 +258,7 @@ export class ApiClient {
      */
     async getConversations(userId) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/conversations/${userId}`);
+            const response = await authFetch(`${this.baseUrl}/api/conversations/${userId}`);
 
             if (!response.ok) {
                 throw new Error(`Failed to get conversations: ${response.status}`);
@@ -272,7 +276,7 @@ export class ApiClient {
      */
     async getLogs(limit = 100) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/logs?limit=${limit}`);
+            const response = await authFetch(`${this.baseUrl}/api/logs?limit=${limit}`);
 
             if (!response.ok) {
                 throw new Error(`Failed to get logs: ${response.status}`);
@@ -290,7 +294,7 @@ export class ApiClient {
      */
     async getCircleMembers(userId) {
         try {
-            const response = await fetch(`${this.baseUrl}/api/circle/${userId}`);
+            const response = await authFetch(`${this.baseUrl}/api/circle/${userId}`);
 
             if (!response.ok) {
                 throw new Error(`Failed to get circle: ${response.status}`);
@@ -316,7 +320,7 @@ export class ApiClient {
             throw new Error('EventSource must be created by caller in Node.js environment');
         } else {
             // Browser environment - native EventSource
-            return new EventSource(`${this.baseUrl}/events/${userId}`);
+            return new EventSource(this.getEventSourceUrl(userId));
         }
     }
 
@@ -324,7 +328,7 @@ export class ApiClient {
      * Helper: Get event source URL
      */
     getEventSourceUrl(userId) {
-        return `${this.baseUrl}/events/${userId}`;
+        return withSessionToken(`${this.baseUrl}/events/${userId}`);
     }
 }
 

@@ -1,10 +1,11 @@
 import express from 'express';
+import { authenticate, requireSelf } from '../middleware/auth.js';
 import { findUserById, getUserCircles, getCircleMembers } from '../db/index.js';
 
 const router = express.Router();
 
 // Get Circle Members
-router.get('/circle/:userId', async (req, res) => {
+router.get('/circle/:userId', authenticate, requireSelf(), async (req, res) => {
     try {
         const { userId } = req.params;
 
@@ -33,7 +34,7 @@ router.get('/circle/:userId', async (req, res) => {
 });
 
 // Get User
-router.get('/user/:userId', async (req, res) => {
+router.get('/user/:userId', authenticate, requireSelf(), async (req, res) => {
     try {
         const { userId } = req.params;
         const user = await findUserById(userId);
@@ -48,7 +49,7 @@ router.get('/user/:userId', async (req, res) => {
 });
 
 // Get My Circles
-router.get('/mycircles/:userId', async (req, res) => {
+router.get('/mycircles/:userId', authenticate, requireSelf(), async (req, res) => {
     try {
         const { userId } = req.params;
         const circles = await getUserCircles(userId);
@@ -60,7 +61,7 @@ router.get('/mycircles/:userId', async (req, res) => {
 });
 
 // Get Patients for Doctor
-router.get('/patients/:userId', async (req, res) => {
+router.get('/patients/:userId', authenticate, requireSelf(), async (req, res) => {
     try {
         const { userId } = req.params;
         const allCircles = await getUserCircles(userId);

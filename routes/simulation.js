@@ -1,11 +1,12 @@
 import express from 'express';
-import { broadcastToAll } from '../lib/sse.js';
+import { authenticate, authorize } from '../middleware/auth.js';
+import { broadcast } from '../lib/sse.js';
 import fs from 'fs/promises';
 
 const router = express.Router();
 
 // Trigger simulation
-router.post('/simulate', async (req, res) => {
+router.post('/simulate', authenticate, authorize('simulations:run'), async (req, res) => {
     try {
         let { runs = 5, scenario: scenarioKey = 'random_single', turns = 3 } = req.body;
 
@@ -82,7 +83,8 @@ router.post('/simulate', async (req, res) => {
         const sim = new SimulationDriver({ logResults: true, autoFeedback: true });
 
         sim.progressCallback = (progress) => {
-            broadcastToAll({
+            // Progress goes to the user who started the run, not to every client
+            broadcast([req.user.userId], {
                 type: 'simulation_progress',
                 ...progress
             });
@@ -108,7 +110,7 @@ router.post('/simulate', async (req, res) => {
 });
 
 // Get available scenarios and personas
-router.get('/scenarios', async (req, res) => {
+router.get('/scenarios', authenticate, authorize('simulations:view'), async (req, res) => {
     try {
         const personasModule = await import('../training/simulation/personas.js');
         const scenariosModule = await import('../training/simulation/scenarios.js');
@@ -124,7 +126,7 @@ router.get('/scenarios', async (req, res) => {
 });
 
 // Get full simulation history
-router.get('/simulations/history', async (req, res) => {
+router.get('/simulations/history', authenticate, authorize('simulations:view'), async (req, res) => {
     try {
         try {
             await fs.access('./training/training_log.jsonl');
@@ -180,7 +182,7 @@ router.get('/simulations/history', async (req, res) => {
 });
 
 // Get specific simulation logs
-router.get('/simulations/:id/logs', async (req, res) => {
+router.get('/simulations/:id/logs', authenticate, authorize('simulations:view'), async (req, res) => {
     try {
         const { id } = req.params;
         try {
@@ -251,7 +253,7 @@ router.get('/simulations/:id/logs', async (req, res) => {
 });
 
 // Get comprehensive analysis stats
-router.get('/analysis/stats', async (req, res) => {
+router.get('/analysis/stats', authenticate, authorize('simulations:view'), async (req, res) => {
     try {
         const { TrainingMetricsAnalyzer } = await import('../training/analysis/lib/training_metrics_analyzer.js');
         const analyzer = new TrainingMetricsAnalyzer();

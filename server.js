@@ -12,6 +12,7 @@ import { initializeDatabase } from './db/index.js';
 import { events } from './orchestrator.js';
 import { setupLogger, getLogs } from './lib/logger.js';
 import { addClient, removeClient, broadcast } from './lib/sse.js';
+import { authenticate, authenticateStream, authorize, requireSelf } from './middleware/auth.js';
 
 // Route Modules
 import authRouter from './routes/auth.js';
@@ -27,7 +28,10 @@ import notificationsRouter from './routes/notifications.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
-app.use(cors()); // Allow all origins for now (Refine for production)
+// CORS_ORIGINS (comma-separated) limits which sites may call the API from a browser.
+// Unset, any origin may (local development). Requests still need a session token either way.
+const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
+app.use(cors(corsOrigins.length > 0 ? { origin: corsOrigins } : {}));
 app.use(express.json());
 
 // Trust Proxy for ALB
@@ -50,7 +54,8 @@ app.use('/reports', express.static(path.join(__dirname, 'training/analysis/repor
 // ========== SERVER-SENT EVENTS (SSE) ==========
 
 // Client Connection
-app.get('/events/:userId', (req, res) => {
+// A user can only listen to their own events
+app.get('/events/:userId', authenticateStream, requireSelf(), (req, res) => {
     const { userId } = req.params;
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -139,12 +144,12 @@ app.use('/api', componentsRouter);
 // Notifications
 app.use('/api', notificationsRouter);
 
-// Core API (Prompts, Command, Legacy Login) -> Mounted at root because it handles both /login and /api/prompts
+// Core API (send, command, escalations, prompts) -> mounted at root for /send, /command and /doctor/*
 app.use('/', coreRouter);
 
 
 // Logs API (Uses lib/logger)
-app.get('/api/logs', (req, res) => {
+app.get('/api/logs', authenticate, authorize('logs:view'), (req, res) => {
     const limit = parseInt(req.query.limit) || 100;
     const recent = getLogs(limit);
     res.json({ logs: recent });

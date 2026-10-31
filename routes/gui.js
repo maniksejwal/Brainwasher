@@ -1,11 +1,12 @@
 import express from 'express';
+import { authenticate, authorize, requireSelf } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import fs from 'fs/promises';
 
 const router = express.Router();
 
 // Get conversation history (grouped by conversation_id)
-router.get('/conversations/:userId', async (req, res) => {
+router.get('/conversations/:userId', authenticate, requireSelf(), async (req, res) => {
     try {
         const { userId } = req.params;
 
@@ -48,7 +49,7 @@ router.get('/conversations/:userId', async (req, res) => {
 });
 
 // Get user's feedback history from database
-router.get('/feedback/:userId', async (req, res) => {
+router.get('/feedback/:userId', authenticate, authorize('feedback:view'), async (req, res) => {
     try {
         const { userId } = req.params;
         const db = await getDb();
@@ -79,7 +80,7 @@ router.get('/feedback/:userId', async (req, res) => {
 });
 
 // POST endpoint to submit feedback
-router.post('/feedback', async (req, res) => {
+router.post('/feedback', authenticate, authorize('feedback:submit'), async (req, res) => {
     try {
         const { userId, conversationId, score, comment } = req.body;
         const db = await getDb();

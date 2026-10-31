@@ -1,4 +1,5 @@
 import express from 'express';
+import { authenticate, authorize } from '../middleware/auth.js';
 import { spawn } from 'child_process';
 import { sanitizeCLIOutput } from '../lib/logger.js';
 
@@ -98,7 +99,7 @@ function executeCLICommand(command, args, res, timeoutMs = 300000) {
 }
 
 // Run simulation CLI
-router.post('/run-simulation', async (req, res) => {
+router.post('/run-simulation', authenticate, authorize('simulations:run'), async (req, res) => {
     try {
         const { scenario, turns, skipFeedback } = req.body;
         const args = [];
@@ -119,7 +120,7 @@ router.post('/run-simulation', async (req, res) => {
 });
 
 // Train CLI
-router.post('/train', async (req, res) => {
+router.post('/train', authenticate, authorize('training:run'), async (req, res) => {
     try {
         const { command = 'run', prompts, scenarios } = req.body;
         const args = [command];
@@ -133,7 +134,7 @@ router.post('/train', async (req, res) => {
 });
 
 // Analyze CLI
-router.post('/analyze', async (req, res) => {
+router.post('/analyze', authenticate, authorize('training:view'), async (req, res) => {
     try {
         const { command = 'all' } = req.body;
         executeCLICommand('cli/analyze.js', [command], res);
@@ -143,7 +144,7 @@ router.post('/analyze', async (req, res) => {
 });
 
 // Generate HTML Report
-router.post('/generate-report', async (req, res) => {
+router.post('/generate-report', authenticate, authorize('simulations:run'), async (req, res) => {
     try {
         // Run the generation script
         executeCLICommand('training/analysis/generate_simulation_report.js', [], res);
@@ -153,7 +154,7 @@ router.post('/generate-report', async (req, res) => {
 });
 
 // World simulation CLI
-router.post('/world-simulation', async (req, res) => {
+router.post('/world-simulation', authenticate, authorize('simulations:run'), async (req, res) => {
     try {
         const { scenario, skipFeedback } = req.body;
         const args = [];
@@ -171,7 +172,7 @@ router.post('/world-simulation', async (req, res) => {
     }
 });
 
-router.post('/prompts', async (req, res) => {
+router.post('/prompts', authenticate, authorize('prompts:write'), async (req, res) => {
     try {
         const { command, version, compare } = req.body;
         const args = [command];

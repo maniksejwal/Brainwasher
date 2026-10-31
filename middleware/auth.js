@@ -14,9 +14,66 @@ const COMPATIBILITY_MODE = true;
  * SIMPLIFIED AUTH: No JWT verification, just DB session check
  */
 export async function authenticate(req, res, next) {
-    try {
-        const token = req.headers.authorization?.replace('Bearer ', '');
+    return authenticateWithToken(req.headers.authorization?.replace('Bearer ', ''), req, res, next);
+}
 
+/**
+ * Like `authenticate`, for Server-Sent Events. A browser EventSource cannot set headers,
+ * so the session token may also be passed as `?token=`. Use only on stream routes.
+ */
+export async function authenticateStream(req, res, next) {
+    const token = req.headers.authorization?.replace('Bearer ', '') || (typeof req.query.token === 'string' ? req.query.token : null);
+    return authenticateWithToken(token, req, res, next);
+}
+
+/**
+ * Allow the request only when the `:userId` route parameter (or another named one) is the
+ * signed-in user. Admins may act for anyone.
+ * @param {string} [param]
+ */
+export function requireSelf(param = 'userId') {
+    return (req, res, next) => {
+        if (!req.user) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        if (req.user.systemRole !== 'admin' && req.params[param] !== req.user.userId) {
+            return res.status(403).json({ error: 'You can only access your own data' });
+        }
+        next();
+    };
+}
+
+/**
+ * Allow the request only when the signed-in user is a member of `req.body.circleId`.
+ * A `userId` in the body, when given, must be the signed-in user: it is never trusted
+ * as the sender.
+ */
+export async function requireCircleMember(req, res, next) {
+    if (!req.user) {
+        return res.status(401).json({ error: 'Not authenticated' });
+    }
+    const { userId, circleId } = req.body || {};
+    if (userId && userId !== req.user.userId) {
+        return res.status(403).json({ error: 'userId does not match the signed-in user' });
+    }
+    if (!circleId) {
+        return res.status(400).json({ error: 'Missing circleId' });
+    }
+    try {
+        const db = await getDb();
+        const member = await db.get('SELECT 1 FROM care_circle_members WHERE circle_id = ? AND user_id = ?', [circleId, req.user.userId]);
+        if (!member) {
+            return res.status(403).json({ error: 'Not a member of this care circle' });
+        }
+        next();
+    } catch (error) {
+        console.error('[Auth] Membership check error:', error.message);
+        return res.status(500).json({ error: 'Membership check failed' });
+    }
+}
+
+async function authenticateWithToken(token, req, res, next) {
+    try {
         if (!token) {
             return res.status(401).json({ error: 'No token provided' });
         }

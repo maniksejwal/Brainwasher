@@ -8,19 +8,37 @@ import config from '../config.js';
 
 const router = express.Router();
 
-/** When REQUIRE_COGNITO_LOGIN=true, username-only login is rejected in production if Cognito is configured (except localhost). */
-function allowsLegacyUsernameLogin(req) {
+/**
+ * When REQUIRE_COGNITO_LOGIN=true and Cognito is configured, username-only login is rejected.
+ * There is no localhost exception: the Host header is set by the client, so it cannot
+ * prove where a request came from. Local development sets REQUIRE_COGNITO_LOGIN=false.
+ */
+function allowsLegacyUsernameLogin() {
     if (process.env.REQUIRE_COGNITO_LOGIN !== 'true') {
         return true;
     }
-    if (!verifier) {
-        return true;
-    }
-    const host = (req.get('host') || '').split(':')[0].toLowerCase();
-    if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
-        return true;
-    }
-    return false;
+    return !verifier;
+}
+
+// Roles that grant access beyond a user's own data. They are never taken from the login
+// request alone: they come from ADMIN_USERNAMES / REVIEWER_USERNAMES, or from the request
+// only when ALLOW_SELF_ASSIGNED_ROLES=true (local development and simulations).
+const PRIVILEGED_ROLES = ['admin', 'reviewer'];
+
+function usernamesFromEnv(name) {
+    return (process.env[name] || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+}
+
+/**
+ * Whether this login may hold the given role.
+ * @param {string} username
+ * @param {string} role
+ */
+export function mayHoldRole(username, role) {
+    if (!PRIVILEGED_ROLES.includes(role)) return true;
+    if (process.env.ALLOW_SELF_ASSIGNED_ROLES === 'true') return true;
+    const listed = usernamesFromEnv(role === 'admin' ? 'ADMIN_USERNAMES' : 'REVIEWER_USERNAMES');
+    return listed.includes(String(username).toLowerCase());
 }
 
 let verifier;
@@ -72,7 +90,7 @@ router.post('/login', async (req, res) => {
 
         // 2. Legacy/Fallback Validation
         if (!isCognitoAuth) {
-            if (!allowsLegacyUsernameLogin(req)) {
+            if (!allowsLegacyUsernameLogin()) {
                 return res.status(401).json({
                     error: 'Cognito login required',
                     hint: 'Set REQUIRE_COGNITO_LOGIN=false for migration, or send a valid Cognito id token in body.token'
@@ -85,6 +103,13 @@ router.post('/login', async (req, res) => {
             if (password) {
                 console.log(`[Auth] Password provided for ${username} but ignored (Simulated Auth Mode)`);
             }
+        }
+
+        if (!mayHoldRole(finalUsername, role)) {
+            return res.status(403).json({
+                error: `The ${role} role cannot be chosen at login`,
+                hint: `Add the user to ${role === 'admin' ? 'ADMIN_USERNAMES' : 'REVIEWER_USERNAMES'}, or set ALLOW_SELF_ASSIGNED_ROLES=true for local development`
+            });
         }
 
         // 3. User & Context Setup (Common Path)

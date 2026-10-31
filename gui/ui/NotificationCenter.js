@@ -1,4 +1,5 @@
 import config from '../config.js';
+import { authFetch } from '../../shared/session.js';
 
 /**
  * NotificationCenter Component
@@ -96,7 +97,7 @@ export default class NotificationCenter {
         if (!this.userId) return;
 
         try {
-            const response = await fetch(config.apiUrl(`/api/notifications/history/${this.userId}?limit=10`));
+            const response = await authFetch(config.apiUrl(`/api/notifications/history/${this.userId}?limit=10`));
             const data = await response.json();
 
             if (data.success) {

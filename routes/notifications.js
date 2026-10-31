@@ -1,5 +1,6 @@
 
 import express from 'express';
+import { authenticate, requireSelf } from '../middleware/auth.js';
 import {
     getNotificationHistory,
     getUserNotificationPreferences,
@@ -9,7 +10,7 @@ import {
 const router = express.Router();
 
 // Get notification history (logs) for a user
-router.get('/notifications/history/:userId', async (req, res) => {
+router.get('/notifications/history/:userId', authenticate, requireSelf(), async (req, res) => {
     try {
         const { userId } = req.params;
         const limit = parseInt(req.query.limit) || 20;
@@ -22,7 +23,7 @@ router.get('/notifications/history/:userId', async (req, res) => {
 });
 
 // Get user preferences
-router.get('/notifications/preferences/:userId', async (req, res) => {
+router.get('/notifications/preferences/:userId', authenticate, requireSelf(), async (req, res) => {
     try {
         const { userId } = req.params;
         const prefs = await getUserNotificationPreferences(userId);
@@ -34,7 +35,7 @@ router.get('/notifications/preferences/:userId', async (req, res) => {
 });
 
 // Update user preferences
-router.post('/notifications/preferences/:userId', async (req, res) => {
+router.post('/notifications/preferences/:userId', authenticate, requireSelf(), async (req, res) => {
     try {
         const { userId } = req.params;
         const { channel, eventType, enabled, config } = req.body;

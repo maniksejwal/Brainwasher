@@ -8,11 +8,12 @@
 import { MESSAGES } from '../config/messages.js';
 import { addSystemMessage } from './messages.js';
 import config from '../config.js';
+import { authFetch } from '../../shared/session.js';
 
 // Import findUserById function
 async function findUserById(userId) {
     try {
-        const response = await fetch(config.apiUrl(`/api/user/${userId}`));
+        const response = await authFetch(config.apiUrl(`/api/user/${userId}`));
         const data = await response.json();
         return data.user;
     } catch (error) {
@@ -144,7 +145,7 @@ export async function loadMyCirclesData(api, userId) {
 
     try {
         // Directly call the backend to get circles data
-        const response = await fetch(config.apiUrl(`/api/mycircles/${userId}`));
+        const response = await authFetch(config.apiUrl(`/api/mycircles/${userId}`));
         
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
@@ -232,7 +233,7 @@ export async function loadPatientsData(api, userId) {
 
     try {
         // Directly call the backend to get doctor's patients
-        const response = await fetch(config.apiUrl(`/api/patients/${userId}`));
+        const response = await authFetch(config.apiUrl(`/api/patients/${userId}`));
         
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
@@ -454,7 +455,7 @@ export async function loadServerLogs(api) {
     logsList.innerHTML = '<div class="loading">Loading server logs...</div>';
 
     try {
-        const response = await fetch(config.apiUrl('/api/logs?limit=100'));
+        const response = await authFetch(config.apiUrl('/api/logs?limit=100'));
         const data = await response.json();
         
         if (!data.logs || data.logs.length === 0) {

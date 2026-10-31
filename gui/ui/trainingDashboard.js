@@ -5,6 +5,7 @@
 
 import CommandExecutor from '../utils/commandExecutor.js';
 import config from '../config.js';
+import { authFetch } from '../../shared/session.js';
 
 export function initTrainingDashboard() {
     const container = document.getElementById('training-dashboard');
@@ -138,7 +139,7 @@ export function initTrainingDashboard() {
 
     async function loadMetrics() {
         try {
-            const response = await fetch(config.apiUrl('/api/simulation/analysis/stats'));
+            const response = await authFetch(config.apiUrl('/api/simulation/analysis/stats'));
             const data = await response.json();
 
             if (data.success) {

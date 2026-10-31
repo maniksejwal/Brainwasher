@@ -5,6 +5,7 @@
 
 import { MESSAGES } from '../config/messages.js';
 import config from '../config.js';
+import { authFetch } from '../../shared/session.js';
 
 export function initSimulationLogsUI(api) {
     const tabButton = document.querySelector('button[data-tab="reports"]'); // Assuming we hook into Reports or a new Logs tab
@@ -21,7 +22,7 @@ export async function loadConversationLogs(api) {
     try {
         // Fetch simulations (assuming endpoint exists, or we use a direct DB query via API)
         // If /api/simulations doesn't exist, we might need to use /api/logs with a filter
-        const response = await fetch(config.apiUrl('/api/simulations/history'));
+        const response = await authFetch(config.apiUrl('/api/simulations/history'));
         let sessions = [];
 
         if (response.ok) {
@@ -89,7 +90,7 @@ function renderSessionList(container, sessions) {
 
 async function loadSessionDetails(sessionId, container) {
     try {
-        const response = await fetch(config.apiUrl(`/api/simulations/${sessionId}/logs`));
+        const response = await authFetch(config.apiUrl(`/api/simulations/${sessionId}/logs`));
         if (response.ok) {
             const data = await response.json();
             const logs = data.logs || [];
@@ -168,7 +169,7 @@ window.submitFeedback = async function (conversationId) {
     const comment = document.getElementById('feedback-comment').value;
 
     try {
-        const response = await fetch(config.apiUrl('/api/feedback/submit'), {
+        const response = await authFetch(config.apiUrl('/api/feedback/submit'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
