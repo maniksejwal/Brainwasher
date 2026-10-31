@@ -8,11 +8,9 @@
 import { normalizeCriticality } from '../../utils/criticality.js';
 import {
     getCircleMembers,
-    updateUserState,
     findUserById,
     findCircleByPatientId,
     findCircleById,
-    addEscalation,
     getRecentMessages,
     getUserState,
     getFactHistory,
@@ -317,43 +315,8 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         details: 'Generating personalized reply'
     });
 
-    // Check for escalation based on criticality
-    if (analysis.criticality === 'HIGH') {
-        console.log(`🚨 [AIAnalysisHandler] HIGH/CRITICAL escalation detected for user ${userId} in circle ${circleId}`);
-
-        // Add escalation to database
-        const escalationDetails = `AI Analysis detected ${analysis.criticality} criticality. Message: "${message}"`;
-        await addEscalation(circleId, analysis.criticality, escalationDetails);
-
-        // Emit escalation event for notification system
-        events.emit('escalate', { circleId });
-
-        // NEW: Send notifications via NotificationService
-        try {
-            const members = await getCircleMembers(circleId);
-            for (const member of members) {
-                // Don't notify the user who caused it? Or maybe yes?
-                // For now, notify everyone including the sender.
-                notificationService.send(
-                    member.user_id,
-                    'escalation',
-                    `⚠️ Critical Event Detected: ${analysis.criticality}`,
-                    { criticality: analysis.criticality, details: escalationDetails }
-                ).catch(e => console.error(`[AIAnalysisHandler] Notification failed for ${member.user_id}:`, e.message));
-            }
-        } catch (e) {
-            console.error('[AIAnalysisHandler] Error fetching members for notification:', e.message);
-        }
-
-        console.log(`📢 [AIAnalysisHandler] Escalation event emitted for circle ${circleId}`);
-    }
-
-    // The reply is not sent here: messageHandler checks it and sends the one final message.
-
-    if (analysis.state_update) {
-        await updateUserState(userId, circleId, analysis.state_update);
-        console.log(`[AIAnalysisHandler] State for '${userId}' in circle '${circleId}' updated:`, analysis.state_update);
-    }
+    // Escalation (through the escalation service), the reply and the state update are
+    // handled by messageHandler after analysis.
 
     // Step 5: Complete
     events.emit('analysis_progress', {
