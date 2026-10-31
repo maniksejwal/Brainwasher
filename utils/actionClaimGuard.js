@@ -11,7 +11,10 @@
  *     doctors: string[],            // doctors in the circle who can see it
  *     caregiversAlerted: string[],  // caregivers sent an alert this turn
  *     membersMessaged: string[],    // members sent a mediated message this turn
- *     noDoctorConnected: boolean    // a doctor was needed but the circle has none
+ *     noDoctorConnected: boolean,   // a doctor was needed but the circle has none
+ *     failedRecipients: string[],   // recipients the escalation could not be sent to
+ *     anonymousConsultation: boolean, // an anonymous consultation request was logged
+ *     permissionRequested: boolean  // the user was asked whether to consult a doctor
  *   }
  */
 
@@ -114,7 +117,9 @@ export function findFalseClaims(text, actions = {}) {
  */
 export function buildActionStatus(actions = {}) {
     const parts = [];
-    if (actions.escalationCreated && actions.doctors?.length) {
+    if (actions.anonymousConsultation) {
+        parts.push("I've logged a request for an anonymous consultation about your concern, without your identity. No doctor has reviewed it yet.");
+    } else if (actions.escalationCreated && actions.doctors?.length) {
         parts.push(`I've flagged this for ${joinNames(actions.doctors)}, who will see it in the app.`);
     } else if (actions.noDoctorConnected) {
         parts.push("No doctor is connected to your care circle yet, so I couldn't send this to a doctor.");
@@ -124,6 +129,12 @@ export function buildActionStatus(actions = {}) {
     }
     if (actions.membersMessaged?.length) {
         parts.push(`I've passed your message on to ${joinNames(actions.membersMessaged)} in the app.`);
+    }
+    if (actions.failedRecipients?.length) {
+        parts.push(`I couldn't send this to ${joinNames(actions.failedRecipients)}.`);
+    }
+    if (actions.permissionRequested) {
+        parts.push('Would you like me to consult with a doctor about this?');
     }
     return parts.join(' ');
 }
