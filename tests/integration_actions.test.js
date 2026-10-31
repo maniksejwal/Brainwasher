@@ -350,3 +350,19 @@ test('escalation tiers and doctor requests propose instead of sending in a Healt
     assert.deepEqual(open.map(a => a.actionId), [doctorRequest.proposal.actionId]);
     assert.equal((await queries.getIntegrationAction(caregiverTier.proposal.actionId)).status, 'expired');
 });
+
+test('a model-scheduled message for another member is not sent in a HealthyMitra circle', async () => {
+    const { caregiverConversation, circleId } = await setup();
+    const { sendScheduledMessage } = await import('../handlers/message_logic/futurePlanningHandler.js');
+    const { events } = await import('../orchestrator.js');
+    const sent = [];
+    const listener = (payload) => sent.push(payload);
+    events.on('broadcast', listener);
+    try {
+        await sendScheduledMessage({ scheduled_message_id: 1, circle_id: circleId, target_user_id: await localId(CAREGIVER.userId), message_text: 'How is Asha doing today?' });
+    } finally {
+        events.off('broadcast', listener);
+    }
+    assert.deepEqual(sent, []);
+    assert.deepEqual(await agentTexts(caregiverConversation, CAREGIVER.userId), []);
+});

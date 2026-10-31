@@ -11,6 +11,7 @@ import {
 } from '../../db/queries_future_plans.js';
 import { events } from '../../orchestrator.js';
 import { findFalseClaims } from '../../utils/actionClaimGuard.js';
+import { isHealthyMitraCircle } from '../../lib/deliveryMode.js';
 
 /**
  * Process future planning from AI analysis
@@ -273,6 +274,14 @@ export async function sendScheduledMessage(scheduledMessage) {
     
     // Mark as sent
     await markScheduledMessageSent(scheduledMessage.scheduled_message_id);
+
+    // Only messages for other members are sent here (one for the speaker goes into their
+    // reply). In a HealthyMitra circle a message to another member needs the user's
+    // acceptance, so a model-scheduled one is not sent.
+    if (isHealthyMitraCircle(scheduledMessage.circle_id)) {
+        console.warn(`[FuturePlanning] Dropped scheduled message ${scheduledMessage.scheduled_message_id} for another member in HealthyMitra circle ${scheduledMessage.circle_id}`);
+        return;
+    }
 
     // Scheduled text is model-written: one that claims an action is not sent
     const violations = findFalseClaims(scheduledMessage.message_text, {});
