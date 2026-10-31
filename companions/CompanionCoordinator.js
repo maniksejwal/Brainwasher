@@ -74,6 +74,12 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
         }
         resolved.future_plan = futurePlan;
         
+        // Context for rewriting the reply after actions run (see handlers/message_logic/replyWriter.js)
+        resolved.replyContext = {
+            ...enhancedContext,
+            clinicalAssessment: componentResults.clinicalAgent?.result || undefined
+        };
+
         // Step 7: Add state_update from state tracker
         resolved.state_update = aggregated.state_update || initialResults.stateTracker?.result?.state_update || null;
         

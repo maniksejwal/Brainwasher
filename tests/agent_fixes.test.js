@@ -22,6 +22,8 @@ const seenContexts = {};
 const prompts = [];
 // Set to override the next makeApiCall result (e.g. an emergency confidence score)
 let nextApiResult = null;
+// Set to answer each makeApiCall by prompt; return undefined to fall through to the default
+let apiResponder = null;
 
 function stubHandler(name, result) {
     return async (userId, role, message, circleId, context) => {
@@ -52,6 +54,8 @@ mock.module(url('../agents/api_client.js'), {
     exports: {
         makeApiCall: async (prompt) => {
             prompts.push(prompt);
+            const answered = apiResponder?.(prompt);
+            if (answered !== undefined) return answered;
             const result = nextApiResult ?? { reply: 'ok' };
             nextApiResult = null;
             return result;
@@ -346,4 +350,91 @@ test('mediation returns the member messaged and skips the speaker as target', as
 
     assert.equal(await handleMediationRequest('p1', 'c1', analysis('pat')), false);
     await db.run("DELETE FROM care_circle_members WHERE user_id = 'g2'");
+});
+
+// --- Phase 2: the reply is written after the actions run ---
+
+const isReplyPrompt = (prompt) => prompt.includes('ACTIONS_TAKEN this turn');
+
+test('an escalating HIGH turn rewrites the reply with the real actions and sends one message', async () => {
+    const { handleMessage } = await import('../handlers/messageHandler.js');
+    const { getEmergencySentence } = await import('../config/emergencyGuidance.js');
+    await clearEscalations();
+    await db.run('DELETE FROM scheduled_messages');
+
+    apiResponder = (prompt) => {
+        if (prompt.includes('assessing the confidence level')) return { confidence: 0.95 };
+        if (isReplyPrompt(prompt)) {
+            // The draft (no actions yet) claims a doctor was told; the rewrite knows there is none
+            return prompt.includes('NOT sent to any doctor')
+                ? { reply: 'I am here with you while you wait.' }
+                : { reply: "I've notified your doctor about this." };
+        }
+        return undefined;
+    };
+    try {
+        const { result, sent } = await collectBroadcasts(() => handleMessage('p1', 'c1', 'crushing chest pain and my left arm is numb'));
+        const toPatient = sent.filter(b => b.targetUsers.includes('p1'));
+
+        assert.equal(toPatient.length, 1, JSON.stringify(toPatient.map(b => b.reply || b.message)));
+        const reply = toPatient[0].reply;
+        assert.ok(reply.startsWith(getEmergencySentence(null)), reply);
+        assert.match(reply, /I am here with you while you wait\./);
+        assert.match(reply, /No doctor is connected/);
+        assert.doesNotMatch(reply, /notified your doctor/);
+        assert.equal(reply, result.reply);
+
+        const rows = await db.all('SELECT type, message_id FROM escalations');
+        assert.deepEqual(rows, [{ type: 'CRITICAL', message_id: result.message_id }]);
+    } finally {
+        apiResponder = null;
+    }
+});
+
+test('a reply that claims an action that did not happen is regenerated once', async () => {
+    const { handleMessage } = await import('../handlers/messageHandler.js');
+    await clearEscalations();
+    await db.run('DELETE FROM scheduled_messages');
+
+    apiResponder = (prompt) => {
+        if (!isReplyPrompt(prompt)) return undefined;
+        return prompt.includes('Your previous draft said')
+            ? { reply: 'Tell me more about your day.' }
+            : { reply: "I've let your doctor know." };
+    };
+    try {
+        // No medical keywords: the clinical agent does not run and nothing is escalated
+        const { result, sent } = await collectBroadcasts(() => handleMessage('p1', 'c1', 'hello there'));
+        assert.equal(result.reply, 'Tell me more about your day.');
+        assert.deepEqual(sent.filter(b => b.targetUsers.includes('p1')).map(b => b.reply), [result.reply]);
+        assert.equal((await db.all('SELECT * FROM escalations')).length, 0);
+    } finally {
+        apiResponder = null;
+    }
+});
+
+test('a scheduled message due this turn is added to the one reply', async () => {
+    const { handleMessage } = await import('../handlers/messageHandler.js');
+    const { createScheduledMessage } = await import('../db/queries_future_plans.js');
+    await clearEscalations();
+    await db.run('DELETE FROM scheduled_messages');
+    await createScheduledMessage('c1', 'p1', 'Is the tightness any better than earlier?', 1, 'p1', 'turn', null, {}, null);
+
+    apiResponder = (prompt) => {
+        if (!isReplyPrompt(prompt)) return undefined;
+        return prompt.includes('The system ends your reply with this question')
+            ? { reply: 'Good to hear from you again.' }
+            : { reply: 'How are you doing today?' };
+    };
+    try {
+        const { result, sent } = await collectBroadcasts(() => handleMessage('p1', 'c1', 'hi again'));
+        const toPatient = sent.filter(b => b.targetUsers.includes('p1'));
+
+        assert.equal(toPatient.length, 1, JSON.stringify(toPatient.map(b => b.reply || b.message)));
+        assert.equal(result.reply, 'Good to hear from you again. Is the tightness any better than earlier?');
+        const pending = await db.all("SELECT * FROM scheduled_messages WHERE status = 'pending'");
+        assert.equal(pending.length, 0);
+    } finally {
+        apiResponder = null;
+    }
 });

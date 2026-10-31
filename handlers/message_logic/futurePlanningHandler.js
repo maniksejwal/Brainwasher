@@ -10,6 +10,7 @@ import {
     getPendingScheduledMessages
 } from '../../db/queries_future_plans.js';
 import { events } from '../../orchestrator.js';
+import { findFalseClaims } from '../../utils/actionClaimGuard.js';
 
 /**
  * Process future planning from AI analysis
@@ -237,8 +238,11 @@ function checkTriggerCondition(triggerValue, context) {
 /**
  * Execute a future plan (called when turn arrives)
  * @param {object} plan - Future plan object from database
+ * @param {object} [options]
+ * @param {boolean} [options.deliverInReply] - The caller puts the plan into its reply, so the
+ *   orchestrator sends no separate message for it
  */
-export async function executePlan(plan) {
+export async function executePlan(plan, { deliverInReply = false } = {}) {
     const { executeFuturePlan } = await import('../../db/queries_future_plans.js');
     
     // Mark as executed
@@ -254,7 +258,9 @@ export async function executePlan(plan) {
         userId: plan.user_id,
         planType: plan.plan_type,
         description: plan.description,
-        details: plan.details
+        details: plan.details,
+        // The caller works the plan into its reply, so no separate message is sent
+        deliverInReply
     });
 }
 
@@ -267,7 +273,14 @@ export async function sendScheduledMessage(scheduledMessage) {
     
     // Mark as sent
     await markScheduledMessageSent(scheduledMessage.scheduled_message_id);
-    
+
+    // Scheduled text is model-written: one that claims an action is not sent
+    const violations = findFalseClaims(scheduledMessage.message_text, {});
+    if (violations.length > 0) {
+        console.warn(`[FuturePlanning] Dropped scheduled message ${scheduledMessage.scheduled_message_id} containing unsupported action claims:`, violations);
+        return;
+    }
+
     // Emit broadcast event
     events.emit('broadcast', {
         targetUsers: scheduledMessage.target_user_id ? [scheduledMessage.target_user_id] : [],

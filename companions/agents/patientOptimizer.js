@@ -15,7 +15,8 @@ import { NO_ACTIONS_TAKEN } from '../../prompts/action_contract.js';
  * @param {string} role - User role
  * @param {string} message - User message
  * @param {string} circleId - Care circle ID
- * @param {object} context - Conversation context
+ * @param {object} context - Conversation context. context.actionsTaken, when set, is the
+ *   ACTIONS_TAKEN text for a reply written after this turn's actions ran.
  * @returns {Promise<object>} Optimized patient response
  */
 export async function processPatientOptimization(userId, role, message, circleId, context) {
@@ -64,7 +65,7 @@ export async function processPatientOptimization(userId, role, message, circleId
         TOPIC_SHIFT_GUIDANCE: topicShiftGuidance,
         TOPIC_SHIFT: topicShift,
         CONVERSATION_HISTORY: conversationHistoryText,
-        ACTIONS_TAKEN: NO_ACTIONS_TAKEN
+        ACTIONS_TAKEN: context.actionsTaken || NO_ACTIONS_TAKEN
     });
 
     try {

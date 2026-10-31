@@ -148,19 +148,8 @@ export class ConversationRunner {
                 await this._logInteraction(user, userMessage, agentResult, latency, turn);
             }
 
-            // Process pending future plans and scheduled messages for this turn
-            const { processPendingFutureItems, executePlan, sendScheduledMessage } = await import('../../handlers/message_logic/futurePlanningHandler.js');
-            const pendingItems = await processPendingFutureItems(user.userId, this.conversationId, turn);
-
-            // Execute due future plans
-            for (const plan of pendingItems.plans) {
-                await executePlan(plan);
-            }
-
-            // Send due scheduled messages
-            for (const scheduledMsg of pendingItems.messages) {
-                await sendScheduledMessage(scheduledMsg);
-            }
+            // Due future plans and scheduled messages are processed by handleMessage on each
+            // turn, as in production, so they are not processed again here.
 
             // Add to conversation history
             conversationHistory.push({

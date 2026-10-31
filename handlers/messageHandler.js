@@ -4,7 +4,7 @@
  * This module follows a clear "chain of thought" to process incoming messages.
  */
 
-import { getMemberInfo, findUserById, findCircleByPatientId, findCircleById, getCircleMembers, addMessage, getRecentMessages, updateUserState, addPendingAction } from '../db/index.js';
+import { getMemberInfo, findUserById, findCircleByPatientId, findCircleById, getCircleMembers, addMessage, getRecentMessages, updateUserState, addPendingAction, markScheduledMessageSent } from '../db/index.js';
 import { performAiAnalysis } from './message_logic/aiAnalysisHandler.js';
 import { handleFactProcessing } from './message_logic/conflictHandler.js';
 import { handleSharingAndEscalation } from './message_logic/sharing/index.js';
@@ -19,7 +19,7 @@ import { handleNonDoctorQuestion } from './message_logic/nonDoctorQuestionHandle
 import { broadcastErrorReply, formatAnalysisErrorMessage } from './utils/errorHandling.js';
 import { getAgentName } from './utils/agentIdentity.js';
 import { privacyGuard } from '../security/privacy_guard.js';
-import { composeFinalReply } from '../utils/actionClaimGuard.js';
+import { buildCheckedReply } from './message_logic/replyWriter.js';
 
 // Lazy initialization of topic shift handler
 let topicShiftHandler = null;
@@ -134,14 +134,24 @@ export async function handleMessage(userId, circleId, message) {
     const { processPendingFutureItems, executePlan, sendScheduledMessage } = await import('./message_logic/futurePlanningHandler.js');
     const pendingItems = await processPendingFutureItems(userId, circleId, currentTurn, conversationContext);
 
-    // Execute due future plans
+    // Due items for this user go into the one reply (step 6) instead of separate messages.
+    // A plan's description is an internal note, so the reply works it in rather than quoting it.
+    const dueNotes = [];
     for (const plan of pendingItems.plans) {
-        await executePlan(plan);
+        const inReply = plan.plan_type !== 'escalation';
+        await executePlan(plan, { deliverInReply: inReply });
+        if (inReply && plan.description) dueNotes.push(plan.description);
     }
 
-    // Send due scheduled messages
+    // Scheduled messages for this user are added to the reply; those for other members are sent now
+    const dueMessages = [];
     for (const scheduledMsg of pendingItems.messages) {
-        await sendScheduledMessage(scheduledMsg);
+        if (scheduledMsg.target_user_id === userId) {
+            await markScheduledMessageSent(scheduledMsg.scheduled_message_id);
+            dueMessages.push(scheduledMsg.message_text);
+        } else {
+            await sendScheduledMessage(scheduledMsg);
+        }
     }
 
     // Step 3.5: Handle future planning (if present in analysis) - creates NEW plans
@@ -178,20 +188,27 @@ export async function handleMessage(userId, circleId, message) {
         await updateUserState(userId, circleId, analysis.state_update);
     }
 
-    // Step 6: Build the one message for the originating user. Action claims in the model's
-    // reply are checked against what the sharing handlers did; the emergency sentence (HIGH)
-    // and the action status are written by code. A consent or permission question from a
-    // sharing handler goes at the end.
+    // Step 6: Build the one message for the originating user, now that the actions have run.
+    // The reply is rewritten with the real actions when something was done or is due, and
+    // checked: action claims must match what the sharing handlers did. The emergency sentence
+    // (HIGH) and the action status are written by code. A consent or permission question from
+    // a sharing handler, and scheduled messages due now, go at the end.
     if (analysis?.reply || analysis?.criticality === 'HIGH') {
-        const { message: finalReply, violations } = composeFinalReply({
-            modelText: analysis.reply,
-            criticality: analysis.criticality,
-            highCategory: analysis.high_category,
-            actions: sharingResult?.actions,
-            question: sharingResult?.question
+        const { message: finalReply, violations, draftViolations, regenerated } = await buildCheckedReply({
+            userId,
+            role: memberInfo.role,
+            message,
+            circleId,
+            analysis,
+            sharingResult,
+            notes: dueNotes,
+            dueMessages
         });
+        if (regenerated) {
+            console.warn(`[MessageHandler] Regenerated reply containing unsupported action claims (circle=${circleId}, user=${userId}, turn=${currentTurn}, message=${analysis.message_id}):`, draftViolations);
+        }
         if (violations.length > 0) {
-            console.warn(`[MessageHandler] Replaced reply containing unsupported action claims (circle=${circleId}, user=${userId}, turn=${currentTurn}):`, violations);
+            console.warn(`[MessageHandler] Replaced reply containing unsupported action claims (circle=${circleId}, user=${userId}, turn=${currentTurn}, message=${analysis.message_id}):`, violations);
         }
         // Simulations, training logs and the return value all see what the user received
         analysis.reply = finalReply;

@@ -215,6 +215,9 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
             analysis = await resolveEntitiesAndEnrichContext(userId, message, analysis, circleId);
         }
 
+        // Kept off the enumerable fields so it is not logged or serialized with the analysis
+        Object.defineProperty(analysis, 'replyContext', { value: companionResult.replyContext || null, enumerable: false });
+
         events.emit('analysis_progress', {
             userId,
             step: 5,

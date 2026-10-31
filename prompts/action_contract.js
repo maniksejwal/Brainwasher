@@ -20,5 +20,66 @@ export const ACTION_CONTRACT = `
 - You may offer to flag something for the doctor as a question ("Would you like me to flag this for your doctor?").
 `;
 
-// Phase 1: replies are written before any action runs, so nothing has been done yet.
+// A draft reply is written during analysis, before any action runs, so nothing has been done yet.
 export const NO_ACTIONS_TAKEN = 'none';
+
+/**
+ * Whether an action record holds anything the reply must be written around.
+ * @param {object} actions - Action record (see utils/actionClaimGuard.js)
+ * @returns {boolean}
+ */
+export function hasActionsToReport(actions = {}) {
+    return Boolean(
+        actions.escalationCreated ||
+        actions.noDoctorConnected ||
+        actions.anonymousConsultation ||
+        actions.caregiversAlerted?.length ||
+        actions.membersMessaged?.length ||
+        actions.failedRecipients?.length
+    );
+}
+
+/**
+ * Render the ACTIONS_TAKEN block for a reply written after the actions ran.
+ * @param {object} params
+ * @param {object} [params.actions] - Action record for this turn
+ * @param {string} [params.question] - Question the system appends to the reply
+ * @param {string[]} [params.notes] - Planned follow-ups due this turn (internal notes)
+ * @param {Array<{sentence: string}>} [params.violations] - Claims from a previous draft that were not true
+ * @returns {string}
+ */
+export function renderActionsTaken({ actions = {}, question = null, notes = [], violations = [] } = {}) {
+    const lines = [];
+    if (actions.anonymousConsultation) {
+        lines.push('- An anonymous consultation request was logged. No doctor has reviewed it.');
+    } else if (actions.escalationCreated && actions.doctors?.length) {
+        lines.push(`- This was flagged for these doctors, who will see it in the app: ${actions.doctors.join(', ')}. No one has replied yet.`);
+    }
+    if (actions.noDoctorConnected) {
+        lines.push('- No doctor is connected to this care circle, so this was NOT sent to any doctor.');
+    }
+    if (actions.caregiversAlerted?.length) {
+        lines.push(`- An in-app alert was sent to: ${actions.caregiversAlerted.join(', ')}. No one has replied yet.`);
+    }
+    if (actions.membersMessaged?.length) {
+        lines.push(`- A message was passed on in the app to: ${actions.membersMessaged.join(', ')}.`);
+    }
+    if (actions.failedRecipients?.length) {
+        lines.push(`- This could NOT be sent to: ${actions.failedRecipients.join(', ')}.`);
+    }
+    if (lines.length === 0) {
+        lines.push('- No action was taken this turn.');
+    } else {
+        lines.push('- The system adds its own sentence stating these actions after your reply. Do not repeat it; you may refer to it briefly, without adding to it.');
+    }
+    if (question) {
+        lines.push(`- The system ends your reply with this question, so do not ask another one: "${question}"`);
+    }
+    for (const note of notes) {
+        lines.push(`- Planned follow-up for this turn (an internal note: work it into your reply in your own words, do not quote it): ${note}`);
+    }
+    for (const { sentence } of violations) {
+        lines.push(`- Your previous draft said: "${sentence}" That is not true. Do not say it or anything like it.`);
+    }
+    return lines.join('\n');
+}

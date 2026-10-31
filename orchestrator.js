@@ -17,7 +17,12 @@ events.on('clear_db', clearDatabase);
 // Listen for future plan execution events
 events.on('future_plan_executed', async (planData) => {
     console.log(`[Orchestrator] Future plan executed: ${planData.planType} - ${planData.description}`);
-    
+
+    // The message handler works the plan into its one reply; only escalations act here
+    if (planData.deliverInReply && planData.planType !== 'escalation') {
+        return;
+    }
+
     try {
         // Get user and circle info (using static imports from top of file)
         const user = await findUserById(planData.userId);
