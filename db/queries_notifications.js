@@ -62,12 +62,17 @@ export async function getNotificationHistory(userId, limit = 50) {
 /**
  * Add an in-app notification (Inbox/Alert)
  */
+/**
+ * Store a notification in the user's in-app inbox.
+ * @returns {Promise<number>} The new notification ID
+ */
 export async function addInAppNotification(userId, type, title, body, data = {}) {
     const db = await getDb();
-    await db.run(`
+    const result = await db.run(`
         INSERT INTO in_app_notifications (user_id, type, title, body, data, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
     `, [userId, type, title, body, JSON.stringify(data), Date.now()]);
+    return result.lastID;
 }
 
 /**

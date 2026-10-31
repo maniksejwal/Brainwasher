@@ -3,6 +3,8 @@ import {
     isNotificationEnabled,
     logNotification
 } from '../db/index.js';
+import { addInAppNotification } from '../db/queries_notifications.js';
+import { isConnected } from '../lib/sse.js';
 import { TwilioProvider } from './TwilioProvider.js';
 import { AISensyProvider } from './AISensyProvider.js';
 
@@ -30,7 +32,8 @@ class ConsoleProvider extends NotificationProvider {
     async send(to, content, metadata = {}) {
         console.log(`\n🔔 [Notification] To: ${to} | Content: ${content}`);
         if (metadata.type) console.log(`   [Metadata] Type: ${metadata.type}`);
-        return { success: true, messageId: `console-${Date.now()}` };
+        // Printing to the server console reaches no one
+        return { success: true, delivered: false, messageId: `console-${Date.now()}` };
     }
 }
 
@@ -116,7 +119,9 @@ class NotificationService {
                         null
                     );
 
-                    results.push({ channel, success: true, result });
+                    // Only a real send counts as delivered: not the console, not a simulated (stub) send
+                    const delivered = Boolean(result?.success && result.delivered !== false && !result.simulated);
+                    results.push({ channel, success: true, delivered, result });
 
                 } catch (error) {
                     console.error(`[NotificationService] Failed to send via ${channel}:`, error.message);
@@ -131,7 +136,7 @@ class NotificationService {
                         error.message
                     );
 
-                    results.push({ channel, success: false, error: error.message });
+                    results.push({ channel, success: false, delivered: false, error: error.message });
                 }
             }
 
@@ -141,6 +146,28 @@ class NotificationService {
             console.error('[NotificationService] Critical error:', error);
             // Log system-level failure?
             return [];
+        }
+    }
+
+    /**
+     * Send through the in-app channel: store the notification in the user's inbox.
+     * The status is "delivered" when the user had the app open (an SSE connection) at send
+     * time, and "pending" when it waits in the inbox. The caller shows the live message.
+     * @param {string} userId - Target user ID
+     * @param {string} type - Event type (e.g., 'escalation')
+     * @param {string} title - Short title
+     * @param {string} body - Notification content
+     * @param {object} data - Additional context stored with the notification
+     * @returns {Promise<{channel: string, status: string, providerMessageId: string|null, error: string|null}>}
+     */
+    async sendInApp(userId, type, title, body, data = {}) {
+        const connected = isConnected(userId);
+        try {
+            const notificationId = await addInAppNotification(userId, type, title, body, data);
+            return { channel: 'in_app', status: connected ? 'delivered' : 'pending', providerMessageId: String(notificationId), error: null };
+        } catch (error) {
+            console.error(`[NotificationService] In-app send failed for ${userId}:`, error.message);
+            return { channel: 'in_app', status: 'failed', providerMessageId: null, error: error.message };
         }
     }
 
