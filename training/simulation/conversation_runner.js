@@ -532,6 +532,11 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
      * Collect conversation-level feedback
      */
     async _collectConversationFeedback(users, conversationHistory) {
+        // No collector when the simulation runs with autoFeedback off
+        if (!this.feedbackCollector) {
+            return null;
+        }
+
         // Collect all feedback for conversation-level analysis
         const allFeedback = [];
         users.forEach(user => {
