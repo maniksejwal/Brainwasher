@@ -11,6 +11,7 @@ import { addEscalation, getCircleMembers, findUserById, findCircleByPatientId, a
 import { events } from '../../../orchestrator.js';
 import { getAgentName } from '../../utils/agentIdentity.js';
 import { randomUUID } from 'crypto';
+import { buildActionStatus } from '../../../utils/actionClaimGuard.js';
 
 /**
  * Escalation tiers
@@ -130,7 +131,7 @@ export async function handleTier2Caregiver(userId, circleId, analysis) {
     await addEscalation(circleId, 'CAREGIVER_NOTIFICATION', `Caregiver notified about ${patientUsername}'s health concern`);
 
     // Inform patient
-    const confirmationReply = `I've notified your family members about your concern so they can check on you.`;
+    const confirmationReply = buildActionStatus({ caregiversAlerted: familyMembers.map(m => m.username) });
     const patientAgentName = await getAgentName(userId, circleId);
     events.emit('broadcast', {
         targetUsers: [userId],
@@ -160,7 +161,7 @@ export async function handleTier3Anonymous(userId, circleId, analysis) {
     events.emit('escalate', { circleId, userId, anonymous: true });
 
     // Inform patient
-    const confirmationReply = `I've consulted with a doctor anonymously about your concern. They've provided guidance without knowing your identity. If you'd like a full consultation, I can arrange that.`;
+    const confirmationReply = `I've logged a request for an anonymous consultation about your concern, without your identity. No doctor has reviewed it yet.`;
     const agentName = await getAgentName(userId, circleId);
     events.emit('broadcast', {
         targetUsers: [userId],
@@ -189,8 +190,10 @@ export async function handleTier4Consultation(userId, circleId, analysis) {
     await addEscalation(circleId, 'CONSULTATION', consultationDetails);
     events.emit('escalate', { circleId, userId });
 
-    // Inform patient
-    const confirmationReply = `I've arranged a consultation with your doctor. They will review your concern and get back to you.`;
+    // Inform patient of what was actually done
+    const members = await getCircleMembers(circleId);
+    const doctors = members.filter(m => m.role === 'doctor').map(m => m.username);
+    const confirmationReply = buildActionStatus({ escalationCreated: true, doctors, noDoctorConnected: doctors.length === 0 });
     const agentName = await getAgentName(userId, circleId);
     events.emit('broadcast', {
         targetUsers: [userId],

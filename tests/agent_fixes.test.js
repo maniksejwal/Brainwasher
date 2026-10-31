@@ -252,3 +252,20 @@ test('a HIGH turn sends the patient exactly one message, opening with the emerge
     assert.ok(toPatient[0].reply.startsWith(getEmergencySentence(null)), toPatient[0].reply);
     assert.equal(toPatient[0].reply, result.reply);
 });
+
+test('escalation tiers 3 and 4 only confirm what was done', async () => {
+    const { handleTier3Anonymous, handleTier4Consultation } = await import('../handlers/message_logic/sharing/escalationTiers.js');
+    const { findFalseClaims } = await import('../utils/actionClaimGuard.js');
+    const analysis = { criticality: 'MEDIUM', sharingSuggestion: { content_to_share: 'dizzy spells' } };
+
+    const tier3 = await collectBroadcasts(() => handleTier3Anonymous('p1', 'c1', analysis));
+    const tier3Reply = tier3.sent.find(b => b.targetUsers.includes('p1')).reply;
+    assert.match(tier3Reply, /logged a request/);
+    assert.doesNotMatch(tier3Reply, /provided guidance/);
+
+    // c1 has no doctor
+    const tier4 = await collectBroadcasts(() => handleTier4Consultation('p1', 'c1', analysis));
+    const tier4Reply = tier4.sent.find(b => b.targetUsers.includes('p1')).reply;
+    assert.match(tier4Reply, /No doctor is connected/);
+    assert.deepEqual(findFalseClaims(tier4Reply, {}), []);
+});
