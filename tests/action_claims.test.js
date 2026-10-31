@@ -105,3 +105,11 @@ test('companion reply prompts carry the action contract with ACTIONS_TAKEN fille
         assert.ok(!prompt.includes('{{ACTIONS_TAKEN}}'), `${name} left the placeholder unfilled`);
     }
 });
+
+test('unified prompt no longer scripts an escalation claim', async () => {
+    const { PROMPT_UNIFIED_AGENT_WITH_STATE } = await import('../prompts/unified_prompt.js');
+    assert.ok(!/escalating this to the doctor/i.test(PROMPT_UNIFIED_AGENT_WITH_STATE));
+    assert.ok(!/contacting the doctor immediately/i.test(PROMPT_UNIFIED_AGENT_WITH_STATE));
+    assert.match(PROMPT_UNIFIED_AGENT_WITH_STATE, /CAPABILITIES/);
+    assert.match(PROMPT_UNIFIED_AGENT_WITH_STATE, /\{\{ACTIONS_TAKEN\}\}/);
+});

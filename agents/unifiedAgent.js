@@ -7,6 +7,7 @@
 import { makeApiCall } from './api_client.js';
 import { getPromptForModel } from '../prompts/model_specific_prompts.js';
 import { PROMPT_CONTEXT_ENRICHMENT } from '../prompts/enrichment_prompt.js';
+import { NO_ACTIONS_TAKEN } from '../prompts/action_contract.js';
 import { getRecentMessages, getUserState, getFactHistory, findUserById, findCircleByPatientId, getUnreadEscalationsForCircle } from '../db/index.js';
 import { STAGES_OF_CHANGE, COPING_STYLES } from '../behavioral_models.js';
 import config from '../config.js';
@@ -67,7 +68,8 @@ export async function processUserMessage(userId, role, message, careCircleMember
         .replace('{{BEHAVIORAL_MODELS}}', JSON.stringify(behavioralModels, null, 2))
         // New replacements
         .replace('{{USER_PROFILE}}', JSON.stringify(userProfile, null, 2))
-        .replace('{{UNREAD_SUMMARY}}', JSON.stringify(unreadSummary, null, 2));
+        .replace('{{UNREAD_SUMMARY}}', JSON.stringify(unreadSummary, null, 2))
+        .replace('{{ACTIONS_TAKEN}}', NO_ACTIONS_TAKEN);
 
     return makeApiCall(prompt, historyText, true, 0.7, 300, 'conversational_agent'); // Increased maxTokens to 300 for complete responses
 }
