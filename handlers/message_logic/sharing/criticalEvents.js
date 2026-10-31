@@ -78,7 +78,7 @@ async function calculateEmergencyConfidence(message, analysis) {
  * @param {string} circleId - The circle ID
  * @param {object} analysis - The AI analysis result
  * @param {number} currentTurn - Current conversation turn number (optional)
- * @returns {Promise<boolean>} - True if handled, false otherwise
+ * @returns {Promise<object|false>} - Sharing result with the actions taken, or false if not HIGH
  */
 export async function handleCriticalEvent(userId, role, message, circleId, analysis, currentTurn = 1) {
     if (analysis.criticality !== 'HIGH') {
@@ -101,24 +101,31 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
         // Notify family members about critical health issues
         const members = await getCircleMembers(circleId);
         const familyMembers = members.filter(m => m.role === 'caregiver' && m.user_id !== userId);
+        const doctors = members.filter(m => m.role === 'doctor').map(m => m.username);
         if (familyMembers.length > 0) {
             const familyNotification = `Urgent health update: ${patientUsername} reported a critical health concern. Please check on them. [Automatically notified due to criticality]`;
             const agentName = await getAgentName(familyMembers[0].user_id, circleId);
-            events.emit('broadcast', { 
-                targetUsers: familyMembers.map(m => m.user_id), 
-                message: familyNotification, 
-                from: agentName, 
-                circleId, 
-                patientUsername 
+            events.emit('broadcast', {
+                targetUsers: familyMembers.map(m => m.user_id),
+                message: familyNotification,
+                from: agentName,
+                circleId,
+                patientUsername
             });
         }
-        
-        // Inform patient that escalation is mandatory for safety
-        const confirmationReply = `This sounds very serious. I'm escalating this to the doctor immediately for your safety. This escalation happens automatically for clear emergencies.`;
-        const agentName = await getAgentName(userId, circleId);
-        events.emit('broadcast', { targetUsers: [userId], reply: confirmationReply, from: agentName, circleId, patientUsername });
 
-        return true;
+        // The user is not messaged here: messageHandler states what was done in its one reply.
+        return {
+            action: 'ESCALATE',
+            escalated: true,
+            details: { escalation_type: 'CRITICAL', confidence },
+            actions: {
+                escalationCreated: true,
+                doctors,
+                caregiversAlerted: familyMembers.map(m => m.username),
+                noDoctorConnected: doctors.length === 0
+            }
+        };
     }
     
     // Lower confidence (< 0.9): Use future planning to ask a follow-up question before escalating
@@ -146,18 +153,13 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
         null // trigger_condition
     );
     
-    // Respond now with acknowledgment and hint at escalation
-    const acknowledgmentReply = `This sounds concerning. ${analysis.reply || "Can you tell me more about what you're experiencing?"} I want to make sure you get the right help.`;
-    const agentName = await getAgentName(userId, circleId);
-    events.emit('broadcast', { 
-        targetUsers: [userId], 
-        reply: acknowledgmentReply, 
-        from: agentName, 
-        circleId, 
-        patientUsername 
-    });
-
-    return true;
+    // No acknowledgment is sent here: it repeated analysis.reply as a second message.
+    return {
+        action: 'FOLLOW_UP',
+        escalated: false,
+        details: { confidence },
+        actions: {}
+    };
 }
 
 /**

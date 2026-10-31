@@ -20,6 +20,8 @@ const url = (p) => new URL(p, import.meta.url).href;
 const callOrder = [];
 const seenContexts = {};
 const prompts = [];
+// Set to override the next makeApiCall result (e.g. an emergency confidence score)
+let nextApiResult = null;
 
 function stubHandler(name, result) {
     return async (userId, role, message, circleId, context) => {
@@ -50,7 +52,9 @@ mock.module(url('../agents/api_client.js'), {
     exports: {
         makeApiCall: async (prompt) => {
             prompts.push(prompt);
-            return { reply: 'ok' };
+            const result = nextApiResult ?? { reply: 'ok' };
+            nextApiResult = null;
+            return result;
         }
     }
 });
@@ -126,7 +130,10 @@ test('#4 doctor request routes on pipe-separated intents and ignores others', as
     assert.equal(await handleDoctorRequest('p1', 'c1', { intent: 'ASKING_QUESTION' }), false);
     assert.equal(await handleDoctorRequest('p1', 'c1', { intent: 'REPORTING_FACT' }), false);
 
-    assert.equal(await handleDoctorRequest('p1', 'c1', { intent: 'REPORTING_FACT| requesting_doctor' }), true);
+    const result = await handleDoctorRequest('p1', 'c1', { intent: 'REPORTING_FACT| requesting_doctor' });
+    assert.equal(result.action, 'ESCALATE');
+    // c1 has no doctor: the request is recorded, and the result says so
+    assert.equal(result.actions.noDoctorConnected, true);
     const rows = await db.all("SELECT type FROM escalations WHERE circle_id = 'c1'");
     assert.deepEqual(rows.map(r => r.type), ['DOCTOR_REQUEST']);
 });
@@ -176,4 +183,55 @@ test('normalizeCriticality maps model output onto NONE/LOW/MEDIUM/HIGH', async (
     assert.equal(normalizeCriticality('banana'), 'NONE');
     assert.equal(normalizeCriticality('banana', 'MEDIUM'), 'MEDIUM');
     assert.equal(normalizeCriticality(null, 'CRITICAL'), 'HIGH');
+});
+
+// --- False action claims: sharing handlers return what they did and do not message the user ---
+
+async function collectBroadcasts(fn) {
+    const { events } = await import('../orchestrator.js');
+    const sent = [];
+    const listener = (payload) => sent.push(payload);
+    events.on('broadcast', listener);
+    try {
+        return { result: await fn(), sent };
+    } finally {
+        events.off('broadcast', listener);
+    }
+}
+
+test('critical event at high confidence escalates and reports caregivers without messaging the patient', async () => {
+    const { handleCriticalEvent } = await import('../handlers/message_logic/sharing/criticalEvents.js');
+    const now = Date.now();
+    await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', ['g1', 'gina', now]);
+    await db.run('INSERT OR IGNORE INTO care_circle_members (circle_id, user_id, role) VALUES (?, ?, ?)', ['c1', 'g1', 'caregiver']);
+    await db.run('DELETE FROM escalations');
+
+    nextApiResult = { confidence: 0.95 };
+    const { result, sent } = await collectBroadcasts(() =>
+        handleCriticalEvent('p1', 'patient', 'crushing chest pain', 'c1', { criticality: 'HIGH' }));
+
+    assert.equal(result.escalated, true);
+    assert.deepEqual(result.actions.caregiversAlerted, ['gina']);
+    assert.equal(result.actions.noDoctorConnected, true);
+    assert.ok(sent.every(b => !b.targetUsers.includes('p1')), 'patient must not get a separate message');
+    assert.ok(sent.some(b => b.targetUsers.includes('g1')), 'caregiver alert is kept');
+    const rows = await db.all("SELECT type FROM escalations WHERE circle_id = 'c1'");
+    assert.deepEqual(rows.map(r => r.type), ['CRITICAL']);
+
+    await db.run("DELETE FROM care_circle_members WHERE user_id = 'g1'");
+});
+
+test('critical event below the threshold does not escalate or message the patient', async () => {
+    const { handleCriticalEvent } = await import('../handlers/message_logic/sharing/criticalEvents.js');
+    await db.run('DELETE FROM escalations');
+
+    nextApiResult = { confidence: 0.5 };
+    const { result, sent } = await collectBroadcasts(() =>
+        handleCriticalEvent('p1', 'patient', 'my chest feels a bit tight', 'c1', { criticality: 'HIGH', reply: 'model reply' }));
+
+    assert.equal(result.action, 'FOLLOW_UP');
+    assert.equal(result.escalated, false);
+    assert.deepEqual(result.actions, {});
+    assert.equal(sent.length, 0);
+    assert.equal((await db.all('SELECT * FROM escalations')).length, 0);
 });

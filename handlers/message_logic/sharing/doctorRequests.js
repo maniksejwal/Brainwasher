@@ -4,14 +4,13 @@
  * This should trigger immediate escalation to the doctor.
  */
 
-import { addEscalation, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
+import { addEscalation, findUserById, findCircleById, getCircleMembers } from '../../../db/index.js';
 import { events } from '../../../orchestrator.js';
-import { getAgentName } from '../../utils/agentIdentity.js';
 
 /**
  * Handles the case where a user explicitly requests to talk to or consult with the doctor.
  * This should trigger immediate escalation to the doctor.
- * @returns {boolean} - True if the doctor request was handled, otherwise false.
+ * @returns {Promise<object|false>} - Sharing result with the actions taken, or false if not a doctor request.
  */
 export async function handleDoctorRequest(userId, circleId, analysis) {
     // Intent may be a pipe-separated list (e.g. "REPORTING_FACT|REQUESTING_DOCTOR")
@@ -23,25 +22,27 @@ export async function handleDoctorRequest(userId, circleId, analysis) {
     const currentUser = await findUserById(userId);
     const circle = await findCircleById(circleId);
     if (!circle) return null;
-    const patient = await findUserById(circle.primary_patient_id);
     
     console.log(`[DoctorRequest] User '${currentUser.username}' requesting doctor consultation`);
 
-    // Create escalation for doctor request
+    const members = await getCircleMembers(circleId);
+    const doctors = members.filter(m => m.role === 'doctor').map(m => m.username);
+
+    // Create escalation for doctor request. It is recorded even without a doctor,
+    // so a doctor who joins the circle later can see the request.
     const escalationDetails = `User '${currentUser.username}' requested doctor consultation: "${analysis.sharingSuggestion?.content_to_share || 'Patient wants to speak with doctor'}"`;
     await addEscalation(circleId, 'DOCTOR_REQUEST', escalationDetails);
     events.emit('escalate', { circleId });
 
-    // Confirm to the requesting user that doctor has been notified
-    const confirmationReply = `I've notified the doctor that you'd like to speak with them. They should respond soon.`;
-    const agentName = await getAgentName(userId, circleId);
-    events.emit('broadcast', {
-        targetUsers: [userId],
-        reply: confirmationReply,
-        from: agentName,
-        circleId,
-        patientUsername: patient.username
-    });
-
-    return true;
+    // The user is not messaged here: messageHandler states what was done in its one reply.
+    return {
+        action: 'ESCALATE',
+        escalated: true,
+        details: { escalation_type: 'DOCTOR_REQUEST' },
+        actions: {
+            escalationCreated: true,
+            doctors,
+            noDoctorConnected: doctors.length === 0
+        }
+    };
 }
