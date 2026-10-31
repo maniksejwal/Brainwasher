@@ -20,6 +20,7 @@ import { broadcastErrorReply, formatAnalysisErrorMessage } from './utils/errorHa
 import { getAgentName } from './utils/agentIdentity.js';
 import { privacyGuard } from '../security/privacy_guard.js';
 import { buildCheckedReply } from './message_logic/replyWriter.js';
+import { toPublicProposal } from '../services/escalationService.js';
 
 // Lazy initialization of topic shift handler
 let topicShiftHandler = null;
@@ -223,6 +224,8 @@ export async function handleMessage(userId, circleId, message) {
         }
         // Simulations, training logs and the return value all see what the user received
         analysis.reply = finalReply;
+        // An alert waiting for the user's yes; a client can show it as an Accept/Reject card
+        analysis.proposal = toPublicProposal(sharingResult?.proposal);
 
         const circle = await findCircleById(circleId);
         const patient = circle ? await findUserById(circle.primary_patient_id) : null;
@@ -232,7 +235,8 @@ export async function handleMessage(userId, circleId, message) {
             reply: analysis.reply,
             from: agentName,
             circleId,
-            patientUsername: patient?.username ?? userId
+            patientUsername: patient?.username ?? userId,
+            ...(analysis.proposal ? { proposal: analysis.proposal } : {})
         });
     } else {
         if (process.env.DEBUG_CLI) {

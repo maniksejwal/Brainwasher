@@ -30,11 +30,17 @@ import {
     getEscalationById,
     acknowledgeEscalation,
     getCircleMembers,
+    addPendingAction,
+    getPendingAction,
+    getActivePendingActions,
+    removePendingAction,
     findUserById
 } from '../db/index.js';
+import { randomUUID } from 'crypto';
 import { events } from '../orchestrator.js';
 import { notificationService } from '../notifications/NotificationService.js';
 import { getAgentName } from '../handlers/utils/agentIdentity.js';
+import { joinNames } from '../utils/actionClaimGuard.js';
 
 // Escalation types created by this service. A message gets at most one of them.
 export const SAFETY_ESCALATION_TYPES = [
@@ -92,6 +98,7 @@ export function toActionRecord(deliveries, { doctorsWanted, circleHasDoctor, ano
  * @param {string} [params.caregiverMessage] - Text sent to caregivers
  * @param {string} [params.patientUsername] - Patient the circle belongs to
  * @param {boolean} [params.anonymous] - The doctor sees no patient identity
+ * @param {string[]} [params.onlyUserIds] - Send only to these members (an approved proposal's recipients)
  * @param {number} [params.timeoutMs] - Longest wait for each send
  * @returns {Promise<{escalationId: number, duplicate: boolean, deliveries: object[], doctorReached: boolean, actions: object}>}
  */
@@ -106,6 +113,7 @@ export async function escalate({
     caregiverMessage = null,
     patientUsername = null,
     anonymous = false,
+    onlyUserIds = null,
     timeoutMs = SEND_TIMEOUT_MS
 }) {
     if (!SAFETY_ESCALATION_TYPES.includes(type)) {
@@ -113,8 +121,10 @@ export async function escalate({
     }
 
     const members = await getCircleMembers(circleId);
-    const doctors = notifyDoctors ? members.filter(m => m.role === 'doctor') : [];
-    const caregivers = notifyCaregivers ? members.filter(m => m.role === 'caregiver' && m.user_id !== userId) : [];
+    // An approved proposal fixes its recipients; anyone who has left the circle since is dropped
+    const allowed = (m) => !onlyUserIds || onlyUserIds.includes(m.user_id);
+    const doctors = notifyDoctors ? members.filter(m => m.role === 'doctor' && allowed(m)) : [];
+    const caregivers = notifyCaregivers ? members.filter(m => m.role === 'caregiver' && m.user_id !== userId && allowed(m)) : [];
     const circleHasDoctor = members.some(m => m.role === 'doctor');
     const recordOptions = { doctorsWanted: notifyDoctors, circleHasDoctor, anonymous };
 
@@ -206,6 +216,123 @@ export async function recordInboxEscalation({ circleId, type, details, messageId
     const deliveries = await sendToDoctors({ escalationId, circleId, type, details, doctors, timeoutMs });
     emitEscalated({ circleId, escalationId, type, deliveries });
     return { escalationId, deliveries };
+}
+
+export const PROPOSAL_ACTION_TYPE = 'escalation_proposal';
+// An unanswered proposal stops being valid after this long; a later HIGH message proposes again
+export const PROPOSAL_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Propose an escalation instead of sending it. Nothing leaves the system until the user
+ * accepts. The proposal fixes the escalation's content and recipients, so what the user
+ * accepts is exactly what is sent. A newer proposal replaces an older open one from the
+ * same user in the same circle, so one "yes" can never send two.
+ * @param {object} params - Same as `escalate`, plus `ttlMs`
+ * @returns {Promise<{proposal: object|null, question: string|null, actions: object}>}
+ *   `proposal` is null when the circle has nobody to alert
+ */
+export async function proposeEscalation({
+    circleId,
+    userId,
+    type,
+    details,
+    messageId = null,
+    notifyDoctors = true,
+    notifyCaregivers = false,
+    caregiverMessage = null,
+    patientUsername = null,
+    ttlMs = PROPOSAL_TTL_MS
+}) {
+    if (!SAFETY_ESCALATION_TYPES.includes(type)) {
+        throw new Error(`[EscalationService] Unknown escalation type: ${type}`);
+    }
+    const members = await getCircleMembers(circleId);
+    const circleHasDoctor = members.some(m => m.role === 'doctor');
+    const recipients = members
+        .filter(m => (notifyDoctors && m.role === 'doctor') || (notifyCaregivers && m.role === 'caregiver' && m.user_id !== userId))
+        .map(m => ({ userId: m.user_id, username: m.username, role: m.role }));
+    const actions = { noDoctorConnected: notifyDoctors && !circleHasDoctor };
+    if (recipients.length === 0) {
+        return { proposal: null, question: null, actions };
+    }
+
+    for (const open of await getActivePendingActions(userId, circleId)) {
+        if (open.action_type === PROPOSAL_ACTION_TYPE) await removePendingAction(open.action_id);
+    }
+
+    const proposal = {
+        actionId: `esc_${randomUUID()}`,
+        type,
+        details,
+        messageId,
+        recipients,
+        notifyDoctors,
+        notifyCaregivers,
+        caregiverMessage,
+        patientUsername,
+        expiresAt: Date.now() + ttlMs
+    };
+    await addPendingAction(proposal.actionId, circleId, userId, PROPOSAL_ACTION_TYPE, proposal);
+    return {
+        proposal,
+        question: `Do you want me to alert ${joinNames(recipients.map(r => r.username))} now? Just reply yes.`,
+        actions
+    };
+}
+
+/**
+ * The parts of a proposal a client shows on its Accept/Reject card: who it goes to and
+ * the exact text each kind of recipient gets.
+ * @param {object|null|undefined} proposal - From proposeEscalation
+ * @returns {object|null}
+ */
+export function toPublicProposal(proposal) {
+    if (!proposal) return null;
+    return {
+        actionId: proposal.actionId,
+        type: proposal.type,
+        recipients: proposal.recipients.map(({ username, role }) => ({ username, role })),
+        content: {
+            doctors: proposal.notifyDoctors ? proposal.details : null,
+            caregivers: proposal.notifyCaregivers ? proposal.caregiverMessage : null
+        },
+        expiresAt: proposal.expiresAt
+    };
+}
+
+/**
+ * Accept or reject an escalation proposal. Only the user it was proposed to can decide,
+ * and it runs at most once: the proposal is removed before anything is sent.
+ * @param {string} actionId
+ * @param {string} userId - The user deciding
+ * @param {boolean} accept
+ * @returns {Promise<{status: 'completed'|'rejected'|'expired'|'not_found', result?: object}>}
+ */
+export async function decideEscalationProposal(actionId, userId, accept) {
+    const pending = await getPendingAction(actionId);
+    if (!pending || pending.action_type !== PROPOSAL_ACTION_TYPE || pending.user_id !== userId) {
+        return { status: 'not_found' };
+    }
+    // Removing it claims it: a second decision (another tab, a double click) finds nothing
+    if (!(await removePendingAction(actionId))) return { status: 'not_found' };
+
+    const proposal = pending.details;
+    if (Date.now() > proposal.expiresAt) return { status: 'expired' };
+    if (!accept) return { status: 'rejected' };
+
+    const result = await escalate({
+        circleId: pending.circle_id,
+        userId,
+        type: proposal.type,
+        details: proposal.details,
+        messageId: proposal.messageId,
+        notifyDoctors: proposal.notifyDoctors,
+        notifyCaregivers: proposal.notifyCaregivers,
+        caregiverMessage: proposal.caregiverMessage,
+        patientUsername: proposal.patientUsername,
+        onlyUserIds: proposal.recipients.map(r => r.userId)
+    });
+    return { status: 'completed', result };
 }
 
 // Conflicts are between two members' reports; nobody raised them, so nobody is told

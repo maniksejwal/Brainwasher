@@ -1,12 +1,12 @@
 /**
  * @fileoverview handlers/message_logic/sharing/criticalEvents.js
  * Handles critical health events and family notifications.
- * Uses confidence-based escalation: immediate escalation only for high-confidence emergencies,
+ * Uses confidence-based escalation: high-confidence emergencies propose an alert the user accepts,
  * otherwise schedules a follow-up question for the next turn without escalating.
  */
 
 import { findUserById, findCircleByPatientId } from '../../../db/index.js';
-import { escalate } from '../../../services/escalationService.js';
+import { proposeEscalation } from '../../../services/escalationService.js';
 import { createScheduledMessage } from '../../../db/queries_future_plans.js';
 import { makeApiCall } from '../../../agents/api_client.js';
 import { generateEmergencyConfidencePrompt, generateEscalationHintPrompt } from '../../../prompts/emergency_confidence_prompt.js';
@@ -73,7 +73,7 @@ async function calculateEmergencyConfidence(message, analysis) {
 
 /**
  * Handles HIGH criticality events with confidence-based escalation
- * Only escalates immediately if confidence is very high (0.9+)
+ * Proposes an alert to the doctors and caregivers only if confidence is very high (0.9+)
  * Otherwise schedules a follow-up question for the next turn without escalating
  * @param {string} userId - The user who reported the critical event
  * @param {string} role - The role of the user
@@ -94,28 +94,30 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
     // Calculate confidence level for emergency using LLM
     const confidence = await calculateEmergencyConfidence(message, analysis);
     
-    // High confidence (0.9+): Immediate escalation - clear emergency
+    // High confidence (0.9+): a clear emergency. The alert to the doctors and caregivers is
+    // proposed, not sent: the reply opens with the emergency sentence and asks the user to
+    // accept the alert, which goes out on "yes" (escalationService.decideEscalationProposal).
     if (confidence >= ESCALATION_CONFIDENCE_THRESHOLD) {
-        // ESCALATION DENIAL OVERRIDE: For HIGH criticality with high confidence, we MUST escalate regardless of patient consent
-        const criticalDetails = `User '${userId}' (${role}) reported: "${message}" [IMMEDIATE ESCALATION: High confidence emergency (${(confidence * 100).toFixed(0)}%)]`;
-        // Doctors get the escalation; caregivers (other than the speaker) get an alert
-        const result = await escalate({
+        const criticalDetails = `User '${userId}' (${role}) reported: "${message}" [High confidence emergency (${(confidence * 100).toFixed(0)}%)]`;
+        const { proposal, question, actions } = await proposeEscalation({
             circleId,
             userId,
             type: 'CRITICAL',
             details: criticalDetails,
             messageId: analysis.message_id ?? null,
             notifyCaregivers: true,
-            caregiverMessage: `Urgent health update: ${patientUsername} reported a critical health concern. Please check on them. [Automatically notified due to criticality]`,
+            caregiverMessage: `Urgent health update: ${patientUsername} reported a critical health concern. Please check on them.`,
             patientUsername
         });
 
-        // The user is not messaged here: messageHandler states what was done in its one reply.
+        // The user is not messaged here: messageHandler puts the question in its one reply.
         return {
-            action: 'ESCALATE',
-            escalated: true,
-            details: { escalation_type: 'CRITICAL', escalation_id: result.escalationId, confidence },
-            actions: result.actions
+            action: 'PROPOSE_ESCALATION',
+            escalated: false,
+            details: { escalation_type: 'CRITICAL', proposal_id: proposal?.actionId ?? null, confidence },
+            question,
+            proposal,
+            actions
         };
     }
     

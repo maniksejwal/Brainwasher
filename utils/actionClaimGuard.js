@@ -289,7 +289,7 @@ function escapeRegExp(text) {
     return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function joinNames(names) {
+export function joinNames(names) {
     if (names.length <= 1) return names.join('');
     return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 }

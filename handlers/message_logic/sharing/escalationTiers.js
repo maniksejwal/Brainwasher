@@ -220,8 +220,8 @@ export async function handleTieredEscalation(userId, role, message, circleId, an
 }
 
 // Whole-word answers only: "I took my pills" is not an "ok", and "I don't know" is not a "no"
-const YES_PATTERN = /\b(?:yes|yeah|yep|ok|okay|sure|please do|go ahead)\b/i;
-const NO_PATTERN = /\b(?:no|nope|not now|rather not)\b|\b(?:don't|do not)\b(?!\s+know)/i;
+export const YES_PATTERN = /\b(?:yes|yeah|yep|ok|okay|sure|please do|go ahead)\b/i;
+export const NO_PATTERN = /\b(?:no|nope|not now|rather not)\b|\b(?:don't|do not)\b(?!\s+know)/i;
 
 /**
  * Handle user response to escalation permission request

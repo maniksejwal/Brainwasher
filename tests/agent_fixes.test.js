@@ -209,26 +209,69 @@ async function collectBroadcasts(fn) {
     }
 }
 
-test('critical event at high confidence escalates and reports caregivers without messaging the patient', async () => {
+test('critical event at high confidence proposes the alert and sends nothing until the user accepts', async () => {
     const { handleCriticalEvent } = await import('../handlers/message_logic/sharing/criticalEvents.js');
+    const { handlePendingActionResponse } = await import('../handlers/message_logic/actionResponseHandler.js');
     const now = Date.now();
     await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', ['g1', 'gina', now]);
     await db.run('INSERT OR IGNORE INTO care_circle_members (circle_id, user_id, role) VALUES (?, ?, ?)', ['c1', 'g1', 'caregiver']);
     await clearEscalations();
+    await db.run('DELETE FROM pending_actions');
+    try {
+        nextApiResult = { confidence: 0.95 };
+        const { result, sent } = await collectBroadcasts(() =>
+            handleCriticalEvent('p1', 'patient', 'crushing chest pain', 'c1', { criticality: 'HIGH' }));
 
-    nextApiResult = { confidence: 0.95 };
-    const { result, sent } = await collectBroadcasts(() =>
-        handleCriticalEvent('p1', 'patient', 'crushing chest pain', 'c1', { criticality: 'HIGH' }));
+        assert.equal(result.action, 'PROPOSE_ESCALATION');
+        assert.equal(result.escalated, false);
+        assert.equal(result.question, 'Do you want me to alert gina now? Just reply yes.');
+        assert.deepEqual(result.proposal.recipients.map(r => r.username), ['gina']);
+        assert.equal(result.actions.noDoctorConnected, true);
+        assert.equal(sent.length, 0, 'nothing is sent before the user accepts');
+        assert.equal((await db.all('SELECT * FROM escalations')).length, 0);
 
-    assert.equal(result.escalated, true);
-    assert.deepEqual(result.actions.caregiversAlerted, ['gina']);
-    assert.equal(result.actions.noDoctorConnected, true);
-    assert.ok(sent.every(b => !b.targetUsers.includes('p1')), 'patient must not get a separate message');
-    assert.ok(sent.some(b => b.targetUsers.includes('g1')), 'caregiver alert is kept');
-    const rows = await db.all("SELECT type FROM escalations WHERE circle_id = 'c1'");
-    assert.deepEqual(rows.map(r => r.type), ['CRITICAL']);
+        // "yes" sends it once, to the recipients that were shown
+        const accepted = await collectBroadcasts(() => handlePendingActionResponse('p1', 'c1', 'yes please'));
+        assert.equal(accepted.result.reply, "No doctor is connected to your care circle yet, so I couldn't send this to a doctor. I've sent an alert to gina in the app.");
+        assert.ok(accepted.sent.some(b => b.targetUsers.includes('g1')), 'caregiver alert');
+        assert.deepEqual((await db.all('SELECT type FROM escalations')).map(r => r.type), ['CRITICAL']);
+        assert.equal((await db.all('SELECT * FROM pending_actions')).length, 0);
+        assert.equal(await handlePendingActionResponse('p1', 'c1', 'yes'), null, 'a second yes sends nothing');
+    } finally {
+        await db.run("DELETE FROM care_circle_members WHERE user_id = 'g1'");
+        await db.run('DELETE FROM pending_actions');
+    }
+});
 
-    await db.run("DELETE FROM care_circle_members WHERE user_id = 'g1'");
+test('a declined or expired alert proposal sends nothing', async () => {
+    const { proposeEscalation, decideEscalationProposal } = await import('../services/escalationService.js');
+    const { handlePendingActionResponse } = await import('../handlers/message_logic/actionResponseHandler.js');
+    await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', ['g1', 'gina', Date.now()]);
+    await db.run('INSERT OR IGNORE INTO care_circle_members (circle_id, user_id, role) VALUES (?, ?, ?)', ['c1', 'g1', 'caregiver']);
+    await clearEscalations();
+    await db.run('DELETE FROM pending_actions');
+    const propose = (overrides = {}) => proposeEscalation({ circleId: 'c1', userId: 'p1', type: 'CRITICAL', details: 'chest pain', notifyCaregivers: true, caregiverMessage: 'Please check on pat.', ...overrides });
+    try {
+        await propose();
+        const declined = await collectBroadcasts(() => handlePendingActionResponse('p1', 'c1', 'no, not now'));
+        assert.match(declined.result.reply, /haven't sent it/);
+        assert.ok(declined.sent.every(b => !b.targetUsers.includes('g1')));
+
+        const { proposal } = await propose({ ttlMs: -1 });
+        assert.equal((await decideEscalationProposal(proposal.actionId, 'p1', true)).status, 'expired');
+
+        const { proposal: forPat } = await propose();
+        assert.equal((await decideEscalationProposal(forPat.actionId, 'g1', true)).status, 'not_found', 'only the user it was proposed to can decide');
+        // A newer proposal replaces the open one, so one "yes" cannot send two
+        const { proposal: newer } = await propose();
+        assert.equal((await decideEscalationProposal(forPat.actionId, 'p1', true)).status, 'not_found');
+        assert.equal((await db.all('SELECT * FROM pending_actions')).length, 1);
+        assert.equal((await decideEscalationProposal(newer.actionId, 'p1', false)).status, 'rejected');
+        assert.equal((await db.all('SELECT * FROM escalations')).length, 0);
+    } finally {
+        await db.run("DELETE FROM care_circle_members WHERE user_id = 'g1'");
+        await db.run('DELETE FROM pending_actions');
+    }
 });
 
 test('critical event below the threshold does not escalate or message the patient', async () => {
@@ -356,7 +399,7 @@ test('mediation returns the member messaged and skips the speaker as target', as
 
 const isReplyPrompt = (prompt) => prompt.includes('ACTIONS_TAKEN this turn');
 
-test('an escalating HIGH turn rewrites the reply with the real actions and sends one message', async () => {
+test('a HIGH turn rewrites the reply with the real actions and sends one message', async () => {
     const { handleMessage } = await import('../handlers/messageHandler.js');
     const { getEmergencySentence } = await import('../config/emergencyGuidance.js');
     await clearEscalations();
@@ -384,8 +427,9 @@ test('an escalating HIGH turn rewrites the reply with the real actions and sends
         assert.doesNotMatch(reply, /notified your doctor/);
         assert.equal(reply, result.reply);
 
-        const rows = await db.all('SELECT type, message_id FROM escalations');
-        assert.deepEqual(rows, [{ type: 'CRITICAL', message_id: result.message_id }]);
+        // c1 has nobody to alert, so nothing is proposed or recorded
+        assert.equal(result.proposal, null);
+        assert.equal((await db.all('SELECT * FROM escalations')).length, 0);
     } finally {
         apiResponder = null;
     }
@@ -439,7 +483,7 @@ test('a scheduled message due this turn is added to the one reply', async () => 
     }
 });
 
-test('an answer to a delegated question is forwarded and still analyzed, escalated and checked', async () => {
+test('an answer to a delegated question is forwarded and still analyzed, checked and the alert proposed', async () => {
     const { handleMessage } = await import('../handlers/messageHandler.js');
     const now = Date.now();
     await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', ['g5', 'gwen', now]);
@@ -463,13 +507,15 @@ test('an answer to a delegated question is forwarded and still analyzed, escalat
         assert.equal(toPatient.length, 1, JSON.stringify(toPatient.map(b => b.reply || b.message)));
         assert.equal(result.criticality, 'HIGH');
         assert.match(result.reply, /^Please call 112|^If you are in danger/);
-        assert.match(result.reply, /sent an alert to gwen and passed your message on to them/);
+        assert.match(result.reply, /passed your message on to gwen in the app. Do you want me to alert gwen now?/);
+        assert.deepEqual(result.proposal.recipients, [{ username: 'gwen', role: 'caregiver' }]);
         assert.ok(sent.some(b => b.targetUsers.includes('g5') && /Response from pat/.test(b.reply || '')), 'answer forwarded to gwen');
-        assert.deepEqual((await db.all('SELECT type FROM escalations')).map(r => r.type), ['CRITICAL']);
-        assert.equal((await db.all('SELECT * FROM pending_actions')).length, 0);
+        assert.equal((await db.all('SELECT * FROM escalations')).length, 0, 'nothing is escalated until pat accepts');
+        assert.deepEqual((await db.all('SELECT action_type FROM pending_actions')).map(r => r.action_type), ['escalation_proposal']);
     } finally {
         apiResponder = null;
         await db.run("DELETE FROM care_circle_members WHERE user_id = 'g5'");
+        await db.run('DELETE FROM pending_actions');
     }
 });
 

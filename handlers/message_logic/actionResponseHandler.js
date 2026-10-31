@@ -7,7 +7,9 @@
 
 import { handleUserResponseToAction } from '../../state_manager.js';
 import { executeResolvedAction } from './actionExecutor.js';
-import { handleEscalationPermissionResponse } from './sharing/escalationTiers.js';
+import { handleEscalationPermissionResponse, YES_PATTERN, NO_PATTERN } from './sharing/escalationTiers.js';
+import { decideEscalationProposal, PROPOSAL_ACTION_TYPE } from '../../services/escalationService.js';
+import { buildActionStatus } from '../../utils/actionClaimGuard.js';
 import { getActivePendingActions, findCircleById, findUserById } from '../../db/index.js';
 import { events } from '../../orchestrator.js';
 import { getAgentName } from '../utils/agentIdentity.js';
@@ -18,21 +20,30 @@ export async function handlePendingActionResponse(userId, circleId, message) {
 
     // Check for escalation permission responses first
     const pendingActions = await getActivePendingActions(userId, circleId);
+
+    // A proposed emergency alert: "yes" sends it to the recipients shown, "no" drops it.
+    // Anything else leaves it open and the message is handled as a normal turn.
+    const proposalAction = pendingActions.find(a => a.action_type === PROPOSAL_ACTION_TYPE);
+    if (proposalAction) {
+        const answeredYes = YES_PATTERN.test(message);
+        const answeredNo = NO_PATTERN.test(message);
+        if (answeredYes !== answeredNo) {
+            const decision = await decideEscalationProposal(proposalAction.action_id, userId, answeredYes);
+            const handled = proposalReply(decision);
+            if (handled) {
+                await sendReply(userId, circleId, handled.reply);
+                return handled;
+            }
+        }
+    }
+
     const escalationAction = pendingActions.find(a => a.action_type === 'escalation_permission');
 
     if (escalationAction) {
         const handled = await handleEscalationPermissionResponse(userId, circleId, message, escalationAction);
         if (handled) {
             // One message to the user, built from what the tier handler did
-            const circle = await findCircleById(circleId);
-            const patient = circle ? await findUserById(circle.primary_patient_id) : null;
-            events.emit('broadcast', {
-                targetUsers: [userId],
-                reply: handled.reply,
-                from: await getAgentName(userId, circleId),
-                circleId,
-                patientUsername: patient?.username ?? userId
-            });
+            await sendReply(userId, circleId, handled.reply);
             return { reply: handled.reply, sharingResult: handled.sharingResult };
         }
     }
@@ -61,3 +72,45 @@ export async function handlePendingActionResponse(userId, circleId, message) {
     return actionResult; // Return the full result so messageHandler can use the reply
 }
 
+/**
+ * Send the one reply for a turn that a pending action answered.
+ */
+async function sendReply(userId, circleId, reply) {
+    const circle = await findCircleById(circleId);
+    const patient = circle ? await findUserById(circle.primary_patient_id) : null;
+    events.emit('broadcast', {
+        targetUsers: [userId],
+        reply,
+        from: await getAgentName(userId, circleId),
+        circleId,
+        patientUsername: patient?.username ?? userId
+    });
+}
+
+/**
+ * The reply to a decision on a proposed alert, stating only what was done.
+ * @returns {{reply: string, sharingResult: object|null}|null} Null when the proposal
+ *   was already decided elsewhere (the message is then handled as a normal turn)
+ */
+export function proposalReply(decision) {
+    switch (decision.status) {
+        case 'completed': {
+            const status = buildActionStatus(decision.result.actions);
+            return {
+                reply: status || "I couldn't send the alert to anyone.",
+                sharingResult: {
+                    action: 'ESCALATE',
+                    escalated: true,
+                    details: { escalation_type: 'CRITICAL', escalation_id: decision.result.escalationId },
+                    actions: decision.result.actions
+                }
+            };
+        }
+        case 'rejected':
+            return { reply: "Okay, I haven't sent it. If anything changes, tell me and I can alert them then.", sharingResult: null };
+        case 'expired':
+            return { reply: "That alert was from a while ago, so I haven't sent it. If you still need help, tell me what's happening now.", sharingResult: null };
+        default:
+            return null;
+    }
+}

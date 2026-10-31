@@ -207,8 +207,14 @@ export async function getPendingAction(actionId) {
     return row;
 }
 
+/**
+ * Remove a pending action.
+ * @returns {Promise<boolean>} True if this call removed it (false if it was already gone),
+ *   so a caller can use the removal to claim the action exactly once
+ */
 export async function removePendingAction(actionId) {
     const db = await getDb();
-    await db.run('DELETE FROM pending_actions WHERE action_id = ?', [actionId]);
+    const result = await db.run('DELETE FROM pending_actions WHERE action_id = ?', [actionId]);
+    return result.changes > 0;
 }
 

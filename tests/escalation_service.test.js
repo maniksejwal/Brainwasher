@@ -285,3 +285,23 @@ test('the simulation claim check uses what the turn actually delivered', async (
     const later = await checkTurnActionClaims({ circleId: 'c1', since: Date.now() + 1000, messages: ["I've notified your doctor."] });
     assert.equal(later.messages_with_false_claims, 1, 'an escalation from an earlier turn does not count');
 });
+
+test('an accepted proposal goes only to the recipients shown who are still in the circle', async () => {
+    const { proposeEscalation, decideEscalationProposal, toPublicProposal } = await import('../services/escalationService.js');
+    await db.run('DELETE FROM pending_actions');
+    const { proposal, question } = await proposeEscalation(critical());
+    assert.equal(question, 'Do you want me to alert dr_rao and gina now? Just reply yes.');
+    assert.deepEqual(toPublicProposal(proposal).content, { doctors: 'pat reported crushing chest pain', caregivers: 'Urgent health update: pat reported a critical health concern.' });
+
+    // gina leaves before pat accepts, and a new caregiver joins
+    await db.run("DELETE FROM care_circle_members WHERE circle_id = 'c1' AND user_id = 'g1'");
+    await db.run("INSERT INTO care_circle_members (circle_id, user_id, role) VALUES ('c1', 'p2', 'caregiver')");
+    try {
+        const decision = await decideEscalationProposal(proposal.actionId, 'p1', true);
+        assert.equal(decision.status, 'completed');
+        assert.deepEqual(decision.result.deliveries.map(d => d.username), ['dr_rao']);
+    } finally {
+        await db.run("DELETE FROM care_circle_members WHERE circle_id = 'c1' AND user_id = 'p2'");
+        await db.run("INSERT INTO care_circle_members (circle_id, user_id, role) VALUES ('c1', 'g1', 'caregiver')");
+    }
+});
