@@ -139,7 +139,42 @@ export function removeSupportedClaims(text, actions = {}) {
         const rule = CLAIM_RULES.find(r => r.patterns.some(p => p.test(clause)));
         return Boolean(rule && rule.isSupported(actions));
     };
+    return removeClauses(text, isSupportedClaim);
+}
 
+// The model telling the user to call emergency services or go to hospital, in its own
+// words. On HIGH turns the code-inserted emergency sentence already says this.
+const EMERGENCY_INSTRUCTION = [
+    /\b(?:call|dial|ring|phone|contact)\s+(?:your\s+|the\s+)?(?:local\s+|nearest\s+)?(?:emergency(?:\s+(?:services|number|line|helpline))?|(?:an\s+)?ambulance|112|911|108|999|14416|tele-?manas|(?:a\s+|the\s+)?(?:crisis|suicide|mental health)\s+(?:line|helpline|hotline))\b/i,
+    /\b(?:go|get|head|rush|make your way)\s+(?:straight\s+|immediately\s+|right away\s+)?to\s+(?:the\s+|a\s+|your\s+)?(?:nearest\s+|closest\s+)?(?:emergency\s+(?:room|department)|er|a&e|casualty|hospital)\b/i,
+    /\bseek\s+(?:immediate\s+|emergency\s+|urgent\s+)+(?:medical\s+)?(?:attention|help|care)\b/i
+];
+// A condition left on its own once its instruction is removed ("If it gets worse, ...")
+const CONDITION_CLAUSE = /^(?:if|when|should|in case)\b/i;
+
+/**
+ * Remove the model's own emergency instructions ("please call your local emergency
+ * number right away"). Used only when the approved emergency sentence opens the reply,
+ * so the instruction is given once, in the reviewed wording. Questions about getting
+ * help ("Is someone there who can take you to hospital?") are kept. A first-person
+ * claim ("I've called 112") never gets here: findFalseClaims replaces that reply first.
+ * @param {string} text - Model-written reply
+ * @returns {string} The text without those clauses (may be empty)
+ */
+export function removeEmergencyInstructions(text) {
+    return removeClauses(text, (clause) => EMERGENCY_INSTRUCTION.some(p => p.test(clause)), { dropCondition: true });
+}
+
+/**
+ * Remove the clauses of each sentence that `shouldDrop` matches, keeping the rest of
+ * the sentence readable. The last clause of a question (what is being asked) is never
+ * removed, and a dependent clause after a removed one goes with it.
+ * @param {string} text
+ * @param {(clause: string) => boolean} shouldDrop
+ * @param {object} [options]
+ * @param {boolean} [options.dropCondition] - Also remove a condition clause right before a removed one
+ */
+function removeClauses(text, shouldDrop, { dropCondition = false } = {}) {
     const kept = [];
     for (const sentence of splitSentences(text)) {
         const trimmed = sentence.trim();
@@ -151,8 +186,9 @@ export function removeSupportedClaims(text, actions = {}) {
         clauses.forEach((clause, i) => {
             // The last clause of a question is what is being asked, never a claim
             if (isQuestion && i === clauses.length - 1) return;
-            if (!isSupportedClaim(clause)) return;
+            if (!shouldDrop(clause)) return;
             drop.add(i);
+            if (dropCondition && i > 0 && CONDITION_CLAUSE.test(clauses[i - 1].trim())) drop.add(i - 1);
             for (let j = i + 1; j < clauses.length && DEPENDENT_CLAUSE.test(clauses[j].trim()); j++) drop.add(j);
         });
         if (drop.size === 0) {
@@ -232,6 +268,8 @@ export function composeFinalReply({ modelText, criticality, highCategory = null,
     const parts = [];
     if (criticality === 'HIGH') {
         parts.push(getEmergencySentence(highCategory));
+        // The approved sentence gives the instruction; the model's own version is removed
+        if (body !== FALLBACK_TEXT) body = removeEmergencyInstructions(body);
     }
     if (body) parts.push(body);
     if (status) parts.push(status);

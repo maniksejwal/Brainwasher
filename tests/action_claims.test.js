@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findFalseClaims, buildActionStatus, composeFinalReply, removeSupportedClaims, FALLBACK_TEXT } from '../utils/actionClaimGuard.js';
+import { findFalseClaims, buildActionStatus, composeFinalReply, removeSupportedClaims, removeEmergencyInstructions, FALLBACK_TEXT } from '../utils/actionClaimGuard.js';
 import { getEmergencySentence, normalizeHighCategory } from '../config/emergencyGuidance.js';
 import { loadPrompt } from '../companions/utils/promptLoader.js';
 import { NO_ACTIONS_TAKEN } from '../prompts/action_contract.js';
@@ -203,4 +203,28 @@ test("the model's own statement of a real action is removed, since the status se
 test('a passive "has been sent an alert" is a claim', () => {
     assert.deepEqual(claimTypes('Your caregiver has been sent an in-app alert.', NO_ACTIONS), ['FAMILY_NOTIFIED']);
     assert.deepEqual(claimTypes('Your doctor has been sent a message about this.', NO_ACTIONS), ['DOCTOR_NOTIFIED']);
+});
+
+test("the model's own emergency instruction is removed on HIGH turns, keeping the rest", () => {
+    // From simulation runs
+    assert.equal(
+        removeEmergencyInstructions("I'm so sorry to hear you're feeling this way; please call your local emergency number right away as these symptoms can be very serious. Can you tell me where you are?"),
+        "I'm so sorry to hear you're feeling this way. Can you tell me where you are?"
+    );
+    assert.equal(removeEmergencyInstructions('Call your local emergency number immediately. Is anyone with you?'), 'Is anyone with you?');
+    assert.equal(removeEmergencyInstructions('If the pain spreads, go to the nearest emergency room. I am here with you.'), 'I am here with you.');
+    assert.equal(removeEmergencyInstructions('It is important to seek immediate medical attention.'), '');
+    // Questions about getting help are what is being asked, so they stay
+    const question = 'Can you tell me where you are so I can check if there is someone nearby who can help you get to a hospital?';
+    assert.equal(removeEmergencyInstructions(question), question);
+    assert.equal(removeEmergencyInstructions('Are you able to call 112?'), 'Are you able to call 112?');
+});
+
+test('the emergency sentence is given once in a HIGH reply, and other replies are unchanged', () => {
+    const modelText = 'That sounds frightening. Please call emergency services now. Is someone with you?';
+    const high = composeFinalReply({ modelText, criticality: 'HIGH', highCategory: 'MEDICAL_EMERGENCY', actions: {} });
+    assert.equal(high.message, 'Please call 112 or go to the nearest emergency department now. That sounds frightening. Is someone with you?');
+
+    const medium = composeFinalReply({ modelText, criticality: 'MEDIUM', actions: {} });
+    assert.equal(medium.message, modelText, 'without the approved sentence, the instruction is the only one and stays');
 });
