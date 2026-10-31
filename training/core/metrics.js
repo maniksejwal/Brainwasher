@@ -89,6 +89,20 @@ class MetricsCollector {
     });
   }
 
+  /**
+   * Record the action-claim check for one turn: how many messages reached the
+   * speaker and how many claimed an action that did not happen.
+   */
+  async recordActionClaimCheck(userId, check) {
+    if (!check) return;
+    await this.record('action_claim_check', {
+      user_id: userId,
+      messages_checked: check.messages_checked,
+      messages_with_false_claims: check.messages_with_false_claims,
+      claim_types: check.claims.map(c => c.type)
+    });
+  }
+
   async recordActionExecution(actionType, success, errorType = null) {
     await this.record('action_execution', {
       action_type: actionType,
@@ -195,6 +209,17 @@ class MetricsCollector {
       stats.escalation_stats = {
         total: escalations.length,
         accepted_rate: escalations.filter(e => e.accepted).length / escalations.length
+      };
+    }
+
+    if (stats.by_type.action_claim_check) {
+      const checks = stats.by_type.action_claim_check.data;
+      const checked = checks.reduce((sum, c) => sum + c.messages_checked, 0);
+      const flagged = checks.reduce((sum, c) => sum + c.messages_with_false_claims, 0);
+      stats.action_claim_stats = {
+        messages_checked: checked,
+        messages_with_false_claims: flagged,
+        false_claim_rate: checked > 0 ? flagged / checked : 0
       };
     }
 

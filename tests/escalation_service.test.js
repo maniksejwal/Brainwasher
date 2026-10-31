@@ -261,3 +261,27 @@ test('acknowledging falls back to the patient, keeps anonymous requests anonymou
     assert.deepEqual(quiet.result, { acknowledged: true, notified: null });
     assert.deepEqual(quiet.sent, []);
 });
+
+test('the simulation claim check uses what the turn actually delivered', async () => {
+    const { checkTurnActionClaims } = await import('../training/simulation/ai_integration.js');
+    const since = Date.now() - 1;
+    await escalate(critical({ notifyCaregivers: false }));
+
+    const check = await checkTurnActionClaims({
+        circleId: 'c1',
+        since,
+        messages: [
+            "I've flagged this for dr_rao, who will see it in the app.",
+            "I've let your caregiver know."
+        ]
+    });
+    assert.equal(check.messages_checked, 2);
+    assert.equal(check.messages_with_false_claims, 1, 'nobody else was messaged');
+    assert.deepEqual(check.claims.map(c => c.type), ['FAMILY_NOTIFIED']);
+
+    const forwarded = await checkTurnActionClaims({ circleId: 'c1', since, messages: ["I've let your caregiver know."], othersMessaged: ['g1'] });
+    assert.equal(forwarded.messages_with_false_claims, 0);
+
+    const later = await checkTurnActionClaims({ circleId: 'c1', since: Date.now() + 1000, messages: ["I've notified your doctor."] });
+    assert.equal(later.messages_with_false_claims, 1, 'an escalation from an earlier turn does not count');
+});

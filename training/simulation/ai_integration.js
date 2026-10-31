@@ -10,6 +10,58 @@ import { performAiAnalysis } from '../../handlers/message_logic/aiAnalysisHandle
 import { ORCHESTRATOR_ACTIONS } from '../../constants.js';
 
 import { setGlobalDb, getDb } from '../../db/index.js';
+import { findFalseClaims } from '../../utils/actionClaimGuard.js';
+import { toActionRecord } from '../../services/escalationService.js';
+
+/**
+ * Check every message sent to the speaker during a turn for action claims that
+ * did not happen. The action record is rebuilt from what the turn left behind,
+ * not from what the reply code was told: escalation delivery rows, and the other
+ * members who were actually sent a message.
+ * @param {object} params
+ * @param {string} params.circleId
+ * @param {string[]} params.messages - Text of each message sent to the speaker
+ * @param {number} params.since - Turn start time
+ * @param {string[]} params.othersMessaged - User IDs other than the speaker sent a message this turn
+ * @returns {Promise<{messages_checked: number, messages_with_false_claims: number, claims: Array<{type: string, sentence: string}>}>}
+ */
+export async function checkTurnActionClaims({ circleId, messages, since, othersMessaged = [] }) {
+    const db = await getDb();
+    const escalations = await db.all(
+        'SELECT escalation_id, type FROM escalations WHERE circle_id = ? AND timestamp >= ?',
+        [circleId, since]
+    );
+    let actions = {};
+    if (escalations.length > 0) {
+        const ids = escalations.map(e => e.escalation_id);
+        const deliveries = await db.all(
+            `SELECT d.user_id AS userId, d.role, d.status, u.username
+             FROM escalation_deliveries d LEFT JOIN users u ON u.user_id = d.user_id
+             WHERE d.escalation_id IN (${ids.map(() => '?').join(', ')})`,
+            ids
+        );
+        const doctorCount = await db.get("SELECT COUNT(*) AS n FROM care_circle_members WHERE circle_id = ? AND role = 'doctor'", [circleId]);
+        actions = toActionRecord(deliveries, {
+            doctorsWanted: true,
+            circleHasDoctor: doctorCount.n > 0,
+            anonymous: escalations.some(e => e.type === 'ANONYMOUS_CONSULTATION')
+        });
+    }
+    if (othersMessaged.length > 0) {
+        const placeholders = othersMessaged.map(() => '?').join(', ');
+        const users = await db.all(`SELECT username FROM users WHERE user_id IN (${placeholders})`, othersMessaged);
+        actions.membersMessaged = users.map(u => u.username);
+    }
+
+    const claims = [];
+    let flagged = 0;
+    for (const text of messages) {
+        const found = findFalseClaims(text, actions);
+        if (found.length > 0) flagged++;
+        claims.push(...found);
+    }
+    return { messages_checked: messages.length, messages_with_false_claims: flagged, claims };
+}
 
 /**
  * Derive the orchestrator action actually executed during a turn by inspecting
@@ -160,9 +212,13 @@ export class SimulationAI {
             const turnStartedAt = Date.now();
             // Record every message sent to this user during the turn, not just the reply
             const messagesToUser = [];
+            const othersMessaged = new Set();
             const recordBroadcast = (payload) => {
                 if (payload?.targetUsers?.includes(userId)) {
                     messagesToUser.push({ text: payload.reply || payload.message || '', source: payload.source || 'reply' });
+                }
+                for (const target of payload?.targetUsers || []) {
+                    if (target !== userId) othersMessaged.add(target);
                 }
             };
             events.on('broadcast', recordBroadcast);
@@ -182,6 +238,12 @@ export class SimulationAI {
             return {
                 agent_response: analysis.reply,
                 messages_to_user: messagesToUser,
+                action_claims: await checkTurnActionClaims({
+                    circleId,
+                    messages: messagesToUser.map(m => m.text),
+                    since: turnStartedAt,
+                    othersMessaged: [...othersMessaged]
+                }),
                 orchestrator_action: await detectExecutedActions(circleId, turnStartedAt),
                 state_vector: {
                     intent: analysis.intent,

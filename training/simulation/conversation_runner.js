@@ -671,6 +671,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             userMessage.length,
             agentResult.agent_response.length
         );
+        await metricsCollector.recordActionClaimCheck(user.userId, agentResult.action_claims);
     }
 
     /**
@@ -711,6 +712,7 @@ Respond to this escalation notification. Keep your response brief (1-2 sentences
             userMessage.length,
             agentResult.agent_response.length
         );
+        await metricsCollector.recordActionClaimCheck(activeUser.userId, agentResult.action_claims);
     }
 
     /**
