@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { findFalseClaims, buildActionStatus, composeFinalReply, FALLBACK_TEXT } from '../utils/actionClaimGuard.js';
+import { findFalseClaims, buildActionStatus, composeFinalReply, removeSupportedClaims, FALLBACK_TEXT } from '../utils/actionClaimGuard.js';
 import { getEmergencySentence, normalizeHighCategory } from '../config/emergencyGuidance.js';
 import { loadPrompt } from '../companions/utils/promptLoader.js';
 import { NO_ACTIONS_TAKEN } from '../prompts/action_contract.js';
@@ -164,4 +164,32 @@ test('a question from a sharing handler goes at the end, and is dropped if it cl
     const claimed = composeFinalReply({ modelText: 'That sounds worrying.', criticality: 'MEDIUM', actions: {}, question: "I've already told your doctor. Anything else?" });
     assert.equal(claimed.message, 'That sounds worrying.');
     assert.deepEqual(claimed.violations.map(v => v.type), ['DOCTOR_NOTIFIED']);
+});
+
+test("the model's own statement of a real action is removed, since the status sentence states it", () => {
+    const alerted = { escalationCreated: true, doctors: [], caregiversAlerted: ['gina'], noDoctorConnected: true };
+
+    // Seen in simulation: the model and the code both said the caregiver was alerted
+    assert.equal(
+        removeSupportedClaims("I'm so sorry you're unwell. I've sent an in-app alert to your caregiver, and I can stay with you while you wait; can you tell me more?", alerted),
+        "I'm so sorry you're unwell. I can stay with you while you wait; can you tell me more?"
+    );
+    assert.equal(
+        removeSupportedClaims("I'm sorry it's worse; your caregiver has been sent an in-app alert, and I'm here for you.", alerted),
+        "I'm sorry it's worse, and I'm here for you."
+    );
+    // A claim naming the person, and the clause that only continues it
+    assert.equal(removeSupportedClaims("Thanks. I've let gina know, so she can check on you. Rest now.", alerted), 'Thanks. Rest now.');
+    assert.equal(removeSupportedClaims("I've flagged this for dr_evans, who will see it soon. How are you now?", DOCTOR_FLAGGED), 'How are you now?');
+
+    // Offers, and the question being asked, are kept
+    assert.equal(removeSupportedClaims('Would you like me to let your caregiver know?', alerted), 'Would you like me to let your caregiver know?');
+
+    const { message } = composeFinalReply({ modelText: "I've sent an alert to your caregiver.", criticality: 'MEDIUM', actions: alerted });
+    assert.equal((message.match(/alert/g) || []).length, 1, message);
+});
+
+test('a passive "has been sent an alert" is a claim', () => {
+    assert.deepEqual(claimTypes('Your caregiver has been sent an in-app alert.', NO_ACTIONS), ['FAMILY_NOTIFIED']);
+    assert.deepEqual(claimTypes('Your doctor has been sent a message about this.', NO_ACTIONS), ['DOCTOR_NOTIFIED']);
 });

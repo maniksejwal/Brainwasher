@@ -31,6 +31,8 @@ const SUBJECT = String.raw`(?:\b(?:i(?:'m| am) going to|we(?:'re| are) going to|
 const ACTION_VERB = String.raw`(?:notif|alert|escalat|contact|messag|inform|reach|call|sent\b|send|told|tell|let|flag|pass|forward|share|ping|arrang)\w*`;
 const DOCTOR = String.raw`\b(?:doctors?|dr\b\.?|physicians?|gp|clinician|medical team)\b`;
 const FAMILY = String.raw`\b(?:family|caregivers?|care ?givers?|care team|care circle|son|daughter|wife|husband|relatives?)\b`;
+// "has been notified", or "has been sent an alert"
+const PASSIVE_NOTIFIED = String.raw`\b(?:has|have) been (?:notified|alerted|informed|contacted|told|messaged|sent (?:an? |the )?(?:in-app |urgent )?(?:alert|message|notification))`;
 
 const CLAIM_RULES = [
     {
@@ -41,7 +43,7 @@ const CLAIM_RULES = [
             // There is no call to stay on, and nobody is coming to arrive
             new RegExp(`${SUBJECT}(?:stay|be|remain)\\s+(?:right\\s+)?(?:here\\s+)?(?:on the (?:line|phone|call)|with you until)`, 'i'),
             /\buntil (?:help|assistance|the ambulance|the paramedics|they|someone|the doctor) (?:arrives?|gets? (?:there|here)|comes)\b/i,
-            /\b(?:ambulance|paramedics?|emergency services|first responders?|police|help|someone|they|he|she|the doctor|your doctor|dr\b\.?\s*\w*)(?:\s+(?:is|are|has been|have been)|'re|'s)\s+(?:already\s+)?(?:on (?:the|their|his|her) way|coming|dispatched|sent|called|en route|arriving)\b/i,
+            /\b(?:ambulance|paramedics?|emergency services|first responders?|police|help|someone|they|he|she|the doctor|your doctor|dr\b\.?\s*\w*)(?:\s+(?:is|are|has been|have been)|'re|'s)\s+(?:already\s+)?(?:on (?:the|their|his|her) way|coming|dispatched|sent(?!\s+(?:an?|the)\s+(?:in-app\s+|urgent\s+)?(?:alert|message|notification))|called|en route|arriving)\b/i,
             /\bhelp is (?:on the way|coming)\b/i
         ],
         isSupported: () => false
@@ -50,7 +52,7 @@ const CLAIM_RULES = [
         type: 'DOCTOR_NOTIFIED',
         patterns: [
             new RegExp(`${SUBJECT}${ACTION_VERB}[^.!?]*${DOCTOR}`, 'i'),
-            new RegExp(`${DOCTOR}[^.!?]*\\b(?:has|have) been (?:notified|alerted|informed|contacted|told|messaged)`, 'i'),
+            new RegExp(`${DOCTOR}[^.!?]*${PASSIVE_NOTIFIED}`, 'i'),
             /\b(?:the|your)\s+(?:medical|care|healthcare|doctor'?s?)\s+team\s+(?:is|are|has been|have been)\s+(?:already\s+)?(?:aware|informed|notified|alerted|working on|looking into|reviewing)/i,
             /\b(?:your|the)\s+(?:doctor|physician)\s+(?:is|has been)\s+(?:already\s+)?(?:aware|informed|notified|alerted|reviewing)/i
         ],
@@ -60,7 +62,7 @@ const CLAIM_RULES = [
         type: 'FAMILY_NOTIFIED',
         patterns: [
             new RegExp(`${SUBJECT}${ACTION_VERB}[^.!?]*${FAMILY}`, 'i'),
-            new RegExp(`${FAMILY}[^.!?]*\\b(?:has|have) been (?:notified|alerted|informed|contacted|told|messaged)`, 'i')
+            new RegExp(`${FAMILY}[^.!?]*${PASSIVE_NOTIFIED}`, 'i')
         ],
         isSupported: (actions) => Boolean(actions.caregiversAlerted?.length || actions.membersMessaged?.length)
     },
@@ -112,6 +114,66 @@ export function findFalseClaims(text, actions = {}) {
     return failures;
 }
 
+// A clause that only continues the one before it ("..., who will see it soon")
+const DEPENDENT_CLAUSE = /^(?:who|which|where|so (?:that )?(?:they|he|she)|and (?:they|he|she) (?:will|can|should|may))\b/i;
+const LEADING_CONJUNCTION = /^(?:and|but|so|also)\s+/i;
+
+/**
+ * Remove the model's own statements of actions that did happen. The code adds the
+ * action status sentence, so these would repeat it, often less precisely. Only clauses
+ * whose claim is supported by the action record are removed; failed claims are left for
+ * findFalseClaims. Offers and questions are kept.
+ * @param {string} text - Model-written reply
+ * @param {object} actions - Action record for this turn
+ * @returns {string} The text without those clauses (may be empty)
+ */
+export function removeSupportedClaims(text, actions = {}) {
+    // Claims that name someone the action reached ("I've let gina know")
+    const reached = [...(actions.doctors || []), ...(actions.caregiversAlerted || []), ...(actions.membersMessaged || [])];
+    const namedClaim = reached.length > 0
+        ? new RegExp(`${SUBJECT}${ACTION_VERB}[^.!?]*\\b(?:${reached.map(escapeRegExp).join('|')})\\b`, 'i')
+        : null;
+    const isSupportedClaim = (clause) => {
+        if (OFFER_CLAUSE.test(clause)) return false;
+        if (namedClaim?.test(clause)) return true;
+        const rule = CLAIM_RULES.find(r => r.patterns.some(p => p.test(clause)));
+        return Boolean(rule && rule.isSupported(actions));
+    };
+
+    const kept = [];
+    for (const sentence of splitSentences(text)) {
+        const trimmed = sentence.trim();
+        const isQuestion = trimmed.endsWith('?');
+        // [clause, separator, clause, separator, ...]
+        const pieces = trimmed.split(/(\s*[,;]\s*|\s[-–—]\s)/);
+        const clauses = pieces.filter((_, i) => i % 2 === 0);
+        const drop = new Set();
+        clauses.forEach((clause, i) => {
+            // The last clause of a question is what is being asked, never a claim
+            if (isQuestion && i === clauses.length - 1) return;
+            if (!isSupportedClaim(clause)) return;
+            drop.add(i);
+            for (let j = i + 1; j < clauses.length && DEPENDENT_CLAUSE.test(clauses[j].trim()); j++) drop.add(j);
+        });
+        if (drop.size === 0) {
+            kept.push(trimmed);
+            continue;
+        }
+
+        let rebuilt = '';
+        clauses.forEach((clause, i) => {
+            if (drop.has(i)) return;
+            rebuilt += rebuilt ? (pieces[i * 2 - 1] ?? ', ') + clause : clause;
+        });
+        rebuilt = rebuilt.trim().replace(LEADING_CONJUNCTION, '');
+        if (!rebuilt || /^[.!?]+$/.test(rebuilt)) continue;
+        // Keep the sentence's own ending; a removed last clause can take it with it
+        if (!/[.!?]$/.test(rebuilt)) rebuilt += trimmed.slice(-1).match(/[.!?]/) ? trimmed.slice(-1) : '.';
+        kept.push(rebuilt.charAt(0).toUpperCase() + rebuilt.slice(1));
+    }
+    return kept.join(' ');
+}
+
 /**
  * Build the sentence that tells the user what the system actually did.
  * @param {object} actions - Action record for this turn
@@ -152,13 +214,17 @@ export function buildActionStatus(actions = {}) {
  */
 export function composeFinalReply({ modelText, criticality, highCategory = null, actions = {}, question = null }) {
     const violations = findFalseClaims(modelText, actions);
-    const body = violations.length > 0 || !modelText ? FALLBACK_TEXT : modelText.trim();
+    const status = buildActionStatus(actions);
+    let body = violations.length > 0 || !modelText ? FALLBACK_TEXT : modelText.trim();
+    if (status && body !== FALLBACK_TEXT) {
+        // The status sentence states what was done; the model's own version is removed
+        body = removeSupportedClaims(body, actions);
+    }
     const parts = [];
     if (criticality === 'HIGH') {
         parts.push(getEmergencySentence(highCategory));
     }
-    parts.push(body);
-    const status = buildActionStatus(actions);
+    if (body) parts.push(body);
     if (status) parts.push(status);
     if (question) {
         // A question that claims an action is dropped, not sent
@@ -170,6 +236,10 @@ export function composeFinalReply({ modelText, criticality, highCategory = null,
         }
     }
     return { message: parts.join(' '), violations };
+}
+
+function escapeRegExp(text) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function joinNames(names) {
