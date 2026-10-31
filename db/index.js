@@ -88,6 +88,16 @@ import {
     logNotification,
     getNotificationHistory
 } from './queries_notifications.js';
+import {
+    recordIntegrationRequestId,
+    findExternalIdentity,
+    addExternalIdentity,
+    findConversationByUser,
+    findConversationById,
+    addConversation,
+    findIdempotencyRecord,
+    addIdempotencyRecord
+} from './queries_integrations.js';
 
 export {
     getDb,
@@ -157,6 +167,14 @@ export {
     setNotificationPreference,
     isNotificationEnabled,
     logNotification,
-    getNotificationHistory
+    getNotificationHistory,
+    recordIntegrationRequestId,
+    findExternalIdentity,
+    addExternalIdentity,
+    findConversationByUser,
+    findConversationById,
+    addConversation,
+    findIdempotencyRecord,
+    addIdempotencyRecord
 };
 

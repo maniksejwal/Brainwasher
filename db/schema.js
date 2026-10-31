@@ -356,6 +356,36 @@ export async function migrateDatabase(db) {
             );
         `);
 
+        // HealthyMitra integration: seen signed-request IDs, external user links, each
+        // user's single private conversation, and idempotency records
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS integration_request_ids (
+                request_id TEXT PRIMARY KEY,
+                received_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS external_identities (
+                provider TEXT NOT NULL,
+                external_user_id TEXT NOT NULL,
+                user_id TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (provider, external_user_id),
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
+            CREATE TABLE IF NOT EXISTS conversations (
+                conversation_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
+            CREATE TABLE IF NOT EXISTS integration_idempotency (
+                idempotency_key TEXT PRIMARY KEY,
+                purpose TEXT NOT NULL,
+                external_user_id TEXT NOT NULL,
+                response TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+        `);
+
         // Migration for feedback table - add all missing columns
         const feedbackInfo = await db.all('PRAGMA table_info(feedback)');
         if (feedbackInfo.length > 0) {
@@ -419,6 +449,10 @@ export async function clearDatabase() {
         DELETE FROM pending_actions;
         DELETE FROM directives;
         DELETE FROM emergency_auto_alert_consent;
+        DELETE FROM integration_request_ids;
+        DELETE FROM integration_idempotency;
+        DELETE FROM conversations;
+        DELETE FROM external_identities;
         DELETE FROM escalation_deliveries;
         DELETE FROM escalations;
         DELETE FROM fact_history;

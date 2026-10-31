@@ -7,22 +7,23 @@
   "scripts": {
     "start": "node server.js",
     "build": "node --check server.js && node --check config.js && node --check agents/api/index.js && node --check agents/api/balancer.js && node --check agents/api/providers/bedrock.js",
-    "test": "node --test tests/bedrock_provider.test.js && node --test tests/action_claims.test.js && node --test --test-force-exit tests/escalation_service.test.js && node --test --test-force-exit tests/auth_middleware.test.js && node --test --experimental-test-module-mocks --test-force-exit tests/agent_fixes.test.js && node tests/test_basic.js && node tests/test_circles.js && node tests/test_conflict.js && node tests/test_consent.js && node tests/test_escalation.js"
+    "test": "node --test tests/bedrock_provider.test.js && node --test tests/action_claims.test.js && node --test --test-force-exit tests/escalation_service.test.js && node --test --test-force-exit tests/auth_middleware.test.js && node --test --test-force-exit tests/integration_auth.test.js && node --test --experimental-test-module-mocks --test-force-exit tests/agent_fixes.test.js && node tests/test_basic.js && node tests/test_circles.js && node tests/test_conflict.js && node tests/test_consent.js && node tests/test_escalation.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.975.0",
+    "@aws-sdk/client-secrets-manager": "^3.1161.0",
     "@google-cloud/storage": "^7.18.0",
     "@google/generative-ai": "^0.2.1",
+    "aws-jwt-verify": "^4.0.0",
     "bcrypt": "^6.0.0",
     "chalk": "^5.3.0",
+    "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "eventsource": "^2.0.2",
     "express": "^4.18.3",
     "jsonwebtoken": "^9.0.3",
     "openai": "^4.28.4",
     "sqlite": "^5.1.1",
-    "sqlite3": "^5.1.7",
-    "cors": "^2.8.5",
-    "aws-jwt-verify": "^4.0.0"
+    "sqlite3": "^5.1.7"
   }
 }

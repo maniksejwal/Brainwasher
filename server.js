@@ -14,9 +14,11 @@ import { events } from './orchestrator.js';
 import { setupLogger, getLogs } from './lib/logger.js';
 import { addClient, removeClient, broadcast } from './lib/sse.js';
 import { authenticate, authenticateStream, authorize, requireSelf } from './middleware/auth.js';
+import { captureRawBody } from './middleware/serviceAuth.js';
 
 // Route Modules
 import authRouter from './routes/auth.js';
+import integrationsRouter from './routes/integrations.js';
 import coreRouter from './routes/core.js';
 import simulationRouter from './routes/simulation.js';
 import dataRouter from './routes/data.js';
@@ -33,7 +35,8 @@ const app = express();
 // Unset, any origin may (local development). Requests still need a session token either way.
 const corsOrigins = (process.env.CORS_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
 app.use(cors(corsOrigins.length > 0 ? { origin: corsOrigins } : {}));
-app.use(express.json());
+// The raw body is kept so signed integration requests can verify their body digest
+app.use(express.json({ verify: captureRawBody }));
 
 // Trust Proxy for ALB
 app.enable('trust proxy');
@@ -123,6 +126,9 @@ app.get('/api/auth/health', (req, res) => res.status(200).send('OK'));
 
 // Auth
 app.use('/api/auth', authRouter);
+
+// HealthyMitra integration: signed service requests only
+app.use('/api/integrations/healthymitra', integrationsRouter);
 
 // CLI Endpoints
 app.use('/api/cli', cliRouter);
