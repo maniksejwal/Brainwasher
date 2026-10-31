@@ -98,7 +98,10 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
     // proposed, not sent: the reply opens with the emergency sentence and asks the user to
     // accept the alert, which goes out on "yes" (escalationService.decideEscalationProposal).
     if (confidence >= ESCALATION_CONFIDENCE_THRESHOLD) {
-        const criticalDetails = `User '${userId}' (${role}) reported: "${message}" [High confidence emergency (${(confidence * 100).toFixed(0)}%)]`;
+        // Recipients see the reporter's name; the user ID is internal (a HealthyMitra circle's
+        // IDs mean nothing to the doctor reading it)
+        const reporterName = (await findUserById(userId))?.username ?? userId;
+        const criticalDetails = `User '${reporterName}' (${role}) reported: "${message}" [High confidence emergency (${(confidence * 100).toFixed(0)}%)]`;
         const { proposal, question, actions } = await proposeEscalation({
             circleId,
             userId,
