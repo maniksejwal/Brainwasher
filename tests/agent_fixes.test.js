@@ -438,3 +438,37 @@ test('a scheduled message due this turn is added to the one reply', async () => 
         apiResponder = null;
     }
 });
+
+test('an answer to a delegated question is forwarded and still analyzed, escalated and checked', async () => {
+    const { handleMessage } = await import('../handlers/messageHandler.js');
+    const now = Date.now();
+    await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', ['g5', 'gwen', now]);
+    await db.run('INSERT OR IGNORE INTO care_circle_members (circle_id, user_id, role) VALUES (?, ?, ?)', ['c1', 'g5', 'caregiver']);
+    await clearEscalations();
+    await db.run('DELETE FROM scheduled_messages');
+    await db.run('DELETE FROM pending_actions');
+    // gwen asked pat a question earlier; any reply from pat is taken as the answer
+    await db.run('INSERT INTO pending_actions (action_id, circle_id, user_id, action_type, details, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+        ['dp1', 'c1', 'p1', 'delegated_probe_response', JSON.stringify({ requested_by: 'g5', topic: 'how you are feeling' }), now]);
+
+    apiResponder = (prompt) => {
+        if (prompt.includes('assessing the confidence level')) return { confidence: 0.95 };
+        if (isReplyPrompt(prompt)) return { reply: 'I am right here with you.' };
+        return undefined;
+    };
+    try {
+        const { result, sent } = await collectBroadcasts(() => handleMessage('p1', 'c1', 'bad chest pain and I cannot breathe'));
+        const toPatient = sent.filter(b => b.targetUsers.includes('p1'));
+
+        assert.equal(toPatient.length, 1, JSON.stringify(toPatient.map(b => b.reply || b.message)));
+        assert.equal(result.criticality, 'HIGH');
+        assert.match(result.reply, /^Please call 112|^If you are in danger/);
+        assert.match(result.reply, /passed your message on to gwen/);
+        assert.ok(sent.some(b => b.targetUsers.includes('g5') && /Response from pat/.test(b.reply || '')), 'answer forwarded to gwen');
+        assert.deepEqual((await db.all('SELECT type FROM escalations')).map(r => r.type), ['CRITICAL']);
+        assert.equal((await db.all('SELECT * FROM pending_actions')).length, 0);
+    } finally {
+        apiResponder = null;
+        await db.run("DELETE FROM care_circle_members WHERE user_id = 'g5'");
+    }
+});

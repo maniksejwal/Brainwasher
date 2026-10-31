@@ -75,32 +75,17 @@ export async function handleUserResponseToAction(userId, circleId, message) {
         
         if (matchedAction) {
             await removePendingAction(matchedAction.action_id);
-            
-            // Generate acknowledgment using companion system (lighter than full analysis)
-            let acknowledgmentReply = "Thank you for your response.";
-            try {
-                const { performCompanionAnalysis } = await import('./handlers/message_logic/aiAnalysisHandler.js');
-                const { getMemberInfo } = await import('./db/index.js');
-                const memberInfo = await getMemberInfo(userId, circleId);
-                const analysis = await performCompanionAnalysis(
-                    userId, 
-                    memberInfo?.role || 'patient', 
-                    `User responded: "${message}". Generate a brief, natural acknowledgment (1 sentence max, no probing question).`, 
-                    circleId
-                );
-                if (analysis && analysis.reply) {
-                    acknowledgmentReply = analysis.reply;
-                }
-            } catch (error) {
-                console.error('[StateManager] Error generating acknowledgment:', error);
-                // Fallback to default message
-            }
-            
+
+            // Any message is accepted as the answer, so it may also report something new
+            // (a symptom, an emergency). The message handler forwards the answer and then
+            // still analyzes the message and replies once; the fixed reply below is only
+            // used on the /yes and /no command path.
             return {
                 action: 'execute',
                 details: { ...matchedAction, ...matchedAction.details },
-                reply: acknowledgmentReply,
-                userResponse: message // Store the actual user response for notification
+                reply: "Thank you for your response.",
+                userResponse: message, // Store the actual user response for notification
+                continueWithAnalysis: true
             };
         }
     }

@@ -48,9 +48,11 @@ export async function handleMessage(userId, circleId, message) {
     // For patients and caregivers, follow the full "chain of thought".
 
     // Step 1: Handle any pending user actions.
-    // Step 1: Handle any pending user actions.
     const actionResult = await handlePendingActionResponse(userId, circleId, message);
-    if (actionResult) {
+    // An answer to a delegated question was forwarded; the message is still handled as a normal
+    // turn, and what was forwarded goes into the action record for the reply.
+    const priorActions = actionResult?.continueWithAnalysis ? actionResult.actions : null;
+    if (actionResult && !priorActions) {
         metricsCollector.recordResponseTime('action_response', Date.now() - startTime, true);
         return {
             reply: actionResult.reply || "Action handled successfully",
@@ -61,8 +63,9 @@ export async function handleMessage(userId, circleId, message) {
         };
     }
 
-    // Step 1.5: Check if this is a question directed at another member (for non-doctors)
-    if (memberInfo.role !== 'doctor') {
+    // Step 1.5: Check if this is a question directed at another member (for non-doctors).
+    // Skipped for an answer that was just forwarded, so the answer is not sent on twice.
+    if (memberInfo.role !== 'doctor' && !priorActions) {
         const questionResult = await handleNonDoctorQuestion(userId, circleId, message, memberInfo.role);
         if (questionResult) {
             return questionResult;
@@ -160,7 +163,15 @@ export async function handleMessage(userId, circleId, message) {
     }
 
     // Step 4: Handle the core logic for sharing, advice, and escalations.
-    const sharingResult = await handleSharingAndEscalation(userId, memberInfo.role, message, circleId, analysis);
+    let sharingResult = await handleSharingAndEscalation(userId, memberInfo.role, message, circleId, analysis);
+    if (priorActions?.membersMessaged?.length) {
+        const actions = sharingResult?.actions || {};
+        sharingResult = {
+            action: 'DELEGATED_ANSWER',
+            ...sharingResult,
+            actions: { ...actions, membersMessaged: [...new Set([...priorActions.membersMessaged, ...(actions.membersMessaged || [])])] }
+        };
+    }
 
     // Update conversation context with consent status if sharing was handled
     if (sharingResult?.consentGranted) {

@@ -14,9 +14,20 @@ import { getAgentName } from '../utils/agentIdentity.js';
 import { checkSharingPermission, prioritizeContent } from '../utils/sensitiveContentFilter.js';
 import { getMemberInfo } from '../../db/index.js';
 
-export async function executeResolvedAction(actionResult, userId, circleId) {
+/**
+ * Execute a resolved pending action.
+ * @param {object} actionResult - Result from handleUserResponseToAction
+ * @param {string} userId - User who answered
+ * @param {string} circleId - Circle ID
+ * @param {object} [options]
+ * @param {boolean} [options.sendReply] - Send actionResult.reply to the user. False when the
+ *   caller replies as part of the normal turn.
+ * @returns {Promise<{forwardedTo: string[]}>} Members the answer or shared content was sent to
+ */
+export async function executeResolvedAction(actionResult, userId, circleId, { sendReply = true } = {}) {
+    const forwardedTo = [];
     const currentCircle = await findCircleById(circleId);
-    if (!currentCircle) return; // Should not happen
+    if (!currentCircle) return { forwardedTo }; // Should not happen
     const patientUsername = (await findUserById(currentCircle.primary_patient_id)).username;
 
     if (actionResult.action === 'execute') {
@@ -57,6 +68,7 @@ export async function executeResolvedAction(actionResult, userId, circleId) {
                         circleId, 
                         patientUsername 
                     });
+                    forwardedTo.push(target);
                 }
             }
         }
@@ -102,6 +114,7 @@ export async function executeResolvedAction(actionResult, userId, circleId) {
                         circleId,
                         patientUsername
                     });
+                    forwardedTo.push(requesterInfo.username);
                 } else {
                     // Can share - use filtered content if available, otherwise original
                     const contentToSummarize = sharingCheck.filteredContent || userResponse;
@@ -115,12 +128,16 @@ export async function executeResolvedAction(actionResult, userId, circleId) {
                         circleId,
                         patientUsername
                     });
+                    forwardedTo.push(requesterInfo.username);
                 }
             }
         }
     }
     
     // Send the final confirmation/cancellation reply to the user who responded.
-    const agentName = await getAgentName(userId, circleId);
-    events.emit('broadcast', { targetUsers: [userId], reply: actionResult.reply, from: agentName, circleId, patientUsername });
+    if (sendReply) {
+        const agentName = await getAgentName(userId, circleId);
+        events.emit('broadcast', { targetUsers: [userId], reply: actionResult.reply, from: agentName, circleId, patientUsername });
+    }
+    return { forwardedTo };
 }

@@ -48,6 +48,13 @@ export async function handlePendingActionResponse(userId, circleId, message) {
         actionResult.userResponse = actionResult.userResponse || message;
     }
 
+    // An answer to a delegated question is forwarded, then the message is handled as a normal
+    // turn: messageHandler analyzes it and sends the one reply, stating what was forwarded.
+    if (actionResult.continueWithAnalysis) {
+        const { forwardedTo } = await executeResolvedAction(actionResult, userId, circleId, { sendReply: false });
+        return { continueWithAnalysis: true, actions: { membersMessaged: forwardedTo } };
+    }
+
     // Delegate the execution of the action to the shared executor module.
     await executeResolvedAction(actionResult, userId, circleId);
 
