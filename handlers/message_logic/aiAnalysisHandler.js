@@ -184,6 +184,7 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
             reply: companionResult.reply || 'I understand.',
             privacyLevel: companionResult.privacyLevel || 'PRIVATE',
             criticality: normalizeCriticality(companionResult.criticality),
+            high_category: companionResult.high_category || null, // Selects the approved emergency sentence on HIGH
             facts: companionResult.facts || {},
             mentioned_usernames: companionResult.mentioned_usernames || [],
             sharingSuggestion: companionResult.sharingSuggestion || null,

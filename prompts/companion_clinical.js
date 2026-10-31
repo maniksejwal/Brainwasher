@@ -79,6 +79,7 @@ Return ONLY valid JSON:
 {
   "assessment": "Brief clinical assessment of the symptoms and situation",
   "criticality": "NONE|LOW|MEDIUM|HIGH",
+  "high_category": "MEDICAL_EMERGENCY|SELF_HARM_RISK|IMMEDIATE_DANGER|null (only when criticality is HIGH: medical emergency, risk of self-harm, or violence/immediate danger)",
   "has_misconception": true|false,
   "misconception_type": "harmful_behavior|dangerous_belief|none",
   "educational_approach": "Brief explanation using mechanisms/analogies/cause-effect (consider user's analogy preference)",

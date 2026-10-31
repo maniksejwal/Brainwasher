@@ -56,6 +56,7 @@ export function aggregateResponses(componentResults) {
         const clinical = componentResults.clinicalAgent.result;
         aggregated.clinicalAssessment = clinical.assessment;
         aggregated.criticality = clinical.criticality || aggregated.criticality;
+        aggregated.high_category = clinical.highCategory || null;
     }
     
     if (componentResults.escalationManager?.result) {

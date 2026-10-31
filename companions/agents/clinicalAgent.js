@@ -4,6 +4,7 @@
  */
 
 import { normalizeCriticality } from '../../utils/criticality.js';
+import { normalizeHighCategory } from '../../config/emergencyGuidance.js';
 import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { loadPrompt } from '../utils/promptLoader.js';
@@ -74,6 +75,8 @@ export async function processClinicalAnalysis(userId, role, message, circleId, c
         return {
             assessment: analysis.assessment || 'No immediate medical concerns',
             criticality: criticality,
+            // Only meaningful on HIGH; unknown values become null so the general sentence is used
+            highCategory: criticality === 'HIGH' ? normalizeHighCategory(analysis.high_category) : null,
             hasMisconception: analysis.has_misconception || false,
             misconceptionType: analysis.misconception_type || 'none',
             educationalApproach: analysis.educational_approach || null,
