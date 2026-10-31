@@ -316,9 +316,6 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         console.warn(`[AIAnalysisHandler] Circle not found: ${circleId}`);
         return null;
     }
-    const patient = await findUserById(currentCircle.primary_patient_id);
-    const patientUsername = patient ? patient.username : 'unknown';
-
     // Persist the original message to the database with the *final, enriched* analysis.
     // Add safety defaults to prevent database constraint errors
     const criticality = analysis.criticality || 'NONE';
@@ -364,11 +361,7 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         console.log(`📢 [AIAnalysisHandler] Escalation event emitted for circle ${circleId}`);
     }
 
-    // Determine the appropriate agent name based on context
-    const agentName = await getAgentName(userId, circleId);
-
-    // Send the agent's conversational reply back to the original user.
-    events.emit('broadcast', { targetUsers: [userId], reply: analysis.reply, from: agentName, circleId, patientUsername });
+    // The reply is not sent here: messageHandler checks it and sends the one final message.
 
     if (analysis.state_update) {
         await updateUserState(userId, circleId, analysis.state_update);
@@ -384,7 +377,7 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         complete: true
     });
     if (process.env.DEBUG_CLI) {
-        console.log('[AIAnalysisHandler] Broadcasting reply', {
+        console.log('[AIAnalysisHandler] Unified analysis summary', {
             userId,
             circleId,
             system_used: analysis?.system_used,
