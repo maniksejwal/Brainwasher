@@ -344,6 +344,18 @@ export async function migrateDatabase(db) {
             CREATE INDEX IF NOT EXISTS idx_deliveries_user ON escalation_deliveries(user_id);
         `);
 
+        // A patient's advance consent to an emergency alert being sent when they do not
+        // answer the alert question in time. One row per patient; revoking keeps the row.
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS emergency_auto_alert_consent (
+                user_id TEXT PRIMARY KEY,
+                delay_ms INTEGER NOT NULL,
+                consented_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            );
+        `);
+
         // Migration for feedback table - add all missing columns
         const feedbackInfo = await db.all('PRAGMA table_info(feedback)');
         if (feedbackInfo.length > 0) {
@@ -406,6 +418,7 @@ export async function clearDatabase() {
         DELETE FROM implied_consent;
         DELETE FROM pending_actions;
         DELETE FROM directives;
+        DELETE FROM emergency_auto_alert_consent;
         DELETE FROM escalation_deliveries;
         DELETE FROM escalations;
         DELETE FROM fact_history;

@@ -305,3 +305,83 @@ test('an accepted proposal goes only to the recipients shown who are still in th
         await db.run("INSERT INTO care_circle_members (circle_id, user_id, role) VALUES ('c1', 'g1', 'caregiver')");
     }
 });
+
+test('an emergency is sent unanswered only for a patient who consented in advance', async () => {
+    const { autoSendDelayFor, EMERGENCY_AUTO_ALERT_DELAY_MS } = await import('../services/escalationService.js');
+    const { setEmergencyAutoAlertConsent } = await import('../db/index.js');
+    const c1 = { circle_id: 'c1', primary_patient_id: 'p1' };
+    assert.equal(await autoSendDelayFor('p1', 'patient', c1), null, 'off by default');
+
+    await setEmergencyAutoAlertConsent('p1', true, EMERGENCY_AUTO_ALERT_DELAY_MS);
+    await setEmergencyAutoAlertConsent('g1', true, EMERGENCY_AUTO_ALERT_DELAY_MS);
+    try {
+        assert.equal(await autoSendDelayFor('p1', 'patient', c1), 5 * 60 * 1000);
+        assert.equal(await autoSendDelayFor('g1', 'caregiver', c1), null, 'a caregiver reporting is never sent unanswered');
+        assert.equal(await autoSendDelayFor('g1', 'patient', c1), null, 'only the patient of the circle');
+    } finally {
+        await db.run('DELETE FROM emergency_auto_alert_consent');
+    }
+});
+
+test('an unanswered proposal from a consenting patient is sent once when due', async () => {
+    const { proposeEscalation, runDueAutoAlerts, toPublicProposal, AUTO_SEND_DECISION } = await import('../services/escalationService.js');
+    const { setEmergencyAutoAlertConsent } = await import('../db/index.js');
+    const { composeFinalReply } = await import('../utils/actionClaimGuard.js');
+    await db.run('DELETE FROM pending_actions');
+    await setEmergencyAutoAlertConsent('p1', true, 5 * 60 * 1000);
+    try {
+        const { proposal, question } = await proposeEscalation({ ...critical(), autoSendAfterMs: 5 * 60 * 1000 });
+        assert.equal(question, "Do you want me to alert dr_rao and gina now? Just reply yes. If you don't answer within 5 minutes, the alert goes to them automatically, as you set up.");
+        assert.ok(toPublicProposal(proposal).autoSendAt > Date.now());
+        const { message, violations } = composeFinalReply({ modelText: 'I hear you.', criticality: 'HIGH', question });
+        assert.deepEqual(violations, [], 'the question is not an action claim');
+        assert.ok(message.endsWith('as you set up.'));
+
+        assert.deepEqual(await runDueAutoAlerts({ now: Date.now() }), [], 'not due yet');
+
+        const due = proposal.autoSendAt + 1;
+        const { result: outcomes, sent } = await collectBroadcasts(() => runDueAutoAlerts({ now: due }));
+        assert.equal(outcomes.length, 1);
+        assert.equal(outcomes[0].status, 'completed');
+        assert.deepEqual(outcomes[0].result.deliveries.map(d => d.username).sort(), ['dr_rao', 'gina']);
+        const row = await db.get('SELECT details FROM escalations WHERE escalation_id = ?', [outcomes[0].result.escalationId]);
+        assert.match(row.details, new RegExp(AUTO_SEND_DECISION));
+        const notice = sent.find(b => b.source === 'escalation_auto_sent');
+        assert.deepEqual(notice.targetUsers, ['p1']);
+        assert.match(notice.reply, /^You didn't answer within 5 minutes, so the alert went out as you set up\. /);
+
+        assert.deepEqual(await runDueAutoAlerts({ now: due + 60000 }), [], 'sent only once');
+    } finally {
+        await db.run('DELETE FROM emergency_auto_alert_consent');
+    }
+});
+
+test('a proposal is not sent unanswered without consent, after revoking, or once answered', async () => {
+    const { proposeEscalation, runDueAutoAlerts, decideEscalationProposal } = await import('../services/escalationService.js');
+    const { setEmergencyAutoAlertConsent, getPendingAction } = await import('../db/index.js');
+    const later = Date.now() + 10 * 60 * 1000;
+    await db.run('DELETE FROM pending_actions');
+
+    const plain = await proposeEscalation(critical());
+    assert.equal(plain.proposal.autoSendAt, null);
+    assert.ok(!plain.question.includes('automatically'));
+    assert.deepEqual(await runDueAutoAlerts({ now: later }), [], 'no send time without consent');
+
+    await setEmergencyAutoAlertConsent('p1', true, 5 * 60 * 1000);
+    const revoked = await proposeEscalation({ ...critical(), autoSendAfterMs: 5 * 60 * 1000 });
+    await setEmergencyAutoAlertConsent('p1', false);
+    const outcomes = await runDueAutoAlerts({ now: later });
+    assert.deepEqual(outcomes.map(o => o.status), ['skipped']);
+    assert.equal((await getPendingAction(revoked.proposal.actionId)).details.autoSendAt, null, 'it waits for an answer instead');
+    assert.equal((await db.get('SELECT COUNT(*) AS n FROM escalations')).n, 0);
+
+    await setEmergencyAutoAlertConsent('p1', true, 5 * 60 * 1000);
+    try {
+        const answered = await proposeEscalation({ ...critical(), autoSendAfterMs: 5 * 60 * 1000 });
+        assert.equal((await decideEscalationProposal(answered.proposal.actionId, 'p1', false)).status, 'rejected');
+        assert.deepEqual(await runDueAutoAlerts({ now: later }), [], 'a "no" before the send time stops it');
+        assert.equal((await db.get('SELECT COUNT(*) AS n FROM escalations')).n, 0);
+    } finally {
+        await db.run('DELETE FROM emergency_auto_alert_consent');
+    }
+});

@@ -1,8 +1,8 @@
 import express from 'express';
 import { handleCommand, handleMessage } from '../orchestrator.js';
-import { getUnreadEscalationsForUser, getAllPromptVersions } from '../db/index.js';
+import { getUnreadEscalationsForUser, getAllPromptVersions, getEmergencyAutoAlertConsent, setEmergencyAutoAlertConsent } from '../db/index.js';
 import { authenticate, authorize, requireSelf, requireCircleMember } from '../middleware/auth.js';
-import { acknowledge } from '../services/escalationService.js';
+import { acknowledge, EMERGENCY_AUTO_ALERT_DELAY_MS } from '../services/escalationService.js';
 import { handleProposalDecision } from '../handlers/message_logic/actionResponseHandler.js';
 import { broadcast } from '../lib/sse.js';
 
@@ -49,6 +49,33 @@ router.post('/api/escalation-proposals/:actionId/decision', authenticate, async 
     } catch (error) {
         console.error('[API] Error deciding escalation proposal:', error.message);
         res.status(500).json({ error: 'Failed to decide the proposal' });
+    }
+});
+
+// The signed-in user's consent to an emergency alert being sent when they do not answer
+// the alert question in time. It is off until the user turns it on, and applies only to
+// emergencies they report about themselves as the patient.
+const autoAlertStatus = (consent) => ({
+    enabled: Boolean(consent),
+    delayMs: consent ? consent.delay_ms : EMERGENCY_AUTO_ALERT_DELAY_MS,
+    consentedAt: consent ? consent.consented_at : null
+});
+
+router.get('/api/emergency-auto-alert', authenticate, async (req, res) => {
+    res.status(200).json(autoAlertStatus(await getEmergencyAutoAlertConsent(req.user.userId)));
+});
+
+router.put('/api/emergency-auto-alert', authenticate, async (req, res) => {
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+        return res.status(400).json({ error: 'Body must be { "enabled": true | false }' });
+    }
+    try {
+        await setEmergencyAutoAlertConsent(req.user.userId, enabled, EMERGENCY_AUTO_ALERT_DELAY_MS);
+        res.status(200).json(autoAlertStatus(await getEmergencyAutoAlertConsent(req.user.userId)));
+    } catch (error) {
+        console.error('[API] Error updating emergency auto-alert consent:', error.message);
+        res.status(500).json({ error: 'Failed to update the setting' });
     }
 });
 

@@ -9,6 +9,7 @@ import cors from 'cors';
 import { fileURLToPath } from 'url';
 import config from './config.js';
 import { initializeDatabase } from './db/index.js';
+import { runDueAutoAlerts } from './services/escalationService.js';
 import { events } from './orchestrator.js';
 import { setupLogger, getLogs } from './lib/logger.js';
 import { addClient, removeClient, broadcast } from './lib/sse.js';
@@ -160,7 +161,15 @@ app.get('/api/logs', authenticate, authorize('logs:view'), (req, res) => {
 const PORT = config.PORT || 3000; // Use config port or default to 3000? original used config.PORT
 const HOST = config.HOST || 'localhost';
 
+// How often unanswered emergency proposals are checked for their automatic send time
+const AUTO_ALERT_SWEEP_MS = 15000;
+
+const sweepAutoAlerts = () => runDueAutoAlerts().catch(error => console.error('[Server] Automatic alert sweep failed:', error.message));
+
 initializeDatabase().then(() => {
+    // The first run sends alerts that fell due while the server was down
+    sweepAutoAlerts();
+    setInterval(sweepAutoAlerts, AUTO_ALERT_SWEEP_MS).unref();
     app.listen(PORT, HOST, () => {
         console.log(`--- Multi-Agent Orchestrator (JS) is RUNNING ---`);
         console.log(`Listening on http://${HOST}:${PORT}`);

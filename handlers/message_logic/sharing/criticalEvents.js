@@ -6,7 +6,7 @@
  */
 
 import { findUserById, findCircleByPatientId } from '../../../db/index.js';
-import { proposeEscalation } from '../../../services/escalationService.js';
+import { proposeEscalation, autoSendDelayFor } from '../../../services/escalationService.js';
 import { createScheduledMessage } from '../../../db/queries_future_plans.js';
 import { makeApiCall } from '../../../agents/api_client.js';
 import { generateEmergencyConfidencePrompt, generateEscalationHintPrompt } from '../../../prompts/emergency_confidence_prompt.js';
@@ -107,7 +107,9 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
             messageId: analysis.message_id ?? null,
             notifyCaregivers: true,
             caregiverMessage: `Urgent health update: ${patientUsername} reported a critical health concern. Please check on them.`,
-            patientUsername
+            patientUsername,
+            // Sent unanswered only when the patient consented in advance (off by default)
+            autoSendAfterMs: await autoSendDelayFor(userId, role, currentCircle)
         });
 
         // The user is not messaged here: messageHandler puts the question in its one reply.

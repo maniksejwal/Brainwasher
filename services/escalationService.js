@@ -34,13 +34,15 @@ import {
     getPendingAction,
     getActivePendingActions,
     removePendingAction,
-    findUserById
+    findUserById,
+    getEmergencyAutoAlertConsent,
+    getDueAutoSendProposals
 } from '../db/index.js';
 import { randomUUID } from 'crypto';
 import { events } from '../orchestrator.js';
 import { notificationService } from '../notifications/NotificationService.js';
 import { getAgentName } from '../handlers/utils/agentIdentity.js';
-import { joinNames } from '../utils/actionClaimGuard.js';
+import { joinNames, buildActionStatus } from '../utils/actionClaimGuard.js';
 
 // Escalation types created by this service. A message gets at most one of them.
 export const SAFETY_ESCALATION_TYPES = [
@@ -221,13 +223,23 @@ export async function recordInboxEscalation({ circleId, type, details, messageId
 export const PROPOSAL_ACTION_TYPE = 'escalation_proposal';
 // An unanswered proposal stops being valid after this long; a later HIGH message proposes again
 export const PROPOSAL_TTL_MS = 30 * 60 * 1000;
+// The wait a patient consents to before an unanswered emergency alert is sent for them
+export const EMERGENCY_AUTO_ALERT_DELAY_MS = 5 * 60 * 1000;
+// Recorded on an alert sent because the patient consented in advance and did not answer
+export const AUTO_SEND_DECISION = 'auto_by_prior_consent';
+
+const minutesText = (ms) => {
+    const minutes = Math.max(1, Math.round(ms / 60000));
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+};
 
 /**
  * Propose an escalation instead of sending it. Nothing leaves the system until the user
  * accepts. The proposal fixes the escalation's content and recipients, so what the user
  * accepts is exactly what is sent. A newer proposal replaces an older open one from the
  * same user in the same circle, so one "yes" can never send two.
- * @param {object} params - Same as `escalate`, plus `ttlMs`
+ * @param {object} params - Same as `escalate`, plus `ttlMs` and `autoSendAfterMs` (send it
+ *   if still unanswered after this long; only for a patient who consented in advance)
  * @returns {Promise<{proposal: object|null, question: string|null, actions: object}>}
  *   `proposal` is null when the circle has nobody to alert
  */
@@ -241,7 +253,8 @@ export async function proposeEscalation({
     notifyCaregivers = false,
     caregiverMessage = null,
     patientUsername = null,
-    ttlMs = PROPOSAL_TTL_MS
+    ttlMs = PROPOSAL_TTL_MS,
+    autoSendAfterMs = null
 }) {
     if (!SAFETY_ESCALATION_TYPES.includes(type)) {
         throw new Error(`[EscalationService] Unknown escalation type: ${type}`);
@@ -270,14 +283,16 @@ export async function proposeEscalation({
         notifyCaregivers,
         caregiverMessage,
         patientUsername,
-        expiresAt: Date.now() + ttlMs
+        expiresAt: Date.now() + ttlMs,
+        autoSendAfterMs: autoSendAfterMs || null,
+        autoSendAt: autoSendAfterMs ? Date.now() + autoSendAfterMs : null
     };
     await addPendingAction(proposal.actionId, circleId, userId, PROPOSAL_ACTION_TYPE, proposal);
-    return {
-        proposal,
-        question: `Do you want me to alert ${joinNames(recipients.map(r => r.username))} now? Just reply yes.`,
-        actions
-    };
+    let question = `Do you want me to alert ${joinNames(recipients.map(r => r.username))} now? Just reply yes.`;
+    if (proposal.autoSendAt) {
+        question += ` If you don't answer within ${minutesText(autoSendAfterMs)}, the alert goes to them automatically, as you set up.`;
+    }
+    return { proposal, question, actions };
 }
 
 /**
@@ -296,8 +311,86 @@ export function toPublicProposal(proposal) {
             doctors: proposal.notifyDoctors ? proposal.details : null,
             caregivers: proposal.notifyCaregivers ? proposal.caregiverMessage : null
         },
-        expiresAt: proposal.expiresAt
+        expiresAt: proposal.expiresAt,
+        autoSendAt: proposal.autoSendAt ?? null
     };
+}
+
+/**
+ * The automatic-send delay for an emergency proposal, or null when it must wait for an
+ * answer. Only a patient's own emergency in their own circle qualifies, and only with
+ * consent given in advance.
+ * @param {string} userId - The user who reported the emergency
+ * @param {string} role
+ * @param {object} circle - The circle row
+ * @returns {Promise<number|null>}
+ */
+export async function autoSendDelayFor(userId, role, circle) {
+    if (role !== 'patient' || circle?.primary_patient_id !== userId) return null;
+    const consent = await getEmergencyAutoAlertConsent(userId);
+    return consent ? consent.delay_ms : null;
+}
+
+/**
+ * Send the emergency proposals that reached their automatic send time unanswered, and
+ * tell each patient what was sent. Consent is checked again here, so revoking it stops
+ * proposals already waiting. Each proposal is claimed before sending, so it is sent at
+ * most once even if the patient answers at the same moment.
+ * @param {object} [options]
+ * @param {number} [options.now]
+ * @returns {Promise<Array<{actionId: string, status: 'completed'|'skipped', result?: object}>>}
+ */
+export async function runDueAutoAlerts({ now = Date.now() } = {}) {
+    const outcomes = [];
+    for (const pending of await getDueAutoSendProposals(now)) {
+        const proposal = pending.details;
+        if (now > proposal.expiresAt || !(await getEmergencyAutoAlertConsent(pending.user_id))) {
+            // Expired or consent revoked: it waits for an answer like any other proposal
+            await updateAutoSend(pending, null);
+            outcomes.push({ actionId: proposal.actionId, status: 'skipped' });
+            continue;
+        }
+        if (!(await removePendingAction(proposal.actionId))) continue;
+
+        const waited = minutesText(proposal.autoSendAfterMs);
+        const result = await escalate({
+            circleId: pending.circle_id,
+            userId: pending.user_id,
+            type: proposal.type,
+            details: `${proposal.details} [Sent automatically (${AUTO_SEND_DECISION}): no answer within ${waited}]`,
+            messageId: proposal.messageId,
+            notifyDoctors: proposal.notifyDoctors,
+            notifyCaregivers: proposal.notifyCaregivers,
+            caregiverMessage: proposal.caregiverMessage,
+            patientUsername: proposal.patientUsername,
+            onlyUserIds: proposal.recipients.map(r => r.userId)
+        });
+        console.log(`[EscalationService] Proposal ${proposal.actionId} sent as escalation ${result.escalationId} (${AUTO_SEND_DECISION})`);
+
+        const status = buildActionStatus(result.actions);
+        const notice = status
+            ? `You didn't answer within ${waited}, so the alert went out as you set up. ${status}`
+            : `You didn't answer within ${waited}, but I couldn't send the alert to anyone.`;
+        await notificationService.sendInApp(pending.user_id, 'escalation_auto_sent', 'Emergency alert sent', notice, { escalationId: result.escalationId, circleId: pending.circle_id });
+        events.emit('broadcast', {
+            targetUsers: [pending.user_id],
+            reply: notice,
+            from: await getAgentName(pending.user_id, pending.circle_id),
+            circleId: pending.circle_id,
+            patientUsername: proposal.patientUsername,
+            source: 'escalation_auto_sent'
+        });
+        outcomes.push({ actionId: proposal.actionId, status: 'completed', result, notice });
+    }
+    return outcomes;
+}
+
+/**
+ * Change or clear a waiting proposal's automatic send time.
+ */
+async function updateAutoSend(pending, autoSendAt) {
+    if (!(await removePendingAction(pending.action_id))) return;
+    await addPendingAction(pending.action_id, pending.circle_id, pending.user_id, PROPOSAL_ACTION_TYPE, { ...pending.details, autoSendAt });
 }
 
 /**

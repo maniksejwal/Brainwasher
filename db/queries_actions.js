@@ -218,3 +218,45 @@ export async function removePendingAction(actionId) {
     return result.changes > 0;
 }
 
+
+/**
+ * A patient's current consent to emergency alerts being sent when they do not answer.
+ * @returns {Promise<{user_id: string, delay_ms: number, consented_at: number}|null>} Null when not consented or revoked
+ */
+export async function getEmergencyAutoAlertConsent(userId) {
+    const db = await getDb();
+    const row = await db.get('SELECT * FROM emergency_auto_alert_consent WHERE user_id = ? AND revoked_at IS NULL', [userId]);
+    return row ?? null;
+}
+
+/**
+ * Give or revoke a patient's consent. Giving it again replaces the delay and time.
+ * @param {string} userId
+ * @param {boolean} enabled
+ * @param {number} delayMs - The wait the patient consented to
+ */
+export async function setEmergencyAutoAlertConsent(userId, enabled, delayMs) {
+    const db = await getDb();
+    const now = Date.now();
+    if (enabled) {
+        await db.run(
+            `INSERT INTO emergency_auto_alert_consent (user_id, delay_ms, consented_at, revoked_at) VALUES (?, ?, ?, NULL)
+             ON CONFLICT(user_id) DO UPDATE SET delay_ms = excluded.delay_ms, consented_at = excluded.consented_at, revoked_at = NULL`,
+            [userId, delayMs, now]
+        );
+    } else {
+        await db.run('UPDATE emergency_auto_alert_consent SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL', [now, userId]);
+    }
+}
+
+/**
+ * Open alert proposals whose automatic send time has passed.
+ * @param {number} now
+ */
+export async function getDueAutoSendProposals(now) {
+    const db = await getDb();
+    const rows = await db.all("SELECT * FROM pending_actions WHERE action_type = 'escalation_proposal'");
+    return rows
+        .map(row => ({ ...row, details: JSON.parse(row.details) }))
+        .filter(row => row.details.autoSendAt && row.details.autoSendAt <= now);
+}
