@@ -235,3 +235,20 @@ test('critical event below the threshold does not escalate or message the patien
     assert.equal(sent.length, 0);
     assert.equal((await db.all('SELECT * FROM escalations')).length, 0);
 });
+
+test('a HIGH turn sends the patient exactly one message, opening with the emergency sentence', async () => {
+    const { handleMessage } = await import('../handlers/messageHandler.js');
+    const { getEmergencySentence } = await import('../config/emergencyGuidance.js');
+    await db.run('DELETE FROM escalations');
+    // Isolate from follow-ups scheduled by earlier tests
+    await db.run('DELETE FROM scheduled_messages');
+
+    // The mocked clinical agent returns HIGH with no category; every LLM call returns "ok"
+    const { result, sent } = await collectBroadcasts(() => handleMessage('p1', 'c1', 'I have crushing chest pain'));
+    const toPatient = sent.filter(b => b.targetUsers.includes('p1'));
+
+    assert.equal(result.criticality, 'HIGH');
+    assert.equal(toPatient.length, 1, `expected one message, got: ${JSON.stringify(toPatient.map(b => b.reply || b.message))}`);
+    assert.ok(toPatient[0].reply.startsWith(getEmergencySentence(null)), toPatient[0].reply);
+    assert.equal(toPatient[0].reply, result.reply);
+});

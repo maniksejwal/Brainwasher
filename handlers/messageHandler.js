@@ -19,6 +19,7 @@ import { handleNonDoctorQuestion } from './message_logic/nonDoctorQuestionHandle
 import { broadcastErrorReply, formatAnalysisErrorMessage } from './utils/errorHandling.js';
 import { getAgentName } from './utils/agentIdentity.js';
 import { privacyGuard } from '../security/privacy_guard.js';
+import { composeFinalReply } from '../utils/actionClaimGuard.js';
 
 // Lazy initialization of topic shift handler
 let topicShiftHandler = null;
@@ -172,8 +173,22 @@ export async function handleMessage(userId, circleId, message) {
         await updateUserState(userId, circleId, analysis.state_update);
     }
 
-    // Ensure the originating user receives the conversational reply.
-    if (analysis?.reply) {
+    // Step 6: Build the one message for the originating user. Action claims in the model's
+    // reply are checked against what the sharing handlers did; the emergency sentence (HIGH)
+    // and the action status are written by code.
+    if (analysis?.reply || analysis?.criticality === 'HIGH') {
+        const { message: finalReply, violations } = composeFinalReply({
+            modelText: analysis.reply,
+            criticality: analysis.criticality,
+            highCategory: analysis.high_category,
+            actions: sharingResult?.actions
+        });
+        if (violations.length > 0) {
+            console.warn(`[MessageHandler] Replaced reply containing unsupported action claims (circle=${circleId}, user=${userId}, turn=${currentTurn}):`, violations);
+        }
+        // Simulations, training logs and the return value all see what the user received
+        analysis.reply = finalReply;
+
         const circle = await findCircleById(circleId);
         const patient = circle ? await findUserById(circle.primary_patient_id) : null;
         const agentName = await getAgentName(userId, circleId);
