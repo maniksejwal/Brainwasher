@@ -101,7 +101,7 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
         // Recipients see the reporter's name; the user ID is internal (a HealthyMitra circle's
         // IDs mean nothing to the doctor reading it)
         const reporterName = (await findUserById(userId))?.username ?? userId;
-        const criticalDetails = `User '${reporterName}' (${role}) reported: "${message}" [High confidence emergency (${(confidence * 100).toFixed(0)}%)]`;
+        const criticalDetails = `Emergency: '${reporterName}'(${role}) reported: '${message}'`;
         const { proposal, question, actions } = await proposeEscalation({
             circleId,
             userId,
