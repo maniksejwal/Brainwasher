@@ -113,3 +113,38 @@ test('unified prompt no longer scripts an escalation claim', async () => {
     assert.match(PROMPT_UNIFIED_AGENT_WITH_STATE, /CAPABILITIES/);
     assert.match(PROMPT_UNIFIED_AGENT_WITH_STATE, /\{\{ACTIONS_TAKEN\}\}/);
 });
+
+test('phrasings missed in the first simulation are caught', () => {
+    const cases = [
+        // Statement before a trailing question is still checked
+        ['Please stay as calm as possible while I flag this for your doctor, can you tell me more about when these symptoms started?', 'DOCTOR_NOTIFIED'],
+        ["I'll make sure to flag this for your doctor as soon as possible.", 'DOCTOR_NOTIFIED'],
+        ["I'm here with you, and I'll stay on the line until you get to the hospital.", 'EMERGENCY_DISPATCH'],
+        ["I'm going to send help your way right away - please stay calm and try to stay safe until assistance arrives.", 'EMERGENCY_DISPATCH'],
+        ['Please stay safe until help arrives.', 'EMERGENCY_DISPATCH'],
+        ['I understand your distress; the medical team is aware of your situation and is working to address your concerns.', 'DOCTOR_NOTIFIED'],
+        ['Let me flag this for your doctor now.', 'DOCTOR_NOTIFIED']
+    ];
+    for (const [text, type] of cases) {
+        assert.deepEqual(claimTypes(text, NO_ACTIONS), [type], text);
+    }
+});
+
+test('offers and questions about actions are still allowed', () => {
+    for (const text of [
+        'Can I flag this for your doctor?',
+        'Would you like me to flag this for your doctor so they can call you back?',
+        'If you want, shall I let your caregiver know, or would you rather tell them yourself?',
+        'I can offer to flag your concerns about falling for your doctor.',
+        "I didn't directly notify your caregiver, but I can help you flag a message for them.",
+        'Can you tell me where you are and if someone can call for emergency services?'
+    ]) {
+        assert.deepEqual(claimTypes(text, NO_ACTIONS), [], text);
+    }
+});
+
+test('a true claim next to an offer in the same question is not flagged', () => {
+    const text = "I'm here to support you, and I've already sent an alert to your caregiver in the app; would you like me to flag this for your doctor as well, when you're able to?";
+    assert.deepEqual(claimTypes(text, { caregiversAlerted: ['gina'] }), []);
+    assert.deepEqual(claimTypes(text, NO_ACTIONS), ['FAMILY_NOTIFIED']);
+});

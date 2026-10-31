@@ -18,9 +18,10 @@ import { getEmergencySentence } from '../config/emergencyGuidance.js';
 
 export const FALLBACK_TEXT = "I'm here with you. Can you tell me more about what's happening?";
 
-// First-person subject that states something done or about to be done.
-// Offers and questions ("I can...", "Would you like me to...") are not claims.
-const SUBJECT = String.raw`\b(?:i(?:'ve| have| am|'m|'ll| will)|we(?:'ve| have| are|'re|'ll| will))\s+(?:already\s+|just\s+|now\s+|also\s+)?`;
+// First-person subject that states something done or about to be done: "I've", "I'll",
+// "I'm going to", "let me", or a bare "I" ("while I flag this"). A bare "I" after a modal
+// or "if" is an offer or condition ("Can I flag this?", "if I contact them"), not a claim.
+const SUBJECT = String.raw`(?:\b(?:i(?:'m| am) going to|we(?:'re| are) going to|i(?:'ve| have| am|'m|'ll| will)|we(?:'ve| have| are|'re|'ll| will)|let me)|(?<!\b(?:can|could|shall|should|may|might|would|do|did|if|when|unless|to)\s)\bi)\s+(?:already\s+|just\s+|now\s+|also\s+|immediately\s+)?(?:make sure to\s+|be sure to\s+|go ahead and\s+|try to\s+|do my best to\s+)?`;
 const ACTION_VERB = String.raw`(?:notif|alert|escalat|contact|messag|inform|reach|call|sent\b|send|told|tell|let|flag|pass|forward|share|ping|arrang)\w*`;
 const DOCTOR = String.raw`\b(?:doctors?|dr\b\.?|physicians?|gp|clinician|medical team)\b`;
 const FAMILY = String.raw`\b(?:family|caregivers?|care ?givers?|care team|care circle|son|daughter|wife|husband|relatives?)\b`;
@@ -30,7 +31,10 @@ const CLAIM_RULES = [
         type: 'EMERGENCY_DISPATCH',
         // The system cannot dispatch anyone, so these claims always fail.
         patterns: [
-            new RegExp(`${SUBJECT}(?:called|calling|call(?:ed)?|sent for|sending for|send for|summon\\w*|dispatch\\w*|contact\\w*|notif\\w*|alert\\w*)\\s+(?:an?\\s+|the\\s+|some\\s+)?(?:medical\\s+|emergency\\s+|urgent\\s+)?(?:ambulance|paramedics?|emergency services|first responders?|police|help|112|911|108)`, 'i'),
+            new RegExp(`${SUBJECT}(?:called|calling|call(?:ed)?|sent for|sending for|send for|send|sending|get|getting|bring|bringing|arrang\\w*|summon\\w*|dispatch\\w*|contact\\w*|notif\\w*|alert\\w*)\\s+(?:an?\\s+|the\\s+|some\\s+)?(?:medical\\s+|emergency\\s+|urgent\\s+)?(?:ambulance|paramedics?|emergency services|first responders?|police|help|112|911|108)`, 'i'),
+            // There is no call to stay on, and nobody is coming to arrive
+            new RegExp(`${SUBJECT}(?:stay|be|remain)\\s+(?:right\\s+)?(?:here\\s+)?(?:on the (?:line|phone|call)|with you until)`, 'i'),
+            /\buntil (?:help|assistance|the ambulance|the paramedics|they|someone|the doctor) (?:arrives?|gets? (?:there|here)|comes)\b/i,
             /\b(?:ambulance|paramedics?|emergency services|first responders?|police|help|someone|they|he|she|the doctor|your doctor|dr\b\.?\s*\w*)(?:\s+(?:is|are|has been|have been)|'re|'s)\s+(?:already\s+)?(?:on (?:the|their|his|her) way|coming|dispatched|sent|called|en route|arriving)\b/i,
             /\bhelp is (?:on the way|coming)\b/i
         ],
@@ -40,7 +44,9 @@ const CLAIM_RULES = [
         type: 'DOCTOR_NOTIFIED',
         patterns: [
             new RegExp(`${SUBJECT}${ACTION_VERB}[^.!?]*${DOCTOR}`, 'i'),
-            new RegExp(`${DOCTOR}[^.!?]*\\b(?:has|have) been (?:notified|alerted|informed|contacted|told|messaged)`, 'i')
+            new RegExp(`${DOCTOR}[^.!?]*\\b(?:has|have) been (?:notified|alerted|informed|contacted|told|messaged)`, 'i'),
+            /\b(?:the|your)\s+(?:medical|care|healthcare|doctor'?s?)\s+team\s+(?:is|are|has been|have been)\s+(?:already\s+)?(?:aware|informed|notified|alerted|working on|looking into|reviewing)/i,
+            /\b(?:your|the)\s+(?:doctor|physician)\s+(?:is|has been)\s+(?:already\s+)?(?:aware|informed|notified|alerted|reviewing)/i
         ],
         isSupported: (actions) => Boolean(actions.escalationCreated && actions.doctors?.length)
     },
@@ -67,6 +73,20 @@ function splitSentences(text) {
     return String(text || '').split(/(?<=[.!?])\s+/).filter(Boolean);
 }
 
+const OFFER_CLAUSE = /^\s*(?:and\s+|or\s+|but\s+)?(?:would you like|do you want|shall i|should i|can i|could i|may i|would it help)/i;
+
+/**
+ * The parts of a sentence that state something. A question is an offer, not a claim
+ * ("Shall I let your doctor know?"), but a statement can come before a trailing question
+ * ("...while I flag this for your doctor, can you tell me more?"). For a question, each
+ * clause before the last one is checked on its own, skipping offers.
+ */
+function statementParts(sentence) {
+    const trimmed = sentence.trim();
+    if (!trimmed.endsWith('?')) return [trimmed];
+    return trimmed.split(/,|;|\s[-–—]\s/).slice(0, -1).filter(c => c.trim() && !OFFER_CLAUSE.test(c));
+}
+
 /**
  * Find action claims in model-written text that the action record does not support.
  * @param {string} text - Model-written reply (without the code-inserted emergency sentence)
@@ -76,10 +96,9 @@ function splitSentences(text) {
 export function findFalseClaims(text, actions = {}) {
     const failures = [];
     for (const sentence of splitSentences(text)) {
-        // Questions are offers, not claims ("Shall I let your doctor know?")
-        if (sentence.trim().endsWith('?')) continue;
+        const parts = statementParts(sentence);
         // Rules are ordered most specific first; one sentence yields at most one claim
-        const rule = CLAIM_RULES.find(r => r.patterns.some(p => p.test(sentence)));
+        const rule = CLAIM_RULES.find(r => r.patterns.some(p => parts.some(part => p.test(part))));
         if (rule && !rule.isSupported(actions)) {
             failures.push({ type: rule.type, sentence });
         }
