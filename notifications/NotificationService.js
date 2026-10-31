@@ -194,9 +194,9 @@ class NotificationService {
                 [userId]
             );
 
-            // Get unread escalations
+            // Unacknowledged escalations sent to this user as a doctor (same rule as the unread list)
             const unreadEscalations = await db.get(
-                'SELECT COUNT(*) as count FROM escalations WHERE circle_id IN (SELECT circle_id FROM care_circle_members WHERE user_id = ?) AND is_read = 0',
+                "SELECT COUNT(*) as count FROM escalation_deliveries WHERE user_id = ? AND role = 'doctor' AND status != 'failed' AND acknowledged_at IS NULL",
                 [userId]
             );
 

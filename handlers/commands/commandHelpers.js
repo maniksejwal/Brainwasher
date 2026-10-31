@@ -4,9 +4,12 @@
  * particularly for complex, reusable actions like generating a doctor's summary.
  */
 
-import { getUnreadEscalationsForCircle, getRecentMessages, markCircleEscalationsAsRead, findUserById, findCircleByPatientId } from '../../db/index.js';
+import { getUnreadEscalationsForUser, getRecentMessages, findUserById, findCircleByPatientId } from '../../db/index.js';
+import { acknowledge } from '../../services/escalationService.js';
 import { generateDoctorSummary } from '../../agents/index.js';
 import { events } from '../../orchestrator.js';
+
+const ANONYMOUS_TYPES = ['ANONYMOUS_CONSULTATION', 'CONSULT'];
 
 /**
  * Generates a clinical summary for a specific care circle and broadcasts it to the doctor.
@@ -15,7 +18,10 @@ import { events } from '../../orchestrator.js';
  * @param {string} patientUsername - The username of the patient for context in the summary.
  */
 export async function generateAndSendSummary(doctorId, circleId, patientUsername) {
-    const escalations = await getUnreadEscalationsForCircle(circleId);
+    // Only what was sent to this doctor. Anonymous consultations stay out of a named
+    // patient's summary; the doctor acknowledges those on their own.
+    const escalations = (await getUnreadEscalationsForUser(doctorId, circleId))
+        .filter(e => !ANONYMOUS_TYPES.includes(e.type));
     const messages = await getRecentMessages(circleId, 5);
     const circle = await findCircleByPatientId(circleId);
     // FIX: Ensure we have a valid patient object before proceeding
@@ -39,8 +45,9 @@ export async function generateAndSendSummary(doctorId, circleId, patientUsername
     // FIX: Ensure the correct patient username from the database is passed in the event
     events.emit('broadcast', { targetUsers: [doctorId], reply: `[Clinical Summary for ${patient.username}]\n${summary}`, from: 'system', circleId, patientUsername: patient.username });
 
-    if (escalations.length > 0) {
-        await markCircleEscalationsAsRead(circleId);
+    // Acknowledge exactly the escalations the summary showed
+    for (const escalation of escalations) {
+        await acknowledge(escalation.escalation_id, doctorId);
     }
 }
 

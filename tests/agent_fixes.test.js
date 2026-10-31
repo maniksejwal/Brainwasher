@@ -472,3 +472,34 @@ test('an answer to a delegated question is forwarded and still analyzed, escalat
         await db.run("DELETE FROM care_circle_members WHERE user_id = 'g5'");
     }
 });
+
+test('a doctor summary acknowledges only the escalations it showed to that doctor', async () => {
+    const { generateAndSendSummary } = await import('../handlers/commands/commandHelpers.js');
+    const { escalate } = await import('../services/escalationService.js');
+    const { getUnreadEscalationsForUser } = await import('../db/index.js');
+    const now = Date.now();
+    for (const [id, name] of [['d7', 'dr_lee'], ['d8', 'dr_kim']]) {
+        await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', [id, name, now]);
+    }
+    await clearEscalations();
+    await db.run("INSERT INTO care_circle_members (circle_id, user_id, role) VALUES ('c1', 'd7', 'doctor')");
+    try {
+        // Sent to dr_lee only; dr_kim joins afterwards and was never sent it
+        const shown = await escalate({ circleId: 'c1', userId: 'p1', type: 'CRITICAL', details: 'chest pain', messageId: null });
+        const anonymous = await escalate({ circleId: 'c1', userId: 'p1', type: 'ANONYMOUS_CONSULTATION', details: 'a question', anonymous: true });
+        await db.run("INSERT INTO care_circle_members (circle_id, user_id, role) VALUES ('c1', 'd8', 'doctor')");
+
+        const { sent } = await collectBroadcasts(() => generateAndSendSummary('d8', 'c1', 'pat'));
+        assert.ok(sent.some(b => b.targetUsers.includes('d8')));
+        assert.equal((await db.get('SELECT status FROM escalations WHERE escalation_id = ?', [shown.escalationId])).status, 'OPEN',
+            "another doctor's summary acknowledges nothing");
+
+        const second = await collectBroadcasts(() => generateAndSendSummary('d7', 'c1', 'pat'));
+        assert.ok(second.sent.some(b => b.targetUsers.includes('p1') && /dr_lee has seen the concern/.test(b.reply)), 'patient told who saw it');
+        assert.deepEqual((await getUnreadEscalationsForUser('d7')).map(e => e.escalation_id), [anonymous.escalationId],
+            'the anonymous request stays out of the named summary and stays unread');
+    } finally {
+        await db.run("DELETE FROM care_circle_members WHERE user_id IN ('d7', 'd8')");
+        await clearEscalations();
+    }
+});

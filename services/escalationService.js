@@ -1,15 +1,21 @@
 /**
  * @fileoverview services/escalationService.js
- * The one place patient-safety escalations are created: HIGH emergencies, doctor
- * requests and the escalation tiers. Routine inbox rows (INFO, FACT_REPORT, CONFLICT,
- * CONSULT) are written directly with addEscalation and do not come through here.
+ * The one place escalations are created and sent.
  *
- * For each escalation the service:
+ * Patient-safety escalations (HIGH emergencies, doctor requests and the escalation
+ * tiers) go through `escalate`. For each one the service:
  *  1. creates at most one escalation row per message;
  *  2. finds recipients from circle membership (doctors, then caregivers);
  *  3. sends to each recipient through the in-app channel, with a bounded wait;
  *  4. records each delivery;
- *  5. returns an action result that replies are built from.
+ *  5. emits `escalate` with the recipients, so live clients are told only who received it;
+ *  6. returns an action result that replies are built from.
+ *
+ * Routine inbox rows (INFO, FACT_REPORT, CONFLICT) go through `recordInboxEscalation`:
+ * no dedupe and no action result, but the same delivery rows, so doctors' unread lists
+ * and acknowledgements work the same way.
+ *
+ * `acknowledge` records that one doctor saw one escalation and tells the user who raised it.
  *
  * The in-app channel is the only real one (no SMS). A delivery is "delivered" when the
  * recipient had the app open at send time, "pending" when it waits in their inbox, and
@@ -17,10 +23,14 @@
  */
 
 import {
+    addEscalation,
     addEscalationOnce,
     addEscalationDelivery,
     getEscalationDeliveries,
-    getCircleMembers
+    getEscalationById,
+    acknowledgeEscalation,
+    getCircleMembers,
+    findUserById
 } from '../db/index.js';
 import { events } from '../orchestrator.js';
 import { notificationService } from '../notifications/NotificationService.js';
@@ -82,7 +92,6 @@ export function toActionRecord(deliveries, { doctorsWanted, circleHasDoctor, ano
  * @param {string} [params.caregiverMessage] - Text sent to caregivers
  * @param {string} [params.patientUsername] - Patient the circle belongs to
  * @param {boolean} [params.anonymous] - The doctor sees no patient identity
- * @param {object} [params.eventDetails] - Extra fields for the `escalate` event
  * @param {number} [params.timeoutMs] - Longest wait for each send
  * @returns {Promise<{escalationId: number, duplicate: boolean, deliveries: object[], doctorReached: boolean, actions: object}>}
  */
@@ -97,7 +106,6 @@ export async function escalate({
     caregiverMessage = null,
     patientUsername = null,
     anonymous = false,
-    eventDetails = {},
     timeoutMs = SEND_TIMEOUT_MS
 }) {
     if (!SAFETY_ESCALATION_TYPES.includes(type)) {
@@ -124,16 +132,7 @@ export async function escalate({
         };
     }
 
-    const deliveries = [];
-
-    // Doctors see the escalation in their unread list; the in-app notification records delivery
-    for (const doctor of doctors) {
-        const result = await sendWithTimeout(
-            notificationService.sendInApp(doctor.user_id, 'escalation', `Escalation: ${type}`, details, { escalationId, circleId, type }),
-            timeoutMs
-        );
-        deliveries.push(await recordDelivery(escalationId, doctor, result));
-    }
+    const deliveries = await sendToDoctors({ escalationId, circleId, type, details, doctors, timeoutMs });
 
     if (caregivers.length > 0 && caregiverMessage) {
         // Live message for caregivers who have the app open
@@ -154,7 +153,7 @@ export async function escalate({
         }
     }
 
-    events.emit('escalate', { circleId, escalationId, ...eventDetails });
+    emitEscalated({ circleId, escalationId, type, deliveries });
 
     return {
         escalationId,
@@ -163,6 +162,90 @@ export async function escalate({
         doctorReached: deliveries.some(d => d.role === 'doctor' && d.status !== 'failed'),
         actions: toActionRecord(deliveries, recordOptions)
     };
+}
+
+/**
+ * Send an escalation to each doctor's inbox and record each delivery.
+ * Doctors see it in their unread list; the in-app notification records delivery.
+ */
+async function sendToDoctors({ escalationId, circleId, type, details, doctors, timeoutMs }) {
+    const deliveries = [];
+    for (const doctor of doctors) {
+        const result = await sendWithTimeout(
+            notificationService.sendInApp(doctor.user_id, 'escalation', `Escalation: ${type}`, details, { escalationId, circleId, type }),
+            timeoutMs
+        );
+        deliveries.push(await recordDelivery(escalationId, doctor, result));
+    }
+    return deliveries;
+}
+
+/**
+ * Tell live clients about a new escalation. The event names only the recipients
+ * whose delivery did not fail; listeners send it to them and to nobody else.
+ */
+function emitEscalated({ circleId, escalationId, type, deliveries }) {
+    const recipients = deliveries.filter(d => d.status !== 'failed').map(d => d.userId);
+    if (recipients.length === 0) return;
+    events.emit('escalate', { circleId, escalationId, type, recipients });
+}
+
+/**
+ * Write a routine escalation (INFO, FACT_REPORT, CONFLICT) to the doctors' inbox.
+ * @param {object} params
+ * @param {string} params.circleId
+ * @param {string} params.type
+ * @param {string} params.details
+ * @param {number|null} [params.messageId] - The message that caused it
+ * @param {number} [params.timeoutMs]
+ * @returns {Promise<{escalationId: number, deliveries: object[]}>}
+ */
+export async function recordInboxEscalation({ circleId, type, details, messageId = null, timeoutMs = SEND_TIMEOUT_MS }) {
+    const escalationId = await addEscalation(circleId, type, details, messageId);
+    const doctors = (await getCircleMembers(circleId)).filter(m => m.role === 'doctor');
+    const deliveries = await sendToDoctors({ escalationId, circleId, type, details, doctors, timeoutMs });
+    emitEscalated({ circleId, escalationId, type, deliveries });
+    return { escalationId, deliveries };
+}
+
+// Conflicts are between two members' reports; nobody raised them, so nobody is told
+const NO_ACKNOWLEDGEMENT_NOTICE = ['CONFLICT'];
+
+/**
+ * Record that a doctor saw an escalation, and tell the user who raised it.
+ * The notice goes to the author of the message that caused it, or to the patient
+ * when the message is not known. It runs only on the first acknowledgement by
+ * this doctor.
+ * @param {number} escalationId
+ * @param {string} doctorId
+ * @returns {Promise<{acknowledged: boolean, notified: string|null}>}
+ */
+export async function acknowledge(escalationId, doctorId) {
+    const acknowledged = await acknowledgeEscalation(escalationId, doctorId);
+    if (!acknowledged) return { acknowledged: false, notified: null };
+
+    const escalation = await getEscalationById(escalationId);
+    const notifyUserId = escalation?.author_id || escalation?.patient_id;
+    if (!escalation || !notifyUserId || NO_ACKNOWLEDGEMENT_NOTICE.includes(escalation.type) || notifyUserId === doctorId) {
+        return { acknowledged: true, notified: null };
+    }
+
+    const doctor = await findUserById(doctorId);
+    const notice = ['ANONYMOUS_CONSULTATION', 'CONSULT'].includes(escalation.type)
+        ? 'A doctor has seen your anonymous consultation request.'
+        : `${doctor?.username ?? 'Your doctor'} has seen the concern I flagged for them.`;
+
+    await notificationService.sendInApp(notifyUserId, 'escalation_acknowledged', 'Your doctor has seen this', notice, { escalationId, circleId: escalation.circle_id });
+    const patient = escalation.patient_id ? await findUserById(escalation.patient_id) : null;
+    events.emit('broadcast', {
+        targetUsers: [notifyUserId],
+        reply: notice,
+        from: await getAgentName(notifyUserId, escalation.circle_id),
+        circleId: escalation.circle_id,
+        patientUsername: patient?.username ?? null,
+        source: 'escalation_acknowledged'
+    });
+    return { acknowledged: true, notified: notifyUserId };
 }
 
 async function recordDelivery(escalationId, member, result) {

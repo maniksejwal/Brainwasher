@@ -80,6 +80,21 @@ export async function getEscalationDeliveries(escalationId) {
 }
 
 /**
+ * Get one escalation with the user whose message caused it, when known.
+ * @returns {Promise<object|undefined>} The escalation row plus `author_id` and `patient_id`
+ */
+export async function getEscalationById(escalationId) {
+    const db = await getDb();
+    return db.get(`
+        SELECT e.*, m.user_id AS author_id, c.primary_patient_id AS patient_id
+        FROM escalations e
+        LEFT JOIN messages m ON m.message_id = e.message_id
+        LEFT JOIN care_circles c ON c.circle_id = e.circle_id
+        WHERE e.escalation_id = ?
+    `, [escalationId]);
+}
+
+/**
  * Record that one recipient acknowledged one escalation.
  * @returns {Promise<boolean>} True if the user was a recipient and had not acknowledged it yet
  */
@@ -90,34 +105,44 @@ export async function acknowledgeEscalation(escalationId, userId) {
         [Date.now(), escalationId, userId]
     );
     if (result.changes === 0) return false;
-    await db.run("UPDATE escalations SET status = 'ACKNOWLEDGED' WHERE escalation_id = ? AND status = 'OPEN'", [escalationId]);
+    // is_read follows the status so older readers of the column stay correct
+    await db.run("UPDATE escalations SET status = 'ACKNOWLEDGED', is_read = 1 WHERE escalation_id = ? AND status = 'OPEN'", [escalationId]);
     return true;
 }
 
+/**
+ * Open escalations in a circle, oldest first. Used as context for the agents.
+ */
 export async function getUnreadEscalationsForCircle(circleId) {
     const db = await getDb();
-    return db.all('SELECT * FROM escalations WHERE circle_id = ? AND is_read = 0 ORDER BY timestamp ASC', [circleId]);
+    return db.all("SELECT * FROM escalations WHERE circle_id = ? AND status = 'OPEN' ORDER BY timestamp ASC", [circleId]);
 }
 
-export async function getUnreadEscalationsForUser(userId) {
+/**
+ * Escalations sent to a doctor that the doctor has not acknowledged, oldest first.
+ * Based on delivery rows, so a doctor sees only what was sent to them. Anonymous
+ * consultations (ANONYMOUS_CONSULTATION, CONSULT) do not carry the patient's username.
+ * @param {string} userId - The doctor
+ * @param {string} [circleId] - Limit to one circle
+ */
+export async function getUnreadEscalationsForUser(userId, circleId = null) {
     const db = await getDb();
-    const escalations = await db.all(`
-        SELECT e.*, p.username as patient_username
-        FROM escalations e
-        JOIN care_circle_members m ON e.circle_id = m.circle_id
+    const params = [userId];
+    let circleFilter = '';
+    if (circleId) {
+        circleFilter = 'AND e.circle_id = ?';
+        params.push(circleId);
+    }
+    return db.all(`
+        SELECT e.*,
+            CASE WHEN e.type IN ('ANONYMOUS_CONSULTATION', 'CONSULT') THEN NULL ELSE p.username END AS patient_username
+        FROM escalation_deliveries d
+        JOIN escalations e ON e.escalation_id = d.escalation_id
         JOIN care_circles c ON e.circle_id = c.circle_id
         JOIN users p ON c.primary_patient_id = p.user_id
-        WHERE m.user_id = ? AND m.role = 'doctor' AND e.is_read = 0
+        WHERE d.user_id = ? AND d.role = 'doctor' AND d.status != 'failed' AND d.acknowledged_at IS NULL ${circleFilter}
         ORDER BY e.timestamp ASC
-    `, [userId]);
-    
-    return escalations;
-}
-
-
-export async function markCircleEscalationsAsRead(circleId) {
-    const db = await getDb();
-    await db.run('UPDATE escalations SET is_read = 1 WHERE circle_id = ?', [circleId]);
+    `, params);
 }
 
 export async function addDirective(circleId, doctorId, type, details) {

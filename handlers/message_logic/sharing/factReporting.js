@@ -4,11 +4,12 @@
  * This should trigger either escalation to doctor or consent request for sharing.
  */
 
-import { addEscalation, getImpliedConsent, getCircleMembers, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
+import { getImpliedConsent, getCircleMembers, findUserById, findCircleByPatientId, findCircleById } from '../../../db/index.js';
 import { generateSharingRequest, generateSharingSummaryOrProbe } from '../../../agents/index.js';
 import { createSharingConsentAction } from '../../../state_manager.js';
 import { events } from '../../../orchestrator.js';
 import { getAgentName } from '../../utils/agentIdentity.js';
+import { recordInboxEscalation } from '../../../services/escalationService.js';
 
 /**
  * Handles the case where a user reports facts about another person in the care circle.
@@ -69,8 +70,7 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
         // Check if this is medically significant enough to escalate to doctor
         if (analysis.criticality === 'MEDIUM' || analysis.criticality === 'HIGH') {
             const escalationDetails = `User '${reporterUser.username}' reported about '${targetMember.username}': "${factKey}" - ${fact.value}`;
-            await addEscalation(circleId, 'FACT_REPORT', escalationDetails, analysis.message_id ?? null);
-            events.emit('escalate', { circleId });
+            await recordInboxEscalation({ circleId, type: 'FACT_REPORT', details: escalationDetails, messageId: analysis.message_id ?? null });
 
             // Doctors see FACT_REPORT rows in their unread list
             const doctors = members.filter(m => m.role === 'doctor').map(m => m.username);

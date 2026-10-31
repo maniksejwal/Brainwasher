@@ -5,7 +5,8 @@
  */
 
 import { classifyExplicitIntent } from '../../agents/index.js';
-import { addEscalation, findCircleByPatientId } from '../../db/index.js';
+import { findCircleByPatientId } from '../../db/index.js';
+import { recordInboxEscalation } from '../../services/escalationService.js';
 import { events } from '../../orchestrator.js';
 import { getAgentName } from '../utils/agentIdentity.js';
 
@@ -14,8 +15,7 @@ export async function handleExplicitIntent(userId, circleId, message) {
 
     if (intentAnalysis.intent === 'REQUEST_CONSULTATION') {
         const details = `User '${userId}' requested to consult a doctor. Message: "${message}"`;
-        await addEscalation(circleId, 'INFO', details); // Changed from CRITICAL to INFO for routine consultations
-        events.emit('escalate', { circleId });
+        await recordInboxEscalation({ circleId, type: 'INFO', details }); // INFO, not CRITICAL: a routine consultation
         
         // Provide more helpful response based on context
         let reply = "I understand you want to talk to the doctor. ";
@@ -51,7 +51,7 @@ export async function handleExplicitIntent(userId, circleId, message) {
  */
 export async function handleAnonymousConsultation(userId, circleId, concern, reason = 'harmful behavior') {
     const anonymizedDetails = `Anonymous consultation requested for ${reason}. General concern: ${concern}. No patient identifiers disclosed.`;
-    await addEscalation(circleId, 'CONSULT', anonymizedDetails);
+    await recordInboxEscalation({ circleId, type: 'CONSULT', details: anonymizedDetails });
     
     // Notify the requesting agent
     const agentName = await getAgentName(userId, circleId);

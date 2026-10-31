@@ -7,12 +7,13 @@
  */
 
 import { events } from '../../orchestrator.js';
-import { addEscalation, findUserByUsername, findUserById, findCircleByPatientId, addMessage, findCircleById } from '../../db/index.js';
+import { findUserByUsername, findUserById, findCircleByPatientId, addMessage, findCircleById } from '../../db/index.js';
 import { generateSharingSummaryOrProbe } from '../../agents/index.js';
 import { summarizeReplyForDoctor } from '../../agents/doctorAgent.js';
 import { getAgentName } from '../utils/agentIdentity.js';
 import { checkSharingPermission, prioritizeContent } from '../utils/sensitiveContentFilter.js';
 import { getMemberInfo } from '../../db/index.js';
+import { recordInboxEscalation } from '../../services/escalationService.js';
 
 /**
  * Execute a resolved pending action.
@@ -43,8 +44,7 @@ export async function executeResolvedAction(actionResult, userId, circleId, { se
         else if (details.action_type === 'share_consent') {
             const { target, content_to_share, originatingUser } = details;
             if (target === 'doctor') {
-                await addEscalation(circleId, 'INFO', `User with ID '${originatingUser}' consented to share: "${content_to_share}"`);
-                events.emit('escalate', { circleId });
+                await recordInboxEscalation({ circleId, type: 'INFO', details: `User with ID '${originatingUser}' consented to share: "${content_to_share}"` });
             } else {
                 const targetUserInfo = await findUserByUsername(target);
                 const originatingUserInfo = await findUserById(originatingUser);

@@ -4,7 +4,8 @@
  */
 
 import chalk from 'chalk';
-import { getMemberInfo, findUserById, addEscalation } from '../../db/index.js';
+import { getMemberInfo, findUserById } from '../../db/index.js';
+import { recordInboxEscalation } from '../../services/escalationService.js';
 import { addFact, getCurrentFact } from '../../db/queries_facts.js';
 import { generateMediatedClarification } from '../../agents/index.js'; // Ensure this is exported/updated
 import { events } from '../../orchestrator.js'; // Or wherever addEscalation/events come from
@@ -79,8 +80,7 @@ export async function handleFactProcessing(userId, circleId, analysis) {
             console.log(chalk.yellow.bold(`[ConflictHandler] CONFLICT DETECTED in circle ${circleId} on '${key}'`));
 
             const conflictDetails = `Conflict on '${key}': User ${userId} says '${factValue}', but ${currentFact.reported_by} said '${currentFact.value}'.`;
-            await addEscalation(circleId, 'CONFLICT', conflictDetails, analysis.message_id ?? null);
-            events.emit('escalate', { circleId });
+            await recordInboxEscalation({ circleId, type: 'CONFLICT', details: conflictDetails, messageId: analysis.message_id ?? null });
 
             // Initiate mediated clarification with the previous reporter
             try {

@@ -143,8 +143,7 @@ export async function handleTier3Anonymous(userId, circleId, analysis) {
         type: 'ANONYMOUS_CONSULTATION',
         details: anonymousDetails,
         messageId: analysis.message_id ?? null,
-        anonymous: true,
-        eventDetails: { userId, anonymous: true }
+        anonymous: true
     });
 
     return {
@@ -170,8 +169,7 @@ export async function handleTier4Consultation(userId, circleId, analysis) {
         userId,
         type: 'CONSULTATION',
         details: consultationDetails,
-        messageId: analysis.message_id ?? null,
-        eventDetails: { userId }
+        messageId: analysis.message_id ?? null
     });
 
     return {

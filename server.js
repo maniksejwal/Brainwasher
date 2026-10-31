@@ -95,22 +95,13 @@ events.on('context_switch', (payload) => {
     }
 });
 
-events.on('escalate', (payload) => {
-    // Broadcast to all connected clients? Original logic was Object.keys(clients).forEach...
-    // We should use broadcastToAll from sse.js? Or broadcast to everyone.
-    // Ideally we should import broadcastToAll.
-    // I'll assume broadcast handles it if I pass all keys? No.
-    // I'll dynamically import broadcastToAll? Or just add it to imports.
-    // Wait, I didn't import broadcastToAll at the top.
-    import('./lib/sse.js').then(({ broadcast, broadcastToAll }) => {
-        if (payload.userId) {
-            broadcast([payload.userId], { type: 'escalation', ...payload });
-        } else {
-            // Fallback for backward compatibility
-            console.warn('[Server] Escalation event missing userId, using broadcastToAll fallback.');
-            broadcastToAll({ type: 'escalation', ...payload });
-        }
-    });
+// An escalation is sent only to its recipients; there is no circle-wide or global fallback
+events.on('escalate', ({ circleId, escalationId, type, recipients }) => {
+    if (!recipients?.length) {
+        console.error(`[Server] Escalation ${escalationId} in circle ${circleId} has no recipients; not sending it`);
+        return;
+    }
+    broadcast(recipients, { type: 'escalation', circleId, escalationId, escalationType: type });
 });
 
 events.on('analysis_progress', (payload) => {

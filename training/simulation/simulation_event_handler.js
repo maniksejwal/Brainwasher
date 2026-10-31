@@ -24,6 +24,9 @@ export class SimulationEventHandler {
             this.escalations.push({
                 timestamp: Date.now(),
                 circleId: data.circleId,
+                escalationId: data.escalationId,
+                escalationType: data.type,
+                recipients: data.recipients || [],
                 type: 'escalation'
             });
         });

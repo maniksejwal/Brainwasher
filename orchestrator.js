@@ -1,7 +1,7 @@
 // This file is the central event emitter and dispatcher.
 import { EventEmitter } from 'events';
 // FIX: Update import path to the new db package index
-import { clearDatabase, findUserById, findCircleByPatientId, getCircleMembers, addEscalation } from './db/index.js';
+import { clearDatabase, findUserById, findCircleByPatientId, getCircleMembers } from './db/index.js';
 
 // Import the new handlers
 import { handleLogin } from './handlers/loginHandler.js';
@@ -65,9 +65,11 @@ events.on('future_plan_executed', async (planData) => {
                 break;
                 
             case 'escalation':
-                // Trigger an escalation (using static import from top of file)
-                await addEscalation(planData.circleId, 'INFO', planData.description);
-                events.emit('escalate', { circleId: planData.circleId });
+                {
+                    // Imported here: the service imports `events` from this module
+                    const { recordInboxEscalation } = await import('./services/escalationService.js');
+                    await recordInboxEscalation({ circleId: planData.circleId, type: 'INFO', details: planData.description });
+                }
                 break;
                 
             default:
