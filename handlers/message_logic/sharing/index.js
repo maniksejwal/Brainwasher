@@ -42,9 +42,9 @@ export async function handleSharingAndEscalation(userId, role, message, circleId
     }
 
     // 4. Handle the specific intent of REQUESTING_MEDIATION.
-    const wasMediationHandled = await handleMediationRequest(userId, circleId, analysis);
-    if (wasMediationHandled) {
-        return { action: 'MEDIATION', actions: {} };
+    const mediationResult = await handleMediationRequest(userId, circleId, analysis);
+    if (mediationResult) {
+        return mediationResult;
     }
 
     // 5. Handle the specific intent of GIVING_ADVICE_FOR_OTHER.

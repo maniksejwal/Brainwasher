@@ -10,6 +10,7 @@
  *     escalationCreated: boolean,   // an escalation row was written
  *     doctors: string[],            // doctors in the circle who can see it
  *     caregiversAlerted: string[],  // caregivers sent an alert this turn
+ *     membersMessaged: string[],    // members sent a mediated message this turn
  *     noDoctorConnected: boolean    // a doctor was needed but the circle has none
  *   }
  */
@@ -56,7 +57,7 @@ const CLAIM_RULES = [
             new RegExp(`${SUBJECT}${ACTION_VERB}[^.!?]*${FAMILY}`, 'i'),
             new RegExp(`${FAMILY}[^.!?]*\\b(?:has|have) been (?:notified|alerted|informed|contacted|told|messaged)`, 'i')
         ],
-        isSupported: (actions) => Boolean(actions.caregiversAlerted?.length)
+        isSupported: (actions) => Boolean(actions.caregiversAlerted?.length || actions.membersMessaged?.length)
     },
     {
         type: 'ESCALATED',
@@ -65,7 +66,7 @@ const CLAIM_RULES = [
             new RegExp(`${SUBJECT}(?:escalat|notif|alert)\\w*`, 'i'),
             /\b(?:this|it) (?:has been|was|is being) (?:escalated|flagged|reported)\b/i
         ],
-        isSupported: (actions) => Boolean(actions.escalationCreated || actions.caregiversAlerted?.length)
+        isSupported: (actions) => Boolean(actions.escalationCreated || actions.caregiversAlerted?.length || actions.membersMessaged?.length)
     }
 ];
 
@@ -120,6 +121,9 @@ export function buildActionStatus(actions = {}) {
     }
     if (actions.caregiversAlerted?.length) {
         parts.push(`I've sent an alert to ${joinNames(actions.caregiversAlerted)} in the app.`);
+    }
+    if (actions.membersMessaged?.length) {
+        parts.push(`I've passed your message on to ${joinNames(actions.membersMessaged)} in the app.`);
     }
     return parts.join(' ');
 }

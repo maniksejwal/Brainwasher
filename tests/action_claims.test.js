@@ -148,3 +148,10 @@ test('a true claim next to an offer in the same question is not flagged', () => 
     assert.deepEqual(claimTypes(text, { caregiversAlerted: ['gina'] }), []);
     assert.deepEqual(claimTypes(text, NO_ACTIONS), ['FAMILY_NOTIFIED']);
 });
+
+test('a mediated message is stated as passed on, without promising a response', () => {
+    const status = buildActionStatus({ membersMessaged: ['bob'] });
+    assert.equal(status, "I've passed your message on to bob in the app.");
+    assert.doesNotMatch(status, /respond soon/);
+    assert.deepEqual(claimTypes("I've let your caregiver know.", { membersMessaged: ['bob'] }), []);
+});

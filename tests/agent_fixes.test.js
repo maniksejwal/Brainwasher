@@ -269,3 +269,19 @@ test('escalation tiers 3 and 4 only confirm what was done', async () => {
     assert.match(tier4Reply, /No doctor is connected/);
     assert.deepEqual(findFalseClaims(tier4Reply, {}), []);
 });
+
+test('mediation returns the member messaged and skips the speaker as target', async () => {
+    const { handleMediationRequest } = await import('../handlers/message_logic/sharing/mediation.js');
+    const now = Date.now();
+    await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', ['g2', 'gus', now]);
+    await db.run('INSERT OR IGNORE INTO care_circle_members (circle_id, user_id, role) VALUES (?, ?, ?)', ['c1', 'g2', 'caregiver']);
+    const analysis = (target) => ({ intent: 'REQUESTING_MEDIATION', sharingSuggestion: { target, content_to_share: 'please call me' } });
+
+    const { result, sent } = await collectBroadcasts(() => handleMediationRequest('p1', 'c1', analysis('gus')));
+    assert.deepEqual(result.actions.membersMessaged, ['gus']);
+    assert.ok(sent.some(b => b.targetUsers.includes('g2')), 'target gets the mediated message');
+    assert.ok(sent.every(b => !b.targetUsers.includes('p1')), 'speaker gets no separate confirmation');
+
+    assert.equal(await handleMediationRequest('p1', 'c1', analysis('pat')), false);
+    await db.run("DELETE FROM care_circle_members WHERE user_id = 'g2'");
+});
