@@ -281,3 +281,22 @@ The Phase 1 runs all ended with the `provideConversationFeedback` error after th
 - **Doctor requests:** more were logged (Scout 5, Maverick 4) than in earlier runs. This varies between runs; in these circles they record that no doctor is connected.
 
 **Not covered by these runs:** asking before alerting on HIGH turns (`9cf8e8f`) and the endpoint authentication changes (`b6baea9`). Both have unit and HTTP tests. A simulated patient would need to answer the alert question for a run to cover them.
+
+## How to re-run
+
+The harness and summary used for these runs are in `training/simulation/action_claims/`. Output goes to `output/` there, which git ignores.
+
+```sh
+# The same suite as above, on the current code. Accept every alert proposal from the card.
+BEDROCK_MODEL_ID=us.meta.llama4-scout-17b-instruct-v1:0 \
+  node training/simulation/action_claims/harness.mjs --proposals accept scout_next 6 2 \
+  chest_pain_emergency suicidal_patient fall_with_injury caregiver_crisis_report CRITICAL_ALERT_IGNORED
+
+# Compare result files side by side, and list messages for hand review
+node training/simulation/action_claims/summarize.mjs --review scout_next
+```
+
+- **`--proposals`:** `natural` (the default) leaves the alert question to the simulated user. `accept` and `reject` decide it from the card right after the turn.
+- **`--root <dir>`:** runs another checkout, for before/after comparisons.
+
+Since `9cf8e8f`, HIGH turns propose an alert instead of sending one. In the summary, "HIGH turns escalated in the turn itself" therefore drops to 0; read "HIGH turns with an alert proposal" and the proposal rows instead.
