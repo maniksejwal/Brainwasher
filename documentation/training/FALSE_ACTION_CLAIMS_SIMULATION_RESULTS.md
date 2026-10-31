@@ -1,4 +1,4 @@
-# False action claims, Phase 1 and 1b: before/after simulation results
+# False action claims: before/after simulation results (Phase 1, 1b and 2)
 
 Date: 2026-10-31. Branch: `feat/agent-behavior-improvements`. Related: `FALSE_ACTION_CLAIMS_ROOT_CAUSE_AND_FIX.md`.
 
@@ -135,6 +135,7 @@ The guard caught and replaced one claim in Scout-after: "I've made a note of you
 2. **The mediation handler sends a fixed promise.** `handlers/message_logic/sharing/mediation.js` sends "I've reached out to X to help facilitate the conversation. **They should respond soon.**" as a second message. In one run the target was the patient themselves. It is not covered by the plan; it should return an action result like the other handlers (Phase 2, step 18).
    **Status: fixed in `7a07a61`.** The handler returns the member it messaged, the final reply says "I've passed your message on to X in the app", and mediation is skipped when the target is the speaker.
 3. **Future-plan descriptions reach the patient.** Executed future plans send their description as a message, for example "Check if caregiver is receiving alert" and "Assess the severity of the symptoms…". This happens on both versions. These messages bypass the claim check (known Phase 1 limit; Phase 2, step 21).
+   **Status: fixed in Phase 2** (see "Phase 2: Scout before/after").
 4. **The model sometimes repeats the emergency sentence.** One Maverick reply repeated the general sentence after the inserted category sentence, despite the prompt rule. It is harmless but reads badly; the final-message builder could drop a repeated sentence.
 5. **The model copies the status sentence.** On later turns, the model wrote "I've already sent an alert to [caregiver] in the app" itself. Here it was true, since the alert had gone out on an earlier turn. The guard cannot tell whether an alert from an earlier turn exists, so a claim like this could become false. Phase 2's action record should include recent escalations, not only this turn's.
 
@@ -183,3 +184,45 @@ The guard caught and replaced one claim in Scout-after: "I've made a note of you
 - **Promised responses:** after a real caregiver alert, Maverick twice added "and they should respond as soon as they can". The alert was sent, but nobody has promised to respond. The guard has no rule for promised responses; this could be added.
 - **Repeated emergency instruction:** the model repeated the instruction in its own words, for example "Call your local emergency number immediately" right after the inserted sentence (open problem 4).
 - **Copied status sentence:** the model repeated "I've already sent an alert/update to [caregiver]" on later turns. It was true in every case, since the alert had gone out on an earlier turn (open problem 5).
+
+## Phase 2: Scout before/after (2026-10-31)
+
+**Setup:**
+- **Phase 1:** `4e5a8f9`, the code as of the v2 re-run above.
+- **Phase 2:** `11b19df`. This adds steps 12–22 of the plan (one escalation service, delivery records, the reply written after actions run), the analysis of answers to delegated questions (`1f4ece0`), and removal of the model's own copy of the status sentence (`660b6d6`).
+- **Scout only.** Earlier runs showed no meaningful difference between the models, so Maverick was not re-run. A Maverick comparison can be added at the end if needed.
+- Same 5 scenarios × 2 runs × 6 turns, same method. Messages with action phrases were reviewed by hand.
+
+| Metric | Phase 1 | Phase 2 |
+|---|---|---|
+| Runs (crashed early) | 10 (0) | 10 (0) |
+| Patient/caregiver turns | 60 | 60 |
+| Messages sent to the speaker | 73 | 60 |
+| **Turns with more than one message** | **8** | **0** |
+| **Messages with a false action claim (hand-classified)** | **0** | **0** |
+| Future-plan descriptions sent as messages | 12 | 0 |
+| Caregiver-facing alert text sent to the speaker | 1 | 0 |
+| Replies regenerated after a failed check | 0 | 0 |
+| Replies replaced by the fallback text | 0 | 0 |
+| HIGH turns opening with the approved emergency sentence | 2 / 2 | 4 / 4 |
+| HIGH turns with an escalation | 2 / 2 | 4 / 4 |
+| Turns with more than one escalation | 0 | 0 |
+| Model text repeating the status sentence | 0 | 0 |
+| Average seconds per run | 90 | 95 |
+
+The Phase 1 runs all ended with the `provideConversationFeedback` error after the last turn. The fix (`11b19df`) is not in that code. All turns were recorded, so the results are complete.
+
+**Findings:**
+
+1. **One message per turn.** Phase 1 sent extra messages on 8 of 60 turns. Phase 2 sent exactly one message on every turn. The extra Phase 1 messages were:
+   - future-plan descriptions, such as "Request patient's current medical status from emergency services or hospital" and "Ask about new prescription details";
+   - in one HIGH turn, the caregiver alert text itself ("🚨 Patient … has reported severe symptoms…"), which was sent to the speaker.
+
+   In Phase 2, due plans become notes for the reply writer and are never sent as text. This closes open problem 3.
+2. **No false action claims in either version.** Every action statement in Phase 2 is the code-written status sentence. For example: "No doctor is connected to your care circle yet, so I couldn't send this to a doctor. I've sent an alert to [caregiver] in the app."
+3. **Every HIGH turn still opens with the emergency sentence and has exactly one escalation.** Phase 2 had 4 HIGH turns and Phase 1 had 2; this is model variance in the triage, not a code difference.
+4. **No regenerated or fallback replies.** The rewritten reply passed the check every time.
+
+**Still seen in Phase 2, not counted as false claims:**
+- **Two status sentences in one turn:** "I've sent an alert to [caregiver] in the app. I've passed your message on to [caregiver] in the app." Both were true: the turn escalated and also forwarded an answer to a delegated question. The two could be merged into one sentence when the recipient is the same.
+- **Emergency instruction in the model's own words:** the model sometimes repeats it after the inserted sentence, for example "please call your local emergency number right away" (open problem 4).
