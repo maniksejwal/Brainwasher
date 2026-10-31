@@ -156,6 +156,17 @@ test('a mediated message is stated as passed on, without promising a response', 
     assert.deepEqual(claimTypes("I've let your caregiver know.", { membersMessaged: ['bob'] }), []);
 });
 
+test('a member both alerted and messaged is named in one sentence', () => {
+    assert.equal(
+        buildActionStatus({ caregiversAlerted: ['gina'], membersMessaged: ['gina'] }),
+        "I've sent an alert to gina and passed your message on to them in the app."
+    );
+    assert.equal(
+        buildActionStatus({ caregiversAlerted: ['gina', 'hal'], membersMessaged: ['gina', 'bob'] }),
+        "I've sent an alert to gina and passed your message on to them in the app. I've sent an alert to hal in the app. I've passed your message on to bob in the app."
+    );
+});
+
 test('a question from a sharing handler goes at the end, and is dropped if it claims an action', () => {
     const asked = composeFinalReply({ modelText: 'That sounds worrying.', criticality: 'MEDIUM', actions: {}, question: 'Would you like me to share this with gina?' });
     assert.equal(asked.message, 'That sounds worrying. Would you like me to share this with gina?');

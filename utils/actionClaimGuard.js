@@ -188,11 +188,20 @@ export function buildActionStatus(actions = {}) {
     } else if (actions.noDoctorConnected) {
         parts.push("No doctor is connected to your care circle yet, so I couldn't send this to a doctor.");
     }
-    if (actions.caregiversAlerted?.length) {
-        parts.push(`I've sent an alert to ${joinNames(actions.caregiversAlerted)} in the app.`);
+    // One sentence per person: someone both alerted and messaged is named once
+    const alerted = actions.caregiversAlerted || [];
+    const messaged = actions.membersMessaged || [];
+    const both = alerted.filter(name => messaged.includes(name));
+    const alertedOnly = alerted.filter(name => !both.includes(name));
+    const messagedOnly = messaged.filter(name => !both.includes(name));
+    if (both.length) {
+        parts.push(`I've sent an alert to ${joinNames(both)} and passed your message on to them in the app.`);
     }
-    if (actions.membersMessaged?.length) {
-        parts.push(`I've passed your message on to ${joinNames(actions.membersMessaged)} in the app.`);
+    if (alertedOnly.length) {
+        parts.push(`I've sent an alert to ${joinNames(alertedOnly)} in the app.`);
+    }
+    if (messagedOnly.length) {
+        parts.push(`I've passed your message on to ${joinNames(messagedOnly)} in the app.`);
     }
     if (actions.failedRecipients?.length) {
         parts.push(`I couldn't send this to ${joinNames(actions.failedRecipients)}.`);

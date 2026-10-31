@@ -463,7 +463,7 @@ test('an answer to a delegated question is forwarded and still analyzed, escalat
         assert.equal(toPatient.length, 1, JSON.stringify(toPatient.map(b => b.reply || b.message)));
         assert.equal(result.criticality, 'HIGH');
         assert.match(result.reply, /^Please call 112|^If you are in danger/);
-        assert.match(result.reply, /passed your message on to gwen/);
+        assert.match(result.reply, /sent an alert to gwen and passed your message on to them/);
         assert.ok(sent.some(b => b.targetUsers.includes('g5') && /Response from pat/.test(b.reply || '')), 'answer forwarded to gwen');
         assert.deepEqual((await db.all('SELECT type FROM escalations')).map(r => r.type), ['CRITICAL']);
         assert.equal((await db.all('SELECT * FROM pending_actions')).length, 0);
