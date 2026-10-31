@@ -549,3 +549,31 @@ test('a doctor summary acknowledges only the escalations it showed to that docto
         await clearEscalations();
     }
 });
+
+test('different descriptions, different people and empty values are not fact conflicts', async () => {
+    const { isFactConflict, handleFactProcessing } = await import('../handlers/message_logic/conflictHandler.js');
+    const current = (overrides) => ({ reported_by: 'p1', subject_id: 'p1', value: 'took morning dose', ...overrides });
+    const reported = (overrides) => ({ key: 'medication_adherence', value: 'missed morning dose', reporterId: 'g1', subjectId: 'p1', subjectNamed: true, ...overrides });
+
+    // From the Maverick run: the same speaker-relative key used by two people
+    assert.equal(isFactConflict(current({ subject_id: 'p1', value: 'feeling frustrated' }), reported({ key: 'symptom_report', value: 'anxious', subjectId: 'g1', subjectNamed: false })), false);
+    assert.equal(isFactConflict(current({ value: 'treatment plan' }), reported({ key: 'other_person_medication', value: 'null', subjectNamed: false })), false);
+    assert.equal(isFactConflict(current({ value: 'worrying' }), reported({ key: 'other_person_symptom', value: 'withdrawn' })), false, 'descriptions can both be true');
+    assert.equal(isFactConflict(current({ value: 'none' }), reported()), false, 'empty value');
+    assert.equal(isFactConflict(current({ value: 'Missed morning dose.' }), reported()), false, 'same value, different punctuation');
+    assert.equal(isFactConflict(current({ reported_by: 'g1' }), reported()), false, 'same reporter');
+    assert.equal(isFactConflict(undefined, reported()), false);
+    // A real contradiction about the same person
+    assert.equal(isFactConflict(current(), reported()), true);
+
+    await clearEscalations();
+    await db.run("DELETE FROM facts_v2 WHERE circle_id = 'c1'");
+    await handleFactProcessing('p1', 'c1', { facts: { symptom_report: 'feeling frustrated' } });
+    await handleFactProcessing('g1', 'c1', { facts: { symptom_report: 'anxious', other_person_medication: 'null' } });
+    assert.equal((await db.all("SELECT * FROM escalations WHERE type = 'CONFLICT'")).length, 0);
+
+    await handleFactProcessing('p1', 'c1', { facts: { medication_adherence: { value: 'took morning dose', subject_id: 'p1' } } });
+    await handleFactProcessing('g1', 'c1', { facts: { medication_adherence: { value: 'missed morning dose', subject_id: 'p1' } } });
+    assert.equal((await db.all("SELECT * FROM escalations WHERE type = 'CONFLICT'")).length, 1);
+    await clearEscalations();
+});

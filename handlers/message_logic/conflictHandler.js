@@ -11,6 +11,41 @@ import { generateMediatedClarification } from '../../agents/index.js'; // Ensure
 import { events } from '../../orchestrator.js'; // Or wherever addEscalation/events come from
 import { getAgentName } from '../utils/agentIdentity.js';
 
+// Values that say nothing, so they cannot contradict anything
+const EMPTY_VALUES = new Set(['', 'null', 'undefined', 'none', 'n/a', 'na', 'unknown', 'not mentioned', 'not specified']);
+// Facts that describe how someone is (symptoms, mood, concerns). Several can be true at
+// once ("anxious" and "frustrated"), so a different description is not a contradiction.
+const DESCRIPTIVE_KEY = /symptom|mood|feeling|emotion|concern|condition|behaviou?r|observation|note|report/i;
+// Keys about "another person" whose subject the extractor did not name
+const UNRESOLVED_SUBJECT_KEY = /^other_person_/;
+
+function normalizeValue(value) {
+    return String(value ?? '').trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+/**
+ * Whether a newly reported fact contradicts the current one. Fact keys are relative to
+ * the speaker ("symptom_report" is the speaker's own symptom), so two members using the
+ * same key are usually talking about different people. A conflict needs:
+ *  - a different reporter;
+ *  - the same, known subject (a key like other_person_* with no named subject is unknown);
+ *  - a single-valued fact, not a description such as a symptom or mood;
+ *  - two real values that differ after normalizing case and punctuation.
+ * @param {object|undefined} currentFact - Current row from facts_v2
+ * @param {object} reported - { key, value, reporterId, subjectId, subjectNamed }
+ * @returns {boolean}
+ */
+export function isFactConflict(currentFact, { key, value, reporterId, subjectId, subjectNamed }) {
+    if (!currentFact || currentFact.reported_by === reporterId) return false;
+    if (DESCRIPTIVE_KEY.test(key)) return false;
+    if (UNRESOLVED_SUBJECT_KEY.test(key) && !subjectNamed) return false;
+    if (!subjectId || !currentFact.subject_id || currentFact.subject_id !== subjectId) return false;
+    const before = normalizeValue(currentFact.value);
+    const now = normalizeValue(value);
+    if (EMPTY_VALUES.has(before) || EMPTY_VALUES.has(now)) return false;
+    return before !== now;
+}
+
 export async function handleFactProcessing(userId, circleId, analysis) {
     if (!analysis.facts || Object.keys(analysis.facts).length === 0) {
         return; // No facts to process
@@ -74,9 +109,8 @@ export async function handleFactProcessing(userId, circleId, analysis) {
         // Add the new fact (this will archive the old one)
         await addFact(circleId, key, factValue, metadata);
 
-        // Conflict Detection Logic
-        // Conflict if: there WAS a current fact AND it was reported by someone else AND value is different
-        if (currentFact && currentFact.reported_by !== userId && String(currentFact.value) !== String(factValue)) {
+        const subjectNamed = typeof rawValue === 'object' && rawValue !== null && Boolean(rawValue.subject_id) && rawValue.subject_id !== 'self';
+        if (isFactConflict(currentFact, { key, value: factValue, reporterId: userId, subjectId: metadata.subjectId, subjectNamed })) {
             console.log(chalk.yellow.bold(`[ConflictHandler] CONFLICT DETECTED in circle ${circleId} on '${key}'`));
 
             const conflictDetails = `Conflict on '${key}': User ${userId} says '${factValue}', but ${currentFact.reported_by} said '${currentFact.value}'.`;
