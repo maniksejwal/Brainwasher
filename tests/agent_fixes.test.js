@@ -251,6 +251,12 @@ test('a HIGH turn sends the patient exactly one message, opening with the emerge
     assert.equal(toPatient.length, 1, `expected one message, got: ${JSON.stringify(toPatient.map(b => b.reply || b.message))}`);
     assert.ok(toPatient[0].reply.startsWith(getEmergencySentence(null)), toPatient[0].reply);
     assert.equal(toPatient[0].reply, result.reply);
+
+    // The patient's message is saved once, with the final criticality, and its ID is on the analysis
+    const saved = await db.all("SELECT message_id, criticality_level FROM messages WHERE message = 'I have crushing chest pain'");
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].criticality_level, 'HIGH');
+    assert.equal(result.message_id, saved[0].message_id);
 });
 
 test('escalation tiers 3 and 4 only confirm what was done', async () => {

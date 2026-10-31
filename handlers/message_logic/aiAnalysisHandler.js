@@ -8,7 +8,6 @@
 import { normalizeCriticality } from '../../utils/criticality.js';
 import {
     getCircleMembers,
-    addMessage,
     updateUserState,
     findUserById,
     findCircleByPatientId,
@@ -303,24 +302,12 @@ export async function performAiAnalysis(userId, role, message, circleId) {
 
     analysis = await resolveEntitiesAndEnrichContext(userId, message, analysis, circleId);
 
-    // Step 3: Database Operations
-    events.emit('analysis_progress', {
-        userId,
-        step: 3,
-        description: 'Saving conversation...',
-        details: 'Storing message and analysis'
-    });
-
     const currentCircle = await findCircleById(circleId);
     if (!currentCircle) {
         console.warn(`[AIAnalysisHandler] Circle not found: ${circleId}`);
         return null;
     }
-    // Persist the original message to the database with the *final, enriched* analysis.
-    // Add safety defaults to prevent database constraint errors
-    const criticality = analysis.criticality || 'NONE';
-    const privacyLevel = analysis.privacyLevel || 'PRIVATE';
-    await addMessage(circleId, userId, role, message, privacyLevel, criticality);
+    // The message is saved by messageHandler, for both analysis paths.
 
     // Step 4: Agent Response
     events.emit('analysis_progress', {

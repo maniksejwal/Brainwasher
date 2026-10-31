@@ -112,8 +112,13 @@ export async function handleMessage(userId, circleId, message) {
         });
     }
 
+    // Save the user's message with the final analysis, for both analysis paths. Escalations
+    // created this turn are linked to this message ID.
+    analysis.message_id = await addMessage(circleId, userId, memberInfo.role, message, analysis.privacyLevel || 'PRIVATE', analysis.criticality || 'NONE');
+
     // Step 3: Process pending future plans and scheduled messages for current turn (PRODUCTION)
-    // Get current turn from conversation history (used for both future planning and execution)
+    // Get current turn from conversation history (used for both future planning and execution).
+    // The count includes the message just saved.
     const conversationHistory = await getRecentMessages(circleId, 100);
     const currentTurn = conversationHistory.filter(m => m.user_id === userId).length;
 

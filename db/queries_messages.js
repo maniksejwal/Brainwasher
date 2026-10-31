@@ -1,8 +1,13 @@
 import { getDb } from './connection.js';
 
+/**
+ * Save a message.
+ * @returns {Promise<number>} The new message ID
+ */
 export async function addMessage(circleId, userId, role, message, privacy, criticality) {
     const db = await getDb();
-    await db.run('INSERT INTO messages (circle_id, user_id, role, message, privacy_level, criticality_level, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', [circleId, userId, role, message, privacy, criticality, Date.now()]);
+    const result = await db.run('INSERT INTO messages (circle_id, user_id, role, message, privacy_level, criticality_level, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', [circleId, userId, role, message, privacy, criticality, Date.now()]);
+    return result.lastID;
 }
 
 export async function getRecentMessages(circleId, limit = 5) {

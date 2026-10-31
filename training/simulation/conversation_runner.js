@@ -292,20 +292,23 @@ export class ConversationRunner {
                 logger.warn(`[ConversationRunner] Synthetic user feedback failed: ${error.message}`);
             }
 
-            // Store user message in database
-            try {
-                // Use actual circleId (patient userId) instead of conversationId to satisfy foreign key constraint
-                const circleId = activeUser.circleId || this.conversationId;
-                await addMessage(
-                    circleId,
-                    activeUser.userId,
-                    activeUser.role,
-                    userMessage,
-                    'PRIVATE',
-                    'NONE'
-                );
-            } catch (error) {
-                console.warn(`[ConversationRunner] Failed to store user message: ${error.message}`);
+            // Store user message in database. Regular messages are saved by handleMessage;
+            // commands do not go through it, so they are saved here.
+            if (userMessage.startsWith('/')) {
+                try {
+                    // Use actual circleId (patient userId) instead of conversationId to satisfy foreign key constraint
+                    const circleId = activeUser.circleId || this.conversationId;
+                    await addMessage(
+                        circleId,
+                        activeUser.userId,
+                        activeUser.role,
+                        userMessage,
+                        'PRIVATE',
+                        'NONE'
+                    );
+                } catch (error) {
+                    console.warn(`[ConversationRunner] Failed to store user message: ${error.message}`);
+                }
             }
 
             // Add to conversation history
