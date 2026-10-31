@@ -8,6 +8,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { findFalseClaims, buildActionStatus, composeFinalReply, FALLBACK_TEXT } from '../utils/actionClaimGuard.js';
 import { getEmergencySentence, normalizeHighCategory } from '../config/emergencyGuidance.js';
+import { loadPrompt } from '../companions/utils/promptLoader.js';
+import { NO_ACTIONS_TAKEN } from '../prompts/action_contract.js';
 
 const NO_ACTIONS = {};
 const DOCTOR_FLAGGED = { escalationCreated: true, doctors: ['dr_evans'] };
@@ -93,4 +95,13 @@ test('a false claim is replaced by the fallback and reported', () => {
         FALLBACK_TEXT,
         "No doctor is connected to your care circle yet, so I couldn't send this to a doctor."
     ].join(' '));
+});
+
+test('companion reply prompts carry the action contract with ACTIONS_TAKEN filled', () => {
+    for (const name of ['patient_optimizer', 'empathy']) {
+        const prompt = loadPrompt(name, { ACTIONS_TAKEN: NO_ACTIONS_TAKEN });
+        assert.match(prompt, /CAPABILITIES/, name);
+        assert.match(prompt, /ACTIONS_TAKEN this turn:\*\*\s*none/, name);
+        assert.ok(!prompt.includes('{{ACTIONS_TAKEN}}'), `${name} left the placeholder unfilled`);
+    }
 });

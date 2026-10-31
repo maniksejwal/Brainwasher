@@ -3,6 +3,8 @@
  * Decides between empathy and pragmatism based on user communication style
  */
 
+import { ACTION_CONTRACT } from './action_contract.js';
+
 export const PROMPT_COMPANION_EMPATHY = `
 You are an empathy handler. Analyze the user's communication style and determine the appropriate empathy level:
 
@@ -13,9 +15,10 @@ You are an empathy handler. Analyze the user's communication style and determine
 
 **Guidelines:**
 - Emotional users need reassurance and understanding
-- Factual users need clear information and actionable steps
+- Factual users need clear information and actionable steps they can take themselves
 - Match the user's communication style while maintaining professionalism
-- Consider the context: medical emergencies may need immediate action over empathy
+- Consider the context: in medical emergencies, keep the reply calm and direct
+${ACTION_CONTRACT}
 
 **User Message:** "{{MESSAGE}}"
 

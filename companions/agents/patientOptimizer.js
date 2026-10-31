@@ -7,6 +7,7 @@ import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { loadPrompt } from '../utils/promptLoader.js';
 import { validateAndAdjustResponse, shouldUseBlankTurn } from '../utils/responseStyleValidator.js';
+import { NO_ACTIONS_TAKEN } from '../../prompts/action_contract.js';
 
 /**
  * Process patient optimization
@@ -62,7 +63,8 @@ export async function processPatientOptimization(userId, role, message, circleId
         REPETITION_GUIDANCE: repetitionGuidance,
         TOPIC_SHIFT_GUIDANCE: topicShiftGuidance,
         TOPIC_SHIFT: topicShift,
-        CONVERSATION_HISTORY: conversationHistoryText
+        CONVERSATION_HISTORY: conversationHistoryText,
+        ACTIONS_TAKEN: NO_ACTIONS_TAKEN
     });
 
     try {

@@ -6,6 +6,7 @@
 import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { loadPrompt } from '../utils/promptLoader.js';
+import { NO_ACTIONS_TAKEN } from '../../prompts/action_contract.js';
 
 /**
  * Process empathy decision
@@ -20,7 +21,8 @@ export async function processEmpathyDecision(userId, role, message, circleId, co
     const prompt = loadPrompt('empathy', {
         MESSAGE: message,
         ROLE: role,
-        CRITICALITY: context.clinicalAssessment?.criticality || 'NONE'
+        CRITICALITY: context.clinicalAssessment?.criticality || 'NONE',
+        ACTIONS_TAKEN: NO_ACTIONS_TAKEN
     });
 
     try {
