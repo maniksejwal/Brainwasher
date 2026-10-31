@@ -311,6 +311,39 @@ export async function migrateDatabase(db) {
             CREATE INDEX IF NOT EXISTS idx_notif_user ON in_app_notifications(user_id);
         `);
 
+        // Escalation status and the message that caused it
+        const escalationsInfo = await db.all('PRAGMA table_info(escalations)');
+        if (escalationsInfo.length > 0) {
+            if (!escalationsInfo.some(col => col.name === 'status')) {
+                console.log('[Migration] Adding status to escalations...');
+                await db.run("ALTER TABLE escalations ADD COLUMN status TEXT DEFAULT 'OPEN'"); // OPEN, ACKNOWLEDGED, RESOLVED
+            }
+            if (!escalationsInfo.some(col => col.name === 'message_id')) {
+                console.log('[Migration] Adding message_id to escalations...');
+                await db.run('ALTER TABLE escalations ADD COLUMN message_id INTEGER');
+            }
+            await db.run('CREATE INDEX IF NOT EXISTS idx_escalations_message ON escalations(message_id)');
+        }
+
+        // One row per recipient of a patient-safety escalation
+        await db.exec(`
+            CREATE TABLE IF NOT EXISTS escalation_deliveries (
+                delivery_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                escalation_id INTEGER NOT NULL,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                status TEXT NOT NULL, -- 'pending', 'delivered', 'failed'
+                provider_message_id TEXT,
+                error TEXT,
+                sent_at INTEGER NOT NULL,
+                acknowledged_at INTEGER,
+                FOREIGN KEY (escalation_id) REFERENCES escalations(escalation_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_deliveries_escalation ON escalation_deliveries(escalation_id);
+            CREATE INDEX IF NOT EXISTS idx_deliveries_user ON escalation_deliveries(user_id);
+        `);
+
         // Migration for feedback table - add all missing columns
         const feedbackInfo = await db.all('PRAGMA table_info(feedback)');
         if (feedbackInfo.length > 0) {
@@ -373,6 +406,7 @@ export async function clearDatabase() {
         DELETE FROM implied_consent;
         DELETE FROM pending_actions;
         DELETE FROM directives;
+        DELETE FROM escalation_deliveries;
         DELETE FROM escalations;
         DELETE FROM fact_history;
         DELETE FROM facts;
