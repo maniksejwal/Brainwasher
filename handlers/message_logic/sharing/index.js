@@ -18,9 +18,10 @@ import { handleFallbackSharing } from './fallbackSharing.js';
  * @param {string} message - The original message
  * @param {string} circleId - The circle ID
  * @param {object} analysis - The AI analysis result
- * @returns {Promise<object|null>} Sharing result: { action, escalated, details, actions },
- *   where `actions` is the action record checked by utils/actionClaimGuard.js.
- *   Null when no handler acted.
+ * @returns {Promise<object|null>} Sharing result from whichever handler acted:
+ *   { action, escalated, shared, details, actions, question }, where `actions` is the action
+ *   record checked by utils/actionClaimGuard.js and `question` (optional) is asked at the
+ *   end of the reply. Null when no handler acted.
  */
 export async function handleSharingAndEscalation(userId, role, message, circleId, analysis) {
     // 1. Handle HIGH criticality events first. This is a safety override.
@@ -30,9 +31,9 @@ export async function handleSharingAndEscalation(userId, role, message, circleId
     }
 
     // 2. Handle REPORTING_FACT about another person in the care circle.
-    const wasFactReportHandled = await handleFactReporting(userId, circleId, analysis);
-    if (wasFactReportHandled) {
-        return { action: 'FACT_REPORT', actions: {} };
+    const factReportResult = await handleFactReporting(userId, circleId, analysis);
+    if (factReportResult) {
+        return factReportResult;
     }
 
     // 3. Handle the specific intent of REQUESTING_DOCTOR.
@@ -48,12 +49,11 @@ export async function handleSharingAndEscalation(userId, role, message, circleId
     }
 
     // 5. Handle the specific intent of GIVING_ADVICE_FOR_OTHER.
-    const wasAdviceHandled = await handleAdviceSharing(userId, circleId, analysis);
-    if (wasAdviceHandled) {
-        return { action: 'ADVICE_SHARING', actions: {} };
+    const adviceResult = await handleAdviceSharing(userId, circleId, analysis);
+    if (adviceResult) {
+        return adviceResult;
     }
 
     // 6. Fall back to the standard proactive sharing suggestion flow.
-    const wasFallbackHandled = await handleFallbackSharing(userId, circleId, analysis);
-    return wasFallbackHandled ? { action: 'SHARING_SUGGESTION', actions: {} } : null;
+    return (await handleFallbackSharing(userId, circleId, analysis)) || null;
 }

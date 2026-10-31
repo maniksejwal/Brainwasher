@@ -5,9 +5,8 @@
  * otherwise schedules a follow-up question for the next turn without escalating.
  */
 
-import { addEscalation, getCircleMembers, findUserById, findCircleByPatientId } from '../../../db/index.js';
-import { events } from '../../../orchestrator.js';
-import { getAgentName } from '../../utils/agentIdentity.js';
+import { findUserById, findCircleByPatientId } from '../../../db/index.js';
+import { escalate } from '../../../services/escalationService.js';
 import { createScheduledMessage } from '../../../db/queries_future_plans.js';
 import { makeApiCall } from '../../../agents/api_client.js';
 import { generateEmergencyConfidencePrompt, generateEscalationHintPrompt } from '../../../prompts/emergency_confidence_prompt.js';
@@ -99,36 +98,24 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
     if (confidence >= ESCALATION_CONFIDENCE_THRESHOLD) {
         // ESCALATION DENIAL OVERRIDE: For HIGH criticality with high confidence, we MUST escalate regardless of patient consent
         const criticalDetails = `User '${userId}' (${role}) reported: "${message}" [IMMEDIATE ESCALATION: High confidence emergency (${(confidence * 100).toFixed(0)}%)]`;
-        await addEscalation(circleId, 'CRITICAL', criticalDetails);
-        events.emit('escalate', { circleId });
-        
-        // Notify family members about critical health issues
-        const members = await getCircleMembers(circleId);
-        const familyMembers = members.filter(m => m.role === 'caregiver' && m.user_id !== userId);
-        const doctors = members.filter(m => m.role === 'doctor').map(m => m.username);
-        if (familyMembers.length > 0) {
-            const familyNotification = `Urgent health update: ${patientUsername} reported a critical health concern. Please check on them. [Automatically notified due to criticality]`;
-            const agentName = await getAgentName(familyMembers[0].user_id, circleId);
-            events.emit('broadcast', {
-                targetUsers: familyMembers.map(m => m.user_id),
-                message: familyNotification,
-                from: agentName,
-                circleId,
-                patientUsername
-            });
-        }
+        // Doctors get the escalation; caregivers (other than the speaker) get an alert
+        const result = await escalate({
+            circleId,
+            userId,
+            type: 'CRITICAL',
+            details: criticalDetails,
+            messageId: analysis.message_id ?? null,
+            notifyCaregivers: true,
+            caregiverMessage: `Urgent health update: ${patientUsername} reported a critical health concern. Please check on them. [Automatically notified due to criticality]`,
+            patientUsername
+        });
 
         // The user is not messaged here: messageHandler states what was done in its one reply.
         return {
             action: 'ESCALATE',
             escalated: true,
-            details: { escalation_type: 'CRITICAL', confidence },
-            actions: {
-                escalationCreated: true,
-                doctors,
-                caregiversAlerted: familyMembers.map(m => m.username),
-                noDoctorConnected: doctors.length === 0
-            }
+            details: { escalation_type: 'CRITICAL', escalation_id: result.escalationId, confidence },
+            actions: result.actions
         };
     }
     

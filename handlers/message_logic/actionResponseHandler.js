@@ -8,7 +8,9 @@
 import { handleUserResponseToAction } from '../../state_manager.js';
 import { executeResolvedAction } from './actionExecutor.js';
 import { handleEscalationPermissionResponse } from './sharing/escalationTiers.js';
-import { getActivePendingActions } from '../../db/index.js';
+import { getActivePendingActions, findCircleById, findUserById } from '../../db/index.js';
+import { events } from '../../orchestrator.js';
+import { getAgentName } from '../utils/agentIdentity.js';
 
 export async function handlePendingActionResponse(userId, circleId, message) {
     // This function now only handles natural language responses, not commands.
@@ -21,7 +23,17 @@ export async function handlePendingActionResponse(userId, circleId, message) {
     if (escalationAction) {
         const handled = await handleEscalationPermissionResponse(userId, circleId, message, escalationAction);
         if (handled) {
-            return { reply: handled.reply || "Permission processed" };
+            // One message to the user, built from what the tier handler did
+            const circle = await findCircleById(circleId);
+            const patient = circle ? await findUserById(circle.primary_patient_id) : null;
+            events.emit('broadcast', {
+                targetUsers: [userId],
+                reply: handled.reply,
+                from: await getAgentName(userId, circleId),
+                circleId,
+                patientUsername: patient?.username ?? userId
+            });
+            return { reply: handled.reply, sharingResult: handled.sharingResult };
         }
     }
 

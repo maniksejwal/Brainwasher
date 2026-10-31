@@ -75,6 +75,12 @@ before(async () => {
     await db.run('INSERT INTO care_circle_members (circle_id, user_id, role) VALUES (?, ?, ?)', ['c1', 'p1', 'patient']);
 });
 
+// Delivery rows reference escalations, so they are removed first
+async function clearEscalations() {
+    await db.run('DELETE FROM escalation_deliveries');
+    await db.run('DELETE FROM escalations');
+}
+
 // --- #2 ---
 
 test('#2 clinicalAgent completes before dependents, which receive its assessment', async () => {
@@ -125,7 +131,7 @@ test('#7 patient optimizer sees the newest five messages in chronological order'
 
 test('#4 doctor request routes on pipe-separated intents and ignores others', async () => {
     const { handleDoctorRequest } = await import('../handlers/message_logic/sharing/doctorRequests.js');
-    await db.run('DELETE FROM escalations');
+    await clearEscalations();
 
     assert.equal(await handleDoctorRequest('p1', 'c1', { intent: 'ASKING_QUESTION' }), false);
     assert.equal(await handleDoctorRequest('p1', 'c1', { intent: 'REPORTING_FACT' }), false);
@@ -142,7 +148,7 @@ test('#4 doctor request routes on pipe-separated intents and ignores others', as
 
 test('#9a detectExecutedActions reports escalations and pending actions since turn start', async () => {
     const { detectExecutedActions } = await import('../training/simulation/ai_integration.js');
-    await db.run('DELETE FROM escalations');
+    await clearEscalations();
     await db.run('DELETE FROM pending_actions');
 
     const since = Date.now();
@@ -204,7 +210,7 @@ test('critical event at high confidence escalates and reports caregivers without
     const now = Date.now();
     await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', ['g1', 'gina', now]);
     await db.run('INSERT OR IGNORE INTO care_circle_members (circle_id, user_id, role) VALUES (?, ?, ?)', ['c1', 'g1', 'caregiver']);
-    await db.run('DELETE FROM escalations');
+    await clearEscalations();
 
     nextApiResult = { confidence: 0.95 };
     const { result, sent } = await collectBroadcasts(() =>
@@ -223,7 +229,7 @@ test('critical event at high confidence escalates and reports caregivers without
 
 test('critical event below the threshold does not escalate or message the patient', async () => {
     const { handleCriticalEvent } = await import('../handlers/message_logic/sharing/criticalEvents.js');
-    await db.run('DELETE FROM escalations');
+    await clearEscalations();
 
     nextApiResult = { confidence: 0.5 };
     const { result, sent } = await collectBroadcasts(() =>
@@ -239,7 +245,7 @@ test('critical event below the threshold does not escalate or message the patien
 test('a HIGH turn sends the patient exactly one message, opening with the emergency sentence', async () => {
     const { handleMessage } = await import('../handlers/messageHandler.js');
     const { getEmergencySentence } = await import('../config/emergencyGuidance.js');
-    await db.run('DELETE FROM escalations');
+    await clearEscalations();
     // Isolate from follow-ups scheduled by earlier tests
     await db.run('DELETE FROM scheduled_messages');
 
@@ -259,21 +265,71 @@ test('a HIGH turn sends the patient exactly one message, opening with the emerge
     assert.equal(result.message_id, saved[0].message_id);
 });
 
-test('escalation tiers 3 and 4 only confirm what was done', async () => {
-    const { handleTier3Anonymous, handleTier4Consultation } = await import('../handlers/message_logic/sharing/escalationTiers.js');
-    const { findFalseClaims } = await import('../utils/actionClaimGuard.js');
+test('escalation tiers return what was done and do not message the patient', async () => {
+    const { handleTier1Permission, handleTier3Anonymous, handleTier4Consultation } = await import('../handlers/message_logic/sharing/escalationTiers.js');
+    const { buildActionStatus } = await import('../utils/actionClaimGuard.js');
     const analysis = { criticality: 'MEDIUM', sharingSuggestion: { content_to_share: 'dizzy spells' } };
+    await clearEscalations();
 
     const tier3 = await collectBroadcasts(() => handleTier3Anonymous('p1', 'c1', analysis));
-    const tier3Reply = tier3.sent.find(b => b.targetUsers.includes('p1')).reply;
-    assert.match(tier3Reply, /logged a request/);
-    assert.doesNotMatch(tier3Reply, /provided guidance/);
+    assert.equal(tier3.result.actions.anonymousConsultation, true);
+    assert.match(buildActionStatus(tier3.result.actions), /logged a request/);
+    assert.ok(tier3.sent.every(b => !b.targetUsers.includes('p1')));
 
     // c1 has no doctor
-    const tier4 = await collectBroadcasts(() => handleTier4Consultation('p1', 'c1', analysis));
-    const tier4Reply = tier4.sent.find(b => b.targetUsers.includes('p1')).reply;
-    assert.match(tier4Reply, /No doctor is connected/);
-    assert.deepEqual(findFalseClaims(tier4Reply, {}), []);
+    const tier4 = await collectBroadcasts(() => handleTier4Consultation('p1', 'c1', { ...analysis, message_id: 9001 }));
+    assert.equal(tier4.result.actions.noDoctorConnected, true);
+    assert.match(buildActionStatus(tier4.result.actions), /No doctor is connected/);
+    assert.ok(tier4.sent.every(b => !b.targetUsers.includes('p1')));
+
+    // Tier 1 asks the question through the reply and records the pending permission
+    const tier1 = await collectBroadcasts(() => handleTier1Permission('p1', 'c1', analysis));
+    assert.match(tier1.result.question, /Would you like me to consult with a doctor/);
+    assert.equal(tier1.result.escalated, false);
+    assert.equal(tier1.sent.length, 0);
+    await db.run('DELETE FROM pending_actions');
+});
+
+test('a permission answer is matched on whole words, escalates once and clears the question', async () => {
+    const { handleTier1Permission } = await import('../handlers/message_logic/sharing/escalationTiers.js');
+    const { handlePendingActionResponse } = await import('../handlers/message_logic/actionResponseHandler.js');
+    await clearEscalations();
+    await db.run('DELETE FROM pending_actions');
+    await handleTier1Permission('p1', 'c1', { criticality: 'MEDIUM', sharingSuggestion: { content_to_share: 'dizzy spells' } });
+
+    // "took" contains "ok" but is not an answer
+    assert.equal(await handlePendingActionResponse('p1', 'c1', 'I took my pills this morning'), null);
+
+    const { result, sent } = await collectBroadcasts(() => handlePendingActionResponse('p1', 'c1', 'yes please'));
+    // c1 has no caregiver, so tier 2 moves to tier 3
+    assert.match(result.reply, /anonymous consultation/);
+    assert.deepEqual(sent.filter(b => b.targetUsers.includes('p1')).map(b => b.reply), [result.reply]);
+    assert.deepEqual((await db.all('SELECT type FROM escalations')).map(r => r.type), ['ANONYMOUS_CONSULTATION']);
+    assert.equal((await db.all('SELECT * FROM pending_actions')).length, 0, 'answered question is removed');
+});
+
+test('a fact report escalated to the doctor returns its result instead of messaging the reporter', async () => {
+    const { handleFactReporting } = await import('../handlers/message_logic/sharing/factReporting.js');
+    const now = Date.now();
+    await db.run('INSERT OR IGNORE INTO users (user_id, username, created_at) VALUES (?, ?, ?)', ['g3', 'gail', now]);
+    await db.run('INSERT OR IGNORE INTO care_circle_members (circle_id, user_id, role) VALUES (?, ?, ?)', ['c1', 'g3', 'caregiver']);
+    await clearEscalations();
+
+    const analysis = {
+        intent: 'REPORTING_FACT',
+        criticality: 'MEDIUM',
+        reply: 'Thanks for letting me know.',
+        // A null fact used to crash the handler
+        facts: { empty: null, fainted: { subject: 'pat', value: 'fainted twice today' } }
+    };
+    const { result, sent } = await collectBroadcasts(() => handleFactReporting('g3', 'c1', analysis));
+
+    assert.equal(result.action, 'FACT_REPORT');
+    assert.equal(result.actions.escalationCreated, true);
+    assert.equal(result.actions.noDoctorConnected, true);
+    assert.ok(sent.every(b => !b.targetUsers.includes('g3')), 'reporter gets no separate message');
+    assert.deepEqual((await db.all('SELECT type FROM escalations')).map(r => r.type), ['FACT_REPORT']);
+    await db.run("DELETE FROM care_circle_members WHERE user_id = 'g3'");
 });
 
 test('mediation returns the member messaged and skips the speaker as target', async () => {

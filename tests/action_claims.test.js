@@ -155,3 +155,13 @@ test('a mediated message is stated as passed on, without promising a response', 
     assert.doesNotMatch(status, /respond soon/);
     assert.deepEqual(claimTypes("I've let your caregiver know.", { membersMessaged: ['bob'] }), []);
 });
+
+test('a question from a sharing handler goes at the end, and is dropped if it claims an action', () => {
+    const asked = composeFinalReply({ modelText: 'That sounds worrying.', criticality: 'MEDIUM', actions: {}, question: 'Would you like me to share this with gina?' });
+    assert.equal(asked.message, 'That sounds worrying. Would you like me to share this with gina?');
+    assert.deepEqual(asked.violations, []);
+
+    const claimed = composeFinalReply({ modelText: 'That sounds worrying.', criticality: 'MEDIUM', actions: {}, question: "I've already told your doctor. Anything else?" });
+    assert.equal(claimed.message, 'That sounds worrying.');
+    assert.deepEqual(claimed.violations.map(v => v.type), ['DOCTOR_NOTIFIED']);
+});

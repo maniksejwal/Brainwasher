@@ -13,9 +13,11 @@
  *     membersMessaged: string[],    // members sent a mediated message this turn
  *     noDoctorConnected: boolean,   // a doctor was needed but the circle has none
  *     failedRecipients: string[],   // recipients the escalation could not be sent to
- *     anonymousConsultation: boolean, // an anonymous consultation request was logged
- *     permissionRequested: boolean  // the user was asked whether to consult a doctor
+ *     anonymousConsultation: boolean // an anonymous consultation request was logged
  *   }
+ *
+ * A sharing handler can also return a `question` for the user (asking permission to
+ * escalate or to share). It is not an action; it goes at the end of the reply.
  */
 
 import { getEmergencySentence } from '../config/emergencyGuidance.js';
@@ -133,23 +135,22 @@ export function buildActionStatus(actions = {}) {
     if (actions.failedRecipients?.length) {
         parts.push(`I couldn't send this to ${joinNames(actions.failedRecipients)}.`);
     }
-    if (actions.permissionRequested) {
-        parts.push('Would you like me to consult with a doctor about this?');
-    }
     return parts.join(' ');
 }
 
 /**
  * Compose the one message sent to the user who wrote in:
- * emergency sentence (HIGH only), checked model text, action status.
+ * emergency sentence (HIGH only), checked model text, action status, then any question
+ * from a sharing handler.
  * @param {object} params
  * @param {string} params.modelText - Reply written by the model
  * @param {string} params.criticality - Final criticality for the turn
  * @param {string} [params.highCategory] - HIGH category from the clinical agent
  * @param {object} [params.actions] - Action record for this turn
+ * @param {string} [params.question] - Question from a sharing handler (may be model-written)
  * @returns {{message: string, violations: Array<{type: string, sentence: string}>}}
  */
-export function composeFinalReply({ modelText, criticality, highCategory = null, actions = {} }) {
+export function composeFinalReply({ modelText, criticality, highCategory = null, actions = {}, question = null }) {
     const violations = findFalseClaims(modelText, actions);
     const body = violations.length > 0 || !modelText ? FALLBACK_TEXT : modelText.trim();
     const parts = [];
@@ -159,6 +160,15 @@ export function composeFinalReply({ modelText, criticality, highCategory = null,
     parts.push(body);
     const status = buildActionStatus(actions);
     if (status) parts.push(status);
+    if (question) {
+        // A question that claims an action is dropped, not sent
+        const questionViolations = findFalseClaims(question, actions);
+        if (questionViolations.length > 0) {
+            violations.push(...questionViolations);
+        } else {
+            parts.push(question.trim());
+        }
+    }
     return { message: parts.join(' '), violations };
 }
 

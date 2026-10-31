@@ -16,7 +16,8 @@ import { handleTieredEscalation } from './escalationTiers.js';
  * @param {string} userId - The user ID
  * @param {string} circleId - The circle ID
  * @param {object} analysis - The AI analysis result
- * @returns {Promise<boolean>} - True if handled, false otherwise
+ * @returns {Promise<object|false>} - Sharing result if handled, false otherwise. The user who
+ *   wrote in is not messaged here; a consent question is returned for the one reply.
  */
 export async function handleFallbackSharing(userId, circleId, analysis) {
     if (!analysis.sharingSuggestion || !analysis.sharingSuggestion.target || !analysis.sharingSuggestion.content_to_share) {
@@ -91,16 +92,26 @@ export async function handleFallbackSharing(userId, circleId, analysis) {
         const contextualMessage = await generateSharingSummaryOrProbe(userId, targetMember.username, analysis.sharingSuggestion.content_to_share);
         const agentName = await getAgentName(targetMember.user_id, circleId);
         events.emit('broadcast', { targetUsers: [targetMember.user_id], message: contextualMessage, from: agentName, circleId, patientUsername });
-    } else {
-        const currentUser = await findUserById(userId);
-        const suggestion = { originatingUser: currentUser.username, ...analysis.sharingSuggestion };
-        const request = await generateSharingRequest(targetMember.role, analysis.sharingSuggestion.reason, analysis.sharingSuggestion.content_to_share);
-        // Store the full question text in the suggestion for better matching
-        suggestion.full_question = request;
-        await createSharingConsentAction(userId, circleId, suggestion);
-        const agentName = await getAgentName(userId, circleId);
-        events.emit('broadcast', { targetUsers: [userId], reply: request, from: agentName, circleId, patientUsername });
+        return {
+            action: 'SHARING_SUGGESTION',
+            shared: true,
+            details: { target: targetMember.username },
+            actions: { membersMessaged: [targetMember.username] }
+        };
     }
 
-    return true;
+    // Otherwise ask for consent; the question goes at the end of the one reply
+    const currentUser = await findUserById(userId);
+    const suggestion = { originatingUser: currentUser.username, ...analysis.sharingSuggestion };
+    const request = await generateSharingRequest(targetMember.role, analysis.sharingSuggestion.reason, analysis.sharingSuggestion.content_to_share);
+    // Store the full question text in the suggestion for better matching
+    suggestion.full_question = request;
+    await createSharingConsentAction(userId, circleId, suggestion);
+    return {
+        action: 'SHARING_SUGGESTION',
+        shared: false,
+        details: { target: targetMember.username },
+        actions: {},
+        question: request
+    };
 }

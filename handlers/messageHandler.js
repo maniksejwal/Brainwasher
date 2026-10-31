@@ -180,13 +180,15 @@ export async function handleMessage(userId, circleId, message) {
 
     // Step 6: Build the one message for the originating user. Action claims in the model's
     // reply are checked against what the sharing handlers did; the emergency sentence (HIGH)
-    // and the action status are written by code.
+    // and the action status are written by code. A consent or permission question from a
+    // sharing handler goes at the end.
     if (analysis?.reply || analysis?.criticality === 'HIGH') {
         const { message: finalReply, violations } = composeFinalReply({
             modelText: analysis.reply,
             criticality: analysis.criticality,
             highCategory: analysis.high_category,
-            actions: sharingResult?.actions
+            actions: sharingResult?.actions,
+            question: sharingResult?.question
         });
         if (violations.length > 0) {
             console.warn(`[MessageHandler] Replaced reply containing unsupported action claims (circle=${circleId}, user=${userId}, turn=${currentTurn}):`, violations);

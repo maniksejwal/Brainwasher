@@ -12,7 +12,7 @@ import { getAgentName } from '../../utils/agentIdentity.js';
 /**
  * Handles the specific case where one user gives advice for another.
  * Instead of escalating, it mediates the advice to the target user's agent.
- * @returns {boolean} - True if the advice was handled, otherwise false.
+ * @returns {Promise<object|false>} - Sharing result with the member messaged, or false if not handled.
  */
 export async function handleAdviceSharing(userId, circleId, analysis) {
     if (analysis.intent !== 'GIVING_ADVICE_FOR_OTHER' || !analysis.facts || !analysis.sharingSuggestion) {
@@ -21,7 +21,7 @@ export async function handleAdviceSharing(userId, circleId, analysis) {
 
     const factKey = Object.keys(analysis.facts)[0];
     const fact = analysis.facts[factKey];
-    if (!fact.subject) return false;
+    if (!fact?.subject) return false;
 
     const members = await getCircleMembers(circleId);
     const targetMember = members.find(m => m.username === fact.subject);
@@ -45,5 +45,11 @@ export async function handleAdviceSharing(userId, circleId, analysis) {
         patientUsername: patient.username
     });
 
-    return true; // The advice was successfully mediated.
+    // The advice was mediated; the user who gave it is told in messageHandler's one reply
+    return {
+        action: 'ADVICE_SHARING',
+        shared: true,
+        details: { target: targetMember.username },
+        actions: { membersMessaged: [targetMember.username] }
+    };
 }

@@ -4,8 +4,8 @@
  * This should trigger immediate escalation to the doctor.
  */
 
-import { addEscalation, findUserById, findCircleById, getCircleMembers } from '../../../db/index.js';
-import { events } from '../../../orchestrator.js';
+import { findUserById, findCircleById } from '../../../db/index.js';
+import { escalate } from '../../../services/escalationService.js';
 
 /**
  * Handles the case where a user explicitly requests to talk to or consult with the doctor.
@@ -25,24 +25,22 @@ export async function handleDoctorRequest(userId, circleId, analysis) {
     
     console.log(`[DoctorRequest] User '${currentUser.username}' requesting doctor consultation`);
 
-    const members = await getCircleMembers(circleId);
-    const doctors = members.filter(m => m.role === 'doctor').map(m => m.username);
-
     // Create escalation for doctor request. It is recorded even without a doctor,
     // so a doctor who joins the circle later can see the request.
     const escalationDetails = `User '${currentUser.username}' requested doctor consultation: "${analysis.sharingSuggestion?.content_to_share || 'Patient wants to speak with doctor'}"`;
-    await addEscalation(circleId, 'DOCTOR_REQUEST', escalationDetails);
-    events.emit('escalate', { circleId });
+    const result = await escalate({
+        circleId,
+        userId,
+        type: 'DOCTOR_REQUEST',
+        details: escalationDetails,
+        messageId: analysis.message_id ?? null
+    });
 
     // The user is not messaged here: messageHandler states what was done in its one reply.
     return {
         action: 'ESCALATE',
         escalated: true,
-        details: { escalation_type: 'DOCTOR_REQUEST' },
-        actions: {
-            escalationCreated: true,
-            doctors,
-            noDoctorConnected: doctors.length === 0
-        }
+        details: { escalation_type: 'DOCTOR_REQUEST', escalation_id: result.escalationId },
+        actions: result.actions
     };
 }

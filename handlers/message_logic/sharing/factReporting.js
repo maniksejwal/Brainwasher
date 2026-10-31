@@ -13,7 +13,9 @@ import { getAgentName } from '../../utils/agentIdentity.js';
 /**
  * Handles the case where a user reports facts about another person in the care circle.
  * This should trigger either escalation to doctor or consent request for sharing.
- * @returns {boolean} - True if the fact report was handled, otherwise false.
+ * The reporter is not messaged here: the result carries what was done, and any consent
+ * question, for messageHandler's one reply.
+ * @returns {Promise<object|false>} - Sharing result if the fact report was handled, otherwise false.
  */
 export async function handleFactReporting(userId, circleId, analysis, originalUserId = null) {
     if (analysis.intent !== 'REPORTING_FACT' || !analysis.facts) {
@@ -24,8 +26,8 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
     const reporterUserId = originalUserId || userId;
 
     // Check if any facts are about another person
-    const factsAboutOthers = Object.entries(analysis.facts).filter(([key, fact]) => 
-        fact.subject && fact.subject !== reporterUserId
+    const factsAboutOthers = Object.entries(analysis.facts).filter(([key, fact]) =>
+        fact?.subject && fact.subject !== reporterUserId
     );
 
     if (factsAboutOthers.length === 0) {
@@ -54,6 +56,9 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
     if (!circle) return null;
     const patient = await findUserById(circle.primary_patient_id);
 
+    const actions = { membersMessaged: [] };
+    let question = null;
+
     // For each fact about another person, decide on appropriate action
     for (const [factKey, fact] of factsAboutOthers) {
         const targetMember = members.find(m => m.username === fact.subject);
@@ -66,17 +71,15 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
             const escalationDetails = `User '${reporterUser.username}' reported about '${targetMember.username}': "${factKey}" - ${fact.value}`;
             await addEscalation(circleId, 'FACT_REPORT', escalationDetails, analysis.message_id ?? null);
             events.emit('escalate', { circleId });
-            
-            const confirmationReply = `I've noted this information about ${targetMember.username} and will share it with the doctor. ${analysis.reply}`;
-            const agentName = await getAgentName(reporterUserId, circleId);
-            events.emit('broadcast', { 
-                targetUsers: [reporterUserId], 
-                reply: confirmationReply, 
-                from: agentName, 
-                circleId, 
-                patientUsername: patient.username 
-            });
-            return true;
+
+            // Doctors see FACT_REPORT rows in their unread list
+            const doctors = members.filter(m => m.role === 'doctor').map(m => m.username);
+            return {
+                action: 'FACT_REPORT',
+                escalated: true,
+                details: { escalation_type: 'FACT_REPORT', subject: targetMember.username },
+                actions: { escalationCreated: true, doctors, noDoctorConnected: doctors.length === 0 }
+            };
         }
 
         // For lower criticality, ask for consent to share with the target person or doctor
@@ -94,6 +97,7 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
                 circleId, 
                 patientUsername: patient.username 
             });
+            actions.membersMessaged.push(targetMember.username);
         } else {
             // Ask for consent to share - ALWAYS ask the original reporter, not the current user
             const suggestion = {
@@ -106,16 +110,11 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
             // Store the full question text in the suggestion for better matching
             suggestion.full_question = request;
             await createSharingConsentAction(reporterUserId, circleId, suggestion);
-            const agentName = await getAgentName(reporterUserId, circleId);
-            events.emit('broadcast', { 
-                targetUsers: [reporterUserId], 
-                reply: request, 
-                from: agentName, 
-                circleId, 
-                patientUsername: patient.username 
-            });
+            // One question per reply; any further consent actions are still pending
+            question = question || request;
         }
     }
 
-    return true; // The fact report was handled.
+    // The fact report was handled.
+    return { action: 'FACT_REPORT', escalated: false, details: {}, actions, question };
 }
