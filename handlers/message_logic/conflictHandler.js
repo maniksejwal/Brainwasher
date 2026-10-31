@@ -79,7 +79,7 @@ export async function handleFactProcessing(userId, circleId, analysis) {
             console.log(chalk.yellow.bold(`[ConflictHandler] CONFLICT DETECTED in circle ${circleId} on '${key}'`));
 
             const conflictDetails = `Conflict on '${key}': User ${userId} says '${factValue}', but ${currentFact.reported_by} said '${currentFact.value}'.`;
-            await addEscalation(circleId, 'CONFLICT', conflictDetails);
+            await addEscalation(circleId, 'CONFLICT', conflictDetails, analysis.message_id ?? null);
             events.emit('escalate', { circleId });
 
             // Initiate mediated clarification with the previous reporter

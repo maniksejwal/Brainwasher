@@ -64,7 +64,7 @@ export async function handleFactReporting(userId, circleId, analysis, originalUs
         // Check if this is medically significant enough to escalate to doctor
         if (analysis.criticality === 'MEDIUM' || analysis.criticality === 'HIGH') {
             const escalationDetails = `User '${reporterUser.username}' reported about '${targetMember.username}': "${factKey}" - ${fact.value}`;
-            await addEscalation(circleId, 'FACT_REPORT', escalationDetails);
+            await addEscalation(circleId, 'FACT_REPORT', escalationDetails, analysis.message_id ?? null);
             events.emit('escalate', { circleId });
             
             const confirmationReply = `I've noted this information about ${targetMember.username} and will share it with the doctor. ${analysis.reply}`;

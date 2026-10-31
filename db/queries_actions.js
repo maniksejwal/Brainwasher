@@ -7,9 +7,91 @@
 
 import { getDb } from './connection.js';
 
-export async function addEscalation(circleId, type, details) {
+/**
+ * Insert an escalation row. New rows start with status OPEN.
+ * @param {string} circleId
+ * @param {string} type
+ * @param {string} details
+ * @param {number|null} [messageId] - The message that caused it, when known
+ * @returns {Promise<number>} The new escalation ID
+ */
+export async function addEscalation(circleId, type, details, messageId = null) {
     const db = await getDb();
-    await db.run('INSERT INTO escalations (circle_id, type, details, timestamp) VALUES (?, ?, ?, ?)', [circleId, type, details, Date.now()]);
+    const result = await db.run(
+        "INSERT INTO escalations (circle_id, type, details, timestamp, status, message_id) VALUES (?, ?, ?, ?, 'OPEN', ?)",
+        [circleId, type, details, Date.now(), messageId]
+    );
+    return result.lastID;
+}
+
+/**
+ * Insert an escalation unless one of the given types already exists for the same message.
+ * Rows without a message ID are never treated as duplicates.
+ * @param {string} circleId
+ * @param {string} type
+ * @param {string} details
+ * @param {number|null} messageId
+ * @param {string[]} dedupeTypes - Types that count as the same escalation
+ * @returns {Promise<{escalationId: number, created: boolean}>}
+ */
+export async function addEscalationOnce(circleId, type, details, messageId, dedupeTypes) {
+    if (messageId != null) {
+        const db = await getDb();
+        const placeholders = dedupeTypes.map(() => '?').join(', ');
+        const existing = await db.get(
+            `SELECT escalation_id FROM escalations WHERE message_id = ? AND type IN (${placeholders}) ORDER BY escalation_id LIMIT 1`,
+            [messageId, ...dedupeTypes]
+        );
+        if (existing) {
+            return { escalationId: existing.escalation_id, created: false };
+        }
+    }
+    return { escalationId: await addEscalation(circleId, type, details, messageId), created: true };
+}
+
+/**
+ * Record one recipient of an escalation.
+ * @param {object} delivery - { escalationId, userId, role, channel, status, providerMessageId, error }
+ * @returns {Promise<number>} The new delivery ID
+ */
+export async function addEscalationDelivery({ escalationId, userId, role, channel, status, providerMessageId = null, error = null }) {
+    const db = await getDb();
+    const result = await db.run(
+        'INSERT INTO escalation_deliveries (escalation_id, user_id, role, channel, status, provider_message_id, error, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [escalationId, userId, role, channel, status, providerMessageId, error, Date.now()]
+    );
+    return result.lastID;
+}
+
+export async function updateEscalationDelivery(deliveryId, status, error = null) {
+    const db = await getDb();
+    await db.run('UPDATE escalation_deliveries SET status = ?, error = ? WHERE delivery_id = ?', [status, error, deliveryId]);
+}
+
+export async function getEscalationDeliveries(escalationId) {
+    const db = await getDb();
+    return db.all(`
+        SELECT d.*, u.username
+        FROM escalation_deliveries d
+        LEFT JOIN users u ON u.user_id = d.user_id
+        WHERE d.escalation_id = ?
+        ORDER BY d.delivery_id ASC
+    `, [escalationId]);
+}
+
+/**
+ * Record that one recipient acknowledged one escalation.
+ * @returns {Promise<boolean>} True if the user was a recipient and had not acknowledged it yet
+ */
+export async function acknowledgeEscalation(escalationId, userId) {
+    const db = await getDb();
+    const result = await db.run(
+        'UPDATE escalation_deliveries SET acknowledged_at = ? WHERE escalation_id = ? AND user_id = ? AND acknowledged_at IS NULL',
+        [Date.now(), escalationId, userId]
+    );
+    if (result.changes === 0) return false;
+    await db.run("UPDATE escalations SET status = 'ACKNOWLEDGED' WHERE escalation_id = ? AND status = 'OPEN'", [escalationId]);
+    return true;
 }
 
 export async function getUnreadEscalationsForCircle(circleId) {

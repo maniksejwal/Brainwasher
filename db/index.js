@@ -37,6 +37,11 @@ import {
 } from './queries_messages.js';
 import {
     addEscalation,
+    addEscalationOnce,
+    addEscalationDelivery,
+    updateEscalationDelivery,
+    getEscalationDeliveries,
+    acknowledgeEscalation,
     getUnreadEscalationsForCircle,
     getUnreadEscalationsForUser,
     markCircleEscalationsAsRead,
@@ -108,6 +113,11 @@ export {
     getLastFact,
     getFactHistory,
     addEscalation,
+    addEscalationOnce,
+    addEscalationDelivery,
+    updateEscalationDelivery,
+    getEscalationDeliveries,
+    acknowledgeEscalation,
     getUnreadEscalationsForCircle,
     getUnreadEscalationsForUser,
     markCircleEscalationsAsRead,
