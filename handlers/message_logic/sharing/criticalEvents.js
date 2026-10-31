@@ -2,7 +2,7 @@
  * @fileoverview handlers/message_logic/sharing/criticalEvents.js
  * Handles critical health events and family notifications.
  * Uses confidence-based escalation: immediate escalation only for high-confidence emergencies,
- * otherwise uses future planning to ask a follow-up question before escalating.
+ * otherwise schedules a follow-up question for the next turn without escalating.
  */
 
 import { addEscalation, getCircleMembers, findUserById, findCircleByPatientId } from '../../../db/index.js';
@@ -11,6 +11,10 @@ import { getAgentName } from '../../utils/agentIdentity.js';
 import { createScheduledMessage } from '../../../db/queries_future_plans.js';
 import { makeApiCall } from '../../../agents/api_client.js';
 import { generateEmergencyConfidencePrompt, generateEscalationHintPrompt } from '../../../prompts/emergency_confidence_prompt.js';
+
+// HIGH turns escalate immediately at or above this emergency confidence; below it, a follow-up is asked.
+// A failed confidence call returns 0.6, which is below the threshold.
+export const ESCALATION_CONFIDENCE_THRESHOLD = 0.9;
 
 /**
  * Calculate confidence level for HIGH criticality events using LLM
@@ -71,7 +75,7 @@ async function calculateEmergencyConfidence(message, analysis) {
 /**
  * Handles HIGH criticality events with confidence-based escalation
  * Only escalates immediately if confidence is very high (0.9+)
- * Otherwise uses future planning to ask a follow-up question before escalating
+ * Otherwise schedules a follow-up question for the next turn without escalating
  * @param {string} userId - The user who reported the critical event
  * @param {string} role - The role of the user
  * @param {string} message - The original message
@@ -92,7 +96,7 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
     const confidence = await calculateEmergencyConfidence(message, analysis);
     
     // High confidence (0.9+): Immediate escalation - clear emergency
-    if (confidence >= 0.9) {
+    if (confidence >= ESCALATION_CONFIDENCE_THRESHOLD) {
         // ESCALATION DENIAL OVERRIDE: For HIGH criticality with high confidence, we MUST escalate regardless of patient consent
         const criticalDetails = `User '${userId}' (${role}) reported: "${message}" [IMMEDIATE ESCALATION: High confidence emergency (${(confidence * 100).toFixed(0)}%)]`;
         await addEscalation(circleId, 'CRITICAL', criticalDetails);
@@ -128,8 +132,7 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
         };
     }
     
-    // Lower confidence (< 0.9): Use future planning to ask a follow-up question before escalating
-    // Schedule a question for the next turn that hints at escalation intent
+    // Lower confidence: ask a follow-up question on the next turn. This does not escalate.
     const nextTurn = currentTurn + 1;
     
     // Create a follow-up question that hints at escalation using LLM
@@ -147,8 +150,7 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
         {
             escalation_intent: true,
             original_message: message,
-            confidence: confidence,
-            action: 'escalate_after_response'
+            confidence: confidence
         }, // trigger_details
         null // trigger_condition
     );
