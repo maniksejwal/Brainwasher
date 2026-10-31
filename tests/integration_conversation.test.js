@@ -144,13 +144,18 @@ test("one conversation's messages run in order, one at a time", async () => {
     const conversationId = await provision(PATIENT.userId, 'Asha');
     let running = 0;
     let overlapped = false;
+    // Turns wait until all three are submitted, so the order does not depend on timing
+    let allSent;
+    const submitted = new Promise(resolve => { allSent = resolve; });
     turnBehaviour = async () => {
         running += 1;
         if (running > 1) overlapped = true;
+        await submitted;
         await new Promise(resolve => setTimeout(resolve, 30));
         running -= 1;
     };
     for (const n of [1, 2, 3]) await send(conversationId, PATIENT.userId, `req-order-${n}`, `message ${n}`);
+    allSent();
     const page = await settled(conversationId, PATIENT.userId);
     assert.deepEqual(turns, ['message 1', 'message 2', 'message 3']);
     assert.equal(overlapped, false);
