@@ -96,7 +96,18 @@ import {
     findConversationById,
     addConversation,
     findIdempotencyRecord,
-    addIdempotencyRecord
+    addIdempotencyRecord,
+    addUserConversationMessage,
+    addAgentConversationMessage,
+    getConversationMessages,
+    hasConversationMessagesBefore,
+    addConversationJob,
+    claimNextConversationJob,
+    finishConversationJob,
+    recoverInterruptedConversationJobs,
+    removeCircleMembersExcept,
+    getOpenProposalsForUser,
+    hasUnfinishedConversationJobs
 } from './queries_integrations.js';
 
 export {
@@ -175,6 +186,17 @@ export {
     findConversationById,
     addConversation,
     findIdempotencyRecord,
-    addIdempotencyRecord
+    addIdempotencyRecord,
+    addUserConversationMessage,
+    addAgentConversationMessage,
+    getConversationMessages,
+    hasConversationMessagesBefore,
+    addConversationJob,
+    claimNextConversationJob,
+    finishConversationJob,
+    recoverInterruptedConversationJobs,
+    removeCircleMembersExcept,
+    getOpenProposalsForUser,
+    hasUnfinishedConversationJobs
 };
 

@@ -223,6 +223,13 @@ export async function migrateDatabase(db) {
             await db.run('ALTER TABLE users ADD COLUMN preferences TEXT');
         }
 
+        // Messages saved during a HealthyMitra conversation turn name that conversation
+        const messagesInfo = await db.all('PRAGMA table_info(messages)');
+        if (messagesInfo.length > 0 && !messagesInfo.some(col => col.name === 'conversation_id')) {
+            console.log('[Migration] Adding conversation_id to messages...');
+            await db.run('ALTER TABLE messages ADD COLUMN conversation_id TEXT');
+        }
+
         // New Structured Facts Table (facts_v2)
         // Check if facts_v2 exists, if not create it
         const factsV2Exists = await db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='facts_v2'");
@@ -377,6 +384,39 @@ export async function migrateDatabase(db) {
                 created_at INTEGER NOT NULL,
                 FOREIGN KEY (user_id) REFERENCES users(user_id)
             );
+            -- What HealthyMitra shows: the user's messages and every agent message to them.
+            -- message_seq orders the conversation and is the history cursor.
+            CREATE TABLE IF NOT EXISTS conversation_messages (
+                message_seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT NOT NULL UNIQUE,
+                conversation_id TEXT NOT NULL,
+                sender TEXT NOT NULL,
+                request_id TEXT,
+                circle_id TEXT,
+                text TEXT NOT NULL,
+                proposal TEXT,
+                source TEXT,
+                job_id TEXT,
+                created_at INTEGER NOT NULL,
+                UNIQUE (conversation_id, request_id),
+                FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_messages_conv ON conversation_messages(conversation_id, message_seq);
+            -- One job per user message: accepted -> processing -> completed | failed
+            CREATE TABLE IF NOT EXISTS conversation_jobs (
+                job_id TEXT PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                message_id TEXT NOT NULL UNIQUE,
+                user_id TEXT NOT NULL,
+                circle_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                error TEXT,
+                created_at INTEGER NOT NULL,
+                started_at INTEGER,
+                finished_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_conversation_jobs_status ON conversation_jobs(status, created_at);
             CREATE TABLE IF NOT EXISTS integration_idempotency (
                 idempotency_key TEXT PRIMARY KEY,
                 purpose TEXT NOT NULL,
@@ -451,6 +491,8 @@ export async function clearDatabase() {
         DELETE FROM emergency_auto_alert_consent;
         DELETE FROM integration_request_ids;
         DELETE FROM integration_idempotency;
+        DELETE FROM conversation_jobs;
+        DELETE FROM conversation_messages;
         DELETE FROM conversations;
         DELETE FROM external_identities;
         DELETE FROM escalation_deliveries;

@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import config from './config.js';
 import { initializeDatabase } from './db/index.js';
 import { runDueAutoAlerts } from './services/escalationService.js';
+import { startConversationWorker } from './services/conversationJobs.js';
 import { events } from './orchestrator.js';
 import { setupLogger, getLogs } from './lib/logger.js';
 import { addClient, removeClient, broadcast } from './lib/sse.js';
@@ -176,6 +177,8 @@ initializeDatabase().then(() => {
     // The first run sends alerts that fell due while the server was down
     sweepAutoAlerts();
     setInterval(sweepAutoAlerts, AUTO_ALERT_SWEEP_MS).unref();
+    // HealthyMitra conversations: transcripts and queued messages, including any left by a restart
+    startConversationWorker().catch(error => console.error('[Server] Conversation worker failed to start:', error.message));
     app.listen(PORT, HOST, () => {
         console.log(`--- Multi-Agent Orchestrator (JS) is RUNNING ---`);
         console.log(`Listening on http://${HOST}:${PORT}`);

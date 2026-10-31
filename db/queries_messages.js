@@ -1,4 +1,5 @@
 import { getDb } from './connection.js';
+import { currentTurn } from '../lib/turnContext.js';
 
 /**
  * Save a message.
@@ -6,12 +7,25 @@ import { getDb } from './connection.js';
  */
 export async function addMessage(circleId, userId, role, message, privacy, criticality) {
     const db = await getDb();
-    const result = await db.run('INSERT INTO messages (circle_id, user_id, role, message, privacy_level, criticality_level, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)', [circleId, userId, role, message, privacy, criticality, Date.now()]);
+    const conversationId = currentTurn()?.conversationId ?? null;
+    const result = await db.run('INSERT INTO messages (circle_id, user_id, role, message, privacy_level, criticality_level, timestamp, conversation_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', [circleId, userId, role, message, privacy, criticality, Date.now(), conversationId]);
     return result.lastID;
 }
 
+/**
+ * The most recent messages in a circle, newest first. In a HealthyMitra conversation turn
+ * (lib/turnContext.js) only the speaker's own messages and other members' PUBLIC messages
+ * are returned, so one member's private conversation never reaches another's agent.
+ */
 export async function getRecentMessages(circleId, limit = 5) {
     const db = await getDb();
+    const turn = currentTurn();
+    if (turn) {
+        return db.all(
+            "SELECT user_id, message FROM messages WHERE circle_id = ? AND (user_id = ? OR privacy_level = 'PUBLIC') ORDER BY timestamp DESC LIMIT ?",
+            [circleId, turn.userId, limit]
+        );
+    }
     return db.all('SELECT user_id, message FROM messages WHERE circle_id = ? ORDER BY timestamp DESC LIMIT ?', [circleId, limit]);
 }
 

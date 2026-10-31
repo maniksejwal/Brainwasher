@@ -3,6 +3,10 @@
  * HealthyMitra identities and conversations. A HealthyMitra user is linked to one local
  * user through external_identities and has one private conversation. HealthyMitra's
  * user ID is the identity; the display name is only a label.
+ *
+ * Each message carries a context snapshot from HealthyMitra: the patient it is about and the
+ * other members of that patient's circle with their roles. The local circle is a cache of
+ * that snapshot and is updated before the message is handled; it never grants access.
  */
 import { randomUUID } from 'crypto';
 import {
@@ -12,12 +16,33 @@ import {
     addExternalIdentity,
     addConversation,
     findIdempotencyRecord,
-    addIdempotencyRecord
+    addIdempotencyRecord,
+    findConversationById,
+    createCareCircle,
+    addMemberToCircle,
+    updateMemberRole,
+    getMemberInfo,
+    removeCircleMembersExcept,
+    addUserConversationMessage,
+    addConversationJob,
+    getConversationMessages,
+    hasConversationMessagesBefore,
+    getOpenProposalsForUser,
+    hasUnfinishedConversationJobs
 } from '../db/index.js';
+import { toPublicProposal } from './escalationService.js';
 
 export const PROVIDER = 'healthymitra';
 export const PROVISION_PURPOSE = 'conversation.provision';
+export const MESSAGE_PURPOSE = 'conversation.message';
+export const HISTORY_PURPOSE = 'conversation.history';
+export const MAX_MESSAGE_LENGTH = 4000;
+export const MAX_CIRCLE_MEMBERS = 50;
+export const HISTORY_PAGE_DEFAULT = 50;
+export const HISTORY_PAGE_MAX = 100;
 const MAX_DISPLAY_NAME = 60;
+const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const MEMBER_ROLES = ['caregiver', 'doctor'];
 
 export class IntegrationError extends Error {
     constructor(status, code, message) {
@@ -56,16 +81,19 @@ function serialized(key, fn) {
 }
 
 /**
- * The local user for a HealthyMitra user, created on first use.
+ * The local user for a HealthyMitra user, created on first use. Runs one at a time per
+ * HealthyMitra user, so two requests naming the same person create one local user.
  * @returns {Promise<{userId: string, created: boolean}>}
  */
-export async function resolveIdentity(externalUserId, displayName) {
-    const existing = await findExternalIdentity(PROVIDER, externalUserId);
-    if (existing) return { userId: existing.user_id, created: false };
-    const userId = `hm_${randomUUID()}`;
-    await addUser(userId, await availableUsername(displayName));
-    const link = await addExternalIdentity(PROVIDER, externalUserId, userId);
-    return { userId: link.user_id, created: link.user_id === userId };
+export function resolveIdentity(externalUserId, displayName) {
+    return serialized(`identity:${externalUserId}`, async () => {
+        const existing = await findExternalIdentity(PROVIDER, externalUserId);
+        if (existing) return { userId: existing.user_id, created: false };
+        const userId = `hm_${randomUUID()}`;
+        await addUser(userId, await availableUsername(displayName));
+        const link = await addExternalIdentity(PROVIDER, externalUserId, userId);
+        return { userId: link.user_id, created: link.user_id === userId };
+    });
 }
 
 /**
@@ -79,7 +107,7 @@ export async function resolveIdentity(externalUserId, displayName) {
  * @returns {Promise<{status: number, body: object}>}
  */
 export function provisionConversation({ externalUserId, displayName, idempotencyKey }) {
-    return serialized(externalUserId, async () => {
+    return serialized(`provision:${externalUserId}`, async () => {
         const previous = await findIdempotencyRecord(idempotencyKey);
         if (previous) {
             if (previous.external_user_id !== externalUserId || previous.purpose !== PROVISION_PURPOSE) {
@@ -101,4 +129,153 @@ export function provisionConversation({ externalUserId, displayName, idempotency
         await addIdempotencyRecord(idempotencyKey, PROVISION_PURPOSE, externalUserId, response);
         return response;
     });
+}
+
+/**
+ * Check a context snapshot's shape.
+ * @returns {string|null} What is wrong, or null
+ */
+export function contextProblem(context) {
+    if (!context || typeof context !== 'object') return 'context is required';
+    const { patient, members } = context;
+    if (!patient || typeof patient.userId !== 'string' || !ID_PATTERN.test(patient.userId)) return 'context.patient.userId is required';
+    if (patient.displayName !== undefined && typeof patient.displayName !== 'string') return 'context.patient.displayName must be a string';
+    if (!Array.isArray(members) || members.length > MAX_CIRCLE_MEMBERS) return `context.members must be an array of at most ${MAX_CIRCLE_MEMBERS}`;
+    const seen = new Set([patient.userId]);
+    for (const member of members) {
+        if (!member || typeof member.userId !== 'string' || !ID_PATTERN.test(member.userId)) return 'each member needs a userId';
+        if (!MEMBER_ROLES.includes(member.role)) return `member role must be one of ${MEMBER_ROLES.join(', ')}`;
+        if (member.displayName !== undefined && typeof member.displayName !== 'string') return 'member displayName must be a string';
+        if (seen.has(member.userId)) return 'members must be unique and not include the patient';
+        seen.add(member.userId);
+    }
+    return null;
+}
+
+/**
+ * Update the cached circle from a snapshot: the patient, the members and their roles.
+ * Members missing from the snapshot are removed.
+ * @param {string} requesterExternalId - The signed request's user
+ * @param {object} context - A snapshot that passed contextProblem
+ * @returns {Promise<{circleId: string, role: string}>} The circle and the requester's role in it
+ * @throws {IntegrationError} If the requester is neither the patient nor a member
+ */
+export async function syncCircleFromContext(requesterExternalId, context) {
+    const role = requesterExternalId === context.patient.userId
+        ? 'patient'
+        : context.members.find(m => m.userId === requesterExternalId)?.role;
+    if (!role) {
+        throw new IntegrationError(403, 'context_mismatch', 'The requesting user is not the patient or a member in the context');
+    }
+
+    const patient = await resolveIdentity(context.patient.userId, context.patient.displayName);
+    const circleId = `hmc_${patient.userId}`;
+    await createCareCircle(circleId, patient.userId);
+
+    const keep = [patient.userId];
+    for (const member of context.members) {
+        const { userId } = await resolveIdentity(member.userId, member.displayName);
+        keep.push(userId);
+        const existing = await getMemberInfo(userId, circleId);
+        if (!existing) {
+            await addMemberToCircle(circleId, userId, member.role, null);
+        } else if (existing.role !== member.role) {
+            await updateMemberRole(circleId, userId, member.role);
+        }
+    }
+    await removeCircleMembersExcept(circleId, keep);
+    return { circleId, role };
+}
+
+/**
+ * The conversation if it belongs to this HealthyMitra user.
+ * @throws {IntegrationError} 404 otherwise, so another user's conversation ID reveals nothing
+ */
+async function ownedConversation(externalUserId, conversationId) {
+    const identity = await findExternalIdentity(PROVIDER, externalUserId);
+    const conversation = await findConversationById(conversationId);
+    if (!identity || !conversation || conversation.user_id !== identity.user_id) {
+        throw new IntegrationError(404, 'conversation_not_found', 'No such conversation for this user');
+    }
+    return { conversation, userId: identity.user_id };
+}
+
+/**
+ * Save a user's message and queue it for processing. A repeated request ID returns the
+ * first message and its job instead of saving another.
+ * @returns {Promise<{status: number, body: object, queued: boolean}>}
+ */
+export async function submitConversationMessage({ externalUserId, conversationId, requestId, text, context }) {
+    const { userId } = await ownedConversation(externalUserId, conversationId);
+    const { circleId } = await syncCircleFromContext(externalUserId, context);
+
+    const { message, created } = await addUserConversationMessage({
+        messageId: `msg_${randomUUID()}`,
+        conversationId,
+        requestId,
+        circleId,
+        text,
+        jobId: `job_${randomUUID()}`
+    });
+    if (!created && message.text !== text) {
+        throw new IntegrationError(422, 'request_id_reused', 'This request ID was used for a different message');
+    }
+    // Also repairs a message saved without its job (a crash between the two writes)
+    const job = await addConversationJob({ jobId: message.job_id, conversationId, messageId: message.message_id, userId, circleId: message.circle_id });
+    return {
+        status: created ? 202 : 200,
+        queued: job.status === 'accepted',
+        body: {
+            messageId: message.message_id,
+            jobId: job.job_id,
+            status: job.status,
+            createdAt: new Date(message.created_at).toISOString()
+        }
+    };
+}
+
+function toPublicMessage(row) {
+    const message = {
+        messageId: row.message_id,
+        sender: row.sender,
+        text: row.text,
+        createdAt: new Date(row.created_at).toISOString(),
+        patientUserId: row.patient_external_id ?? null
+    };
+    if (row.sender === 'user') {
+        message.requestId = row.request_id;
+        message.job = { jobId: row.job_id, status: row.job_status ?? 'accepted' };
+    } else {
+        message.jobId = row.job_id ?? null;
+        message.source = row.source ?? null;
+        message.proposal = row.proposal ? JSON.parse(row.proposal) : null;
+    }
+    return message;
+}
+
+/**
+ * One page of the user's conversation with the alert proposals waiting for an answer.
+ * @param {object} params
+ * @param {number|null} [params.after] - Messages after this cursor, oldest first (polling)
+ * @param {number|null} [params.before] - Messages before this cursor (older history)
+ * @param {number} [params.limit]
+ */
+export async function getConversationHistory({ externalUserId, conversationId, after = null, before = null, limit = HISTORY_PAGE_DEFAULT }) {
+    const { userId } = await ownedConversation(externalUserId, conversationId);
+    const rows = await getConversationMessages(conversationId, { after, before, limit });
+    const first = rows[0]?.message_seq ?? null;
+    const last = rows.at(-1)?.message_seq ?? null;
+    const now = Date.now();
+    const proposals = (await getOpenProposalsForUser(userId))
+        .filter(p => p.details.expiresAt > now)
+        .map(p => toPublicProposal(p.details));
+    return {
+        messages: rows.map(toPublicMessage),
+        openProposals: proposals,
+        processing: await hasUnfinishedConversationJobs(conversationId),
+        cursor: {
+            next: String(last ?? after ?? 0),
+            previous: first != null && (await hasConversationMessagesBefore(conversationId, first)) ? String(first) : null
+        }
+    };
 }
