@@ -156,8 +156,22 @@ export class SimulationAI {
             // 4. All orchestrator events and cross-messaging
             // Use dynamic import to avoid circular dependency with getRecentMessages
             const { handleMessage } = await import('../../handlers/messageHandler.js');
+            const { events } = await import('../../orchestrator.js');
             const turnStartedAt = Date.now();
-            const analysis = await handleMessage(userId, circleId, message);
+            // Record every message sent to this user during the turn, not just the reply
+            const messagesToUser = [];
+            const recordBroadcast = (payload) => {
+                if (payload?.targetUsers?.includes(userId)) {
+                    messagesToUser.push({ text: payload.reply || payload.message || '', source: payload.source || 'reply' });
+                }
+            };
+            events.on('broadcast', recordBroadcast);
+            let analysis;
+            try {
+                analysis = await handleMessage(userId, circleId, message);
+            } finally {
+                events.off('broadcast', recordBroadcast);
+            }
 
             if (!analysis || !analysis.reply) {
                 throw new Error("AI analysis failed to generate response");
@@ -167,6 +181,7 @@ export class SimulationAI {
 
             return {
                 agent_response: analysis.reply,
+                messages_to_user: messagesToUser,
                 orchestrator_action: await detectExecutedActions(circleId, turnStartedAt),
                 state_vector: {
                     intent: analysis.intent,
