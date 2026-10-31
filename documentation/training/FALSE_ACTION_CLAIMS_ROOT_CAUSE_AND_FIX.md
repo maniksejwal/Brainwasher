@@ -339,6 +339,70 @@ Steps are grouped into phases. Each step is its own commit, and each phase can b
 - Add the integration tests from Fix H.
 - Change the simulation adapter (`training/simulation/ai_integration.js`) to collect every `broadcast` event sent to the simulated user during a turn.
 
+### Phase 2: as implemented (2026-10-31)
+
+Steps 12–22 are done. Where the code differs from the steps above, or goes further, it is listed here.
+
+**Saving the message (step 12)**
+- The companion path never saved the user's message. `messageHandler` now saves it after analysis for both paths, with the final criticality, and puts the ID on `analysis.message_id`.
+- The turn count includes the message just saved, as it already did on the unified path and in simulations.
+- The simulation runner no longer saves regular user messages, which would now be stored twice. It still saves commands.
+- Messages handled before analysis (pending-action answers, questions to another member) are still not saved. That is unchanged from production.
+
+**Escalation records (steps 13–14)**
+- Deduplication is in `addEscalationOnce`, not `addEscalation`. It only counts the five patient-safety types (CRITICAL, DOCTOR_REQUEST, CAREGIVER_NOTIFICATION, ANONYMOUS_CONSULTATION, CONSULTATION), so a routine row from the same message does not block a safety escalation.
+- `addEscalation` is the shared insert: every row gets `status = OPEN`. FACT_REPORT and CONFLICT rows also get the message ID. The other routine callers have no message ID to pass, so theirs is empty.
+
+**In-app channel (step 15)**
+- `NotificationService.sendInApp` stores an in-app notification and reports delivered, pending or failed.
+- Doctors also keep seeing the escalation row in their unread list, as before.
+
+**Escalation service (steps 16–18)**
+- Every send has a 5-second limit. A send that fails or times out is recorded as failed and never counted as reaching anyone. The status sentence then says "I couldn't send this to …".
+- Tier 3 reports "anonymous consultation logged" from the action record.
+- The HIGH block in `aiAnalysisHandler` is removed. Unified HIGH turns now escalate only through `criticalEvents`, at the same confidence threshold as companion turns.
+
+**Sharing results (step 19, beyond the plan)**
+- Every sharing handler returns a result, not only the safety ones:
+  - fact reports;
+  - advice sharing;
+  - fallback sharing;
+  - the tier 1 permission request.
+- Fact reports no longer send their own "will share it with the doctor" message.
+- Consent and permission questions are returned as a `question`. It goes at the end of the one reply, after a claim check, and is dropped if it claims an action.
+- The pending-permission path sends one reply built from what the tier did. Two existing bugs on this path are also fixed:
+  - answers are matched on whole words ("I took my pills" was read as "ok");
+  - the pending question is removed once answered (it used to capture every later message).
+- The null-fact crash in `factReporting` and `adviceSharing` (open problem 5 in the results doc) is fixed.
+
+**Reply after actions (steps 20–21)**
+- The draft reply from analysis is kept when nothing was done. Its ACTIONS_TAKEN was "none", which is then true.
+- The reply is written again, with the real ACTIONS_TAKEN, only when one of these holds:
+  - a handler acted or returned a question;
+  - a scheduled message is due;
+  - a planned follow-up is due.
+
+  So the extra model call happens only on those turns.
+- The new ACTIONS_TAKEN text also tells the model:
+  - that the code adds the status sentence, so it should not repeat it;
+  - which question will be appended, so it should not ask another one.
+- A reply that still claims an action that did not happen is regenerated once, with the false sentence quoted. The fallback text is used only if that also fails.
+- Patients get the patient optimizer and other roles get the empathy handler, as in analysis. The companion path reuses the context its handlers saw. The unified path uses a minimal context, so its rewritten replies are in the companion style.
+- Due plans and scheduled messages:
+  - A plan's description is an internal note. The reply works it in instead of the orchestrator sending the raw text. Escalation plans still act as before.
+  - Scheduled messages for the user who wrote in are added to the reply.
+  - Scheduled messages for other members are still sent, but dropped if they claim an action.
+- The simulation runner no longer processes due plans a second time after each turn.
+
+**Simulation (step 22)**
+- `SimulationAI.getAgentResponse` returns `messages_to_user`, with every message sent to the simulated user during the turn.
+
+**Still outside the one-reply path**
+- The doctor message path.
+- `handleNonDoctorQuestion` (questions to another member).
+- Caregiver probing messages to other members.
+- The ack follow-up and targeted `escalate` events (Phase 3).
+
 ### Phase 3: Targeted delivery and acknowledgements
 
 **23. `services/escalationService.js`**
