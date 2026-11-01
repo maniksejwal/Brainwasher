@@ -37,6 +37,7 @@ import { events } from '../orchestrator.js';
 import { getAgentName } from '../handlers/utils/agentIdentity.js';
 import { buildActionStatus } from '../utils/actionClaimGuard.js';
 import { postToHealthyMitra } from '../lib/healthyMitraClient.js';
+import { notifyConversationUpdated } from './conversationNotices.js';
 
 const PROVIDER = 'healthymitra';
 export const ACTION_KINDS = ['escalation', 'send_member_message', 'post_observation', 'request_patient_agent_update'];
@@ -104,7 +105,7 @@ export async function createAction({ actionId, kind, ownerUserId, circleId, reci
         messageId
     };
     const conversation = await findConversationByUser(ownerUserId);
-    return addIntegrationAction({
+    const row = await addIntegrationAction({
         actionId,
         kind,
         ownerUserId,
@@ -116,6 +117,9 @@ export async function createAction({ actionId, kind, ownerUserId, circleId, reci
         expiresAt,
         autoSendAt
     });
+    // The card shows in HealthyMitra at once instead of on its next history read
+    if (row && conversation) notifyConversationUpdated({ userId: ownerUserId, conversationId: conversation.conversation_id });
+    return row;
 }
 
 /**

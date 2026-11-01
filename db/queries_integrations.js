@@ -89,13 +89,19 @@ export async function addUserConversationMessage({ messageId, conversationId, re
     return { message, created: result.changes > 0 };
 }
 
+/**
+ * Save an agent message.
+ * @returns {Promise<{messageId: string, createdAt: number}>}
+ */
 export async function addAgentConversationMessage({ messageId, conversationId, circleId, text, proposal = null, source = null, jobId = null }) {
     const db = await getDb();
+    const createdAt = Date.now();
     await db.run(
         `INSERT INTO conversation_messages (message_id, conversation_id, sender, circle_id, text, proposal, source, job_id, created_at)
          VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?)`,
-        [messageId, conversationId, circleId, text, proposal ? JSON.stringify(proposal) : null, source, jobId, Date.now()]
+        [messageId, conversationId, circleId, text, proposal ? JSON.stringify(proposal) : null, source, jobId, createdAt]
     );
+    return { messageId, createdAt };
 }
 
 /**

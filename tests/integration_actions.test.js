@@ -22,6 +22,7 @@ const DOCTOR = { userId: 'hm-doc', role: 'doctor', displayName: 'Dr Rao' };
 
 let db, server, hmServer, baseUrl, signRequest, verifySignature, worker, queries, escalation, members, actionsService;
 const notices = [];
+const conversationNotices = [];
 
 before(async () => {
     process.env.SERVICE_SECRETS_SOURCE = 'env';
@@ -56,6 +57,10 @@ before(async () => {
         notices.push({ headers: req.headers, raw: req.rawBody?.toString('utf8') ?? '', body: req.body, path: req.originalUrl });
         res.status(200).json({ received: true });
     });
+    hm.post('/api/integrations/healthymitra-ai/conversation-events', (req, res) => {
+        conversationNotices.push({ headers: req.headers, raw: req.rawBody?.toString('utf8') ?? '', body: req.body, path: req.originalUrl });
+        res.status(202).json({ received: true });
+    });
     await new Promise(resolve => { hmServer = hm.listen(0, resolve); });
     process.env.HEALTHYMITRA_BASE_URL = `http://127.0.0.1:${hmServer.address().port}`;
 
@@ -71,6 +76,7 @@ after(() => {
 
 beforeEach(async () => {
     notices.length = 0;
+    conversationNotices.length = 0;
     for (const table of ['integration_actions', 'conversation_jobs', 'conversation_messages', 'conversations', 'integration_idempotency',
         'integration_request_ids', 'pending_actions', 'escalation_deliveries', 'escalations', 'emergency_auto_alert_consent']) {
         await db.run(`DELETE FROM ${table}`);
@@ -250,6 +256,48 @@ test('a "yes" in chat approves the action and tells HealthyMitra with a signed r
 
     const repeat = await escalation.decideEscalationProposal(proposal.actionId, patientId, true);
     assert.equal(repeat.status, 'not_found', 'the question is already answered');
+});
+
+test('HealthyMitra is told at once about each agent message and each finished job, with a signed request', async () => {
+    const waitFor = async (check) => {
+        for (let i = 0; i < 50 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 20));
+    };
+    const { conversationId, patientId, circleId } = await setup();
+
+    // The message from setup() ran as a job; its end is reported without a message
+    await waitFor(() => conversationNotices.some(n => n.body.message === null));
+    const finished = conversationNotices.find(n => n.body.message === null);
+    assert.equal(finished.headers['x-hm-purpose'], 'conversation.updated');
+    assert.equal(finished.headers['x-hm-user-id'], PATIENT.userId);
+    assert.equal(finished.body.conversationId, conversationId);
+    const fields = {
+        method: 'POST', path: finished.path, timestamp: finished.headers['x-hm-timestamp'], requestId: finished.headers['x-hm-request-id'],
+        userId: finished.headers['x-hm-user-id'], purpose: finished.headers['x-hm-purpose'], body: finished.raw
+    };
+    assert.ok(verifySignature([OUTBOUND_KEY], fields, finished.headers['x-hm-signature']), 'signed with the outbound key');
+
+    // A new card is reported without a message; the preview stays the last message
+    conversationNotices.length = 0;
+    await proposeAlert(patientId, circleId);
+    await waitFor(() => conversationNotices.length > 0);
+    assert.deepEqual(conversationNotices.map(n => n.body), [{ conversationId, message: null }]);
+
+    // An agent message is reported with a short preview
+    conversationNotices.length = 0;
+    const { events } = await import('../orchestrator.js');
+    events.emit('broadcast', { targetUsers: [patientId], reply: `Please rest.
+
+I'll check in later. ${'x'.repeat(200)}`, circleId });
+    await worker.transcriptIdle();
+    await waitFor(() => conversationNotices.length > 0);
+    const [notice] = conversationNotices;
+    const latest = (await history(conversationId, PATIENT.userId)).body.messages.at(-1);
+    assert.equal(latest.sender, 'agent');
+    assert.deepEqual(notice.body, {
+        conversationId,
+        message: { messageId: latest.messageId, sender: 'agent', preview: `Please rest. I'll check in later. ${'x'.repeat(86)}`, createdAt: latest.createdAt }
+    });
+    assert.equal(notice.body.message.preview.length, 120, 'only a preview leaves the service');
 });
 
 test('an unanswered emergency is approved by prior consent from the HealthyMitra snapshot', async () => {

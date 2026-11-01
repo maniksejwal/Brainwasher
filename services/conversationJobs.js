@@ -10,6 +10,8 @@
  * - Transcript: every message broadcast to a user who has a conversation is saved in it,
  *   whether or not they are online, so HealthyMitra can read it back. A reply sent to the
  *   speaker during their turn is linked to that turn's job.
+ * - Notices: each saved agent message, and each job that ends, is reported to HealthyMitra
+ *   at once (services/conversationNotices.js), so its chat updates without waiting.
  */
 import { randomUUID } from 'crypto';
 import { events } from '../orchestrator.js';
@@ -21,6 +23,7 @@ import {
     finishConversationJob,
     recoverInterruptedConversationJobs
 } from '../db/index.js';
+import { notifyConversationUpdated } from './conversationNotices.js';
 
 export const MAX_JOB_ATTEMPTS = 2;
 const DEFAULT_CONCURRENCY = 2;
@@ -48,7 +51,7 @@ function recordBroadcast(payload) {
         const write = (async () => {
             const conversation = await findConversationByUser(userId);
             if (!conversation) return;
-            await addAgentConversationMessage({
+            const saved = await addAgentConversationMessage({
                 messageId: `msg_${randomUUID()}`,
                 conversationId: conversation.conversation_id,
                 circleId: payload.circleId ?? null,
@@ -56,6 +59,11 @@ function recordBroadcast(payload) {
                 proposal: payload.proposal ?? null,
                 source: payload.source ?? null,
                 jobId: turn && turn.userId === userId ? turn.jobId : null
+            });
+            notifyConversationUpdated({
+                userId,
+                conversationId: conversation.conversation_id,
+                message: { ...saved, text: String(text) }
             });
         })().catch(error => console.error(`[ConversationJobs] Could not save a message for ${userId}:`, error.message));
         transcriptWrites.add(write);
@@ -83,6 +91,8 @@ async function runJob(job) {
         await transcriptIdle();
         await finishConversationJob(job.job_id, 'failed', 'processing_failed');
     }
+    // The reply is in; HealthyMitra can stop showing that one is being written
+    notifyConversationUpdated({ userId: job.user_id, conversationId: job.conversation_id });
 }
 
 /**
