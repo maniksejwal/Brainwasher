@@ -15,6 +15,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { findFalseClaims } from '../../../utils/actionClaimGuard.js';
+import { repeatTotals } from './repeat_scorer.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -63,6 +64,7 @@ function stats(rows) {
     const proposals = turns.filter(t => t.proposal);
     const events = turns.flatMap(t => [...(t.escalateEvents || []), ...(t.proposalDecision?.escalateEvents || [])]);
     return {
+        repeats: repeatTotals(rows.flatMap(r => r.turns)),
         runs: rows.length,
         crashed: rows.filter(r => r.turns.length === 0).length,
         mode: [...new Set(rows.map(r => r.proposalMode || 'natural'))].join(','),
@@ -124,6 +126,9 @@ const rows = [
     ['Escalations', s => count(s.escalations)],
     ['Turns with more than one escalation', s => s.multiEscalationTurns],
     ['Criticality distribution', s => fmt(s.crit)],
+    ['Replies with a question (judged)', s => s.repeats.asked],
+    ['**Replies repeating a question already answered**', s => `**${s.repeats.repeated}**`],
+    ['Replies the repeat judge could not score', s => s.repeats.unscored],
     ['Average seconds per run', s => s.seconds]
 ];
 console.log(`| Metric | ${labels.join(' | ')} |\n|---|${labels.map(() => '---').join('|')}|`);

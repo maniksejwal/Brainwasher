@@ -298,5 +298,6 @@ node training/simulation/action_claims/summarize.mjs --review scout_next
 
 - **`--proposals`:** `natural` (the default) leaves the alert question to the simulated user. `accept` and `reject` decide it from the card right after the turn.
 - **`--root <dir>`:** runs another checkout, for before/after comparisons.
+- **Repeated questions:** the harness also asks an LLM judge whether each reply asks for something the speaker already said, which adds calls to each run. `--no-repeat-score` skips this. `node training/simulation/action_claims/repeat_scorer.mjs <label>` scores saved results.
 
 Since `9cf8e8f`, HIGH turns propose an alert instead of sending one. In the summary, "HIGH turns escalated in the turn itself" therefore drops to 0; read "HIGH turns with an alert proposal" and the proposal rows instead.

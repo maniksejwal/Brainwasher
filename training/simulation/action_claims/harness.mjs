@@ -16,6 +16,7 @@
  *                         natural - the simulated user answers it, or not, in their next message (default)
  *                         accept  - accepted from the card right after the turn, as if tapped
  *                         reject  - rejected from the card right after the turn
+ *   --no-repeat-score   Skip the repeated question check (see repeat_scorer.mjs)
  *
  * Each scenario run uses a fresh database. Results are written to
  * <out>/results_<label>.json after every run; compare runs with summarize.mjs.
@@ -23,6 +24,7 @@
 import path from 'path';
 import fs from 'fs';
 import { pathToFileURL, fileURLToPath } from 'url';
+import { scoreRun } from './repeat_scorer.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -35,6 +37,9 @@ const option = (name, fallback) => {
 const root = path.resolve(option('--root', path.join(here, '..', '..', '..')));
 const outDir = path.resolve(option('--out', path.join(here, 'output')));
 const proposalMode = option('--proposals', 'natural');
+const noRepeatIndex = args.indexOf('--no-repeat-score');
+const scoreRepeats = noRepeatIndex === -1;
+if (!scoreRepeats) args.splice(noRepeatIndex, 1);
 const [label, turnsArg, runsArg, ...scenarios] = args;
 if (!label || !turnsArg || !runsArg || scenarios.length === 0 || !['natural', 'accept', 'reject'].includes(proposalMode)) {
     console.error('Usage: node harness.mjs [--root <dir>] [--out <dir>] [--proposals natural|accept|reject] <label> <turns> <runs> <scenario...>');
@@ -186,7 +191,9 @@ for (const key of scenarios) {
         const driver = new SimulationDriver({ dbPath, autoFeedback: false, logResults: false });
         try { await driver.runScenario(cfg, key); } catch (e) { error = e.message; }
         const seconds = Math.round((Date.now() - started) / 1000);
-        out.push({ scenario: key, run, error, seconds, proposalMode, turns: turnLog });
+        const result = { scenario: key, run, error, seconds, proposalMode, turns: turnLog };
+        if (scoreRepeats) await scoreRun(result);
+        out.push(result);
         fs.writeFileSync(path.join(outDir, `results_${label}.json`), JSON.stringify(out, null, 2));
         console.log(`[harness] ${label} ${key} run ${run}: ${turnLog.length} turns, ${seconds}s${error ? ' ERROR ' + error : ''}`);
     }
