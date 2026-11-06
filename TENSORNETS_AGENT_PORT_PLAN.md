@@ -273,3 +273,16 @@ The 2 of 6 HIGH turns with no proposal (`chest_pain_emergency` turn 4 of each ru
 Separate problems seen in that review, not caused by the port and not fixed here:
 - Run 1 turn 6: a patient with chest pain asks "get someone here ASAP", rated MEDIUM, so the reply has no 112 instruction. Criticality is judged per message, so an emergency can lose its instruction later in the conversation.
 - Run 1 turn 4: the reply to the caregiver says "I'll make sure to look into this for you right away", a promise with no recorded action, which the claim check does not catch.
+
+### Emergency instruction carry-over (added ahead of item 1)
+
+For 30 minutes after a HIGH turn, a lower-rated reply opens with: "If these symptoms are still happening, please call 112 or go to the nearest emergency department now." Per-message criticality, alert proposals and escalations do not change. In a HealthyMitra turn, only HIGH messages the speaker may read count, so a member's private emergency is not revealed to another.
+
+Live check, `chest_pain_emergency`, 2 runs x 6 turns: every lower-rated patient turn carried the instruction, with 3 alerts from 3 proposals on 3 HIGH turns and no false action claims.
+
+Known limits, for senior review:
+- Replies from question delegation ("Questions sent → ...") do not carry it, because they do not include the instruction path. Seen for caregivers in 2 of 12 turns.
+- The sentence is medical. A self-harm or danger emergency would get this wording too, because the HIGH category is not stored with the message.
+- It cannot end early, so a patient who says they have reached hospital still sees it until the window ends.
+
+This changes reply text on later turns, so measure items 1 to 3 against a new baseline that includes it.
