@@ -54,6 +54,7 @@ export async function processInputUnderstanding(userId, role, message, circleId,
             intent: analysis.intent || 'ASKING_QUESTION',
             mentionedUsernames: allMentionedUsernames,
             facts: analysis.facts || {},
+            analogyUsed: analysis.analogy_used === true,
             resolvedUsers: resolvedUsers // Store resolved matches for use by other handlers
         };
     } catch (error) {

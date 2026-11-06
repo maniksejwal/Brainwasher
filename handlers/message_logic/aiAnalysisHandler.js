@@ -21,6 +21,20 @@ import { processUserMessage, performContextEnrichment } from '../../agents/index
 import { events } from '../../orchestrator.js';
 import { coordinateCompanions } from '../../companions/CompanionCoordinator.js';
 import { notificationService } from '../../notifications/NotificationService.js';
+import { speakerNames, normalizeSelfFacts, otherMentions, recordAnalogyUse } from './selfReference.js';
+
+/**
+ * Corrects self-facts, then enriches the analysis for mentions of other people only, so a
+ * speaker naming themselves is not treated as a third party. The full mention list is kept.
+ */
+async function enrichForOtherMentions(userId, message, analysis, circleId) {
+    const names = speakerNames(await findUserById(userId));
+    const corrected = { ...analysis, facts: normalizeSelfFacts(analysis.facts, names) };
+    const others = otherMentions(corrected.mentioned_usernames, names);
+    if (others.length === 0) return corrected;
+    const enriched = await resolveEntitiesAndEnrichContext(userId, message, { ...corrected, mentioned_usernames: others }, circleId);
+    return { ...enriched, mentioned_usernames: corrected.mentioned_usernames };
+}
 
 async function resolveEntitiesAndEnrichContext(userId, message, analysis, circleId) {
     if (!analysis.mentioned_usernames || analysis.mentioned_usernames.length === 0) {
@@ -211,8 +225,10 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
         });
 
         // Entity resolution and context enrichment
-        if (analysis.mentioned_usernames && analysis.mentioned_usernames.length > 0) {
-            analysis = await resolveEntitiesAndEnrichContext(userId, message, analysis, circleId);
+        analysis = await enrichForOtherMentions(userId, message, analysis, circleId);
+
+        if (companionResult.analogy_used === true) {
+            await recordAnalogyUse(circleId, userId);
         }
 
         // Kept off the enumerable fields so it is not logged or serialized with the analysis
@@ -301,7 +317,7 @@ export async function performAiAnalysis(userId, role, message, circleId) {
         });
     }
 
-    analysis = await resolveEntitiesAndEnrichContext(userId, message, analysis, circleId);
+    analysis = await enrichForOtherMentions(userId, message, analysis, circleId);
 
     const currentCircle = await findCircleById(circleId);
     if (!currentCircle) {

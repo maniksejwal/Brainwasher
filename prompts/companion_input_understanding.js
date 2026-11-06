@@ -37,7 +37,10 @@ Return ONLY valid JSON:
   "mentioned_usernames": ["username1", "username2"],
   "facts": {
     "key": "value"
-  }
+  },
+  "analogy_used": true or false
 }
+
+Set analogy_used to true only if the user explains their own experience with an analogy ("it feels like a weight on my chest", "as if...").
 `;
 

@@ -73,6 +73,7 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
             }
         }
         resolved.future_plan = futurePlan;
+        resolved.analogy_used = initialResults.inputUnderstanding?.result?.analogyUsed === true;
         
         // Context for rewriting the reply after actions run (see handlers/message_logic/replyWriter.js)
         resolved.replyContext = {
