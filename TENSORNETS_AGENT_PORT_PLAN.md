@@ -281,7 +281,7 @@ For 30 minutes after a HIGH turn, a lower-rated reply opens with: "If these symp
 Live check, `chest_pain_emergency`, 2 runs x 6 turns: every lower-rated patient turn carried the instruction, with 3 alerts from 3 proposals on 3 HIGH turns and no false action claims.
 
 Known limits, for senior review:
-- Replies from question delegation ("Questions sent → ...") do not carry it, because they do not include the instruction path. Seen for caregivers in 2 of 12 turns.
+- Replies from question delegation ("Questions sent → ...") do not carry it, because `handleNonDoctorQuestion` returns before the checked reply is built. Seen for caregivers in 2 of 12 simulated turns. This path is skipped in HealthyMitra circles, so it affects non-HealthyMitra circles such as this simulation.
 - The sentence is medical. A self-harm or danger emergency would get this wording too, because the HIGH category is not stored with the message.
 - It cannot end early, so a patient who says they have reached hospital still sees it until the window ends.
 
