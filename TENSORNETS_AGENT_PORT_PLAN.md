@@ -286,3 +286,37 @@ Known limits, for senior review:
 - It cannot end early, so a patient who says they have reached hospital still sees it until the window ends.
 
 This changes reply text on later turns, so measure items 1 to 3 against a new baseline that includes it.
+
+### Baseline with the carry-over (`port_carry_baseline`, run on `0695ccc`)
+
+Same command and scenarios as the first baseline. Use this one for later comparisons.
+
+| Metric | Result |
+|---|---|
+| Runs, crashes | 8, 0 |
+| False action claims | 0 |
+| Replies regenerated or replaced | 1, 0 |
+| Criticality | NONE 23, LOW 5, MEDIUM 15, HIGH 5 |
+| HIGH turns opening with the emergency sentence | 5 of 5 |
+| HIGH turns with an alert proposal, alerts sent | 3 of 5, 3 |
+| Repeated questions | 3 of 40 replies with a question, 3 unscored |
+| Average time per run | 99 s |
+
+### Item 1 as built
+
+Fact storage had to be fixed first. In the runs before this fix, 61 of 75 stored facts had the value `[object Object]`, because the extractor wrapped facts as `{"speaker": {...}}`. Facts are now flattened before storing, empty values are dropped, and the prompt asks for a flat object.
+
+Differences from the source and from the plan above:
+- **Sensitivity**: the source's filter leaves out `normal`, the default for stored facts, so it would exclude most facts. `normal` is now included.
+- **Whose facts**: only facts the patient reported about themselves. Facts with no subject and `other_person_*` facts are left out, so a member's private statement cannot reach the patient's reply.
+- **Scoring**: confidence and recency only. Topic matching and relapse history are not ported, because all facts are currently stored as `general` and no worker supplies a hint.
+- **Bridge**: only `getLongitudinalHint`, with a timeout, and only when `TENSORNETS_URL` is set. `state.js` and the rest of the bridge are not ported.
+
+Replies do not use the block yet. It reaches the reply prompt in item 3.
+
+Live check, `medication_nonadherent`, 2 runs x 6 turns: 11 facts stored, none unreadable, and the patient's facts were retrieved without the caregiver's.
+
+Known limits:
+- `addFact` replaces the current fact per circle and key. A caregiver's `symptom_report` therefore replaces the patient's, and retrieval no longer finds it. Check this before item 3 is measured.
+- Most facts are stored in category `general`, so the safety-critical rule rarely applies. An old allergy can still rank below the top 6.
+- A fact a caregiver states about someone else without the `other_person_` prefix is stored as the caregiver's own. It does not reach the patient's reply.
