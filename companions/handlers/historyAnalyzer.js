@@ -15,7 +15,8 @@ import { getRecentMessages } from '../../db/index.js';
  * @returns {Promise<object>} History analysis
  */
 export async function processHistoryAnalysis(userId, role, message, circleId, context) {
-    const history = await getRecentMessages(circleId, 20);
+    // DB returns newest-first; the checks below expect chronological order
+    const history = (await getRecentMessages(circleId, 20)).reverse();
     
     // Analyze patterns in history
     const userMessages = history.filter(m => m.user_id === userId);

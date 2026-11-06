@@ -70,7 +70,8 @@ export async function queryCompanionsForDoctor(doctorUserId, circleId, doctorQue
     const { findCircleById } = await import('../../db/index.js');
     const circle = await findCircleById(circleId);
     const patient = circle ? await findUserById(circle.primary_patient_id) : null;
-    const history = await getRecentMessages(circleId, 20);
+    // DB returns newest-first; companions expect chronological order
+    const history = (await getRecentMessages(circleId, 20)).reverse();
     const members = await getCircleMembers(circleId);
     const factHistory = await getFactHistory(circleId, 'all', 10);
     const recentEscalations = await getUnreadEscalationsForCircle(circleId);
