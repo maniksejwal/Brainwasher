@@ -257,3 +257,17 @@ BEDROCK_MODEL_ID=us.meta.llama4-scout-17b-instruct-v1:0 \
 | `privacy_breach_caregiver` | 12 | 3 | 226 |
 
 Not yet measured: whether the agent asks again for something it was already told. This needs hand review of the transcripts, or a new metric, before the item 3 comparison.
+
+### Repeated questions (added after the baseline)
+
+`repeat_scorer.mjs` asks an LLM judge whether each reply asks for something the speaker already stated. Baseline, re-scored from the saved transcripts: **3 to 4 of 40 replies with a question flagged, 1 unscored**; the count varies between scorings. On hand review of the 3 flagged in the last scoring, 1 was genuine (`privacy_breach_caregiver` run 1 turn 3: told "this morning", then asked when it was first noticed) and 2 were false.
+
+On 14 hand-labelled cases the judge caught 7 of 7 repeats and wrongly flagged 1 of 7 non-repeats. It over-flags "tell me more" questions, so hand review the flagged replies in each comparison rather than relying on the count.
+
+### Emergency turns without a proposal
+
+The 2 of 6 HIGH turns with no proposal (`chest_pain_emergency` turn 4 of each run) scored 80% emergency confidence, under the 0.9 threshold, and the caregiver had already been alerted on turn 1. Both replies opened with the 112 instruction. In run 2 the patient's request was forwarded to the caregiver. No change needed for this.
+
+Separate problems seen in that review, not caused by the port and not fixed here:
+- Run 1 turn 6: a patient with chest pain asks "get someone here ASAP", rated MEDIUM, so the reply has no 112 instruction. Criticality is judged per message, so an emergency can lose its instruction later in the conversation.
+- Run 1 turn 4: the reply to the caregiver says "I'll make sure to look into this for you right away", a promise with no recorded action, which the claim check does not catch.
