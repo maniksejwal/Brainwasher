@@ -22,6 +22,7 @@ import { events } from '../../orchestrator.js';
 import { coordinateCompanions } from '../../companions/CompanionCoordinator.js';
 import { notificationService } from '../../notifications/NotificationService.js';
 import { speakerNames, normalizeSelfFacts, otherMentions, recordAnalogyUse } from './selfReference.js';
+import { loadKnownContext } from './knownContext.js';
 
 /**
  * Corrects self-facts, then enriches the analysis for mentions of other people only, so a
@@ -162,7 +163,8 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
             hasCriticalContent: /emergency|urgent|critical|severe/i.test(message),
             circleId,
             behavioralModels,
-            userAge: userProfile?.age || currentState?.age || null // Prioritize profile age
+            userAge: userProfile?.age || currentState?.age || null, // Prioritize profile age
+            ...await loadKnownContext(role, circleId, userId)
         };
 
         // Coordinate companions
