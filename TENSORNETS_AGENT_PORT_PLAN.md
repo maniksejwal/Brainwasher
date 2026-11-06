@@ -40,7 +40,8 @@ Status: plan only. Nothing from this plan has been ported yet. Line numbers belo
 | D4 | `_formatHistory` reads `m.role`, but rows have `user_id`, so every line says "Patient" | **Open** | Label by `user_id === userId` |
 | D5 | Empathy prompt has no `{{PHYSIO_CONTEXT}}` or `{{STRESS_OVERRIDE}}` | **Open** | Add the slots (item 6) |
 | D6 | Production never sets `physioState`, `stressLevel`, `priorCriticality`, `escalationActive` | **Open** | Set the last two (item 5); the physio paths stay inactive |
-| D7 | Fact retrieval matches `subject_id = userId`, but the guard writes `'self'` | **Open** | Match `subject_id IN (?, 'self')` |
+| D7 | Fact retrieval matches `subject_id = userId`, but the guard writes `'self'` | **Not a problem on target** | `conflictHandler.js` stores `'self'` as the speaker's user ID, so no change. Do not match `'self'` in retrieval. |
+| D13 | The analogy block never runs in the companion path, and its `addFact` omits the required `reportedBy` | **Fixed in port** | Asked for in input understanding; `selfReference.js` |
 | D8 | `historyAnalyzer.js` and `doctorOptimizer.js` fetch history themselves, newest first | **Partly fixed on target** | `historyAnalyzer` uses `slice(-5)` on that list, so it reads the oldest messages. Fix it first. Check `doctorOptimizer`. |
 | D9 | privacyGuard can make a second LLM call in the coordinator's rerun | **Open** | Rerun only if the first result is missing |
 | D10 | Selector calls `processUserMessage`, running the whole unified pipeline on its prompt | **Open** | Use `makeApiCall` + `parseCompanionResponse` |
@@ -108,6 +109,7 @@ Status: plan only. Nothing from this plan has been ported yet. Line numbers belo
 - **Add** `companions/physio/state.js` and `companions/physio/tensornetsBridge.js`.
 - **D12**: add `AbortSignal.timeout(TIMEOUT_MS)` to `getLongitudinalHint`, and call the bridge only when `TENSORNETS_URL` is set, so a normal deployment makes no failed request each turn.
 - **`aiAnalysisHandler.js`**: load the facts where `conversationContext` is built and add `knownContextBlock` and `longitudinalHint` to it, so every handler and the final reply can see them.
+- **Subjectless facts**: input understanding returns plain `key: value` facts, which are stored with no `subject_id`, and retrieval accepts those for anyone. A caregiver's statement could then be presented as known about the patient, so check this when building the block.
 - **Privacy**: retrieve with `sensitivity: 'circle'` and `subjectId` set to the patient. Only inject into patient-facing replies at first (`role === 'patient'`), so a caregiver's reply can't reveal a patient's private facts.
 
 ## Item 2: Action selector
@@ -158,7 +160,7 @@ Rules:
 ## Item 4: Self-reference guard and analogy observation
 
 - **`aiAnalysisHandler.js`**: port the block that builds `speakerNames`, normalises `facts[*].subject_id` to `'self'`, and enriches only other people's mentions. Port the analogy preference block (written to `facts_v2`, non-fatal).
-- **`prompts/unified_prompt.js`**: port the `analogy_used` field. Without it the block never runs.
+- **Analogy**: done in `prompts/companion_input_understanding.js`, not `unified_prompt.js`, because the block is on the companion path. Only use is recorded; the source's repeated "unknown" rows are dropped so they can't crowd out useful facts.
 - Take only these hunks. Leave out `opts`, `skipPrivacyGuard` and `extraContext`.
 
 ## Item 5: clinicalAgent changes
