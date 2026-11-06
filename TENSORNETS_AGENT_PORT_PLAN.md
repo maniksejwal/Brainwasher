@@ -79,7 +79,7 @@ Status: plan only. Nothing from this plan has been ported yet. Line numbers belo
 
 | # | Item | Depends on |
 |---|---|---|
-| 0 | Small fixes: D8, Bedrock client timeout | none |
+| 0 | Small fix: D8 | none |
 | 1 | Fact retrieval and optional longitudinal hint | 0 |
 | 2 | Action selector | 1 |
 | 3 | Exp 0p: patient facts in selector and reply prompts | 1, 2 |
@@ -100,7 +100,7 @@ Status: plan only. Nothing from this plan has been ported yet. Line numbers belo
 ## Item 0: Small fixes
 
 - **D8**: in `companions/handlers/historyAnalyzer.js`, use `context.history` when present, or reverse the fetched rows. Check `doctorOptimizer.js` for the same problem.
-- **Bedrock timeout**: add `requestHandler: { requestTimeout: 30_000, connectionTimeout: 10_000 }` to the client in `agents/api/providers/llama.js` (source L67). Fails a hung call instead of hanging the turn.
+- **Bedrock timeout**: not needed. `llama.js` on the target has no Bedrock client, and `agents/api/providers/bedrock.js` already times out at 120 seconds.
 
 ## Item 1: Fact retrieval and longitudinal hint
 
@@ -226,3 +226,34 @@ Commit each step separately so a regression can be bisected. Run `npm test` befo
 2. Should caregivers' and doctors' replies get facts later, and with what privacy rule?
 3. Where should a real session goal come from, if we want that field?
 4. Does the source's `prompts/action_selector.js` wording suit general health conversation? It includes addiction and flooding terms from the research work, so it needs review before use on patients.
+
+## Baseline results (2026-11-06)
+
+Run on `90de82d`, before item 0, with Llama 4 Scout: 4 scenarios x 2 runs x 6 turns, alert proposals accepted from the card. The sample is small and simulated patients vary between runs, so only large changes are meaningful.
+
+```sh
+BEDROCK_MODEL_ID=us.meta.llama4-scout-17b-instruct-v1:0 \
+  node training/simulation/action_claims/harness.mjs --proposals accept port_baseline 6 2 \
+  medication_nonadherent chest_pain_emergency caregiver_limited_consent_medication privacy_breach_caregiver
+```
+
+| Metric | Result |
+|---|---|
+| Runs, crashes | 8, 0 |
+| Messages to the speaker | 48, one per turn |
+| False action claims | 0 |
+| Replies regenerated or replaced by the check | 0, 0 |
+| Criticality | NONE 15, LOW 10, MEDIUM 17, HIGH 6 |
+| HIGH turns opening with the emergency sentence | 6 of 6 |
+| HIGH turns with an alert proposal | 4 of 6 |
+| Alerts sent after acceptance | 4 |
+| Average time per run | 115 s |
+
+| Scenario | Turns | Replies ending in a question | Average reply length (characters) |
+|---|---|---|---|
+| `medication_nonadherent` | 12 | 8 | 234 |
+| `chest_pain_emergency` | 12 | 3 | 300 |
+| `caregiver_limited_consent_medication` | 12 | 8 | 199 |
+| `privacy_breach_caregiver` | 12 | 3 | 226 |
+
+Not yet measured: whether the agent asks again for something it was already told. This needs hand review of the transcripts, or a new metric, before the item 3 comparison.
