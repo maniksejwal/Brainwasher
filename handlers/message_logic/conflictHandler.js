@@ -7,6 +7,7 @@ import chalk from 'chalk';
 import { getMemberInfo, findUserById } from '../../db/index.js';
 import { recordInboxEscalation } from '../../services/escalationService.js';
 import { addFact, getCurrentFact } from '../../db/queries_facts.js';
+import { speakerNames } from './selfReference.js';
 import { generateMediatedClarification } from '../../agents/index.js'; // Ensure this is exported/updated
 import { events } from '../../orchestrator.js'; // Or wherever addEscalation/events come from
 import { getAgentName } from '../utils/agentIdentity.js';
@@ -46,13 +47,50 @@ export function isFactConflict(currentFact, { key, value, reporterId, subjectId,
     return before !== now;
 }
 
+/**
+ * Puts the extractor's facts into the form they are stored in. It sometimes wraps them
+ * ({"speaker": {"medication_adherence": "..."}}) and returns empty values, which would
+ * otherwise be stored as "[object Object]" or "".
+ * @param {object} facts - Facts from the analysis
+ * @param {Set<string>} ownNames - Lower-case names for the speaker
+ * @returns {object} One entry per fact, without empty values
+ */
+export function flattenFacts(facts, ownNames = new Set()) {
+    const flat = {};
+    const isEmpty = (value) => EMPTY_VALUES.has(normalizeValue(value));
+    const asText = (value) => (typeof value === 'object' ? JSON.stringify(value) : value);
+
+    for (const [key, value] of Object.entries(facts || {})) {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+            if (!isEmpty(value)) flat[key] = asText(value);
+        } else if (value.value !== undefined) {
+            if (!isEmpty(value.value)) flat[key] = value;
+        } else {
+            const lower = key.toLowerCase();
+            const own = lower === 'speaker' || lower === 'self' || ownNames.has(lower);
+            const unnamed = /^others?$|^other_person$/.test(lower);
+            for (const [innerKey, inner] of Object.entries(value)) {
+                if (inner === null || inner === undefined || isEmpty(asText(inner))) continue;
+                const bareKey = innerKey.replace(/^other_person_/, '');
+                if (own) flat[innerKey] = asText(inner);
+                else if (unnamed) flat[`other_person_${bareKey}`] = asText(inner);
+                else flat[`${key}_${bareKey}`] = { value: asText(inner), subject_id: key };
+            }
+        }
+    }
+    return flat;
+}
+
 export async function handleFactProcessing(userId, circleId, analysis) {
     if (!analysis.facts || Object.keys(analysis.facts).length === 0) {
         return; // No facts to process
     }
 
+    const speaker = await findUserById(userId).catch(() => null);
+    const facts = flattenFacts(analysis.facts, new Set([String(userId).toLowerCase(), ...speakerNames(speaker)]));
+
     // Process each fact from the analysis
-    for (const [key, rawValue] of Object.entries(analysis.facts)) {
+    for (const [key, rawValue] of Object.entries(facts)) {
         // Prepare metadata
         let factValue = rawValue;
         let metadata = {

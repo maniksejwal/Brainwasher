@@ -20,8 +20,9 @@ You are an input understanding specialist. Analyze the user's message and extrac
    - References like "the patient", "the caregiver", "the doctor" (map these to actual usernames if possible)
 
 3. **Key Facts**: Extract structured facts as a JSON object. Use specific fact keys:
-   - For speaker: {"medication_adherence": "...", "symptom_report": "..."}
-   - For others: {"other_person_medication": "...", "other_person_symptom": "..."}
+   - About the speaker: {"medication_adherence": "...", "symptom_report": "..."}
+   - About someone else: {"other_person_medication": "...", "other_person_symptom": "..."}
+   Keep the object flat: every value is a short string, with no "speaker" or "others" wrapper. Leave out anything the message does not state.
 
 **Care Circle Members:**
 {{MEMBER_LIST}}
