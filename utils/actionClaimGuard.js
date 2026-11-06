@@ -245,6 +245,9 @@ export function buildActionStatus(actions = {}) {
     return parts.join(' ');
 }
 
+// Sent after a HIGH turn while the current message is rated lower; the person may have improved
+export const CARRIED_EMERGENCY_SENTENCE = 'If these symptoms are still happening, please call 112 or go to the nearest emergency department now.';
+
 /**
  * Compose the one message sent to the user who wrote in:
  * emergency sentence (HIGH only), checked model text, action status, then any question
@@ -254,10 +257,11 @@ export function buildActionStatus(actions = {}) {
  * @param {string} params.criticality - Final criticality for the turn
  * @param {string} [params.highCategory] - HIGH category from the clinical agent
  * @param {object} [params.actions] - Action record for this turn
+ * @param {boolean} [params.emergencyActive] - A recent HIGH turn is still within its window
  * @param {string} [params.question] - Question from a sharing handler (may be model-written)
  * @returns {{message: string, violations: Array<{type: string, sentence: string}>}}
  */
-export function composeFinalReply({ modelText, criticality, highCategory = null, actions = {}, question = null }) {
+export function composeFinalReply({ modelText, criticality, highCategory = null, emergencyActive = false, actions = {}, question = null }) {
     const violations = findFalseClaims(modelText, actions);
     const status = buildActionStatus(actions);
     let body = violations.length > 0 || !modelText ? FALLBACK_TEXT : modelText.trim();
@@ -266,8 +270,8 @@ export function composeFinalReply({ modelText, criticality, highCategory = null,
         body = removeSupportedClaims(body, actions);
     }
     const parts = [];
-    if (criticality === 'HIGH') {
-        parts.push(getEmergencySentence(highCategory));
+    if (criticality === 'HIGH' || emergencyActive) {
+        parts.push(criticality === 'HIGH' ? getEmergencySentence(highCategory) : CARRIED_EMERGENCY_SENTENCE);
         // The approved sentence gives the instruction; the model's own version is removed
         if (body !== FALLBACK_TEXT) body = removeEmergencyInstructions(body);
     }

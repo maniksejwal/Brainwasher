@@ -31,6 +31,7 @@ import {
 import {
     addMessage,
     getRecentMessages,
+    hasRecentHighMessage,
     upsertFact,
     getLastFact,
     getFactHistory
@@ -138,6 +139,7 @@ export {
     findMemberInSharedCircles,
     addMessage,
     getRecentMessages,
+    hasRecentHighMessage,
     upsertFact,
     getLastFact,
     getFactHistory,

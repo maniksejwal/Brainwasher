@@ -436,6 +436,8 @@ test('a HIGH turn rewrites the reply with the real actions and sends one message
 });
 
 test('a reply that claims an action that did not happen is regenerated once', async () => {
+    // Earlier tests leave HIGH messages, which would count as an active emergency
+    await db.run('DELETE FROM messages');
     const { handleMessage } = await import('../handlers/messageHandler.js');
     await clearEscalations();
     await db.run('DELETE FROM scheduled_messages');
@@ -458,6 +460,8 @@ test('a reply that claims an action that did not happen is regenerated once', as
 });
 
 test('a scheduled message due this turn is added to the one reply', async () => {
+    // Earlier tests leave HIGH messages, which would count as an active emergency
+    await db.run('DELETE FROM messages');
     const { handleMessage } = await import('../handlers/messageHandler.js');
     const { createScheduledMessage } = await import('../db/queries_future_plans.js');
     await clearEscalations();

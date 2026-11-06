@@ -13,6 +13,25 @@ export async function addMessage(circleId, userId, role, message, privacy, criti
 }
 
 /**
+ * Whether a HIGH turn was saved in the circle since a time. In a HealthyMitra conversation
+ * turn only messages that speaker may read count, as in getRecentMessages, so one member's
+ * private emergency is not revealed to another.
+ * @param {string} circleId - Care circle ID
+ * @param {number} since - Earliest timestamp, in milliseconds
+ * @returns {Promise<boolean>} Whether there is one
+ */
+export async function hasRecentHighMessage(circleId, since) {
+    const db = await getDb();
+    const turn = currentTurn();
+    const visible = turn ? " AND (user_id = ? OR privacy_level = 'PUBLIC')" : '';
+    const row = await db.get(
+        `SELECT 1 FROM messages WHERE circle_id = ? AND criticality_level = 'HIGH' AND timestamp >= ?${visible} LIMIT 1`,
+        turn ? [circleId, since, turn.userId] : [circleId, since]
+    );
+    return Boolean(row);
+}
+
+/**
  * The most recent messages in a circle, newest first. In a HealthyMitra conversation turn
  * (lib/turnContext.js) only the speaker's own messages and other members' PUBLIC messages
  * are returned, so one member's private conversation never reaches another's agent.

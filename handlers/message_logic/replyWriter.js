@@ -9,11 +9,32 @@
  * pointed out; if that also fails, composeFinalReply uses the fixed fallback text.
  */
 
-import { getRecentMessages } from '../../db/index.js';
+import { getRecentMessages, hasRecentHighMessage } from '../../db/index.js';
 import { processPatientOptimization } from '../../companions/agents/patientOptimizer.js';
 import { processEmpathyDecision } from '../../companions/handlers/empathyHandler.js';
 import { hasActionsToReport, renderActionsTaken } from '../../prompts/action_contract.js';
 import { findFalseClaims, composeFinalReply } from '../../utils/actionClaimGuard.js';
+
+// How long the emergency instruction stays on replies after the latest HIGH turn
+export const EMERGENCY_CARRY_WINDOW_MS = 30 * 60 * 1000;
+
+/**
+ * Whether a lower-rated turn still falls within a recent emergency. A failed check must not
+ * stop the reply.
+ * @param {string} circleId - Care circle ID
+ * @param {string} criticality - This turn's rating
+ * @param {Function} [check] - The lookup, replaceable in tests
+ * @returns {Promise<boolean>} Whether to carry the emergency instruction
+ */
+export async function isEmergencyActive(circleId, criticality, check = hasRecentHighMessage) {
+    if (criticality === 'HIGH') return false;
+    try {
+        return await check(circleId, Date.now() - EMERGENCY_CARRY_WINDOW_MS);
+    } catch (error) {
+        console.error('[ReplyWriter] Could not check for a recent emergency:', error.message);
+        return false;
+    }
+}
 
 /**
  * Context for the reply prompts. The companion path keeps the context its handlers saw;
@@ -102,6 +123,7 @@ export async function buildCheckedReply({ userId, role, message, circleId, analy
         modelText,
         criticality: analysis.criticality,
         highCategory: analysis.high_category,
+        emergencyActive: await isEmergencyActive(circleId, analysis.criticality),
         actions,
         question
     });
