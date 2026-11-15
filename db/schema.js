@@ -286,6 +286,13 @@ export async function migrateDatabase(db) {
             await db.run('ALTER TABLE care_circle_members ADD COLUMN last_read_timestamp INTEGER DEFAULT 0');
         }
 
+        // Migration: sharing_restrictions.effective_from (message-history window)
+        const restrictionInfo = await db.all('PRAGMA table_info(sharing_restrictions)');
+        if (restrictionInfo.length > 0 && !restrictionInfo.some(col => col.name === 'effective_from')) {
+            console.log('[Migration] Adding effective_from to sharing_restrictions...');
+            await db.run('ALTER TABLE sharing_restrictions ADD COLUMN effective_from INTEGER');
+        }
+
         // Direct Messages Table
         await db.exec(`
             CREATE TABLE IF NOT EXISTS direct_messages (
@@ -445,6 +452,40 @@ export async function migrateDatabase(db) {
                 finished_at INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_integration_actions_owner ON integration_actions(owner_user_id, status);
+            -- Questions and requests a patient is still waiting on: open -> answered | dropped
+            CREATE TABLE IF NOT EXISTS open_asks (
+                ask_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                circle_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                times_asked INTEGER NOT NULL DEFAULT 1,
+                status TEXT NOT NULL DEFAULT 'open',
+                first_asked_at INTEGER NOT NULL,
+                last_asked_at INTEGER NOT NULL,
+                closed_at INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_open_asks_user ON open_asks(circle_id, user_id, status);
+            -- Who a user asked the companion not to share with (services/sharingPolicy.js).
+            -- Exactly one of target_user_id (one member) or target_role ('caregiver', 'doctor',
+            -- '*' for everyone) is set. Active while revoked_at is NULL.
+            CREATE TABLE IF NOT EXISTS sharing_restrictions (
+                restriction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                circle_id TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                target_user_id TEXT,
+                target_role TEXT,
+                topic TEXT,
+                source_text TEXT,
+                created_at INTEGER NOT NULL,
+                -- Start of the window whose messages the target cannot read; a little before
+                -- created_at so the message that asked for the restriction is covered
+                effective_from INTEGER,
+                revoked_at INTEGER,
+                revoked_source_text TEXT,
+                CHECK ((target_user_id IS NULL) <> (target_role IS NULL))
+            );
+            CREATE INDEX IF NOT EXISTS idx_sharing_restrictions_owner ON sharing_restrictions(circle_id, owner_user_id, revoked_at);
         `);
 
         // Migration for feedback table - add all missing columns

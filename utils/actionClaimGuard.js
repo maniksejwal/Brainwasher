@@ -261,7 +261,7 @@ export const CARRIED_EMERGENCY_SENTENCE = 'If these symptoms are still happening
  * @param {string} [params.question] - Question from a sharing handler (may be model-written)
  * @returns {{message: string, violations: Array<{type: string, sentence: string}>}}
  */
-export function composeFinalReply({ modelText, criticality, highCategory = null, emergencyActive = false, actions = {}, question = null }) {
+export function composeFinalReply({ modelText, criticality, highCategory = null, emergencyActive = false, actions = {}, question = null, notice = null }) {
     const violations = findFalseClaims(modelText, actions);
     const status = buildActionStatus(actions);
     let body = violations.length > 0 || !modelText ? FALLBACK_TEXT : modelText.trim();
@@ -276,6 +276,8 @@ export function composeFinalReply({ modelText, criticality, highCategory = null,
         if (body !== FALLBACK_TEXT) body = removeEmergencyInstructions(body);
     }
     if (body) parts.push(body);
+    // Code-written confirmation of a sharing limit the user set or lifted this turn
+    if (notice) parts.push(notice.trim());
     if (status) parts.push(status);
     if (question) {
         // A question that claims an action is dropped, not sent

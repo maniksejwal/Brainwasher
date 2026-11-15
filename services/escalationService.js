@@ -50,6 +50,7 @@ import { getAgentName } from '../handlers/utils/agentIdentity.js';
 import { joinNames, buildActionStatus } from '../utils/actionClaimGuard.js';
 import { isHealthyMitraCircle } from '../lib/deliveryMode.js';
 import { createAction, decideAction, supersedeAction, DECISIONS, AUTO_SEND_DECISION } from './integrationActions.js';
+import { partitionRecipients } from './sharingPolicy.js';
 
 export { AUTO_SEND_DECISION };
 
@@ -109,7 +110,8 @@ export function toActionRecord(deliveries, { doctorsWanted, circleHasDoctor, ano
  * @param {string} [params.caregiverMessage] - Text sent to caregivers
  * @param {string} [params.patientUsername] - Patient the circle belongs to
  * @param {boolean} [params.anonymous] - The doctor sees no patient identity
- * @param {string[]} [params.onlyUserIds] - Send only to these members (an approved proposal's recipients)
+ * @param {string[]} [params.onlyUserIds] - Send only to these members (an approved proposal's
+ *   recipients). Without it, members the user asked not to share with are left out.
  * @param {number} [params.timeoutMs] - Longest wait for each send
  * @returns {Promise<{escalationId: number, duplicate: boolean, deliveries: object[], doctorReached: boolean, actions: object}>}
  */
@@ -134,8 +136,16 @@ export async function escalate({
     const members = await getCircleMembers(circleId);
     // An approved proposal fixes its recipients; anyone who has left the circle since is dropped
     const allowed = (m) => !onlyUserIds || onlyUserIds.includes(m.user_id);
-    const doctors = notifyDoctors ? members.filter(m => m.role === 'doctor' && allowed(m)) : [];
-    const caregivers = notifyCaregivers ? members.filter(m => m.role === 'caregiver' && m.user_id !== userId && allowed(m)) : [];
+    let doctors = notifyDoctors ? members.filter(m => m.role === 'doctor' && allowed(m)) : [];
+    let caregivers = notifyCaregivers ? members.filter(m => m.role === 'caregiver' && m.user_id !== userId && allowed(m)) : [];
+    if (!onlyUserIds) {
+        // Not approved by the user: their sharing restrictions apply
+        const permitted = new Set((await partitionRecipients({
+            circleId, ownerUserId: userId, members: [...doctors, ...caregivers], path: 'escalation'
+        })).allowed.map(m => m.user_id));
+        doctors = doctors.filter(m => permitted.has(m.user_id));
+        caregivers = caregivers.filter(m => permitted.has(m.user_id));
+    }
     const circleHasDoctor = members.some(m => m.role === 'doctor');
     const recordOptions = { doctorsWanted: notifyDoctors, circleHasDoctor, anonymous };
 
@@ -245,7 +255,11 @@ const minutesText = (ms) => {
  * accepts. The proposal fixes the escalation's content and recipients, so what the user
  * accepts is exactly what is sent. A newer proposal replaces an older open one from the
  * same user in the same circle, so one "yes" can never send two.
- * @param {object} params - Same as `escalate`, plus `ttlMs` and `autoSendAfterMs` (send it
+ * Members the user asked not to share with are left out, except in an emergency
+ * (`emergency: true`, a HIGH turn): there they stay in the proposal, the question names the
+ * restriction, and the proposal is never sent automatically, so they are alerted only on
+ * the user's explicit yes.
+ * @param {object} params - Same as `escalate`, plus `emergency`, `ttlMs` and `autoSendAfterMs` (send it
  *   if still unanswered after this long; only for a patient who consented in advance)
  * @returns {Promise<{proposal: object|null, question: string|null, actions: object}>}
  *   `proposal` is null when the circle has nobody to alert
@@ -261,16 +275,24 @@ export async function proposeEscalation({
     caregiverMessage = null,
     patientUsername = null,
     ttlMs = PROPOSAL_TTL_MS,
-    autoSendAfterMs = null
+    autoSendAfterMs = null,
+    emergency = false
 }) {
     if (!SAFETY_ESCALATION_TYPES.includes(type)) {
         throw new Error(`[EscalationService] Unknown escalation type: ${type}`);
     }
     const members = await getCircleMembers(circleId);
     const circleHasDoctor = members.some(m => m.role === 'doctor');
-    const recipients = members
-        .filter(m => (notifyDoctors && m.role === 'doctor') || (notifyCaregivers && m.role === 'caregiver' && m.user_id !== userId))
-        .map(m => ({ userId: m.user_id, username: m.username, role: m.role }));
+    const wanted = members
+        .filter(m => (notifyDoctors && m.role === 'doctor') || (notifyCaregivers && m.role === 'caregiver' && m.user_id !== userId));
+    const { allowed: permitted, blocked, failedClosed } = await partitionRecipients({
+        circleId, ownerUserId: userId, members: wanted, path: emergency ? 'emergency_proposal' : 'escalation_proposal'
+    });
+    const included = emergency ? wanted : permitted;
+    // Asked first, by name: restricted members are alerted only on an explicit yes
+    const overriddenNames = emergency ? blocked.map(m => m.username) : [];
+    if (emergency && (blocked.length > 0 || failedClosed)) autoSendAfterMs = null;
+    const recipients = included.map(m => ({ userId: m.user_id, username: m.username, role: m.role }));
     const actions = { noDoctorConnected: notifyDoctors && !circleHasDoctor };
     if (recipients.length === 0) {
         return { proposal: null, question: null, actions };
@@ -297,7 +319,8 @@ export async function proposeEscalation({
         patientUsername,
         expiresAt: Date.now() + ttlMs,
         autoSendAfterMs: autoSendAfterMs || null,
-        autoSendAt: autoSendAfterMs ? Date.now() + autoSendAfterMs : null
+        autoSendAt: autoSendAfterMs ? Date.now() + autoSendAfterMs : null,
+        overridesRestrictionFor: overriddenNames
     };
     if (isHealthyMitraCircle(circleId)) {
         // HealthyMitra executes it once accepted; the stored action fixes what it may send
@@ -317,6 +340,9 @@ export async function proposeEscalation({
     }
     await addPendingAction(proposal.actionId, circleId, userId, PROPOSAL_ACTION_TYPE, proposal);
     let question = `Do you want me to alert ${joinNames(recipients.map(r => r.username))} now? Just reply yes.`;
+    if (overriddenNames.length > 0) {
+        question = `You asked me not to share with ${joinNames(overriddenNames)}. Because this could be an emergency, I'd like to alert them anyway, but only if you say so. ${question}`;
+    }
     if (proposal.autoSendAt) {
         question += ` If you don't answer within ${minutesText(autoSendAfterMs)}, the alert goes to them automatically, as you set up.`;
     }
@@ -374,8 +400,15 @@ export async function runDueAutoAlerts({ now = Date.now() } = {}) {
     const outcomes = [];
     for (const pending of await getDueAutoSendProposals(now)) {
         const proposal = pending.details;
-        if (now > proposal.expiresAt || !(await getEmergencyAutoAlertConsent(pending.user_id))) {
-            // Expired or consent revoked: it waits for an answer like any other proposal
+        const restricted = (await partitionRecipients({
+            circleId: pending.circle_id,
+            ownerUserId: pending.user_id,
+            members: (proposal.recipients || []).map(r => ({ user_id: r.userId, username: r.username, role: r.role })),
+            path: 'auto_alert'
+        })).blocked.length > 0;
+        if (now > proposal.expiresAt || restricted || !(await getEmergencyAutoAlertConsent(pending.user_id))) {
+            // Expired, consent revoked, or a recipient restricted since: it waits for an answer
+            // like any other proposal
             await updateAutoSend(pending, null);
             outcomes.push({ actionId: proposal.actionId, status: 'skipped' });
             continue;

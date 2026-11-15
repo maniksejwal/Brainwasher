@@ -14,6 +14,7 @@ import { getAgentName } from '../handlers/utils/agentIdentity.js';
 import { joinNames } from '../utils/actionClaimGuard.js';
 import { isHealthyMitraCircle } from '../lib/deliveryMode.js';
 import { createAction } from './integrationActions.js';
+import { partitionRecipients } from './sharingPolicy.js';
 
 // A message nobody accepted for a day is stale
 export const MEMBER_MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -64,16 +65,25 @@ export async function proposeMemberMessage({ userId, circleId, members, message,
  * @param {Array<{user_id: string, username: string, role: string}>} params.members - Recipients
  * @param {string} params.message - The exact text
  * @param {string|null} [params.patientUsername]
- * @returns {Promise<{actions: object, proposal: object|null, question: string|null}>}
- *   `actions` names who was messaged (utils/actionClaimGuard.js); nobody when proposed
+ * @returns {Promise<{actions: object, proposal: object|null, question: string|null, blocked: string[]}>}
+ *   `actions` names who was messaged (utils/actionClaimGuard.js); nobody when proposed.
+ *   `blocked` names members left out because the user asked not to share with them.
  */
-export async function shareWithMembers({ userId, circleId, members, message, patientUsername = null }) {
+export async function shareWithMembers({ userId, circleId, members: requested, message, patientUsername = null }) {
+    const { allowed: members, blocked: blockedMembers } = await partitionRecipients({
+        circleId, ownerUserId: userId, members: requested, path: 'member_message'
+    });
+    const blocked = blockedMembers.map(m => m.username || m.user_id);
+    if (members.length === 0) {
+        return { actions: {}, proposal: null, question: null, blocked };
+    }
+
     if (isHealthyMitraCircle(circleId)) {
         const proposal = await proposeMemberMessage({ userId, circleId, members, message });
         const question = proposal
             ? `I've drafted a message for ${joinNames(proposal.recipients.map(r => r.username))}. Accept it on the card to send it from you, or reject it.`
             : null;
-        return { actions: {}, proposal, question };
+        return { actions: {}, proposal, question, blocked };
     }
 
     for (const member of members) {
@@ -86,5 +96,5 @@ export async function shareWithMembers({ userId, circleId, members, message, pat
             patientUsername
         });
     }
-    return { actions: { membersMessaged: members.map(m => m.username) }, proposal: null, question: null };
+    return { actions: { membersMessaged: members.map(m => m.username) }, proposal: null, question: null, blocked };
 }

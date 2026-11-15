@@ -13,7 +13,7 @@ import { generateEmergencyConfidencePrompt, generateEscalationHintPrompt } from 
 
 // HIGH turns escalate immediately at or above this emergency confidence; below it, a follow-up is asked.
 // A failed confidence call returns 0.6, which is below the threshold.
-export const ESCALATION_CONFIDENCE_THRESHOLD = 0.9;
+export const ESCALATION_CONFIDENCE_THRESHOLD = 0.85;
 
 /**
  * Calculate confidence level for HIGH criticality events using LLM
@@ -73,7 +73,7 @@ async function calculateEmergencyConfidence(message, analysis) {
 
 /**
  * Handles HIGH criticality events with confidence-based escalation
- * Proposes an alert to the doctors and caregivers only if confidence is very high (0.9+)
+ * Proposes an alert to the doctors and caregivers only if confidence is high (0.85+)
  * Otherwise schedules a follow-up question for the next turn without escalating
  * @param {string} userId - The user who reported the critical event
  * @param {string} role - The role of the user
@@ -94,7 +94,7 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
     // Calculate confidence level for emergency using LLM
     const confidence = await calculateEmergencyConfidence(message, analysis);
     
-    // High confidence (0.9+): a clear emergency. The alert to the doctors and caregivers is
+    // High confidence (0.85+): a clear emergency. The alert to the doctors and caregivers is
     // proposed, not sent: the reply opens with the emergency sentence and asks the user to
     // accept the alert, which goes out on "yes" (escalationService.decideEscalationProposal).
     if (confidence >= ESCALATION_CONFIDENCE_THRESHOLD) {
@@ -112,7 +112,9 @@ export async function handleCriticalEvent(userId, role, message, circleId, analy
             caregiverMessage: `Urgent health update: ${patientUsername} reported a critical health concern. Please check on them.`,
             patientUsername,
             // Sent unanswered only when the patient consented in advance (off by default)
-            autoSendAfterMs: await autoSendDelayFor(userId, role, currentCircle)
+            autoSendAfterMs: await autoSendDelayFor(userId, role, currentCircle),
+            // Members the user restricted stay in, named in the question, never sent automatically
+            emergency: true
         });
 
         // The user is not messaged here: messageHandler puts the question in its one reply.
