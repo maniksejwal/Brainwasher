@@ -1,8 +1,8 @@
 /** Amazon Bedrock Converse adapter using a Bedrock API key. */
 import config from '../../../config.js';
 
-export async function callBedrock(prompt, temperature, maxTokens) {
-    const { BEDROCK_API_KEY: apiKey, BEDROCK_MODEL_ID: modelId, BEDROCK_REGION: region } = config;
+export async function callBedrock(prompt, temperature, maxTokens, modelId = config.BEDROCK_MODEL_ID) {
+    const { BEDROCK_API_KEY: apiKey, BEDROCK_REGION: region } = config;
     if (!apiKey || !modelId) {
         throw new Error('[Agent] Bedrock API key and model ID are required');
     }

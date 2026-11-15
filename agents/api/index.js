@@ -84,7 +84,7 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
 
             const providerType = provider.type;
             const baseModel = modelSelection.preferredModel || config.OLLAMA_DEFAULT_MODEL || config.DEFAULT_MODEL;
-            const modelForAttempt = normalizeModelForProvider(providerType, baseModel);
+            const modelForAttempt = normalizeModelForProvider(providerType, baseModel, useCase);
 
             for (let retry = 1; retry <= maxRetries; retry++) {
             try {
@@ -122,7 +122,7 @@ export async function makeApiCall(prompt, history = [], expectJson = false, temp
                         break;
                     }
                     case PROVIDERS.BEDROCK: {
-                        const res = await callBedrock(fullPrompt, temperature, maxTokens);
+                        const res = await callBedrock(fullPrompt, temperature, maxTokens, modelForAttempt);
                         text = res.text;
                         usage = res.usage;
                         break;

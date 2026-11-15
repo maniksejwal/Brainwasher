@@ -37,6 +37,10 @@ const config = {
     CHAT_GPT_KEY: process.env.CHAT_GPT_KEY,
     BEDROCK_API_KEY: sanitizeString(process.env.AWS_BEARER_TOKEN_BEDROCK),
     BEDROCK_MODEL_ID: sanitizeString(process.env.BEDROCK_MODEL_ID),
+    // Bedrock models for single use cases; a use case not listed uses BEDROCK_MODEL_ID
+    BEDROCK_USE_CASE_MODEL_IDS: {
+        clinical_assessment: sanitizeString(process.env.BEDROCK_CLINICAL_MODEL_ID)
+    },
     BEDROCK_REGION: sanitizeString(process.env.AWS_REGION, 'ap-south-1'),
     OLLAMA_API_BASE_URL: envConfig.OLLAMA_API_BASE_URL,
     OLLAMA_DEFAULT_MODEL: envConfig.OLLAMA_DEFAULT_MODEL,

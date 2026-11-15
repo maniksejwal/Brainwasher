@@ -67,6 +67,32 @@ test('Bedrock adapter sends a Converse request and maps the response', async () 
     }
 });
 
+test('a use case with its own Bedrock model sends to that model; others use the default', async () => {
+    const { normalizeModelForProvider } = await import('../agents/api/selector.js');
+    config.BEDROCK_MODEL_ID = 'example.default-v1:0';
+    config.BEDROCK_USE_CASE_MODEL_IDS = { clinical_assessment: 'example.clinical-v1:0' };
+    assert.equal(normalizeModelForProvider(PROVIDERS.BEDROCK, 'x', 'clinical_assessment'), 'example.clinical-v1:0');
+    assert.equal(normalizeModelForProvider(PROVIDERS.BEDROCK, 'x', 'basic_responses'), 'example.default-v1:0');
+    config.BEDROCK_USE_CASE_MODEL_IDS = { clinical_assessment: '' };
+    assert.equal(normalizeModelForProvider(PROVIDERS.BEDROCK, 'x', 'clinical_assessment'), 'example.default-v1:0');
+
+    config.BEDROCK_API_KEY = 'example-bedrock-key';
+    config.BEDROCK_REGION = 'ap-south-1';
+    const originalFetch = globalThis.fetch;
+    let requested = null;
+    globalThis.fetch = async (url) => {
+        requested = url;
+        return { ok: true, json: async () => ({ output: { message: { content: [{ text: 'ok' }] } }, usage: {} }) };
+    };
+    try {
+        await callBedrock('Hello', 0, 10, 'example.clinical-v1:0');
+        assert.equal(requested, 'https://bedrock-runtime.ap-south-1.amazonaws.com/model/example.clinical-v1%3A0/converse');
+    } finally {
+        globalThis.fetch = originalFetch;
+        config.BEDROCK_USE_CASE_MODEL_IDS = {};
+    }
+});
+
 test('a failed Llama request falls back to Bedrock', async () => {
     resetFailedKeys();
     config.LLAMA_API_URL = 'https://example.invalid/llama';

@@ -54,7 +54,7 @@ export function selectModelForUseCase(useCase, expectJson, promptLength) {
     };
 }
 
-export function normalizeModelForProvider(providerType, desiredModel) {
+export function normalizeModelForProvider(providerType, desiredModel, useCase = null) {
     switch (providerType) {
         case PROVIDERS.OPENAI:
             return OPENAI_MODELS.has(desiredModel) ? desiredModel : config.OPENAI_MODEL;
@@ -69,7 +69,7 @@ export function normalizeModelForProvider(providerType, desiredModel) {
         case PROVIDERS.LLAMA:
             return 'llama4';
         case PROVIDERS.BEDROCK:
-            return config.BEDROCK_MODEL_ID;
+            return (useCase && config.BEDROCK_USE_CASE_MODEL_IDS?.[useCase]) || config.BEDROCK_MODEL_ID;
         default:
             return desiredModel;
     }
