@@ -12,6 +12,8 @@ import {
 import { events } from '../../orchestrator.js';
 import { findFalseClaims } from '../../utils/actionClaimGuard.js';
 import { isHealthyMitraCircle } from '../../lib/deliveryMode.js';
+import { getCircleMembers } from '../../db/index.js';
+import { partitionRecipients } from '../../services/sharingPolicy.js';
 
 /**
  * Process future planning from AI analysis
@@ -288,6 +290,20 @@ export async function sendScheduledMessage(scheduledMessage) {
     if (violations.length > 0) {
         console.warn(`[FuturePlanning] Dropped scheduled message ${scheduledMessage.scheduled_message_id} containing unsupported action claims:`, violations);
         return;
+    }
+
+    // A member the scheduling user asked not to share with is not sent to
+    if (scheduledMessage.target_user_id && scheduledMessage.target_user_id !== scheduledMessage.user_id) {
+        const members = await getCircleMembers(scheduledMessage.circle_id).catch(() => []);
+        const target = members.find(m => m.user_id === scheduledMessage.target_user_id)
+            || { user_id: scheduledMessage.target_user_id, role: null };
+        const { allowed } = await partitionRecipients({
+            circleId: scheduledMessage.circle_id, ownerUserId: scheduledMessage.user_id, members: [target], path: 'scheduled_message'
+        });
+        if (allowed.length === 0) {
+            console.warn(`[FuturePlanning] Dropped scheduled message ${scheduledMessage.scheduled_message_id}: recipient restricted by the user`);
+            return;
+        }
     }
 
     // Emit broadcast event

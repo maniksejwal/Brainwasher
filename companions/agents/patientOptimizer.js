@@ -8,6 +8,23 @@ import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { loadPrompt } from '../utils/promptLoader.js';
 import { validateAndAdjustResponse, shouldUseBlankTurn } from '../utils/responseStyleValidator.js';
 import { NO_ACTIONS_TAKEN } from '../../prompts/action_contract.js';
+import { buildKnownSection } from '../patientFacts.js';
+
+/**
+ * The planned action line for the reply prompt, or '' when no action was planned.
+ * @param {object} context - Has selectedAction etc. from the action selector
+ * @returns {string}
+ */
+export function buildPlannedAction(context = {}) {
+    if (!context.selectedAction) return '';
+    const parts = [`**Planned action this turn:** ${context.selectedAction}`];
+    if (context.framesComponent) parts[0] += ` (FRAMES: ${context.framesComponent})`;
+    if (context.secondaryAction) parts[0] += `, with ${context.secondaryAction} for tone`;
+    parts[0] += '.';
+    if (context.strategyNote) parts.push(context.strategyNote);
+    parts.push('Use it as guidance. If the patient asked a direct question, answer it first. Still end with a probing question that has not been answered.');
+    return parts.join(' ');
+}
 
 /**
  * Process patient optimization
@@ -65,7 +82,9 @@ export async function processPatientOptimization(userId, role, message, circleId
         TOPIC_SHIFT_GUIDANCE: topicShiftGuidance,
         TOPIC_SHIFT: topicShift,
         CONVERSATION_HISTORY: conversationHistoryText,
-        ACTIONS_TAKEN: context.actionsTaken || NO_ACTIONS_TAKEN
+        ACTIONS_TAKEN: context.actionsTaken || NO_ACTIONS_TAKEN,
+        KNOWN_SECTION: buildKnownSection(context),
+        PLANNED_ACTION: buildPlannedAction(context)
     });
 
     try {

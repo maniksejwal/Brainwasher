@@ -24,7 +24,7 @@ ${ACTION_CONTRACT}
 
 **Context:**
 - User role: {{ROLE}}
-- Clinical criticality: {{CRITICALITY}}
+- Clinical criticality: {{CRITICALITY}}{{PHYSIO_CONTEXT}}{{STRESS_OVERRIDE}}{{WITHHELD_NOTE}}
 
 **CRITICAL: You MUST return ONLY valid JSON. Do not include any text before or after the JSON object. Start with { and end with }.**
 

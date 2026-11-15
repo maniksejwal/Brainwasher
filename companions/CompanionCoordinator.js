@@ -35,8 +35,9 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
         // For now, privacyGuard gets enhanced context inline
         const componentResults = initialResults;
         
-        // Update privacyGuard with enhanced context if it didn't get it
-        if (componentResults.privacyGuard && !componentResults.privacyGuard.result.sharingSuggestion) {
+        // privacyGuard already ran with the enhanced context; rerun only if it produced no result,
+        // so a turn makes at most one extra classification call
+        if (componentResults.privacyGuard && !componentResults.privacyGuard.result) {
             const { processPrivacyDecision } = await import('./handlers/privacyGuard.js');
             componentResults.privacyGuard.result = await processPrivacyDecision(
                 userId, role, message, circleId, enhancedContext
@@ -78,8 +79,14 @@ export async function coordinateCompanions(userId, role, message, circleId, cont
         // Context for rewriting the reply after actions run (see handlers/message_logic/replyWriter.js)
         resolved.replyContext = {
             ...enhancedContext,
-            clinicalAssessment: componentResults.clinicalAgent?.result || undefined
+            ...(componentResults.actionSelector?.result || {}),
+            openAsks: componentResults.openAsks?.result || [],
+            clinicalAssessment: componentResults.clinicalAgent?.result || undefined,
+            // Names the speaker asked not to share with ('' none, null unknown)
+            sharingRestrictionText: componentResults.sharingRestrictions?.result?.text ?? ''
         };
+        // Code-written confirmation of this turn's sharing directives, added to the reply
+        resolved.sharingNotice = componentResults.sharingDirectives?.result?.notice || '';
 
         // Step 7: Add state_update from state tracker
         resolved.state_update = aggregated.state_update || initialResults.stateTracker?.result?.state_update || null;
@@ -128,8 +135,11 @@ export function getRelevantHandlers(role, message, context) {
         components.push('doctorOptimizer');
     }
     
-    // Context-dependent agents
-    if (context.hasMedicalContent || message.toLowerCase().includes('pain') || message.toLowerCase().includes('symptom')) {
+    // Clinical assessment runs on every patient and caregiver turn: whether a message is
+    // clinically significant is the clinical agent's judgement, not a keyword match
+    // ("threw up twice and feel dizzy" names no keyword)
+    if (role === 'patient' || role === 'caregiver' || context.hasMedicalContent ||
+        message.toLowerCase().includes('pain') || message.toLowerCase().includes('symptom')) {
         components.push('clinicalAgent');
     }
     

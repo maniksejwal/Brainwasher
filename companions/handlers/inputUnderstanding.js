@@ -7,6 +7,30 @@ import { makeApiCall } from '../../agents/api_client.js';
 import { parseCompanionResponse } from '../utils/jsonParser.js';
 import { formatMemberListForPrompt, resolveMentionedUsers } from '../utils/entityResolver.js';
 import { loadPrompt } from '../utils/promptLoader.js';
+import { getOpenAsks, formatOpenAsks } from '../../db/queries_asks.js';
+import { normalizeDirectives } from '../../services/sharingPolicy.js';
+
+/**
+ * The patient's open asks and the companion's last reply to them, so the model can tell a
+ * repeated ask from a new one and see whether the last reply answered it. Patients only.
+ */
+export async function buildAsksContext(role, circleId, userId, history = []) {
+    if (role !== 'patient') return '';
+    try {
+        const open = formatOpenAsks(await getOpenAsks(circleId, userId), { withIds: true });
+        const lastReply = [...(history || [])].reverse().find(m => m.role === 'patient_agent')?.message;
+        return [
+            '',
+            '**Open asks (still waiting for an answer):**',
+            open || '(none)',
+            '',
+            `**Companion's last reply to this user:** ${lastReply ? `"${String(lastReply).slice(0, 400)}"` : '(none)'}`
+        ].join('\n');
+    } catch (error) {
+        console.warn('[InputUnderstanding] Could not load open asks:', error.message);
+        return '';
+    }
+}
 
 /**
  * Process input understanding
@@ -27,7 +51,8 @@ export async function processInputUnderstanding(userId, role, message, circleId,
         MEMBER_LIST: memberList,
         MESSAGE: message,
         ROLE: role,
-        SPEAKER_USERNAME: context.speaker?.username || 'unknown'
+        SPEAKER_USERNAME: context.speaker?.username || 'unknown',
+        ASKS_CONTEXT: await buildAsksContext(role, circleId, userId, context.history)
     });
 
     try {
@@ -55,6 +80,9 @@ export async function processInputUnderstanding(userId, role, message, circleId,
             mentionedUsernames: allMentionedUsernames,
             facts: analysis.facts || {},
             analogyUsed: analysis.analogy_used === true,
+            asks: Array.isArray(analysis.asks) ? analysis.asks : [],
+            resolvedAsks: Array.isArray(analysis.resolved_asks) ? analysis.resolved_asks : [],
+            sharingDirectives: normalizeDirectives(analysis.sharing_directives),
             resolvedUsers: resolvedUsers // Store resolved matches for use by other handlers
         };
     } catch (error) {
@@ -63,6 +91,7 @@ export async function processInputUnderstanding(userId, role, message, circleId,
             intent: 'ASKING_QUESTION',
             mentionedUsernames: [],
             facts: {},
+            sharingDirectives: [],
             resolvedUsers: []
         };
     }

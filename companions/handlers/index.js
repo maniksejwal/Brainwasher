@@ -15,6 +15,10 @@ import { processClinicalAnalysis } from '../agents/clinicalAgent.js';
 import { processEscalation } from '../agents/escalationManager.js';
 import { processPatientOptimization } from '../agents/patientOptimizer.js';
 import { processDoctorOptimization } from '../agents/doctorOptimizer.js';
+import { selectAction } from '../agents/actionSelector.js';
+import { updateOpenAsks } from '../../db/queries_asks.js';
+import { getCircleMembers } from '../../db/index.js';
+import { applySharingDirectives, buildDirectiveNotice, loadRestrictions, describeRestrictions, describeWithheldFrom } from '../../services/sharingPolicy.js';
 // Note: futurePlanningAgent is called directly from CompanionCoordinator, not via HANDLER_MAP
 
 const HANDLER_MAP = {
@@ -75,6 +79,27 @@ export async function processCompanionHandlers(userId, role, message, circleId, 
         stateTracker: componentResults.stateTracker?.result || {}
     };
 
+    // Step 2a: Track the patient's questions and requests across turns. Never fails the turn.
+    if (role === 'patient') {
+        const understanding = enhancedContext.inputUnderstanding;
+        enhancedContext.openAsks = await updateOpenAsks(circleId, userId, {
+            asks: understanding.asks,
+            resolved: understanding.resolvedAsks
+        }).catch((error) => {
+            console.warn('[Companions] Could not update open asks:', error.message);
+            return [];
+        });
+        componentResults.openAsks = { result: enhancedContext.openAsks };
+        if (process.env.DEBUG_COMPANION) {
+            console.log(`[OpenAsks] labelled ${JSON.stringify(understanding.asks || [])} resolved ${JSON.stringify(understanding.resolvedAsks || [])} -> open ${enhancedContext.openAsks.length}`);
+        }
+    }
+
+    // Step 2a': Store who the speaker asked not to share with (or lifted), then load the active
+    // restrictions so the privacy guard and the reply see them. Sending is enforced again at
+    // every send path, so a failure here cannot let anything through.
+    await applyTurnSharingDirectives(userId, message, circleId, enhancedContext, componentResults);
+
     // Step 2b: Run clinical analysis before its dependents (optimizers, escalation, future planning)
     if (relevantComponents.includes('clinicalAgent')) {
         try {
@@ -84,6 +109,15 @@ export async function processCompanionHandlers(userId, role, message, circleId, 
         } catch (error) {
             console.error('[Companions] Error in clinicalAgent:', error.message);
             componentResults.clinicalAgent = { result: null, error: error.message };
+        }
+    }
+
+    // Step 2c: Plan this turn's action before the reply is written (patients, not HIGH)
+    if (relevantComponents.includes('patientOptimizer')) {
+        const plan = await selectAction(userId, role, message, enhancedContext);
+        if (plan) {
+            Object.assign(enhancedContext, plan);
+            componentResults.actionSelector = { result: plan };
         }
     }
 
@@ -110,3 +144,37 @@ export async function processCompanionHandlers(userId, role, message, circleId, 
     return componentResults;
 }
 
+
+/**
+ * Applies the speaker's sharing directives and loads their active restrictions into the
+ * context: enhancedContext.sharingRestrictions is the list, or null when it could not be
+ * read. componentResults.sharingDirectives holds what changed and the confirmation notice.
+ * Never fails the turn.
+ */
+async function applyTurnSharingDirectives(userId, message, circleId, enhancedContext, componentResults) {
+    const directives = enhancedContext.inputUnderstanding?.sharingDirectives || [];
+    try {
+        if (!enhancedContext.members) enhancedContext.members = await getCircleMembers(circleId);
+        if (directives.length > 0) {
+            const outcome = await applySharingDirectives({
+                circleId, ownerUserId: userId, directives, members: enhancedContext.members, sourceText: message
+            });
+            componentResults.sharingDirectives = { result: { ...outcome, notice: buildDirectiveNotice(outcome) } };
+            console.log(`[SharingPolicy] directives applied (circle=${circleId}, owner=${userId}):`, JSON.stringify(outcome));
+        }
+    } catch (error) {
+        console.error('[SharingPolicy] Could not apply sharing directives:', error.message);
+        componentResults.sharingDirectives = { result: null, error: error.message };
+    }
+    enhancedContext.sharingRestrictions = await loadRestrictions(circleId, userId);
+    const restrictions = enhancedContext.sharingRestrictions;
+    // Read by buildKnownSection in the reply prompts: '' none, null unknown
+    enhancedContext.sharingRestrictionText = restrictions === null
+        ? null
+        : describeRestrictions(restrictions, enhancedContext.members || []);
+    componentResults.sharingRestrictions = {
+        result: { list: restrictions, text: enhancedContext.sharingRestrictionText }
+    };
+    // Members who restricted the speaker: '' none, null unknown (read by buildKnownSection)
+    enhancedContext.withheldFrom = await describeWithheldFrom(circleId, userId, enhancedContext.members || []);
+}

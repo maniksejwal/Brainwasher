@@ -23,6 +23,7 @@ import { coordinateCompanions } from '../../companions/CompanionCoordinator.js';
 import { notificationService } from '../../notifications/NotificationService.js';
 import { speakerNames, normalizeSelfFacts, otherMentions, recordAnalogyUse } from './selfReference.js';
 import { loadKnownContext } from './knownContext.js';
+import { getLastCriticality } from '../../db/queries_messages.js';
 
 /**
  * Corrects self-facts, then enriches the analysis for mentions of other people only, so a
@@ -164,6 +165,9 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
             circleId,
             behavioralModels,
             userAge: userProfile?.age || currentState?.age || null, // Prioritize profile age
+            // Clinical hints: the speaker's previous criticality and whether an escalation is open
+            priorCriticality: await getLastCriticality(circleId, userId).catch(() => null),
+            escalationActive: (recentEscalations || []).length > 0,
             ...await loadKnownContext(role, circleId, userId)
         };
 
@@ -235,6 +239,8 @@ export async function performCompanionAnalysis(userId, role, message, circleId) 
 
         // Kept off the enumerable fields so it is not logged or serialized with the analysis
         Object.defineProperty(analysis, 'replyContext', { value: companionResult.replyContext || null, enumerable: false });
+        // The code-written confirmation of this turn's sharing directives, added to the reply
+        analysis.sharingNotice = companionResult.sharingNotice || '';
 
         events.emit('analysis_progress', {
             userId,

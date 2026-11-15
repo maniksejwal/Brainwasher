@@ -24,6 +24,9 @@ const prompts = [];
 let nextApiResult = null;
 // Set to answer each makeApiCall by prompt; return undefined to fall through to the default
 let apiResponder = null;
+// What the mocked clinical agent returns; it now runs on every patient turn
+const HIGH_CLINICAL = { assessment: 'Possible cardiac event', criticality: 'HIGH' };
+let clinicalResult = HIGH_CLINICAL;
 
 function stubHandler(name, result) {
     return async (userId, role, message, circleId, context) => {
@@ -31,7 +34,7 @@ function stubHandler(name, result) {
         seenContexts[name] = context;
         await new Promise(r => setTimeout(r, name === 'clinicalAgent' ? 30 : 1));
         callOrder.push(`end:${name}`);
-        return result;
+        return typeof result === 'function' ? result() : result;
     };
 }
 
@@ -41,7 +44,7 @@ const handlerModules = {
     '../companions/handlers/empathyHandler.js': ['processEmpathyDecision', 'empathyHandler', { level: 'MEDIUM' }],
     '../companions/handlers/privacyGuard.js': ['processPrivacyDecision', 'privacyGuard', { level: 'PRIVATE' }],
     '../companions/handlers/stateTracker.js': ['processStateTracking', 'stateTracker', {}],
-    '../companions/agents/clinicalAgent.js': ['processClinicalAnalysis', 'clinicalAgent', { assessment: 'Possible cardiac event', criticality: 'HIGH' }],
+    '../companions/agents/clinicalAgent.js': ['processClinicalAnalysis', 'clinicalAgent', () => clinicalResult],
     '../companions/agents/escalationManager.js': ['processEscalation', 'escalationManager', { required: true }],
 };
 for (const [path, [exportName, name, result]] of Object.entries(handlerModules)) {
@@ -448,14 +451,16 @@ test('a reply that claims an action that did not happen is regenerated once', as
             ? { reply: 'Tell me more about your day.' }
             : { reply: "I've let your doctor know." };
     };
+    clinicalResult = { assessment: 'Small talk', criticality: 'NONE' };
     try {
-        // No medical keywords: the clinical agent does not run and nothing is escalated
+        // A NONE turn: nothing is escalated
         const { result, sent } = await collectBroadcasts(() => handleMessage('p1', 'c1', 'hello there'));
         assert.equal(result.reply, 'Tell me more about your day.');
         assert.deepEqual(sent.filter(b => b.targetUsers.includes('p1')).map(b => b.reply), [result.reply]);
         assert.equal((await db.all('SELECT * FROM escalations')).length, 0);
     } finally {
         apiResponder = null;
+        clinicalResult = HIGH_CLINICAL;
     }
 });
 
@@ -474,6 +479,7 @@ test('a scheduled message due this turn is added to the one reply', async () => 
             ? { reply: 'Good to hear from you again.' }
             : { reply: 'How are you doing today?' };
     };
+    clinicalResult = { assessment: 'Greeting', criticality: 'NONE' };
     try {
         const { result, sent } = await collectBroadcasts(() => handleMessage('p1', 'c1', 'hi again'));
         const toPatient = sent.filter(b => b.targetUsers.includes('p1'));
@@ -484,6 +490,7 @@ test('a scheduled message due this turn is added to the one reply', async () => 
         assert.equal(pending.length, 0);
     } finally {
         apiResponder = null;
+        clinicalResult = HIGH_CLINICAL;
     }
 });
 

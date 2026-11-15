@@ -14,6 +14,8 @@ import { processPatientOptimization } from '../../companions/agents/patientOptim
 import { processEmpathyDecision } from '../../companions/handlers/empathyHandler.js';
 import { hasActionsToReport, renderActionsTaken } from '../../prompts/action_contract.js';
 import { findFalseClaims, composeFinalReply } from '../../utils/actionClaimGuard.js';
+import { checkReplyAddressesAsks } from '../../companions/agents/askChecker.js';
+import { markAsksAnswered } from '../../db/queries_asks.js';
 
 // How long the emergency instruction stays on replies after the latest HIGH turn
 export const EMERGENCY_CARRY_WINDOW_MS = 30 * 60 * 1000;
@@ -64,9 +66,9 @@ async function getReplyContext(circleId, analysis) {
  * @param {string} params.actionsTaken - Rendered ACTIONS_TAKEN block
  * @returns {Promise<string|null>} Reply text, or null if no reply could be written
  */
-export async function writeReply({ userId, role, message, circleId, analysis, actionsTaken }) {
+export async function writeReply({ userId, role, message, circleId, analysis, actionsTaken, extraContext = {} }) {
     try {
-        const context = { ...(await getReplyContext(circleId, analysis)), actionsTaken };
+        const context = { ...(await getReplyContext(circleId, analysis)), actionsTaken, ...extraContext };
         const result = role === 'patient'
             ? await processPatientOptimization(userId, role, message, circleId, context)
             : await processEmpathyDecision(userId, role, message, circleId, context);
@@ -94,8 +96,8 @@ export async function buildCheckedReply({ userId, role, message, circleId, analy
     const actions = sharingResult?.actions || {};
     // A handler's question comes first; scheduled messages due now follow it
     const question = [sharingResult?.question, ...dueMessages].filter(Boolean).join(' ') || null;
-    const write = (violations = []) => writeReply({
-        userId, role, message, circleId, analysis,
+    const write = (violations = [], extraContext = {}) => writeReply({
+        userId, role, message, circleId, analysis, extraContext,
         actionsTaken: renderActionsTaken({ actions, question, notes, violations })
     });
 
@@ -119,13 +121,57 @@ export async function buildCheckedReply({ userId, role, message, circleId, analy
         }
     }
 
+    const asks = await ensureAsksAddressed({ userId, role, message, circleId, analysis, modelText, actions, write });
+    modelText = asks.text;
+
     const { message: finalMessage, violations } = composeFinalReply({
         modelText,
         criticality: analysis.criticality,
         highCategory: analysis.high_category,
         emergencyActive: await isEmergencyActive(circleId, analysis.criticality),
         actions,
-        question
+        question,
+        notice: analysis.sharingNotice || null
     });
-    return { message: finalMessage, violations, draftViolations, rewritten, regenerated };
+    return { message: finalMessage, violations, draftViolations, rewritten, regenerated, askCheck: asks.report };
+}
+
+/**
+ * For a patient with open questions or requests, checks the reply addresses them. If it
+ * misses some, the reply is written once more naming them; the new text is used only if it
+ * passes the false claim check. Asks the final text addresses are marked answered.
+ * Skipped for HIGH turns, so the emergency reply is not delayed. Never fails the turn.
+ * @returns {Promise<{text: string, report: object|null}>}
+ */
+export async function ensureAsksAddressed({ userId, role, message, circleId, analysis, modelText, actions, write }) {
+    const openAsks = analysis.replyContext?.openAsks || [];
+    if (role !== 'patient' || analysis.criticality === 'HIGH' || !openAsks.length || !modelText) {
+        return { text: modelText, report: null };
+    }
+    try {
+        let text = modelText;
+        let check = await checkReplyAddressesAsks(text, openAsks, message);
+        if (!check) return { text, report: null };
+
+        let retried = false;
+        if (check.missed.length > 0) {
+            const retry = await write([], { missedAsks: check.missed });
+            if (retry && findFalseClaims(retry, actions).length === 0) {
+                const recheck = await checkReplyAddressesAsks(retry, openAsks, message);
+                // Keep the retry only if it addresses at least as much as the first reply
+                if (recheck && recheck.addressed.length >= check.addressed.length) {
+                    text = retry;
+                    check = recheck;
+                    retried = true;
+                }
+            }
+        }
+        const closed = await markAsksAnswered(circleId, userId, check.addressed);
+        const report = { open: openAsks.length, addressed: check.addressed.length, missed: check.missed.length, retried, closed };
+        if (process.env.DEBUG_COMPANION) console.log('[ReplyWriter] Ask check:', JSON.stringify(report));
+        return { text, report };
+    } catch (error) {
+        console.error('[ReplyWriter] Ask check failed:', error.message);
+        return { text: modelText, report: null };
+    }
 }
