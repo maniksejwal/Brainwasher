@@ -142,7 +142,7 @@ export async function handleFactProcessing(userId, circleId, analysis) {
         }
 
         // Check for conflicts with CURRENT fact
-        const currentFact = await getCurrentFact(circleId, key);
+        const currentFact = await getCurrentFact(circleId, key, metadata.subjectId ?? null);
 
         // Add the new fact (this will archive the old one)
         await addFact(circleId, key, factValue, metadata);

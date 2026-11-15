@@ -91,12 +91,13 @@ export async function addFact(circleId, factKey, value, metadata = {}) {
     const now = Date.now();
     const effectiveValidFrom = validFrom || now;
 
-    // 1. Mark existing current fact for this key as not current and close its validity window
+    // 1. Close the current fact for this key about the same subject. Keys are relative to
+    // the speaker, so the same key about someone else is a different fact and stays current.
     await db.run(`
-        UPDATE facts_v2 
+        UPDATE facts_v2
         SET is_current = 0, valid_until = ?
-        WHERE circle_id = ? AND fact_key = ? AND is_current = 1
-    `, [effectiveValidFrom, circleId, factKey]);
+        WHERE circle_id = ? AND fact_key = ? AND subject_id IS ? AND is_current = 1
+    `, [effectiveValidFrom, circleId, factKey, subjectId]);
 
     // 2. Insert new fact
     const result = await db.run(`
@@ -117,13 +118,21 @@ export async function addFact(circleId, factKey, value, metadata = {}) {
 }
 
 /**
- * Get the current active fact for a key.
+ * Get the current active fact for a key, about one subject if given.
+ * Without a subject, the most recent current fact for the key is returned.
  */
-export async function getCurrentFact(circleId, factKey) {
+export async function getCurrentFact(circleId, factKey, subjectId) {
     const db = await getDb();
+    if (subjectId !== undefined) {
+        return db.get(`
+            SELECT * FROM facts_v2
+            WHERE circle_id = ? AND fact_key = ? AND subject_id IS ? AND is_current = 1
+        `, [circleId, factKey, subjectId]);
+    }
     return db.get(`
-        SELECT * FROM facts_v2 
+        SELECT * FROM facts_v2
         WHERE circle_id = ? AND fact_key = ? AND is_current = 1
+        ORDER BY created_at DESC, fact_id DESC
     `, [circleId, factKey]);
 }
 

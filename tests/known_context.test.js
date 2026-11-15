@@ -8,7 +8,7 @@ import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import { setGlobalDb } from '../db/index.js';
 import { initializeDatabase } from '../db/schema.js';
-import { addFact, retrieveRelevantFacts } from '../db/queries_facts.js';
+import { addFact, getCurrentFact, retrieveRelevantFacts } from '../db/queries_facts.js';
 import { loadKnownContext } from '../handlers/message_logic/knownContext.js';
 import { getLongitudinalHint } from '../companions/physio/tensornetsBridge.js';
 
@@ -66,6 +66,21 @@ test('private, sensitive, expired, low-confidence and replaced facts are left ou
     assert.deepEqual(facts.map(f => f.value), ['new']);
 });
 
+test('another member\'s fact under the same key does not replace the patient\'s', async () => {
+    await own('symptom_report', 'tired all the time');
+    await addFact('c1', 'symptom_report', 'back pain', { reportedBy: 'g1', subjectId: 'g1' });
+    const { facts } = await get();
+    assert.deepEqual(facts.map(f => f.value), ['tired all the time']);
+    assert.equal((await getCurrentFact('c1', 'symptom_report', 'g1')).value, 'back pain');
+});
+
+test('a fact about the same subject still replaces the earlier one', async () => {
+    await own('symptom_report', 'tired');
+    await addFact('c1', 'symptom_report', 'dizzy', { reportedBy: 'g1', subjectId: 'p1' });
+    const current = await db.all("SELECT value FROM facts_v2 WHERE fact_key = 'symptom_report' AND is_current = 1");
+    assert.deepEqual(current, [{ value: 'dizzy' }]);
+});
+
 test('this session\'s facts are labelled apart from older ones', async () => {
     await own('location', 'home');
     await own('living_arrangement', 'alone', { observedAt: Date.now() - 10 * DAY, validFrom: Date.now() - 10 * DAY });
@@ -93,7 +108,7 @@ test('the speaker\'s ID is not shown in a fact key', async () => {
 test('only patients get known context', async () => {
     await own('location', 'home');
     assert.ok((await loadKnownContext('patient', 'c1', 'p1')).knownContextBlock.includes('home'));
-    assert.deepEqual(await loadKnownContext('caregiver', 'c1', 'p1'), { knownContextBlock: '', longitudinalHint: '' });
+    assert.deepEqual(await loadKnownContext('caregiver', 'c1', 'p1'), { knownContextBlock: '', longitudinalHint: '', patientSession: null });
 });
 
 test('with no TENSORNETS_URL no request is made', async (t) => {

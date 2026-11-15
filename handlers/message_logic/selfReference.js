@@ -68,7 +68,7 @@ export function otherMentions(mentions, names) {
 export async function recordAnalogyUse(circleId, userId) {
     try {
         const factKey = `communication_analogy_preference_${userId}`;
-        const existing = await getCurrentFact(circleId, factKey);
+        const existing = await getCurrentFact(circleId, factKey, userId);
         const confidence = Math.min(1, (existing?.confidence ?? 0) + ANALOGY_CONFIDENCE_STEP);
         await addFact(
             circleId,
