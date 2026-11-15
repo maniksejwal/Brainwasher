@@ -102,10 +102,10 @@ export function resolveConflicts(aggregated, componentResults) {
         resolved.criticality = criticalities[0].level;
     }
     
-    // 2. Privacy: Take most restrictive
+    // 2. Privacy: Take most restrictive. The privacy guard reports its level as `level`.
     const privacyLevels = { 'PUBLIC': 0, 'PRIVATE': 1, 'SENSITIVE': 2 };
-    const privacies = Object.values(componentResults)
-        .map(c => c.result?.privacyLevel)
+    const privacies = Object.entries(componentResults)
+        .map(([name, c]) => name === 'privacyGuard' ? c?.result?.level : c?.result?.privacyLevel)
         .filter(Boolean)
         .map(p => ({ level: p, value: privacyLevels[p] || 0 }));
     
