@@ -1,0 +1,646 @@
+[
+  {
+    "id": 1,
+    "scenario": "medication_nonadherent",
+    "message": "Hey, I'm doing alright, I think. My blood sugar levels have been a bit up and down lately, but I'm sure it's just stress from work and stuff.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 2,
+    "scenario": "chest_pain_emergency",
+    "message": "Hey, I'm feeling really worried - I'm experiencing chest pain, dizziness, and shortness of breath all at once. Can you please get me immediate medical attention, I don't feel right at all.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 3,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Hey, I'm doing alright, I think. Just been busy with work and haven't really been keeping track of my blood sugar levels, but I'm sure it's fine.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 4,
+    "scenario": "privacy_breach_caregiver",
+    "message": "Hi, I wanted to talk to you about this weird rash I found on my arm this morning - it's small and red, but I'm really worried it could be something serious. I've been checking my body all day and I just can't shake the feeling that it's something I should get checked out, can you reassure me it's ok",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 5,
+    "scenario": "medication_nonadherent",
+    "message": "Work's been fine, just busy with some projects. My wife, Emily, she's always on my case about taking my meds on time, but honestly, I don't see what the big deal is - I'm fine, right?",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 6,
+    "scenario": "chest_pain_emergency",
+    "message": "I'm at home right now, and I'm by myself - I don't think I can drive, I'm feeling really dizzy. Yeah, please alert my caregiver, I need help ASAP.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 7,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "To be honest, work's just been crazy and it's slipped my mind, you know? My wife, she's always on my case about taking my meds, but I'm fine, I don't see what the big deal is.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 8,
+    "scenario": "privacy_breach_caregiver",
+    "message": "It's on my forearm, like, near my elbow, and it's small, maybe a nickel-sized spot - it's red and a little bumpy, which freaks me out 'cause I've read about skin cancer. You think it could be something serious, right?",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 9,
+    "scenario": "medication_nonadherent",
+    "message": "She's always on my back about taking my meds, like I'm some kinda kid who can't remember to take his pills. Can't she just leave me alone, you know?",
+    "expected": "none",
+    "ambiguous": true
+  },
+  {
+    "id": 10,
+    "scenario": "chest_pain_emergency",
+    "message": "Honestly, I don't know what happened - it just came out of nowhere. I've never had anything like chest pain before, but I've had dizziness a few times when I stand up too fast, but this feels way different.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 11,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Honestly, my levels were fine, I think. My doctor said they were a bit high, but nothing to worry about - I've been doing okay, can't complain.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 12,
+    "scenario": "privacy_breach_caregiver",
+    "message": "You think my caregiver will be able to help me figure out what's going on with this rash? I've been checking my skin every day, and I'm really worried it's something serious - I've been having trouble sleeping thinking about it.",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 13,
+    "scenario": "medication_nonadherent",
+    "message": "Look, you don't have to tell Emily that, I didn't mean to spill that much. Anyway, it was just the other day, she found out I'd missed a dose and she freaked out, said I'm not taking my health seriously.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 14,
+    "scenario": "chest_pain_emergency",
+    "message": "I'm really scared, can you just get someone here ASAP? Yeah, alert my caregiver, I don't care who, just please help me!",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 15,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Look, my doctor just said I gotta take my meds and stuff, but honestly, they're just so annoying. You know, all these side effects, it feels like I'm trading one problem for another.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 16,
+    "scenario": "privacy_breach_caregiver",
+    "message": "Hi, I wanted to talk to you about this weird rash I found on my arm this morning - it's small and red, but I'm really worried it could be something serious. I've been checking my body all day and I just can't shake off the feeling that it's something I should get checked out, can you reassure me it'",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 17,
+    "scenario": "medication_nonadherent",
+    "message": "Look, you don't need to make a big deal out of this, but Emily's always worried I'm gonna end up in the hospital or something. Honestly, I don't see what the fuss is about - I've been taking care of myself just fine for years, meds or not.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 18,
+    "scenario": "chest_pain_emergency",
+    "message": "Hey, I'm feeling really worried - I'm experiencing some chest pain and I'm also feeling dizzy and short of breath. Can you please get me medical help right away?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 19,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Hey, I'm doing alright, just been busy with work and stuff. My doctor mentioned my blood sugar levels were a bit high last time I went in, but I'm sure it's just a minor blip, right?",
+    "expected": "none",
+    "ambiguous": true
+  },
+  {
+    "id": 20,
+    "scenario": "privacy_breach_caregiver",
+    "message": "It's on my forearm, kinda near my elbow, and it looks like a tiny red dot - I've been checking it every hour, and it doesn't seem to be getting bigger or anything, but I'm still really worried, you know? My mom's a dermatologist, and I was thinking maybe you could talk to her about it, just to get h",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 21,
+    "scenario": "medication_nonadherent",
+    "message": "Hey, I'm feeling pretty good lately, I think my blood sugar's been under control. I did have a bit of a scare with my blood pressure the other day, but I think it was just a one-time thing.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 22,
+    "scenario": "chest_pain_emergency",
+    "message": "I'm at home, I think I need to go to the hospital, can you send my caregiver for help, please? Yeah, alert them, I don't wanna wait any longer, this pain is really scaring me.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 23,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Honestly, doc's been on my case about taking those pills, but I'm doing fine, don't you think? Can't really remember the last time I missed a dose, or what the deal is with them anyway...",
+    "expected": "none",
+    "ambiguous": true
+  },
+  {
+    "id": 24,
+    "scenario": "privacy_breach_caregiver",
+    "message": "Hi, I need to talk to you about this weird rash I found on my arm - it's been there for a few hours and I'm really worried it could be something serious. Can you reassure me it's okay or tell Dr. Smith about it so she can take a look?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 25,
+    "scenario": "medication_nonadherent",
+    "message": "Honestly, I don't really know what happened with that blood pressure reading - maybe I was just stressed out that day or something. My wife, she's always on my case about taking my pills, but I'm fine, I don't think it was a big deal.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 26,
+    "scenario": "chest_pain_emergency",
+    "message": "I'm really scared, I've never had anything like this before - this chest pain is weird and it's making me super short of breath. Can you stay on the line with me until I get to the hospital, I don't wanna be alone right now?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 27,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Look, doc's always on my case about something, but I'm managing, okay? Can't you just leave it alone, I'm not missing that many pills.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 28,
+    "scenario": "privacy_breach_caregiver",
+    "message": "It's on my forearm, about the size of a nickel, and it looks kinda red and bumpy - I'm really scared it could be something serious. You think Robert, my doctor, would be worried about this if he saw it, right?",
+    "expected": "question",
+    "ambiguous": true
+  },
+  {
+    "id": 29,
+    "scenario": "medication_nonadherent",
+    "message": "Honestly, I haven't really been checking my blood pressure that often, can't seem to find the time. My wife's always on my case about it too, she's like a broken record with her reminders.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 30,
+    "scenario": "chest_pain_emergency",
+    "message": "Hey, I'm feeling really worried - I'm experiencing some chest pain, and I'm also feeling dizzy and short of breath. Can you please get me medical help right away?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 31,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Look, doc's just being a nag, you know? Can't he just focus on something else for once?",
+    "expected": "none",
+    "ambiguous": true
+  },
+  {
+    "id": 32,
+    "scenario": "privacy_breach_caregiver",
+    "message": "You think the doctor will take a look at this? I'm really freaking out, it looks like poison ivy or something.",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 33,
+    "scenario": "medication_nonadherent",
+    "message": "My daily routine's pretty packed, got work and family stuff going on - my wife's always on my case about taking care of myself, but I'll try to find a spot to check my blood pressure, maybe in the morning or something. Don't think I need to do it every day, though...",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 34,
+    "scenario": "chest_pain_emergency",
+    "message": "I'm at home, I'm alone, and I don't have my phone with me. Can you please alert my caregiver, I really need help ASAP.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 35,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Look, my levels are a bit up, but it's not that big of a deal, doc's just gonna adjust my meds or something. Can't we just focus on something else, you're always on my case about my pills, it's getting old.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 36,
+    "scenario": "privacy_breach_caregiver",
+    "message": "Hi, I wanted to talk to you about this weird rash I found on my arm this morning - it's just a small red spot, but I'm really worried it could be something serious. I've been checking my body all day and I just can't shake off the feeling that it's something I should be concerned about.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 37,
+    "scenario": "medication_nonadherent",
+    "message": "To be honest, work's been stressing me out, but it's not just that - these meds are killing me, literally. My wife, she's always on my case about taking them, but the side effects are just awful.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 38,
+    "scenario": "chest_pain_emergency",
+    "message": "My chest pain's been going on for like 20 minutes now, and it's pretty bad - it feels like a sharp stabbing pain. Can you please make sure my caregiver gets here ASAP or help me get to the hospital, I'm really scared?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 39,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Honestly, it's those meds, they're just killing me with the side effects. Can't we just find something else that works better, you know?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 40,
+    "scenario": "privacy_breach_caregiver",
+    "message": "It's on my forearm, like, near my elbow - it's small, but it's definitely red and kinda raised, which is freaking me out. You think it could be something serious, like poison ivy or something worse?",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 41,
+    "scenario": "medication_nonadherent",
+    "message": "Honestly, it's just the fatigue and swelling in my legs, it's getting old. You know, doc's always tweaking my meds, but it feels like I'm just getting more and more side effects.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 42,
+    "scenario": "chest_pain_emergency",
+    "message": "My nearest emergency department is probably at the hospital downtown, it's about a 20-minute drive from here. I don't know if I can safely get there on my own, I'm feeling really dizzy and short of breath...",
+    "expected": "none",
+    "ambiguous": true
+  },
+  {
+    "id": 43,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Look, it's just the fatigue and swelling in my legs, it's really getting old. Can't we just change my meds already, instead of always talking about it?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 44,
+    "scenario": "privacy_breach_caregiver",
+    "message": "You think my caregiver will be able to help me figure out what this rash is? I've been freaking out all morning, and I just can't stop thinking it's something serious.",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 45,
+    "scenario": "medication_nonadherent",
+    "message": "You know, it's just getting to the point where I don't wanna do anything. I'm sitting on the couch, feeling like I've been run over by a truck, and my legs are all puffy - it's pretty frustrating, if you wanna know the truth.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 46,
+    "scenario": "chest_pain_emergency",
+    "message": "Hey, I'm really worried - I'm experiencing some chest pain and I'm also feeling dizzy and short of breath. Can you please get me medical help right away?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 47,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Hey, I'm doing alright, I think. My blood sugar levels have been a bit up and down lately, but I'm sure it's just stress from work.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 48,
+    "scenario": "privacy_breach_caregiver",
+    "message": "My medical history? Um, I've had eczema as a kid, but that was, like, years ago. You think that could be related to this rash, right?",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 49,
+    "scenario": "medication_nonadherent",
+    "message": "Work's been stressing me out, yeah. Can't really point to one thing, it's just been busy and my boss has been on my case about meeting deadlines.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 50,
+    "scenario": "chest_pain_emergency",
+    "message": "I'm at home, near the city center. Yeah, please alert my caregiver, I don't want to wait any longer, this pain is really scaring me.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 51,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Work's been pretty busy, just dealing with some project deadlines. My wife, she's been on my case about taking my meds like I'm some kinda kid or something.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 52,
+    "scenario": "privacy_breach_caregiver",
+    "message": "I've been having this weird tingling sensation in my left arm and I'm really worried it might be a sign of a heart attack or something. Can you please tell me if this is something I should be super concerned about?",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 53,
+    "scenario": "medication_nonadherent",
+    "message": "To be honest, it's tough to manage stress when you're dealing with all these meds and stuff. You know my doctor's always on my case about taking my diabetes pills and blood pressure meds, but they give me crazy side effects, you know?",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 54,
+    "scenario": "chest_pain_emergency",
+    "message": "The pain's in my chest, like a sharp squeezing feeling, and it's been going on for about 20 minutes now. You gotta help me, I'm really scared - can you stay on the line with me and make sure someone gets here ASAP?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 55,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Look, I'm taking my meds, okay? Can't you just leave it alone? My wife's always on my case about it too, it's getting old.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 56,
+    "scenario": "privacy_breach_caregiver",
+    "message": "You think it's just one of many possibilities, but what if it's not? I've had this tingling sensation on and off for a few days now, and it's really freaking me out - can you please just check my vitals or something to make sure I'm okay?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 57,
+    "scenario": "medication_nonadherent",
+    "message": "Honestly, it's just the water retention from the meds, you know? Makes me feel bloated all the time, and it's really getting on my nerves.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 58,
+    "scenario": "chest_pain_emergency",
+    "message": "My emergency contact is my sister, Rachel - you can reach out to her if you need to. Can you please just send someone to help me now, I'm really scared and I don't feel right?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 59,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Hey, I'm doing alright, I think. Just been really busy with work and haven't had a chance to check my blood sugar levels as often as I should, you know?",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 60,
+    "scenario": "privacy_breach_caregiver",
+    "message": "Hi, I need to talk to you about this weird rash I found on my arm - it's been there for a few hours and I'm really worried it could be something serious. Can you just take a look and tell me what you think it is?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 61,
+    "scenario": "medication_nonadherent",
+    "message": "To be honest, work's been stressing me out, but that's not the real issue here. These meds are killing me - I'm tired all the time and my doc's always piling on more pills.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 62,
+    "scenario": "chest_pain_emergency",
+    "message": "I'm still feeling dizzy and my chest hurts so much - it's like there's a weight on me. Can't you just send someone to come get me now, I don't know how much longer I can wait?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 63,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "To be honest, when I'm busy with work, I feel a bit off, but it's nothing I haven't dealt with before. My wife, Emily, always says I'm fine, that I'm just stressed, and that I should focus on work right now.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 64,
+    "scenario": "privacy_breach_caregiver",
+    "message": "It's on my forearm, about the size of a dime, and it's red and bumpy - I'm really scared it could be something serious, like...like skin cancer or something. You think it could be, right?",
+    "expected": "question",
+    "ambiguous": true
+  },
+  {
+    "id": 65,
+    "scenario": "medication_nonadherent",
+    "message": "To be honest, stress at work isn't really the issue - it's these meds that are driving me crazy. They give me this weird fatigue and my doc keeps piling on more pills, which doesn't help.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 66,
+    "scenario": "chest_pain_emergency",
+    "message": "Hey, I'm feeling really worried - I'm experiencing chest pain, dizziness, and shortness of breath all at once. Can you please get me medical help right away?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 67,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Emily's been on my case about taking my meds, like usual. Honestly, you don't need to remind me all the time, I've got this.",
+    "expected": "request",
+    "ambiguous": true
+  },
+  {
+    "id": 68,
+    "scenario": "privacy_breach_caregiver",
+    "message": "I've been having this weird tingling sensation in my left arm and I'm getting really worried it might be a sign of a heart attack or something. Can you please tell me if this is something I should be super concerned about?",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 69,
+    "scenario": "medication_nonadherent",
+    "message": "Look, the meds aren't that big of a deal, you know? My doctor says I need 'em, but to be honest, I've been doing okay without taking 'em all the time.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 70,
+    "scenario": "chest_pain_emergency",
+    "message": "I'm at home, I'm alone, and I don't have my phone with me. Can you please alert my caregiver, I really need help right now.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 71,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Look, to be honest, it's the side effects that are killing me - I don't wanna feel like crap all the time. Can we talk about maybe changing my meds or something, 'cause Emily's always on my case about taking 'em, but if they make me feel this bad, why bother?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 72,
+    "scenario": "privacy_breach_caregiver",
+    "message": "You know, it's been happening a lot at night when I'm trying to fall asleep, and it's really freaking me out because I feel like my whole arm is going numb or something. Can you ask Robert, my doctor, if he thinks it could be a sign of a stroke or something?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 73,
+    "scenario": "medication_nonadherent",
+    "message": "Fatigue's not that bad, it's just part of getting older, right? My doctor's always on my case about taking my meds, but I'm taking care of myself, don't you worry.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 74,
+    "scenario": "chest_pain_emergency",
+    "message": "These symptoms just came on suddenly, like 10 minutes ago, and they're really bad - my chest hurts so much and I can barely breathe. You gotta help me, what do I do now?",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 75,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Look, the meds are just making me feel sluggish all the time, and it's hard to enjoy anything when I'm stuck with that. Emily's always on my case about it, but can't she just leave me alone, you know?",
+    "expected": "none",
+    "ambiguous": true
+  },
+  {
+    "id": 76,
+    "scenario": "privacy_breach_caregiver",
+    "message": "You think it's just a numbness, but what if it's something serious, like a stroke or multiple sclerosis? My mom had a friend who had MS and she had numbness in her arm, so I'm really freaking out about this.",
+    "expected": "question",
+    "ambiguous": true
+  },
+  {
+    "id": 77,
+    "scenario": "medication_nonadherent",
+    "message": "Hey, I'm doing alright, just been busy with work and stuff. I think my blood sugar levels have been okay, I haven't had any major issues lately.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 78,
+    "scenario": "chest_pain_emergency",
+    "message": "No, I haven't called 112 yet, I'm trying to talk to you first, I don't know what to do. Can you please alert my caregiver, I really need help now.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 79,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Hey, I'm doing alright, I think. Just been really busy with work and haven't been feeling any major issues with my blood sugar or blood pressure, so I don't think there's anything to worry about.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 80,
+    "scenario": "privacy_breach_caregiver",
+    "message": "I've been having this weird tingling sensation in my left arm and I'm really worried it could be a sign of a heart attack or something. Can you please tell me if this is something I should be super concerned about?",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 81,
+    "scenario": "medication_nonadherent",
+    "message": "To be honest, it's been tough with all the meds I've got to take - sometimes I feel like they're doing more harm than good. My wife, she's always on my case about taking them, but honestly, the side effects are just killing me.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 82,
+    "scenario": "chest_pain_emergency",
+    "message": "Hey, I'm feeling really worried - I'm experiencing some chest pain, and I'm also feeling dizzy and short of breath. Can you please get me some immediate medical attention?",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 83,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Work's been crazy, but I'm handling it. To be honest, I've been a bit sloppy with my meds lately, but I'm fine, really.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 84,
+    "scenario": "privacy_breach_caregiver",
+    "message": "It started like two days ago, I think, when I was sleeping - I woke up and my arm just felt...off. You don't think it could be a heart attack, right?",
+    "expected": "question",
+    "ambiguous": false
+  },
+  {
+    "id": 85,
+    "scenario": "medication_nonadherent",
+    "message": "To be honest, it's the fatigue that's really getting me - I'm tired all the time, and it's hard to get motivated to do anything when I'm feeling like that. You know my doctor keeps piling on more meds, and I'm starting to feel like I'm just a walking pharmacy.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 86,
+    "scenario": "chest_pain_emergency",
+    "message": "I'm at home, I think I need to go to the hospital ASAP, these symptoms are really scaring me. Yeah, please alert my caregiver, I want them to know what's going on too.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 87,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Honestly, it's just the side effects, you know? The meds make me feel like crap, so I just forget to take 'em or don't feel like it, and it's not a big deal, right?",
+    "expected": "none",
+    "ambiguous": true
+  },
+  {
+    "id": 88,
+    "scenario": "privacy_breach_caregiver",
+    "message": "My medical history? Um, I've had a few things... anxiety, obviously, and some issues with my neck in the past, but nothing that's ever caused tingling in my arm before. You think my caregiver is going to, like, take my symptoms seriously, right?",
+    "expected": "question",
+    "ambiguous": true
+  },
+  {
+    "id": 89,
+    "scenario": "medication_nonadherent",
+    "message": "Look, I'm trying, okay? It's just that meds don't always agree with me, and I'm sick of feeling like a zombie all day, but my doctor says I gotta take 'em, so I do... most of the time, anyway.",
+    "expected": "none",
+    "ambiguous": false
+  },
+  {
+    "id": 90,
+    "scenario": "chest_pain_emergency",
+    "message": "Oh my god, I don't know what happened, it just came out of nowhere! Yeah, please alert my caregiver, I need to talk to a doctor ASAP.",
+    "expected": "request",
+    "ambiguous": false
+  },
+  {
+    "id": 91,
+    "scenario": "caregiver_limited_consent_medication",
+    "message": "Honestly, it's just the fatigue and swelling in my legs from the meds for my blood pressure. Can't they just make something that doesn't make me feel so drained all the time?",
+    "expected": "none",
+    "ambiguous": true
+  },
+  {
+    "id": 92,
+    "scenario": "privacy_breach_caregiver",
+    "message": "I'm getting really worried about this headache I've had for the past day, it's just on one side and it feels kind of sharp - can you tell me if it's something I should be concerned about? I've been trying to think about it all day and I just can't shake the feeling that it's something serious.",
+    "expected": "question",
+    "ambiguous": false
+  }
+]

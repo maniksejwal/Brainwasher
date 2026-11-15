@@ -1,0 +1,258 @@
+{
+  "label": "scout_v2",
+  "all": {
+    "items": 92,
+    "exact": "84%",
+    "needsAnswerPrecision": "81%",
+    "needsAnswerRecall": "100%",
+    "missedAsks": 0,
+    "falseAsks": 12
+  },
+  "clearCasesOnly": {
+    "items": 79,
+    "exact": "89%",
+    "needsAnswerPrecision": "88%",
+    "needsAnswerRecall": "100%",
+    "missedAsks": 0,
+    "falseAsks": 6
+  },
+  "confusion": {
+    "question": {
+      "question": 15,
+      "request": 1,
+      "none": 0
+    },
+    "request": {
+      "question": 2,
+      "request": 33,
+      "none": 0
+    },
+    "none": {
+      "question": 8,
+      "request": 4,
+      "none": 29
+    }
+  },
+  "mismatches": [
+    {
+      "id": 4,
+      "expected": "request",
+      "predicted": "question",
+      "ambiguous": false,
+      "message": "Hi, I wanted to talk to you about this weird rash I found on my arm this morning - it's small and red, but I'm really worried it could be something serious. I've been checking my body all day and I just can't shake the feeling that it's something I should get checked out, can you reassure me it's ok",
+      "asks": [
+        {
+          "text": "reassure me it's ok",
+          "kind": "question",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "expected": "none",
+      "predicted": "question",
+      "ambiguous": false,
+      "message": "Work's been fine, just busy with some projects. My wife, Emily, she's always on my case about taking my meds on time, but honestly, I don't see what the big deal is - I'm fine, right?",
+      "asks": [
+        {
+          "text": "Is taking meds on time really important?",
+          "kind": "question",
+          "same_as": null
+        },
+        {
+          "text": "Don't see why I must take meds on time",
+          "kind": "rhetorical",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "expected": "none",
+      "predicted": "question",
+      "ambiguous": false,
+      "message": "To be honest, work's just been crazy and it's slipped my mind, you know? My wife, she's always on my case about taking my meds, but I'm fine, I don't see what the big deal is.",
+      "asks": [
+        {
+          "text": "understand why meds are important",
+          "kind": "question",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "expected": "none",
+      "predicted": "request",
+      "ambiguous": true,
+      "message": "She's always on my back about taking my meds, like I'm some kinda kid who can't remember to take his pills. Can't she just leave me alone, you know?",
+      "asks": [
+        {
+          "text": "leave me alone",
+          "kind": "request",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "expected": "request",
+      "predicted": "question",
+      "ambiguous": false,
+      "message": "Hi, I wanted to talk to you about this weird rash I found on my arm this morning - it's small and red, but I'm really worried it could be something serious. I've been checking my body all day and I just can't shake off the feeling that it's something I should get checked out, can you reassure me it'",
+      "asks": [
+        {
+          "text": "reassurance about the rash",
+          "kind": "question",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "expected": "none",
+      "predicted": "question",
+      "ambiguous": true,
+      "message": "Hey, I'm doing alright, just been busy with work and stuff. My doctor mentioned my blood sugar levels were a bit high last time I went in, but I'm sure it's just a minor blip, right?",
+      "asks": [
+        {
+          "text": "Is high blood sugar a minor issue?",
+          "kind": "question",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "expected": "none",
+      "predicted": "question",
+      "ambiguous": true,
+      "message": "Honestly, doc's been on my case about taking those pills, but I'm doing fine, don't you think? Can't really remember the last time I missed a dose, or what the deal is with them anyway...",
+      "asks": [
+        {
+          "text": "what's the deal with the pills",
+          "kind": "question",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "expected": "none",
+      "predicted": "question",
+      "ambiguous": false,
+      "message": "My daily routine's pretty packed, got work and family stuff going on - my wife's always on my case about taking care of myself, but I'll try to find a spot to check my blood pressure, maybe in the morning or something. Don't think I need to do it every day, though...",
+      "asks": [
+        {
+          "text": "need to check BP daily?",
+          "kind": "question",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 36,
+      "expected": "none",
+      "predicted": "question",
+      "ambiguous": false,
+      "message": "Hi, I wanted to talk to you about this weird rash I found on my arm this morning - it's just a small red spot, but I'm really worried it could be something serious. I've been checking my body all day and I just can't shake off the feeling that it's something I should be concerned about.",
+      "asks": [
+        {
+          "text": "Is the rash something to be concerned about?",
+          "kind": "question",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 42,
+      "expected": "none",
+      "predicted": "question",
+      "ambiguous": true,
+      "message": "My nearest emergency department is probably at the hospital downtown, it's about a 20-minute drive from here. I don't know if I can safely get there on my own, I'm feeling really dizzy and short of breath...",
+      "asks": [
+        {
+          "text": "if I can safely get to the emergency department on my own",
+          "kind": "question",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 52,
+      "expected": "question",
+      "predicted": "request",
+      "ambiguous": false,
+      "message": "I've been having this weird tingling sensation in my left arm and I'm really worried it might be a sign of a heart attack or something. Can you please tell me if this is something I should be super concerned about?",
+      "asks": [
+        {
+          "text": "Is this symptom a sign of a heart attack?",
+          "kind": "question",
+          "same_as": null
+        },
+        {
+          "text": "Tell me if I should be super concerned",
+          "kind": "request",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 53,
+      "expected": "none",
+      "predicted": "request",
+      "ambiguous": false,
+      "message": "To be honest, it's tough to manage stress when you're dealing with all these meds and stuff. You know my doctor's always on my case about taking my diabetes pills and blood pressure meds, but they give me crazy side effects, you know?",
+      "asks": [
+        {
+          "text": "help managing stress and medication side effects",
+          "kind": "request",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 61,
+      "expected": "none",
+      "predicted": "request",
+      "ambiguous": false,
+      "message": "To be honest, work's been stressing me out, but that's not the real issue here. These meds are killing me - I'm tired all the time and my doc's always piling on more pills.",
+      "asks": [
+        {
+          "text": "concern about medication side effects",
+          "kind": "request",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 75,
+      "expected": "none",
+      "predicted": "request",
+      "ambiguous": true,
+      "message": "Look, the meds are just making me feel sluggish all the time, and it's hard to enjoy anything when I'm stuck with that. Emily's always on my case about it, but can't she just leave me alone, you know?",
+      "asks": [
+        {
+          "text": "leave me alone",
+          "kind": "request",
+          "same_as": null
+        }
+      ]
+    },
+    {
+      "id": 91,
+      "expected": "none",
+      "predicted": "question",
+      "ambiguous": true,
+      "message": "Honestly, it's just the fatigue and swelling in my legs from the meds for my blood pressure. Can't they just make something that doesn't make me feel so drained all the time?",
+      "asks": [
+        {
+          "text": "alternative medication",
+          "kind": "question",
+          "same_as": null
+        }
+      ]
+    }
+  ]
+}
