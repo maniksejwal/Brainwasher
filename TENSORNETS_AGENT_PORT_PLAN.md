@@ -5,7 +5,7 @@
 **Target**: `feat/agent-behavior-improvements`, continuing on the same branch
 **Related**: `documentation/training/AGENT_BEHAVIOR_ISSUES_AND_FIX_PLAN.md`, `FALSE_ACTION_CLAIMS_ROOT_CAUSE_AND_FIX.md`
 
-Status: plan only. Nothing from this plan has been ported yet. Line numbers below refer to the two commits above.
+Status: items 0 to 8 are ported (uncommitted); see the "as built" sections. Open items are listed under "Related open items" (sharing restrictions) and "Open questions". Line numbers below refer to the two commits above.
 
 ---
 
@@ -169,9 +169,29 @@ Port by diff, not by copying the file, and keep the target's stage behaviour. Th
 
 Set in `aiAnalysisHandler.js` (D6): `priorCriticality` from the last message, `escalationActive` from `recentEscalations.length > 0`. Leave `stressLevel` unset.
 
-**Senior or clinical review needed before this ships:**
-- It removes the regex pre-checks and the "simple pain HIGH to LOW" override.
-- It returns LOW when the LLM fails. Recommended instead: one retry, then MEDIUM, with `llmFallback` logged.
+**Decided:** the regex pre-checks and the "simple pain HIGH to LOW" override are removed, as in the source. On LLM failure the call is retried once, then MEDIUM is returned with `llmFallback: true` (the source returned LOW).
+
+**Done (uncommitted):**
+- `clinicalAgent.js`: the source's hints and stored analogy preference, a 20-message history and `privacyLevel`. Kept from the target: `normalizeCriticality`, `highCategory` and the `isFallback` check.
+- `companion_clinical.js`: the source prompt, keeping the `high_category` field.
+- `getLastCriticality` in `db/queries_messages.js` reads only the speaker's own messages. `aiAnalysisHandler.js` sets `priorCriticality` and `escalationActive`.
+- `tests/clinical_agent.test.js` is added to `npm test`.
+
+**Simulation (16 runs, Scout, compared with `port_sel4_on`):**
+
+| Metric | Before (`port_sel4_on`) | Item 5 (`port_item5`) |
+|---|---|---|
+| False claims | 0 | 0 |
+| HIGH turns, all in `chest_pain_emergency` | 6 | 10 |
+| HIGH turns with an emergency sentence | 6 of 6 | 10 of 10 |
+| Patient HIGH turns with an alert proposal | 6 of 6 | 7 of 7 |
+| Caregiver HIGH turns | 0 | 3 |
+| HIGH in the other three scenarios | 0 | 0 |
+| Criticality fallbacks | — | 0 |
+| Repeats | 8 | 10 |
+| Time per run | 110 s | 108 s |
+
+Rating a caregiver's follow-up during an active chest-pain emergency as HIGH is the 20-message history at work. No other scenario was over-escalated.
 
 ## Item 6: privacyGuard and empathy
 
@@ -179,9 +199,77 @@ Set in `aiAnalysisHandler.js` (D6): `priorCriticality` from the last message, `e
 - Add `prompts/companion_privacy_guard.js`, and register `privacy_guard` in `companions/utils/promptLoader.js`.
 - Port the LLM decision into `privacyGuard.js`, keeping the target's intent split (fix C) and defaulting to `PRIVATE` on failure. Drop the professional circle branch and `skipPrivacyGuard`. Apply D9.
 - Fix `findCircleByPatientId(circleId)`, which passes a circle ID as a patient ID, if it's still there.
-- **Review needed**: Path 1 lets `target === 'doctor'` skip the consent gate. Gate it, or mark it as requiring consent.
+- **Decided**: Path 1 must not let `target === 'doctor'` skip the consent gate. Messages to the doctor require consent.
 
 **Empathy**: port the physio block and add `{{PHYSIO_CONTEXT}}{{STRESS_OVERRIDE}}` to `prompts/companion_empathy.js` (D5). Drop the business branches. Nothing changes until `physioState` is supplied, so this is low priority.
+
+**Done (uncommitted):**
+- **`privacyGuard.js`:**
+  - The source prompt (`prompts/companion_privacy_guard.js`, registered as `privacy_guard`) classifies with the LLM, and an invalid or failed answer falls back to PRIVATE.
+  - SENSITIVE content gets no suggestion.
+  - Suggestions from intent (facts, mediation, advice, doctor) come first, with combined intents split. The classifier's suggestion is used only when intent gives none.
+  - The circle lookup uses `findCircleById`.
+- **`consentManager.js`:**
+  - Ported from the source without the emergency override, because no `emergency_flag` column exists. `logConsentDecision` is not ported.
+  - Every target goes through the gate. `doctor` resolves to the circle's doctor member, and without one, consent is always required.
+- **D9:** the coordinator reruns the guard only when it has no result.
+- **`responseAggregator.js`:** the most-restrictive privacy merge read only `result.privacyLevel`, so the guard's `level` was ignored. Now that the clinical agent also returns `privacyLevel`, its PRIVATE could override the guard's SENSITIVE. Fixed.
+- **Empathy:** `companions/physio/state.js` is copied from the source. The physio block is in `empathyHandler.js`, keeping `ACTIONS_TAKEN`, and the slots are added.
+- **Tests:** `tests/privacy_guard.test.js` is added to `npm test`.
+- **Simulation:** `port_item6b` has 15 of 16 runs; low memory stopped it before the last `privacy_breach_caregiver` run.
+
+  | Metric | Item 5 (`port_item5`) | Item 6 (`port_item6b`) |
+  |---|---|---|
+  | False claims | 0 | 0 |
+  | HIGH turns with an emergency sentence | 10 of 10 | 6 of 6 |
+  | Patient HIGH turns with a proposal | 7 of 7 | 5 of 5 |
+  | Repeats | 10 | 3 |
+  | Guard or clinical fallbacks | 0 | 0 |
+  | Messages to others in the two caregiver scenarios | 59 (6 relays) | 40 (3 relays) |
+  | Time per run | 108 s | 137 s |
+
+  The guard's own LLM call adds about 5 s per turn. Messages to the literal recipients "patient" or "user" happen in both batches, so the port didn't cause them.
+- **Note:** the classifier's own suggestions carry no `content_to_share`, so `fallbackSharing.js` doesn't act on them. Suggestions from intent behave as before.
+
+### Follow-up to item 6: sharing restrictions (not from the source)
+
+A manual GLP-1 test found that after "Don't tell my daughter about this", the companion offered to message the daughter. Recreated directly against the prompts: Scout and Maverick both labelled every "don't tell X" message `REQUESTING_MEDIATION` and listed X as mentioned, and `suggestionFromIntent` turns mediation plus a mention into a suggestion for X (12 of 12 on each model, directly and after a few turns). Maverick's guard also suggested X itself. The system had no way to represent "do not share", so a better model would not fix it.
+
+- **Extract:** input understanding returns `sharing_directives` (`restrict` or `allow`, targets as member names or `all_caregivers`, `all_doctors`, `everyone`) and a new intent `REQUESTING_NON_DISCLOSURE`. Code maps targets to members (`resolveTargets`); unknown names are asked about, not guessed. On both models every test message mapped correctly, including "keep this between us" and "tell my doctor but not my daughter", and ordinary messages produced none.
+- **Store:** table `sharing_restrictions` (`db/queries_sharing_restrictions.js`), one member or a role per row, revoked rather than deleted. A restriction covers everything until lifted; the topic is kept for display only.
+- **Enforce** (`services/sharingPolicy.js`): `evaluateConsent` never suggests a restricted member; `shareWithMembers`, `escalate` (unless the user approved the recipients), `proposeEscalation`, auto-sent alerts and scheduled messages never send to one. If restrictions cannot be read, nothing is sent. A non-disclosure intent never produces a suggestion.
+- **Emergencies:** a HIGH proposal keeps restricted members but names the restriction in the question, and is never sent automatically, so they are alerted only on an explicit yes.
+- **Reply:** a code-written sentence confirms what was stored ("Okay, I won't share anything with Priya Sharma unless you tell me otherwise."), and the reply prompts and the guard prompt list active restrictions.
+- **Limits:** restrictions belong to the user who set them, so a caregiver's own report about the patient is not limited by them. The unified (non-companion) path does not extract directives, but its sends are enforced. In "tell my doctor but not my daughter", Maverick may label the intent `REQUESTING_NON_DISCLOSURE`, which drops the doctor suggestion for that turn.
+- **Tests:** `tests/sharing_policy.test.js` (16) is added to `npm test`; two cases added to `tests/privacy_guard.test.js`.
+
+### Clinical model and temperature
+
+The pancreatitis-like message from the same test ("vomited 6 times, upper belly pain going through to the back"), with the current prompt: Scout rated it MEDIUM 3 of 3, Maverick HIGH 3 of 3. The clinical agent now calls with temperature 0 and use case `clinical_assessment`, which uses `BEDROCK_CLINICAL_MODEL_ID` when set (`.env.example`: Llama 4 Maverick) and `BEDROCK_MODEL_ID` otherwise. No scenario-specific criteria were added to the prompt.
+
+### Fixes from the app test of the above (GLP-1 scenario, demo accounts)
+
+- The clinical agent ran only when the message contained "pain", "symptom", "medication", "diagnosis" or "treatment", so "threw up twice and feel dizzy" was never assessed and stayed NONE. It now runs on every patient and caregiver turn (`getRelevantHandlers`); doctors keep the old check. One more LLM call per turn.
+- The code-written confirmation of a sharing directive was set by the coordinator but not copied onto the analysis, so it never reached the reply (`aiAnalysisHandler.js`).
+- "Can you ask my doctor what I should do?" was labelled ASKING_QUESTION; the privacy guard's model suggested the doctor with empty content, and `fallbackSharing.js` drops suggestions without content. A doctor suggestion with empty content now takes the message as its content (`withDoctorContent`).
+- Emergency confidence threshold lowered from 0.9 to 0.85 (the pancreatitis-like message scored 0.88).
+
+### Restricted members and the owner's message history (fixed)
+
+**Problem.** Restrictions were enforced where the companion sends or proposes something, but not where it reads history. `getRecentMessages` gave the speaker their own messages plus every other member's PUBLIC messages, with no check of `sharing_restrictions`, so a message from Ramesh labelled PUBLIC after he restricted Priya could reach her companion. In the GLP-1 app test nothing leaked only because the classifier labelled each of his messages PRIVATE.
+
+**Fix: a restriction is a time window.**
+- `sharing_restrictions.effective_from` (added by migration) starts the window `RESTRICTION_LOOKBACK_MS` (1 minute) before the turn that set it (`startedAt`, now set by `runInTurn`), so the message asking for it and anything said just before are covered. The window ends at `revoked_at`.
+- In a turn, `getRecentMessages` and `hasRecentHighMessage` leave out another member's message when its author has a restriction covering the reader (as a member, by role, or everyone) and the message was written inside the window. Lifting a restriction shows new messages but keeps the window hidden. If the filter cannot be evaluated, the reader gets only their own messages.
+- Message privacy labels are not changed. Members the owner did not restrict, such as the doctor, still see PUBLIC messages, and the classifier's label stays available.
+- The restricted reader's reply prompts (empathy, and the patient reply via `buildKnownSection`) say updates from that member are not available and ask for a neutral answer: no update that can be shared, ask them directly, with no hint that anything is being kept private. If this cannot be checked, the prompt says it of "some circle members".
+- Emergencies are unchanged: a restricted member is alerted only on the owner's explicit yes.
+
+**Why not filter by topic.** That needs an LLM call per message to judge whether it touches the restricted topic, and misses are likely ("feeling queasy today" never names Ozempic but points straight to it). A restriction covers the whole relationship for its window; topic-level restrictions could be added later as an explicit opt-in.
+
+**Tests.** Seven cases added to `tests/sharing_policy.test.js` (window hiding including PUBLIC messages, other readers unaffected, lifting keeps the window hidden, role restrictions, the emergency carry-over check, fail closed, the one-minute lookback, the neutral prompt guidance).
+
+**Related open items.** Self-harm with a plan scored exactly 0.85 in the emergency run, so a small drop would miss the alert; a code rule that always proposes an alert for it is under consideration. The `[SharingPolicy] blocked on emergency_proposal` log line reads as if the alert was blocked, when the member was only flagged for an explicit yes; it should be reworded. The "ask my doctor" fix (`withDoctorContent`) is unit-tested but not yet tested through the app.
 
 ## Item 7: Probing question conflict
 
@@ -317,6 +405,174 @@ Replies do not use the block yet. It reaches the reply prompt in item 3.
 Live check, `medication_nonadherent`, 2 runs x 6 turns: 11 facts stored, none unreadable, and the patient's facts were retrieved without the caregiver's.
 
 Known limits:
-- `addFact` replaces the current fact per circle and key. A caregiver's `symptom_report` therefore replaces the patient's, and retrieval no longer finds it. Check this before item 3 is measured.
+- Fixed after item 1: `addFact` now replaces the current fact per circle, key and subject, so a caregiver's own `symptom_report` no longer replaces the patient's. A fact about the same subject still replaces the earlier one, and conflict detection compares against the current fact for that subject.
 - Most facts are stored in category `general`, so the safety-critical rule rarely applies. An old allergy can still rank below the top 6.
 - A fact a caregiver states about someone else without the `other_person_` prefix is stored as the caregiver's own. It does not reach the patient's reply.
+
+### Item 3 as built (reply prompt only)
+
+- `companions/patientFacts.js`: `buildPatientFacts` gives the conversation number and days since the last one, and the types of escalations flagged in the circle. Escalation details are left out because they can quote other members. `buildKnownSection` adds the known facts and the longitudinal hint, under "What we already know (do not ask again)", marked as background that does not mean any action was taken. With nothing known, the section is empty.
+- `knownContext.js`: a gap over 6 hours between the patient's messages starts a new conversation. The start of the current one is also the cut-off for "CURRENT SESSION" facts.
+- `companion_patient_optimizer.js`: `{{KNOWN_SECTION}}` after **Consider:** and before `ACTION_CONTRACT`. Both reply passes use it, since the final pass reuses the draft's context.
+- Not included: medication adherence and sentiment as separate lines. Adherence is already in the known facts, and the empathy level is already in the prompt. Goal status has no source. The unified path still gets no facts.
+
+Measured (`port_item3`, same command as the baselines):
+
+| Metric | `port_carry_baseline` | `port_item3` |
+|---|---|---|
+| Runs, crashes | 8, 0 | 8, 0 |
+| False action claims | 0 | 0 |
+| Replies regenerated or replaced | 1, 0 | 1, 0 |
+| Criticality | NONE 23, LOW 5, MEDIUM 15, HIGH 5 | NONE 21, LOW 10, MEDIUM 13, HIGH 4 |
+| HIGH turns opening with the emergency sentence | 5 of 5 | 4 of 4 |
+| HIGH turns with an alert proposal, alerts sent | 3 of 5, 3 | 4 of 4, 4 |
+| Repeated questions | 3 of 40, 3 unscored | 5 of 42, 1 unscored |
+| Average time per run | 99 s | 101 s |
+
+Repeated questions did not fall. All five repeats were in the same conversation, where the answer is already in the history the prompt shows. Only one answer had been stored as a fact (`location=home`, asked again during the chest pain emergency). Runs store 1 to 4 patient facts each, often vague (`symptom_report=scared`), so the block has little to add. The repeats look driven by the prompt's demand to always end with a probing question, which item 7 addresses.
+
+### Item 7 as built
+
+`companion_patient_optimizer.js` no longer requires a probing question or penalises replies without one. It now asks for at most one question, only when the answer would change the reply, and never for something already told; otherwise give information, reassurance or a next step. A direct question is answered first. `requireProbing` in `patientOptimizer.js` is off to match (it only logged). The unified path's prompts (`unified_prompt.js`, `model_specific_prompts.js`) still demand questions and are not changed.
+
+| Metric | `port_carry_baseline` | `port_item3` | `port_item7` |
+|---|---|---|---|
+| Runs, crashes | 8, 0 | 8, 0 | 8, 0 |
+| False action claims sent | 0 | 0 | 0 |
+| Replies regenerated or replaced | 1, 0 | 1, 0 | 5, 0 |
+| HIGH turns opening with the emergency sentence | 5 of 5 | 4 of 4 | 5 of 5 |
+| HIGH turns with an alert proposal, alerts sent | 3 of 5, 3 | 4 of 4, 4 | 5 of 5, 5 |
+| Replies with a question | 40 | 42 | 28 |
+| Repeated questions | 3, 3 unscored | 5, 1 unscored | 3 |
+| Average time per run | 99 s | 101 s | 94 s |
+
+Replies with a question fell from 42 to 28 of 48, and repeats from 5 to 3. Regenerations rose from 1 to 5: four drafts said the doctor had been told and one said the matter was escalated. The guard caught all of them, but drafts without a question seem to fill the gap with "I'll let your doctor know". A next step should be something the patient can do, unless ACTIONS_TAKEN lists an action.
+
+**Revised (`port_item7b`)**, replacing the version above: dropping questions loses detail about the patient, so probing questions are kept. The prompt asks for one specific probing question at the end of most replies, never one the patient has already answered (even in other words); instead it asks for a new detail, the effect on daily life, what helps or worsens it, or an area not yet covered. Direct questions are answered first. "Will be penalized" and "offer to flag it for their doctor" are removed. `requireProbing` is back on.
+
+| Metric | `port_carry_baseline` | `port_item7b` |
+|---|---|---|
+| Runs, crashes | 8, 0 | 8, 0 |
+| False action claims sent | 0 | 0 |
+| Replies regenerated or replaced | 1, 0 | 0, 0 |
+| HIGH turns opening with the emergency sentence | 5 of 5 | 7 of 7 |
+| HIGH turns with an alert proposal, alerts sent | 3 of 5, 3 | 5 of 7, 5 |
+| Replies with a question | 40 | 42 |
+| Repeated questions | 3, 3 unscored | 2, 0 unscored |
+| Average time per run | 99 s | 103 s |
+
+### Item 2 as built
+
+- `prompts/action_selector.js`: cut down from the source's ~500 lines to the 13 actions allowed at medium stress, which is every turn until a stress signal exists. Left out: actions that would claim contact, scheduling or presence (`call_for_help`, `request_presence`, `schedule_future_interaction`, `emergency_mobilise`, `escalate`), `share_circle_insight` (cross-member disclosure), the intervention queue, and techniques needing clinical review (flooding, SPIKE, paradoxical and panic actions). Slots with no real source (session goal, info coverage, phase, mode, HRV) are removed.
+- `companions/agents/actionSelector.js`: `selectAction` runs for patients only, after `clinicalAgent` in `companions/handlers/index.js`, and not on HIGH turns. It uses `makeApiCall` + `parseCompanionResponse` (D10). History shows only the patient's messages and the companion's replies to them (D4); other members' messages are left out. The known section from item 3 is included. A blocked or unknown action becomes `validate` / `Responsibility`; a failed call gives no plan. "Last action" is taken from whether the companion's last reply ended with a question.
+- The plan is returned as `componentResults.actionSelector` and added to `replyContext` in `CompanionCoordinator.js`, so both reply passes see it. `{{PLANNED_ACTION}}` in the reply prompt sits before `ACTION_CONTRACT` and keeps the probing question rule.
+
+Measured (`port_item2`, with `DEBUG_COMPANION=true`):
+
+| Metric | `port_item7b` | `port_item2` |
+|---|---|---|
+| Runs, crashes | 8, 0 | 8, 0 |
+| False action claims sent | 0 | 0 |
+| Replies regenerated or replaced | 0, 0 | 0, 1 |
+| HIGH turns opening with the emergency sentence | 7 of 7 | 3 of 3 |
+| HIGH turns with an alert proposal, alerts sent | 5 of 7, 5 | 3 of 3, 3 |
+| Replies with a question | 42 | 39 |
+| Repeated questions | 2 | 2 |
+| Average time per run | 103 s | 104 s |
+
+Selector: 22 calls, 0 failures. Chosen: `empathic_reflection` 15, `open_question` 6, `give_facts` 1. The one replaced reply was a caregiver turn, where the selector does not run. On this sample the selector changes nothing measurable; its choices lean heavily on reflection.
+
+**Selector tuning (`port_item2b`)**: the selector now sees its last 3 actions for the patient (in memory per circle and patient), with rules for variety (not the same action twice in a row, at most two empathy actions in three turns), reflection only when a feeling was expressed, and moving forward once a problem is explained. Prompt rules only; not enforced in code.
+
+| Metric | `port_item2` | `port_item2b` |
+|---|---|---|
+| Selector calls, failures | 22, 0 | 25, 0 |
+| Actions chosen | reflection 15, open_question 6, give_facts 1 | reflection 13, open_question 5, give_facts 4, socratic_probe 3 |
+| Same action as the previous call (log order, approximate) | n/a | 7 |
+| False action claims sent | 0 | 0 |
+| Replies regenerated or replaced | 0, 1 | 1, 0 |
+| HIGH turns with an alert proposal | 3 of 3 | 3 of 4 |
+| Replies with a question | 39 | 42 |
+| Repeated questions | 2 | 4 |
+| Average time per run | 104 s | 111 s |
+
+Slightly more variety, but reflection is still about half of the choices and the model often repeats its last action despite the rule.
+
+**Second look instead of variety (`port_item2d`)**: repeating an action is allowed; the strict variety rule is softened to "try a different approach if the conversation is not moving forward". When the patient's message asks something ("?", "can we/you", "please") and neither the action nor the secondary action is `give_facts`, `give_options` or `psychoeducation`, the model is asked once more with a note; it may switch, add an answering secondary action, or keep its choice. A failed second call keeps the first plan.
+
+| Metric | `port_item2b` | `port_item2d` |
+|---|---|---|
+| Selector calls, failures | 25, 0 | 22, 0 |
+| Second looks, choice changed | n/a | 12, 4 (2 to `give_facts`) |
+| Actions chosen | reflection 13, open_question 5, give_facts 4, socratic_probe 3 | reflection 8, give_facts 5, socratic_probe 4, open_question 4, validate 1 |
+| False action claims sent | 0 | 0 |
+| Replies regenerated or replaced | 1, 0 | 1, 0 |
+| HIGH turns with an alert proposal | 3 of 4 | 2 of 4 |
+| Replies with a question | 42 | 39 |
+| Repeated questions | 4 | 4 |
+| Average time per run | 111 s | 104 s |
+
+The second look fired on 12 of 22 calls. About half were tag questions ("you know?", "right?", "don't you think?"), where keeping the choice was correct. Real requests were missed too: "Can't we just focus on my blood sugar levels instead?" kept a plain reflection. The model kept its choice 8 times; the log does not show whether it added an answering secondary action. HIGH turns do not run the selector, so the alert proposal count is not affected by it.
+
+### Open asks (A and B) and the asks evaluation (D)
+
+- **A**: input understanding (no extra call) returns `asks` (question, request or rhetorical, with a short summary and `same_as` for a repeat of an open ask) and `resolved_asks` (answered or dropped, judged from the companion's last reply). The selector's second look now runs only when stored open asks exist and the plan does not answer them; the regex trigger is gone.
+- **B**: `open_asks` table and `db/queries_asks.js`. Questions and requests only; repeats increment `times_asked`; only the patient's own open IDs can be closed; an ask not raised for 7 days stops being open. The selector and the reply prompt see "Still waiting for an answer" (no IDs); the reply prompt asks for an answer or an honest "cannot, but you can".
+- **D**: `training/evaluation/asks/labelled_asks.json`, 92 patient messages from simulation runs, labelled by hand (13 marked ambiguous; labels need review), and `run_asks_eval.mjs`. Llama 4 Scout, clear cases: exact 89%, real asks missed 0 of 49, invented asks 6 of 30 (mostly complaints read as questions). The prompt was tuned once on this set (privacy requests such as "don't tell Emily" were missed before).
+
+Live run (`port_asks`): 16 asks stored, 5 asked more than once, **0 closed**. In the rash conversation the patient asked three times whether it was serious and got partial answers each time, so staying open was correct; the reply prompt's "still waiting" list is not making the reply answer. A direct test with an answering reply did close the ask, but whether closing works in every harness case is not yet confirmed; `[OpenAsks]` debug lines now log each update. Selector: 21 calls, 6 second looks, 3 changed. Repeated questions 5, false claims 0, 102 s per run.
+
+### C: reply ask check
+
+`companions/agents/askChecker.js` and `prompts/ask_check.js`, called from `ensureAsksAddressed` in `replyWriter.js` after the false claim check. For a non-HIGH patient turn with open asks, one call checks which asks the reply addresses (a direct answer, or an honest "cannot, but you can"). If any are missed, the reply is written once more naming them (`missedAsks` in the reply prompt); the retry is used only if it passes the false claim check and addresses at least as much. Asks the final reply addresses are marked answered (`markAsksAnswered`). Also fixed: `same_as` and resolved IDs given as the ask's text are matched to the open ask.
+
+| Metric | Scout before C (`port_asks_scout2`) | Scout with C (`port_c_scout`) | Maverick before C (`port_asks_maverick`) | Maverick with C (`port_c_maverick`) |
+|---|---|---|---|---|
+| Asks stored, closed by the end | not counted, 0 closed | 19, 12 | not counted, 3 closures | 23, **23** |
+| Checks; first draft addressed all | n/a | 15; 5 | n/a | 19; 12 |
+| Rewrites | n/a | 8 | n/a | 7 |
+| False action claims sent | 0 | 0 | 0 | 0 |
+| Replies regenerated or replaced | 0, 0 | 2, 1 | 3, 1 | 3, 0 |
+| Repeated questions | 6 | 5 | 2 | 7 |
+| Average time per run | 100 s | 115 s | 110 s | 120 s |
+
+With Maverick every ask was answered by the end of its conversation; with Scout 7 of 19 were still open. The repeated question metric did not improve: it measures the companion asking for information the patient already gave, which this check does not cover. The check adds about 10 to 15 s per run.
+
+### Item 8 comparison
+
+Two temporary settings switched off the selector (`port_abl_nosel`) or the known facts in the reply prompt (`port_abl_nofacts`; open asks still shown), each with everything else as in `port_c_scout`. Llama 4 Scout, same command as the baselines, run one at a time. The settings have been removed.
+
+| Metric | `port_carry_baseline` | All on (`port_c_scout`) | Selector off | Reply facts off |
+|---|---|---|---|---|
+| Runs, crashes | 8, 0 | 8, 0 | 8, 0 | 8, 0 |
+| False action claims sent | 0 | 0 | 0 | 0 |
+| Replies regenerated or replaced | 1, 0 | 2, 1 | 2, 0 | 0, 0 |
+| HIGH turns opening with the emergency sentence | 5 of 5 | all | 5 of 5 | 4 of 4 |
+| HIGH turns with an alert proposal | 3 of 5 | not recorded | 4 of 5 | 3 of 4 |
+| Replies with a question | 40 | 36 | 41 | 39 |
+| Repeated questions | 3 (3 unscored) | 5 | 4 (3 unscored) | 7 (1 unscored) |
+| Asks stored, answered by the end | n/a | 19, 12 | 17, 12 | 19, 14 |
+| Average time per run | 99 s | 115 s | 104 s | 136 s |
+
+Findings:
+- **Selector**: switching it off changes nothing measurable (repeats 4 vs 5, asks answered 12 vs 12) and saves about 10 s per run. On this sample it does not earn its cost.
+- **Reply-prompt facts**: switching them off gives the most repeats (7, against 4 to 5), the only direction consistent with the facts helping, but within the run-to-run spread seen so far (2 to 7). The 136 s is likely Bedrock latency, since this setting removes prompt text.
+- **Since the baseline**: false claims stay at 0 and every HIGH turn opens with the emergency sentence. Repeated questions have not fallen. They need a different fix: most repeats ask for something already in the visible history, not something missing from the prompt.
+- "Replies per concern" from the plan was not measured; it needs a definition of a concern.
+- 8 runs per setting is too few to separate effects of this size. A decision on keeping the selector needs either more runs (e.g. 4 per scenario) or a judgement on reply quality, not counts.
+
+**Selector, 4 runs per scenario** (16 runs each, Scout; the setting has been removed again):
+
+| Metric | Selector on (`port_sel4_on`) | Selector off (`port_sel4_off2`) |
+|---|---|---|
+| Runs, crashes | 16, 0 | 16, 0 |
+| False action claims sent | 0 | 0 |
+| Replies regenerated or replaced | 2, 0 | 4, 0 |
+| HIGH turns opening with the emergency sentence | 6 of 6 | 9 of 9 |
+| HIGH turns with an alert proposal | 6 of 6 | 7 of 9 |
+| Replies with a question | 84 | 82 |
+| Repeated questions | 8 (5 unscored) | 12 (5 unscored) |
+| Asks stored, answered by the end | 41, 28 (68%) | 43, 25 (58%) |
+| Average time per run | 110 s | 102 s |
+
+With the larger sample the selector is ahead on every quality count: fewer repeats (8 vs 12), more asks answered (68% vs 58%) and fewer regenerated drafts, for about 8 s per run. The differences are modest and still within what two more batches could reverse, but they point the same way, so keeping the selector is recommended. The HIGH proposal difference is not the selector's, since it does not run on HIGH turns.
