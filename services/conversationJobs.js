@@ -24,6 +24,7 @@ import {
     recoverInterruptedConversationJobs
 } from '../db/index.js';
 import { notifyConversationUpdated } from './conversationNotices.js';
+import { isDemoMockEnabled, createDemoRunTurn } from './demoMock.js';
 
 export const MAX_JOB_ATTEMPTS = 2;
 const DEFAULT_CONCURRENCY = 2;
@@ -128,6 +129,10 @@ export async function kickConversationWorker() {
 export async function startConversationWorker(options = {}) {
     if (started) return;
     runTurn = options.runTurn ?? defaultRunTurn;
+    if (isDemoMockEnabled()) {
+        runTurn = createDemoRunTurn(runTurn);
+        console.log('[ConversationJobs] DEMO_MOCK_MODE is on: demo users get scripted replies');
+    }
     concurrency = options.concurrency ?? (Number(process.env.INTEGRATION_JOB_CONCURRENCY) || DEFAULT_CONCURRENCY);
     events.on('broadcast', recordBroadcast);
     const { retried, failed } = await recoverInterruptedConversationJobs(MAX_JOB_ATTEMPTS);
